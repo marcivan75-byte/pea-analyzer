@@ -1,0 +1,23 @@
+[project]
+name = "pea-v182"
+version = "18.2.0"
+requires-python = ">=3.12"
+dependencies = [
+  "pydantic>=2.8",
+  "yfinance>=0.2",
+  "pandas>=2.2",
+  "numpy>=2.0",
+  "pyarrow>=17",
+  "requests>=2.32",
+  "beautifulsoup4>=4.12",
+  "lxml>=5.2",
+  "playwright>=1.46",
+  "openpyxl>=3.1"
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "pytest-cov", "ruff", "mypy"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

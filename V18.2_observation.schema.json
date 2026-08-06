@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "universe",
+    "isin",
+    "field",
+    "value",
+    "source",
+    "collected_at",
+    "validation_status"
+  ],
+  "properties": {
+    "universe": {
+      "enum": [
+        "ACTION",
+        "ETF"
+      ]
+    },
+    "isin": {
+      "type": "string",
+      "pattern": "^[A-Z]{2}[A-Z0-9]{9}[0-9]$"
+    },
+    "evidence_level": {
+      "enum": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ]
+    },
+    "validation_status": {
+      "enum": [
+        "VALIDATED",
+        "ISIN_MATCHED",
+        "AUTO_MATCH",
+        "REVIEW",
+        "REJECTED"
+      ]
+    }
+  }
+}

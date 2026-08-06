@@ -1,0 +1,23 @@
+PASS | actions_rows_1486 | 1486
+PASS | actions_unique_isin | 1486
+PASS | actions_tickers_complete | 1486
+PASS | actions_canonical_mic_complete | 1486
+PASS | etf_rows_102 | 102
+PASS | etf_unique_isin | 102
+PASS | etf_tickers_complete | 102
+PASS | etf_map_rows_102 | 102
+PASS | etf_map_unique_isin | 102
+PASS | etf_map_tickers_complete | 102
+PASS | workflow_contains_OPENFIGI_API_KEY | OPENFIGI_API_KEY
+PASS | workflow_contains_actions/upload-artifact@v4 | actions/upload-artifact@v4
+PASS | workflow_contains_peter-evans/create-pull-request@v7 | peter-evans/create-pull-request@v7
+PASS | workflow_contains_pull-requests: write | pull-requests: write
+PASS | workflow_contains_config/V18.2_ETF_TICKER_MAP.csv | config/V18.2_ETF_TICKER_MAP.csv
+PASS | workflow_no_direct_git_push | direct push absent
+PASS | workflow_quality_gate | quality gate enforced
+PASS | checkpoint_per_run | run scoped
+PASS | excel_exporter_present | exports module
+PASS | no_embedded_secrets | []
+PASS | pytest_passed | ..................                                                       [100%]
+18 passed in 2.27s
+PASS | compileall_passed | 

@@ -1,0 +1,16 @@
+﻿universe;group;fields;observed_cells;missing_cells;possible_cells;coverage_pct;rows_any;rows_complete
+ACTION;IDENTITY;isin | yahoo_ticker | euronext_mic | currency | pea_confidence;5866;1564;7430;79.0;1486;0
+ACTION;OHLCV_RAW;last_close | volume | perf_1m_pct | perf_3m_pct | perf_1y_pct;560;6870;7430;7.5;140;0
+ACTION;TECHNICAL_DERIVED;mm20 | mm50 | mm100 | mm200 | rsi14 | macd_hist | atr14 | bb_upper | bb_lower | rvol20 | volatility_20d | volatility_60d | max_drawdown_1y | relative_strength;1400;19404;20804;6.7;140;0
+ACTION;FUNDAMENTALS;per_ttm_yf | per_forward_yf | pb | ev_ebit | roe_api | roa | fcf_yield | dette_ebitda | marge_ebit | marge_nette | croiss_ca_3y | croiss_eps_3y;321;17511;17832;1.8;140;0
+ACTION;CONSENSUS;consensus_score_yf | consensus_delta_yf | upside_pct_yf | n_analysts_yf | target_mean_yf | target_high_yf | target_low_yf;972;9430;10402;9.3;139;138
+ACTION;NEWS_EVENTS;news_polarity | news_materiality | sic_score | corporate_event | insider_signal;0;7430;7430;0.0;0;0
+ACTION;RISK_OPPORTUNITY;scenario_bear_pct | scenario_base_pct | scenario_bull_pct | scenario_proba_bch | asymmetry | invalidation_level | expected_value;0;10402;10402;0.0;0;0
+ACTION;PORTFOLIO_EXECUTION;portfolio_weight | portfolio_correlation | portfolio_risk_contribution | bid | ask | spread_est_bps | depth_multiple | broker_fee_bps | order_size;0;13374;13374;0.0;0;0
+ETF;IDENTITY;isin | provider | pea_confidence | country_domicile;408;0;408;100.0;102;102
+ETF;OHLCV_RAW;last_close | volume | perf_1y_pct | perf_3y_pct | perf_5y_pct;105;405;510;20.6;37;0
+ETF;TECHNICAL_DERIVED;mm20 | mm50 | mm100 | mm200 | rsi14 | macd_hist | atr14 | rvol20 | volatility_20d | volatility_60d | max_drawdown_1y | relative_strength;0;1224;1224;0.0;0;0
+ETF;STRUCTURE_COST;ter_pct | aum_m | benchmark | replication_hint | distribution_policy | tracking_difference | tracking_error;179;535;714;25.1;102;0
+ETF;MORNINGSTAR;morningstar_rating | morningstar_risk | rank_cat_1y | rank_cat_3y | rank_cat_5y;0;510;510;0.0;0;0
+ETF;CONCENTRATION;top10_weight_pct | country_concentration_pct | sector_concentration_pct | number_holdings;0;408;408;0.0;0;0
+ETF;PORTFOLIO_EXECUTION;portfolio_weight | portfolio_overlap | portfolio_correlation | bid | ask | spread_est_bps | depth_multiple | broker_fee_bps | order_size;0;918;918;0.0;0;0

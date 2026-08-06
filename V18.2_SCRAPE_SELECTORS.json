@@ -1,0 +1,15 @@
+{
+  "_comment": "Vide par défaut : WAVE_05_06 est ignorée tant qu'aucun sélecteur n'est renseigné ici. Exemple de structure à adapter/valider une fois testé avec un accès internet réel :",
+  "_example_WAVE_05": {
+    "universe": "ACTION",
+    "source_name": "Boursorama",
+    "evidence": "B",
+    "url_template": "https://www.boursorama.com/cours/{symbol}/",
+    "field_map": {
+      "consensus": "consensus_rating"
+    },
+    "selectors": {
+      "consensus": ".c-consensus__label"
+    }
+  }
+}

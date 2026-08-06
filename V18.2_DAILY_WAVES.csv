@@ -1,0 +1,9 @@
+﻿Wave;Agent;Scope;Output;Reason
+WAVE_01;YFINANCE_HISTORY_ACTIONS;All mapped action tickers;OHLCV 5y daily;Highest bulk gain
+WAVE_02;YFINANCE_HISTORY_ETF;All mapped ETF tickers;OHLCV 5y daily;Highest bulk gain
+WAVE_03;DERIVED_FEATURES;Rows with OHLCV;Technical and risk indicators;No external calls
+WAVE_04;YFINANCE_INFO_ACTIONS;Actions prioritized by Committee/Watch;Fundamentals and estimates;Rate controlled
+WAVE_05;BOURSORAMA_ZONEBOURSE;Actions in stage 2;Consensus and deltas;Bulk public tables
+WAVE_06;ABC_BOURSE_BOURSORAMA_ETF;All ETF;TER, AUM, benchmark, Morningstar;Bulk public tables
+WAVE_07;OFFICIAL_SOURCES;Conflicts and critical gaps;Issuer, AMF, Euronext;Evidence A
+WAVE_08;SCENARIOS;Shortlists only;B/C/H, EV, invalidation;Internal

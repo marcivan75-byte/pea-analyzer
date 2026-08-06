@@ -1,0 +1,135 @@
+{
+  "version": "18.2.0",
+  "base": "18.1.0",
+  "theme": "COMPLETENESS_FIRST",
+  "primary_bulk_source": "yfinance",
+  "no_repeat_api_request_policy": true,
+  "api_keys": {
+    "MARKETSTACK_API_KEY": "environment",
+    "ALPHA_VANTAGE_API_KEY": "environment",
+    "FINNHUB_API_KEY": "environment",
+    "FRED_API_KEY": "environment",
+    "EIA_API_KEY": "environment"
+  },
+  "yfinance": {
+    "enabled": true,
+    "requires_key": false,
+    "history_period": "5y",
+    "interval": "1d",
+    "auto_adjust": true,
+    "actions_batch_size": 100,
+    "etf_batch_size": 50,
+    "threads": true,
+    "retry_count": 3,
+    "cache_days": 1,
+    "fundamental_refresh_days": 7
+  },
+  "derived_features": [
+    "perf_1m_pct",
+    "perf_3m_pct",
+    "perf_6m_pct",
+    "perf_1y_pct",
+    "perf_3y_pct",
+    "perf_5y_pct",
+    "mm20",
+    "mm50",
+    "mm100",
+    "mm200",
+    "rsi14",
+    "macd",
+    "macd_signal",
+    "macd_hist",
+    "atr14",
+    "bb_mid",
+    "bb_upper",
+    "bb_lower",
+    "rvol20",
+    "volatility_20d",
+    "volatility_60d",
+    "max_drawdown_1y",
+    "relative_strength",
+    "positive_reversal_flag"
+  ],
+  "fallback_policy": [
+    [
+      "OHLCV",
+      "yfinance",
+      "Marketstack",
+      "Alpha Vantage",
+      "Issuer/Euronext"
+    ],
+    [
+      "FUNDAMENTALS_ACTIONS",
+      "yfinance",
+      "Alpha Vantage",
+      "Issuer",
+      "Zonebourse"
+    ],
+    [
+      "CONSENSUS_ACTIONS",
+      "Boursorama",
+      "Zonebourse",
+      "yfinance",
+      "Finnhub"
+    ],
+    [
+      "ETF_COSTS_AUM",
+      "ABC Bourse",
+      "Issuer/KID",
+      "Boursorama",
+      ""
+    ],
+    [
+      "ETF_MORNINGSTAR",
+      "Boursorama",
+      "Morningstar-authorized source",
+      "",
+      ""
+    ],
+    [
+      "NEWS_EVENTS",
+      "AMF/Issuer",
+      "Finnhub",
+      "GDELT",
+      "Boursorama/Zonebourse"
+    ],
+    [
+      "MACRO",
+      "FRED",
+      "",
+      "",
+      ""
+    ],
+    [
+      "ENERGY",
+      "EIA",
+      "",
+      "",
+      ""
+    ]
+  ],
+  "merge_policy": {
+    "primary_key": "isin",
+    "never_replace_observed_with_missing": true,
+    "prefer_higher_evidence": true,
+    "prefer_fresher_equal_evidence": true,
+    "quarantine_conflicts": true
+  },
+  "execution_gate": "SHADOW_BLOCKED",
+  "quality_gates": {
+    "actions_min_rows": 1486,
+    "etf_min_rows": 102,
+    "ticker_coverage_min_pct": 100.0,
+    "ohlcv_success_min_pct": 90.0,
+    "coverage_regression_tolerance_points": 0.0,
+    "block_on_empty_output": true,
+    "block_on_duplicate_isin": true
+  },
+  "automation": {
+    "daily_run_id_utc": true,
+    "checkpoint_scope": "PER_RUN",
+    "publish_excel_artifacts": true,
+    "publish_via_pull_request": true,
+    "commit_direct_to_default_branch": false
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "version": "18.2.1-operational",
+  "baseline": "18.2.0",
+  "release_status": "VALIDATED_OPERATIONAL",
+  "actions_rows": 1486,
+  "actions_tickers": 1486,
+  "etf_rows": 102,
+  "etf_tickers": 102,
+  "tests": "18 passed",
+  "workflow": "artifact + controlled pull request",
+  "checkpoints": "per run",
+  "quality_gates": [
+    "row counts",
+    "unique ISIN",
+    "100% ticker coverage",
+    "no coverage regression",
+    "OHLCV success >=90%"
+  ],
+  "excel_outputs": [
+    "V18.2_PEA_ACTIONS_ACTUALISE.xlsx",
+    "V18.2_PEA_ETF_ACTUALISE.xlsx",
+    "V18.2_RUN_REPORT.xlsx"
+  ],
+  "secrets_included": false
+}

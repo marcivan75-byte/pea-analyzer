@@ -1,0 +1,75 @@
+name: V18.2 Completeness First
+
+on:
+  schedule:
+    - cron: "15 4 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: v18-2-completeness
+  cancel-in-progress: false
+
+jobs:
+  completeness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e .[test]
+      - run: pytest -q
+      - name: Execute completeness waves
+        env:
+          V182_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+          OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
+        run: python -m v182.reporting.run
+      - name: Verify required outputs
+        run: |
+          test -s outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv
+          test -s outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
+          test -s outputs/V18.2_PEA_ACTIONS_ACTUALISE.xlsx
+          test -s outputs/V18.2_PEA_ETF_ACTUALISE.xlsx
+          test -s outputs/V18.2_RUN_REPORT.xlsx
+          python - <<'PY'
+          import json
+          q=json.load(open('outputs/audit/V18.2_QUALITY_GATES.json'))
+          assert q['passed'], q
+          PY
+      - name: Upload Excel and audit artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: V18.2-refresh-${{ github.run_id }}
+          path: |
+            outputs/*.xlsx
+            outputs/*.csv
+            outputs/audit/**
+            outputs/gaps/**
+            state/runs/**
+          retention-days: 30
+      - name: Create controlled refresh pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: automation/v18-2-refresh-${{ github.run_id }}
+          delete-branch: true
+          commit-message: "V18.2 completeness refresh ${{ github.run_id }}"
+          title: "V18.2 automated data refresh ${{ github.run_id }}"
+          body: |
+            Automated V18.2 refresh. Quality gates passed.
+            Review coverage, gaps and Excel reports before merging.
+          add-paths: |
+            state/runs/**
+            outputs/**
+            config/V18.2_ETF_TICKER_MAP.csv
