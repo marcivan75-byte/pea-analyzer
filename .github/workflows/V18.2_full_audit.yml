@@ -19,8 +19,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
           cache: pip
@@ -86,6 +88,13 @@ jobs:
               assert sum(int(v or 0) for v in sources.values()) == int(wave['successful']), (key, sources, wave)
           assert 'wave04_alpha' not in metrics, 'obsolete Alpha fundamentals path survived'
 
+          openfigi = metrics['openfigi']
+          assert float(openfigi.get('coverage_pct', 0)) >= 70.0, openfigi
+          fundamentals = metrics['wave04_yfinance']
+          consensus = metrics['wave05_finnhub']
+          assert float(fundamentals.get('available_pct', 0)) >= 90.0, fundamentals
+          assert float(consensus.get('available_pct', 0)) >= 90.0, consensus
+
           macro = json.loads(Path('outputs/context/V18.2_MACRO_CONTEXT.json').read_text())
           energy = json.loads(Path('outputs/context/V18.2_ENERGY_CONTEXT.json').read_text())
           assert macro.get('source') == 'FRED'
@@ -119,7 +128,7 @@ jobs:
 
       - name: Upload full audit evidence
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: V18.2-full-audit-${{ github.run_id }}
           path: |
