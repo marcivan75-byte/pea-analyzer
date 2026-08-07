@@ -94,7 +94,10 @@ def run_quality_gates(actions: pd.DataFrame, etf: pd.DataFrame, before: dict, af
         deferred = int(diagnostics.get("marketstack_symbol_deferred", 0) or 0)
         budget_exhausted = bool(diagnostics.get("marketstack_budget_exhausted", False))
         market_needed = key_present and remaining_after_openfigi > 0
-        activity = eod_attempted + resolver_attempted + cache_hits + negative_cache_hits + deferred + int(budget_exhausted)
+        # Merely deferring symbols is not proof that the Marketstack path worked.
+        # Count only a real resolver/EOD attempt, a validated cache decision, or
+        # an explicitly exhausted shared budget as meaningful activity.
+        activity = eod_attempted + resolver_attempted + cache_hits + negative_cache_hits + int(budget_exhausted)
         checks.append(_check(
             f"{wave_id.lower()}_marketstack_path_invoked_if_needed",
             (not market_needed) or activity > 0,
@@ -148,6 +151,18 @@ def run_quality_gates(actions: pd.DataFrame, etf: pd.DataFrame, before: dict, af
         transient_pct,
         max_transient_pct,
         f"api_requested={api_requested}; transient_failures={transient}; authenticated={authenticated}",
+    ))
+
+    openfigi_records = int(openfigi.get("records", 0) or 0)
+    openfigi_resolved = int(openfigi.get("resolved", 0) or 0)
+    openfigi_mapping_pct = 100.0 if openfigi_records == 0 else round(openfigi_resolved / openfigi_records * 100, 2)
+    openfigi_mapping_floor = float(q.get("openfigi_mapping_coverage_min_pct", 0.0) or 0.0)
+    checks.append(_check(
+        "openfigi_mapping_coverage_pct",
+        openfigi_records == 0 or openfigi_mapping_pct >= openfigi_mapping_floor,
+        openfigi_mapping_pct,
+        openfigi_mapping_floor,
+        f"resolved={openfigi_resolved}/{openfigi_records}",
     ))
 
     alpha_cfg = cfg.get("alpha_vantage", {})
