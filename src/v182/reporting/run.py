@@ -24,7 +24,7 @@ def _load_cfg() -> dict:
 
 def _fields(df):
     skip = {"isin", "name"}
-    return [c for c in df.columns if c not in skip]
+    return [c for c in df.columns if c not in skip and not str(c).startswith("_")]
 
 
 def _load_seed_master(input_path: Path, enriched_path: Path):
@@ -86,8 +86,6 @@ def run() -> None:
     quarantine_log: list[dict] = []
     wave_metrics: dict[str, dict] = {}
 
-    # WAVE 00A — OpenFIGI cache for Actions + ETF. Resolved entries are reused;
-    # definitive negatives expire; transient API failures are never cached.
     openfigi_map_path = CONFIG / "V18.2_OPENFIGI_MASTER_MAP.csv"
     from v182.mapping.etf_isin_resolver import build_openfigi_master_map
     of_cfg = cfg.get("openfigi", {})
