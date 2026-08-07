@@ -6,6 +6,12 @@ import pandas as pd
 MISSING_TOKEN = "NON_OBSERVE"
 FIELD_PROVENANCE_COLUMN = "_field_provenance_json"
 EVIDENCE_RANK = {"A": 4, "B": 3, "C": 2, "D": 1}
+VALIDATION_STATUSES = {
+    "VALIDATED",
+    "ISIN_MATCHED",
+    "AUTO_MATCH",
+    "AUTO_MATCH_ISSUER_PROXY",
+}
 
 TECHNICAL_FIELDS = {
     "last_close", "volume", "mm20", "mm50", "mm100", "mm200", "rsi14",
@@ -196,6 +202,11 @@ def apply_observations(frame: pd.DataFrame, observations: list[dict]) -> tuple[p
     from v182.core.merge import decide
 
     frame = frame.set_index("isin", drop=False)
+    # Preserve the metadata exactly as it existed before this observation batch.
+    # Companion fields such as macro_as_of/ta_as_of are group-level metadata and
+    # must not make another field from the same batch appear artificially fresh.
+    original_frame = frame.copy(deep=True)
+    seen_fields: set[tuple[str, str]] = set()
     quarantined: list[dict] = []
 
     for obs in observations:
@@ -206,16 +217,35 @@ def apply_observations(frame: pd.DataFrame, observations: list[dict]) -> tuple[p
         if field not in frame.columns:
             frame[field] = pd.NA
 
+        key = (str(isin), str(field))
         current_value = frame.at[isin, field]
-        existing = _existing_meta(frame, isin, field, current_value)
-        decision = decide(existing, obs)
+        if key in seen_fields:
+            existing = _existing_meta(frame, isin, field, current_value)
+        else:
+            original_value = (
+                original_frame.at[isin, field]
+                if field in original_frame.columns
+                else pd.NA
+            )
+            existing = _existing_meta(original_frame, isin, field, original_value)
 
-        if decision.action in {"INSERT", "REPLACE"}:
+        incoming = dict(obs)
+        if incoming.get("validation_status") not in VALIDATION_STATUSES:
+            decision_action = "QUARANTINE"
+            decision_reason = "IDENTITY_NOT_VALIDATED"
+        else:
+            decision = decide(existing, incoming)
+            decision_action = decision.action
+            decision_reason = decision.reason
+
+        if decision_action in {"INSERT", "REPLACE"}:
             value = obs.get("value")
             frame.at[isin, field] = "" if value is None else str(value)
             _write_field_provenance(frame, isin, field, obs)
             _update_companion_provenance(frame, isin, field, obs)
-        elif decision.action == "QUARANTINE":
-            quarantined.append({**obs, "reason": decision.reason})
+        elif decision_action == "QUARANTINE":
+            quarantined.append({**obs, "reason": decision_reason})
+
+        seen_fields.add(key)
 
     return frame.reset_index(drop=True), quarantined
