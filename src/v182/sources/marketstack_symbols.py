@@ -20,6 +20,8 @@ class SymbolResolutionResult:
     api_attempted: int
     api_successful: int
     cache_hits: int
+    negative_cache_hits: int
+    deferred: int
 
 
 def _norm(text: str | None) -> str:
@@ -162,7 +164,10 @@ def resolve_marketstack_symbols(
     api_attempted = 0
     api_successful = 0
     cache_hits = 0
+    negative_cache_hits = 0
+    deferred = 0
     replacements: list[dict] = []
+    invalid_identity_keys = set()
 
     for _, row in rows.iterrows():
         original = str(row.get("yahoo_ticker") or "").strip()
@@ -173,19 +178,32 @@ def resolve_marketstack_symbols(
             failures.append({"ticker": original, "isin": isin, "reason": "INSUFFICIENT_IDENTITY"})
             continue
 
-        old = by_key.get((universe, isin))
-        old_same_mic = old is not None and str(old.get("expected_mic") or "").upper() == mic
-        if old_same_mic and _fresh(old, resolved_ttl_days, negative_ttl_days):
-            if str(old.get("status") or "").upper() == "RESOLVED":
+        key = (universe, isin)
+        old = by_key.get(key)
+        old_same_identity = (
+            old is not None
+            and str(old.get("expected_mic") or "").upper() == mic.upper()
+            and str(old.get("original_yahoo_ticker") or "").strip().upper() == original.upper()
+        )
+        if old is not None and not old_same_identity:
+            invalid_identity_keys.add(key)
+
+        if old_same_identity and _fresh(old, resolved_ttl_days, negative_ttl_days):
+            status = str(old.get("status") or "").upper()
+            if status == "RESOLVED":
                 symbol = str(old.get("marketstack_symbol") or "").strip()
                 if symbol:
                     resolved[original] = symbol
                     cache_hits += 1
             else:
-                failures.append({"ticker": original, "isin": isin, "reason": str(old.get("status") or "CACHED_NEGATIVE")})
+                negative_cache_hits += 1
+                failures.append({
+                    "ticker": original, "isin": isin, "reason": status or "CACHED_NEGATIVE", "cached": True
+                })
             continue
 
         if api_attempted >= max(0, int(max_new_resolutions)):
+            deferred += 1
             failures.append({"ticker": original, "isin": isin, "reason": "RESOLUTION_BUDGET_DEFERRED"})
             continue
 
@@ -215,11 +233,16 @@ def resolve_marketstack_symbols(
         time.sleep(max(0.0, float(delay_seconds)))
 
     replace_keys = {(r["universe"], r["isin"]) for r in replacements}
-    if not cache.empty and replace_keys:
-        cache = cache[[ (u, i) not in replace_keys for u, i in zip(cache["universe"], cache["isin"]) ]]
+    remove_keys = replace_keys | invalid_identity_keys
+    if not cache.empty and remove_keys:
+        cache = cache[[
+            (u, i) not in remove_keys for u, i in zip(cache["universe"], cache["isin"])
+        ]]
     if replacements:
         cache = pd.concat([cache, pd.DataFrame(replacements, columns=CACHE_COLUMNS)], ignore_index=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     cache.to_csv(path, sep=";", index=False, encoding="utf-8-sig")
 
-    return SymbolResolutionResult(resolved, failures, api_attempted, api_successful, cache_hits)
+    return SymbolResolutionResult(
+        resolved, failures, api_attempted, api_successful, cache_hits, negative_cache_hits, deferred
+    )
