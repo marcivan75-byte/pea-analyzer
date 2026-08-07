@@ -1,8 +1,10 @@
 from __future__ import annotations
 from pathlib import Path
+import json
 import pandas as pd
 
 MISSING_TOKEN = "NON_OBSERVE"
+FIELD_PROVENANCE_COLUMN = "_field_provenance_json"
 
 TECHNICAL_FIELDS = {
     "last_close", "volume", "mm20", "mm50", "mm100", "mm200", "rsi14",
@@ -13,13 +15,15 @@ TECHNICAL_FIELDS = {
     "perf_3y_pct", "perf_5y_pct",
 }
 FUNDAMENTAL_FIELDS = {
-    "per_ttm_yf", "per_forward_yf", "pb", "roe_api", "roa",
+    "market_cap", "per_ttm_yf", "per_forward_yf", "pb", "roe_api", "roa",
     "debt_to_equity", "free_cash_flow", "marge_ebit", "marge_nette",
 }
 CONSENSUS_FIELDS = {
     "consensus", "consensus_rating", "consensus_score", "n_analysts",
     "target_price", "buy_n", "hold_n", "sell_n", "strong_buy",
-    "strong_sell", "consensus_status",
+    "strong_sell", "consensus_status", "recommendation_key_yf",
+    "recommendation_mean_yf", "target_mean_yf", "target_high_yf",
+    "target_low_yf", "n_analysts_yf",
 }
 SCENARIO_FIELDS = {
     "scenario_bear_pct", "scenario_base_pct", "scenario_bull_pct",
@@ -69,16 +73,49 @@ def _source_evidence(source: str, default: str = "D") -> str:
     return default
 
 
-def _existing_meta(frame: pd.DataFrame, isin: str, field: str, current_value) -> dict | None:
-    """Return field-aware provenance for the currently stored value.
+def _read_provenance(frame: pd.DataFrame, isin: str) -> dict:
+    raw = _safe_cell(frame, isin, FIELD_PROVENANCE_COLUMN, "")
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(str(raw))
+        return parsed if isinstance(parsed, dict) else {}
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
 
-    The master historically stores some provenance at row level, but dynamic
-    fields have dedicated source/date columns. Using those prevents stale
-    technical or API values from being frozen merely because the row-level
-    evidence is B.
+
+def _write_field_provenance(frame: pd.DataFrame, isin: str, field: str, obs: dict) -> None:
+    if FIELD_PROVENANCE_COLUMN not in frame.columns:
+        frame[FIELD_PROVENANCE_COLUMN] = pd.NA
+    provenance = _read_provenance(frame, isin)
+    provenance[field] = {
+        "source": str(obs.get("source") or ""),
+        "evidence_level": str(obs.get("evidence_level") or _source_evidence(obs.get("source"), "D")),
+        "as_of": str(obs.get("as_of") or obs.get("collected_at") or ""),
+    }
+    frame.at[isin, FIELD_PROVENANCE_COLUMN] = json.dumps(
+        provenance, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+
+
+def _existing_meta(frame: pd.DataFrame, isin: str, field: str, current_value) -> dict | None:
+    """Return provenance for the exact stored field whenever available.
+
+    New enriched masters persist field-level provenance in a private JSON
+    column. Legacy row/group metadata are retained only as a migration fallback.
+    This prevents an update to one fundamental from lowering the protection of
+    another field that came from an official source.
     """
     if is_missing(current_value):
         return None
+
+    field_meta = _read_provenance(frame, isin).get(field)
+    if isinstance(field_meta, dict):
+        return {
+            "value": current_value,
+            "evidence_level": str(field_meta.get("evidence_level") or "D"),
+            "as_of": str(field_meta.get("as_of") or ""),
+        }
 
     row_evidence = str(_safe_cell(frame, isin, "evidence_level", "D"))
     row_as_of = str(_safe_cell(frame, isin, "as_of_date", ""))
@@ -87,12 +124,7 @@ def _existing_meta(frame: pd.DataFrame, isin: str, field: str, current_value) ->
 
     if field in TECHNICAL_FIELDS:
         source = str(_safe_cell(frame, isin, "ta_source", ""))
-        if source:
-            evidence = _source_evidence(source, "C")
-        else:
-            # Technical fields produced by this pipeline are evidence C unless
-            # an explicit higher-grade source is known.
-            evidence = "C"
+        evidence = _source_evidence(source, "C") if source else "C"
         as_of = str(
             _safe_cell(frame, isin, "ta_as_of", "")
             or _safe_cell(frame, isin, "perf_as_of", "")
@@ -127,6 +159,11 @@ def _existing_meta(frame: pd.DataFrame, isin: str, field: str, current_value) ->
 
 
 def _update_companion_provenance(frame: pd.DataFrame, isin: str, field: str, obs: dict) -> None:
+    """Maintain legacy human-readable group metadata.
+
+    These columns are no longer authoritative for merge decisions once field
+    provenance exists, but remain useful in reports and for refresh planning.
+    """
     source = str(obs.get("source") or "")
     collected_at = str(obs.get("collected_at") or obs.get("as_of") or "")
     as_of = str(obs.get("as_of") or collected_at)
@@ -141,9 +178,8 @@ def _update_companion_provenance(frame: pd.DataFrame, isin: str, field: str, obs
         if "perf_data_status" in frame.columns and field.startswith("perf_"):
             frame.at[isin, "perf_data_status"] = "OK"
 
-    if field.endswith("_yf"):
-        if "yf_consensus_as_of" in frame.columns:
-            frame.at[isin, "yf_consensus_as_of"] = collected_at or as_of
+    if field.endswith("_yf") and "yf_consensus_as_of" in frame.columns:
+        frame.at[isin, "yf_consensus_as_of"] = collected_at or as_of
 
     if field in FUNDAMENTAL_FIELDS:
         if "fundamentals_source" in frame.columns:
@@ -153,16 +189,19 @@ def _update_companion_provenance(frame: pd.DataFrame, isin: str, field: str, obs
         if "fundamentals_status" in frame.columns:
             frame.at[isin, "fundamentals_status"] = "OK"
 
-    if field in CONSENSUS_FIELDS and "consensus_source" in frame.columns:
-        frame.at[isin, "consensus_source"] = source
+    if field in CONSENSUS_FIELDS:
+        if "consensus_source" in frame.columns:
+            frame.at[isin, "consensus_source"] = source
+        if field.endswith("_yf") and "yf_consensus_as_of" in frame.columns:
+            frame.at[isin, "yf_consensus_as_of"] = collected_at or as_of
 
 
 def apply_observations(frame: pd.DataFrame, observations: list[dict]) -> tuple[pd.DataFrame, list[dict]]:
     """Apply validated observations without replacing observed values by missing.
 
-    Merge decisions use field-aware provenance where the schema already exposes
-    it. This makes cumulative daily runs refreshable without lowering the
-    protection afforded to official/higher-evidence values.
+    Merge decisions are field-aware and their provenance is persisted so that
+    later scheduled runs can refresh dynamic values without compromising
+    higher-evidence observations stored on the same security row.
     """
     from v182.core.merge import decide
 
@@ -184,9 +223,9 @@ def apply_observations(frame: pd.DataFrame, observations: list[dict]) -> tuple[p
         if decision.action in {"INSERT", "REPLACE"}:
             value = obs.get("value")
             frame.at[isin, field] = "" if value is None else str(value)
+            _write_field_provenance(frame, isin, field, obs)
             _update_companion_provenance(frame, isin, field, obs)
         elif decision.action == "QUARANTINE":
             quarantined.append({**obs, "reason": decision.reason})
-        # KEEP -> rien à faire
 
     return frame.reset_index(drop=True), quarantined
