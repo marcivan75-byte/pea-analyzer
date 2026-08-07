@@ -37,8 +37,11 @@ jobs:
         env:
           V182_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
           MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
         run: python -m v182.reporting.run
       - name: Verify required outputs
         run: |
@@ -48,6 +51,8 @@ jobs:
           test -s outputs/V18.2_PEA_ETF_ACTUALISE.xlsx
           test -s outputs/V18.2_RUN_REPORT.xlsx
           test -s outputs/audit/V18.2_SOURCE_FALLBACK_METRICS.json
+          test -s outputs/context/V18.2_MACRO_CONTEXT.json
+          test -s outputs/context/V18.2_ENERGY_CONTEXT.json
           test -s config/V18.2_OPENFIGI_MASTER_MAP.csv
           test -s config/V18.2_MARKETSTACK_SYMBOL_MAP.csv
           python - <<'PY'
@@ -64,8 +69,10 @@ jobs:
             outputs/*.xlsx
             outputs/*.csv
             outputs/audit/**
+            outputs/context/**
             outputs/gaps/**
             state/runs/**
+            config/V18.2_ALPHA_SYMBOL_MAP.csv
             config/V18.2_FINNHUB_SYMBOL_MAP.csv
             config/V18.2_OPENFIGI_MASTER_MAP.csv
             config/V18.2_MARKETSTACK_SYMBOL_MAP.csv
@@ -80,12 +87,13 @@ jobs:
           title: "V18.2 automated data refresh ${{ github.run_id }}"
           body: |
             Automated V18.2 refresh. Quality gates passed.
-            OpenFIGI and Marketstack identifier caches plus fallback diagnostics are included.
+            Identifier caches, API context files and fallback diagnostics are included.
             Review coverage, gaps and Excel reports before merging.
           add-paths: |
             state/runs/**
             outputs/**
             config/V18.2_ETF_TICKER_MAP.csv
+            config/V18.2_ALPHA_SYMBOL_MAP.csv
             config/V18.2_FINNHUB_SYMBOL_MAP.csv
             config/V18.2_OPENFIGI_MASTER_MAP.csv
             config/V18.2_MARKETSTACK_SYMBOL_MAP.csv
