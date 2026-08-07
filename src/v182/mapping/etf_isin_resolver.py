@@ -1,28 +1,27 @@
 from __future__ import annotations
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import os
 import time
 
 OPENFIGI_URL = "https://api.openfigi.com/v3/mapping"
 
-EXCHANGE_TO_YAHOO_SUFFIX = {
-    "PA": "PA", "AS": "AS", "BR": "BR", "LS": "LS", "MI": "MI",
-    "GR": "DE", "GY": "DE", "SW": "SW", "VI": "VI", "IR": "IR",
-    "HE": "HE", "CO": "CO", "ST": "ST", "OS": "OL", "LN": "L",
-}
-
-EXCHANGE_TO_MIC = {
+# Yahoo suffixes and ISO MICs are stable identifiers we control locally.
+# OpenFIGI's `exchCode` is a Bloomberg exchange code and MUST NOT be treated
+# as a Yahoo suffix (for example OpenFIGI uses NA/BB for Netherlands/Belgium).
+YAHOO_SUFFIX_TO_MIC = {
     "PA": "XPAR", "AS": "XAMS", "BR": "XBRU", "LS": "XLIS", "MI": "XMIL",
-    "GR": "XETR", "GY": "XETR", "SW": "XSWX", "VI": "XWBO", "IR": "XDUB",
-    "HE": "XHEL", "CO": "XCSE", "ST": "XSTO", "OS": "XOSL", "LN": "XLON",
+    "DE": "XETR", "SW": "XSWX", "VI": "XWBO", "IR": "XDUB", "HE": "XHEL",
+    "CO": "XCSE", "ST": "XSTO", "OL": "XOSL", "L": "XLON",
 }
+MIC_TO_YAHOO_SUFFIX = {mic: suffix for suffix, mic in YAHOO_SUFFIX_TO_MIC.items()}
 
-EXCHANGE_PREFERENCE = ["PA", "AS", "BR", "MI", "GR", "GY", "LS", "IR", "SW", "LN", "VI", "HE", "CO", "ST", "OS"]
-YAHOO_SUFFIX_TO_EXCHANGE = {
-    "PA": "PA", "AS": "AS", "BR": "BR", "LS": "LS", "MI": "MI",
-    "DE": "GR", "SW": "SW", "VI": "VI", "IR": "IR", "HE": "HE",
-    "CO": "CO", "ST": "ST", "OL": "OS", "L": "LN",
+# Used only when a ticker has no usable Yahoo suffix. It is a conservative
+# home-market hint, not a guarantee of listing venue.
+ISIN_PREFIX_TO_MIC = {
+    "FR": "XPAR", "NL": "XAMS", "BE": "XBRU", "PT": "XLIS", "IT": "XMIL",
+    "DE": "XETR", "CH": "XSWX", "AT": "XWBO", "IE": "XDUB", "FI": "XHEL",
+    "DK": "XCSE", "SE": "XSTO", "NO": "XOSL", "GB": "XLON",
 }
 
 MASTER_MAP_COLUMNS = [
@@ -32,29 +31,45 @@ MASTER_MAP_COLUMNS = [
 ]
 
 
-def _batches(items: list, size: int):
+def _batches(items: list[str], size: int):
     for i in range(0, len(items), size):
         yield items[i:i + size]
 
 
-def _preferred_exchange(yahoo_ticker: str | None) -> str | None:
+def expected_mic(yahoo_ticker: str | None, isin: str | None = None) -> str:
     text = str(yahoo_ticker or "").strip().upper()
-    if "." not in text:
-        return None
-    suffix = text.rsplit(".", 1)[-1]
-    return YAHOO_SUFFIX_TO_EXCHANGE.get(suffix)
+    if "." in text:
+        suffix = text.rsplit(".", 1)[-1]
+        mic = YAHOO_SUFFIX_TO_MIC.get(suffix)
+        if mic:
+            return mic
+    prefix = str(isin or "").strip().upper()[:2]
+    return ISIN_PREFIX_TO_MIC.get(prefix, "")
+
+
+def _base_symbol(yahoo_ticker: str | None) -> str:
+    text = str(yahoo_ticker or "").strip()
+    if not text:
+        return ""
+    if "." in text and text.rsplit(".", 1)[-1].upper() in YAHOO_SUFFIX_TO_MIC:
+        return text.rsplit(".", 1)[0]
+    return text
 
 
 def resolve_isins(
     isins: list[str],
     api_key: str | None = None,
+    mic_by_isin: dict[str, str] | None = None,
     batch_size: int | None = None,
     delay_seconds: float | None = None,
     max_retries: int = 3,
-) -> dict[str, list[dict]]:
-    """Resolve ISINs through OpenFIGI v3 with authenticated high-throughput
-    batches when an API key is available. 429/5xx responses are retried using
-    the server rate-limit reset header when present.
+) -> dict[str, list[dict] | None]:
+    """Resolve ISINs through OpenFIGI v3.
+
+    `None` means a transient/API failure and is deliberately NOT negative-cached.
+    `[]` means OpenFIGI returned a normal no-identifier warning.
+    When a MIC is known we send it in the mapping job, avoiding unsafe
+    Bloomberg-exchange-code -> Yahoo-suffix guesses.
     """
     import requests
 
@@ -63,22 +78,31 @@ def resolve_isins(
     if key:
         headers["X-OPENFIGI-APIKEY"] = key
 
-    # OpenFIGI v3 currently accepts up to 100 jobs with a key. Anonymous mode
-    # is intentionally conservative because its documented limit is lower.
     effective_batch = int(batch_size or (100 if key else 5))
     effective_delay = float(delay_seconds if delay_seconds is not None else (0.30 if key else 2.50))
     clean_isins = sorted({str(i).strip() for i in isins if str(i or "").strip()})
-    results: dict[str, list[dict]] = {}
+    mic_by_isin = mic_by_isin or {}
+    results: dict[str, list[dict] | None] = {}
 
     for batch in _batches(clean_isins, effective_batch):
-        payload = [{"idType": "ID_ISIN", "idValue": isin} for isin in batch]
+        payload = []
+        for isin in batch:
+            job = {"idType": "ID_ISIN", "idValue": isin, "marketSecDes": "Equity"}
+            mic = str(mic_by_isin.get(isin) or "").strip().upper()
+            if mic:
+                job["micCode"] = mic
+            payload.append(job)
+
         body = None
         for attempt in range(max_retries + 1):
             try:
                 resp = requests.post(OPENFIGI_URL, headers=headers, json=payload, timeout=30)
                 if resp.status_code == 429:
                     reset = resp.headers.get("ratelimit-reset") or resp.headers.get("Retry-After")
-                    wait = float(reset) if reset and str(reset).replace(".", "", 1).isdigit() else max(1.0, effective_delay * (attempt + 2))
+                    try:
+                        wait = max(0.5, float(reset)) if reset is not None else max(1.0, effective_delay * (attempt + 2))
+                    except (TypeError, ValueError):
+                        wait = max(1.0, effective_delay * (attempt + 2))
                     time.sleep(wait + 0.15)
                     continue
                 if resp.status_code in {500, 502, 503, 504}:
@@ -92,13 +116,17 @@ def resolve_isins(
                     break
                 time.sleep(max(1.0, 2 ** attempt))
 
-        if not isinstance(body, list):
+        if not isinstance(body, list) or len(body) != len(batch):
             for isin in batch:
-                results[isin] = []
+                results[isin] = None
         else:
             for isin, entry in zip(batch, body):
-                if not isinstance(entry, dict) or entry.get("warning") or entry.get("error"):
+                if not isinstance(entry, dict):
+                    results[isin] = None
+                elif entry.get("warning"):
                     results[isin] = []
+                elif entry.get("error"):
+                    results[isin] = None
                 else:
                     results[isin] = entry.get("data", []) or []
         time.sleep(effective_delay)
@@ -106,49 +134,84 @@ def resolve_isins(
     return results
 
 
-def pick_best_match(matches: list[dict], preferred_exchange: str | None = None) -> dict | None:
-    """Pick a supported European listing, preferring the exchange already
-    encoded in the Yahoo ticker when possible.
-    """
-    supported = [m for m in matches if m.get("exchCode") in EXCHANGE_TO_YAHOO_SUFFIX and m.get("ticker")]
-    if preferred_exchange:
-        for match in supported:
-            if match.get("exchCode") == preferred_exchange:
-                return match
-    by_exchange = {m.get("exchCode"): m for m in supported}
-    for exch in EXCHANGE_PREFERENCE:
-        if exch in by_exchange:
-            return by_exchange[exch]
-    return None
+def pick_best_match(matches: list[dict] | None) -> dict | None:
+    """Choose a plain equity/ETF listing and exclude derivative-like results."""
+    if not matches:
+        return None
+    blocked = {"OPTION", "WARRANT", "FUTURE", "RIGHT", "PREFERRED"}
+    candidates = []
+    for match in matches:
+        if not isinstance(match, dict) or not match.get("ticker"):
+            continue
+        sector = str(match.get("marketSector") or "").upper()
+        type2 = str(match.get("securityType2") or "").upper()
+        if sector and sector != "EQUITY":
+            continue
+        if any(token in type2 for token in blocked):
+            continue
+        candidates.append(match)
+    if not candidates:
+        return None
+    # Deterministic choice. With micCode in the request, candidates are already
+    # constrained to the expected venue.
+    return sorted(candidates, key=lambda m: (str(m.get("ticker") or ""), str(m.get("figi") or "")))[0]
 
 
-def _row_from_match(universe: str, isin: str, original_ticker: str, match: dict | None) -> dict:
+def _row_from_match(
+    universe: str,
+    isin: str,
+    original_ticker: str,
+    requested_mic: str,
+    match: dict | None,
+    no_identifier: bool = False,
+) -> dict:
     now = datetime.now(timezone.utc).isoformat()
     if not match:
         return {
             "universe": universe, "isin": isin, "original_yahoo_ticker": original_ticker,
-            "openfigi_ticker": "", "openfigi_exch_code": "", "openfigi_mic": "",
+            "openfigi_ticker": "", "openfigi_exch_code": "", "openfigi_mic": requested_mic,
             "yahoo_candidate": "", "figi": "", "composite_figi": "", "share_class_figi": "",
-            "status": "NO_SUPPORTED_MATCH", "updated_at": now,
+            "status": "NO_IDENTIFIER" if no_identifier else "NO_SUPPORTED_MATCH", "updated_at": now,
         }
-    exch = match.get("exchCode", "")
     ticker = str(match.get("ticker") or "").strip()
-    suffix = EXCHANGE_TO_YAHOO_SUFFIX.get(exch, "")
-    yahoo_candidate = f"{ticker}.{suffix}" if ticker and suffix else ""
+    suffix = MIC_TO_YAHOO_SUFFIX.get(requested_mic, "")
+    candidate = f"{ticker}.{suffix}" if ticker and suffix else ""
     return {
         "universe": universe, "isin": isin, "original_yahoo_ticker": original_ticker,
-        "openfigi_ticker": ticker, "openfigi_exch_code": exch,
-        "openfigi_mic": EXCHANGE_TO_MIC.get(exch, ""), "yahoo_candidate": yahoo_candidate,
-        "figi": match.get("figi", "") or "", "composite_figi": match.get("compositeFIGI", "") or "",
-        "share_class_figi": match.get("shareClassFIGI", "") or "", "status": "RESOLVED",
+        "openfigi_ticker": ticker, "openfigi_exch_code": str(match.get("exchCode") or ""),
+        "openfigi_mic": requested_mic, "yahoo_candidate": candidate,
+        "figi": str(match.get("figi") or ""), "composite_figi": str(match.get("compositeFIGI") or ""),
+        "share_class_figi": str(match.get("shareClassFIGI") or ""), "status": "RESOLVED",
         "updated_at": now,
     }
 
 
-def build_openfigi_master_map(actions_df, etf_df, output_path: str | Path, api_key: str | None = None) -> dict:
-    """Build/persist one OpenFIGI cache for both universes. Existing ISINs are
-    not requested again, making authenticated OpenFIGI a low-cost identifier
-    service rather than a repeated market-data call.
+def _negative_cache_fresh(row, days: int) -> bool:
+    status = str(row.get("status") or "").upper()
+    if status == "RESOLVED":
+        return True
+    if status not in {"NO_IDENTIFIER", "NO_SUPPORTED_MATCH"}:
+        return False
+    try:
+        stamp = datetime.fromisoformat(str(row.get("updated_at") or "").replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        return stamp >= datetime.now(timezone.utc) - timedelta(days=max(1, int(days)))
+    except Exception:
+        return False
+
+
+def build_openfigi_master_map(
+    actions_df,
+    etf_df,
+    output_path: str | Path,
+    api_key: str | None = None,
+    negative_cache_days: int = 30,
+) -> dict:
+    """Persist a safe OpenFIGI cache for Actions + ETF.
+
+    Resolved entries are permanent. Definitive negative results are retried
+    after a TTL. Transient API failures are never written as negative matches.
     """
     import pandas as pd
 
@@ -167,28 +230,50 @@ def build_openfigi_master_map(actions_df, etf_df, output_path: str | Path, api_k
         if "isin" not in frame.columns:
             continue
         for _, row in frame.iterrows():
-            isin = str(row.get("isin") or "").strip()
+            isin = str(row.get("isin") or "").strip().upper()
             if not isin:
                 continue
+            original = str(row.get("yahoo_ticker") or "").strip()
             source_rows.append({
                 "universe": universe,
                 "isin": isin,
-                "original_yahoo_ticker": str(row.get("yahoo_ticker") or "").strip(),
+                "original_yahoo_ticker": original,
+                "expected_mic": expected_mic(original, isin),
             })
-
     source = pd.DataFrame(source_rows).drop_duplicates(["universe", "isin"])
-    existing_keys = set(zip(existing["universe"], existing["isin"])) if not existing.empty else set()
-    missing = source[[ (u, i) not in existing_keys for u, i in zip(source["universe"], source["isin"]) ]]
-    unique_isins = missing["isin"].dropna().astype(str).unique().tolist()
-    resolved = resolve_isins(unique_isins, api_key=api_key) if unique_isins else {}
+
+    current = {}
+    if not existing.empty:
+        current = {(r["universe"], r["isin"]): r for _, r in existing.iterrows()}
+    to_refresh = []
+    for _, row in source.iterrows():
+        old = current.get((row["universe"], row["isin"]))
+        if old is None or not _negative_cache_fresh(old, negative_cache_days):
+            to_refresh.append(row.to_dict())
+
+    unique_isins = sorted({r["isin"] for r in to_refresh})
+    mic_by_isin = {}
+    for row in to_refresh:
+        if row["expected_mic"] and row["isin"] not in mic_by_isin:
+            mic_by_isin[row["isin"]] = row["expected_mic"]
+    resolved = resolve_isins(unique_isins, api_key=api_key, mic_by_isin=mic_by_isin) if unique_isins else {}
 
     new_rows = []
-    for _, row in missing.iterrows():
-        isin = row["isin"]
-        original = row["original_yahoo_ticker"]
-        best = pick_best_match(resolved.get(isin, []), _preferred_exchange(original))
-        new_rows.append(_row_from_match(row["universe"], isin, original, best))
+    transient_failures = 0
+    for row in to_refresh:
+        raw = resolved.get(row["isin"])
+        if raw is None:
+            transient_failures += 1
+            continue
+        best = pick_best_match(raw)
+        new_rows.append(_row_from_match(
+            row["universe"], row["isin"], row["original_yahoo_ticker"], row["expected_mic"],
+            best, no_identifier=(raw == []),
+        ))
 
+    refreshed_keys = {(r["universe"], r["isin"]) for r in new_rows}
+    if not existing.empty and refreshed_keys:
+        existing = existing[[ (u, i) not in refreshed_keys for u, i in zip(existing["universe"], existing["isin"]) ]]
     updated = pd.concat([existing, pd.DataFrame(new_rows, columns=MASTER_MAP_COLUMNS)], ignore_index=True)
     if not updated.empty:
         updated = updated.drop_duplicates(["universe", "isin"], keep="last").sort_values(["universe", "isin"])
@@ -198,47 +283,54 @@ def build_openfigi_master_map(actions_df, etf_df, output_path: str | Path, api_k
     resolved_count = int((updated["status"] == "RESOLVED").sum()) if not updated.empty else 0
     return {
         "records": len(updated), "resolved": resolved_count,
-        "coverage_pct": round(resolved_count / len(updated) * 100, 2) if len(updated) else 100.0,
+        "coverage_pct": round(resolved_count / len(source) * 100, 2) if len(source) else 100.0,
         "api_isins_requested": len(unique_isins), "new_records": len(new_rows),
+        "transient_failures": transient_failures,
         "authenticated": bool(api_key or os.environ.get("OPENFIGI_API_KEY")),
     }
 
 
 def fallback_specs(master_df, failed_tickers: list[str], openfigi_map_path: str | Path, universe: str) -> dict[str, dict]:
-    """Return OpenFIGI-derived Yahoo and Marketstack identifiers for Yahoo
-    tickers that failed to produce usable OHLCV.
+    """Build safe Yahoo-repair and Marketstack fallback specs.
+
+    Marketstack can use the original Yahoo base symbol + known MIC even if
+    OpenFIGI did not resolve the ISIN. OpenFIGI overrides that symbol only when
+    it has a venue-constrained resolved match.
     """
     import pandas as pd
 
-    path = Path(openfigi_map_path)
-    if not path.exists() or not failed_tickers:
-        return {}
-    mapping = pd.read_csv(path, sep=";", encoding="utf-8-sig", dtype=str).fillna("")
-    mapping = mapping[(mapping["universe"] == universe) & (mapping["status"] == "RESOLVED")]
-    by_isin = mapping.drop_duplicates("isin").set_index("isin").to_dict("index")
     failed = set(failed_tickers)
+    if not failed:
+        return {}
+    by_isin = {}
+    path = Path(openfigi_map_path)
+    if path.exists():
+        mapping = pd.read_csv(path, sep=";", encoding="utf-8-sig", dtype=str).fillna("")
+        mapping = mapping[(mapping["universe"] == universe) & (mapping["status"] == "RESOLVED")]
+        if not mapping.empty:
+            by_isin = mapping.drop_duplicates("isin").set_index("isin").to_dict("index")
+
     specs: dict[str, dict] = {}
     for _, row in master_df.iterrows():
         original = str(row.get("yahoo_ticker") or "").strip()
         if original not in failed:
             continue
-        isin = str(row.get("isin") or "").strip()
-        mapped = by_isin.get(isin)
-        if not mapped:
-            continue
+        isin = str(row.get("isin") or "").strip().upper()
+        mapped = by_isin.get(isin, {})
+        direct_mic = expected_mic(original, isin)
         specs[original] = {
             "isin": isin,
-            "yahoo_candidate": mapped.get("yahoo_candidate", ""),
-            "marketstack_symbol": mapped.get("openfigi_ticker", ""),
-            "marketstack_mic": mapped.get("openfigi_mic", ""),
-            "figi": mapped.get("figi", ""),
+            "yahoo_candidate": str(mapped.get("yahoo_candidate") or ""),
+            "marketstack_symbol": str(mapped.get("openfigi_ticker") or _base_symbol(original)),
+            "marketstack_mic": str(mapped.get("openfigi_mic") or direct_mic),
+            "figi": str(mapped.get("figi") or ""),
         }
     return specs
 
 
 def build_etf_ticker_map(etf_master_path: str | Path, output_map_path: str | Path,
                           gaps_path: str | Path, api_key: str | None = None) -> dict:
-    """Backward-compatible ETF map builder retained for existing V18.2 tests."""
+    """Backward-compatible ETF map builder using MIC-constrained OpenFIGI."""
     import pandas as pd
 
     etf_df = pd.read_csv(etf_master_path, sep=";", encoding="utf-8-sig", dtype=str)
@@ -249,17 +341,22 @@ def build_etf_ticker_map(etf_master_path: str | Path, output_map_path: str | Pat
         existing = pd.DataFrame(columns=["isin", "yahoo_ticker"])
 
     already_mapped = set(existing["isin"].dropna())
-    to_resolve = [isin for isin in etf_df["isin"] if isin not in already_mapped]
-    resolved = resolve_isins(to_resolve, api_key=api_key or os.environ.get("OPENFIGI_API_KEY"))
+    to_resolve = [str(isin) for isin in etf_df["isin"] if isin not in already_mapped]
+    mic_by_isin = {isin: expected_mic("", isin) for isin in to_resolve if expected_mic("", isin)}
+    resolved = resolve_isins(to_resolve, api_key=api_key or os.environ.get("OPENFIGI_API_KEY"), mic_by_isin=mic_by_isin)
 
     new_rows, gaps = [], []
     for isin in to_resolve:
-        matches = resolved.get(isin, [])
-        best = pick_best_match(matches)
-        if best is None:
-            gaps.append({"isin": isin, "reason": "NO_OPENFIGI_MATCH_ON_KNOWN_EXCHANGE", "raw_matches": len(matches)})
+        raw = resolved.get(isin)
+        if raw is None:
+            gaps.append({"isin": isin, "reason": "OPENFIGI_TRANSIENT_FAILURE", "raw_matches": 0})
             continue
-        suffix = EXCHANGE_TO_YAHOO_SUFFIX[best["exchCode"]]
+        best = pick_best_match(raw)
+        mic = mic_by_isin.get(isin, "")
+        suffix = MIC_TO_YAHOO_SUFFIX.get(mic, "")
+        if best is None or not suffix:
+            gaps.append({"isin": isin, "reason": "NO_SAFE_OPENFIGI_MATCH", "raw_matches": len(raw)})
+            continue
         new_rows.append({"isin": isin, "yahoo_ticker": f"{best['ticker']}.{suffix}"})
 
     updated = pd.concat([existing, pd.DataFrame(new_rows)], ignore_index=True).drop_duplicates("isin")
