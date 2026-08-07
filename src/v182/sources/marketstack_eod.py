@@ -16,17 +16,18 @@ class MarketstackResult:
 
 
 def _pick_rows(data: list[dict], symbol: str, expected_mic: str | None) -> list[dict]:
+    """Select only the requested symbol and, when known, the exact MIC.
+
+    A wrong exchange is never accepted merely because it is the only exchange
+    returned. This prevents silently importing a different instrument/listing.
+    """
     symbol_upper = symbol.upper()
     rows = [r for r in data if str(r.get("symbol") or "").upper() == symbol_upper]
     if not rows:
-        rows = list(data)
+        return []
     if expected_mic:
-        exact = [r for r in rows if str(r.get("exchange") or "").upper() == expected_mic.upper()]
-        if exact:
-            return exact
-        exchanges = {str(r.get("exchange") or "").upper() for r in rows if r.get("exchange")}
-        if len(exchanges) > 1:
-            return []
+        expected = expected_mic.upper()
+        return [r for r in rows if str(r.get("exchange") or "").upper() == expected]
     return rows
 
 
@@ -34,18 +35,17 @@ def fetch_eod_history(
     requests_spec: list[dict],
     api_key: str,
     history_days: int = 365,
-    max_symbols: int = 4,
+    max_symbols: int = 3,
     auto_adjust: bool = True,
     min_rows: int = 60,
     delay_seconds: float = 0.25,
     timeout: int = 30,
 ) -> MarketstackResult:
-    """Fetch up to ``max_symbols`` fallback histories from Marketstack v2.
+    """Fetch conservative EOD fallback histories from Marketstack v2.
 
-    Each symbol consumes quota according to Marketstack's billing model, so the
-    caller deliberately supplies a conservative per-run cap. The returned
-    frames use the canonical Yahoo ticker as key so the existing indicator
-    engine can consume them without changing ISIN mappings.
+    One specific ticker lookup consumes quota. The caller therefore supplies a
+    strict per-run cap. The returned frames use the canonical Yahoo ticker as
+    key so the existing indicator engine can consume them unchanged.
     """
     import pandas as pd
     import requests
@@ -58,7 +58,12 @@ def fetch_eod_history(
     for spec in requests_spec:
         canonical = str(spec.get("canonical_ticker") or "").strip()
         symbol = str(spec.get("symbol") or "").strip()
+        expected_mic = str(spec.get("expected_mic") or "").strip()
         if not canonical or not symbol or canonical in seen:
+            continue
+        # For automated fallback we require an exchange/MIC. An unconstrained
+        # ticker lookup is too risky because symbols are not globally unique.
+        if not expected_mic:
             continue
         seen.add(canonical)
         unique.append(spec)
@@ -66,14 +71,14 @@ def fetch_eod_history(
             break
 
     end_date = datetime.now(timezone.utc).date()
-    start_date = end_date - timedelta(days=max(30, int(history_days)))
+    start_date = end_date - timedelta(days=max(30, min(int(history_days), 366)))
     frames: dict[str, pd.DataFrame] = {}
     failures: list[dict] = []
 
     for spec in unique:
         canonical = str(spec["canonical_ticker"]).strip()
         symbol = str(spec["symbol"]).strip()
-        expected_mic = str(spec.get("expected_mic") or "").strip()
+        expected_mic = str(spec.get("expected_mic") or "").strip().upper()
         params = {
             "access_key": api_key,
             "symbols": symbol,
@@ -86,13 +91,19 @@ def fetch_eod_history(
             resp.raise_for_status()
             body = resp.json()
             if isinstance(body, dict) and body.get("error"):
-                failures.append({"ticker": canonical, "symbol": symbol, "reason": "API_ERROR", "detail": str(body.get("error"))[:300]})
+                failures.append({
+                    "ticker": canonical, "symbol": symbol, "reason": "API_ERROR",
+                    "detail": str(body.get("error"))[:300],
+                })
                 time.sleep(delay_seconds)
                 continue
             data = body.get("data", []) if isinstance(body, dict) else []
             rows = _pick_rows(data, symbol, expected_mic)
             if not rows:
-                failures.append({"ticker": canonical, "symbol": symbol, "reason": "NO_MATCHING_EXCHANGE", "expected_mic": expected_mic})
+                failures.append({
+                    "ticker": canonical, "symbol": symbol, "reason": "NO_MATCHING_EXCHANGE",
+                    "expected_mic": expected_mic,
+                })
                 time.sleep(delay_seconds)
                 continue
 
@@ -101,10 +112,12 @@ def fetch_eod_history(
                 date = row.get("date")
                 if not date:
                     continue
+
                 def chosen(adj_key: str, raw_key: str):
                     if auto_adjust and row.get(adj_key) is not None:
                         return row.get(adj_key)
                     return row.get(raw_key)
+
                 records.append({
                     "Date": pd.to_datetime(date, utc=True),
                     "Open": chosen("adj_open", "open"),
@@ -123,7 +136,9 @@ def fetch_eod_history(
                 frame[col] = pd.to_numeric(frame[col], errors="coerce")
             frame = frame.dropna(subset=["Close"])
             if len(frame) < int(min_rows):
-                failures.append({"ticker": canonical, "symbol": symbol, "reason": "INSUFFICIENT_ROWS", "rows": len(frame)})
+                failures.append({
+                    "ticker": canonical, "symbol": symbol, "reason": "INSUFFICIENT_ROWS", "rows": len(frame),
+                })
                 time.sleep(delay_seconds)
                 continue
             frames[canonical] = frame
