@@ -3,8 +3,9 @@ from pathlib import Path
 import os
 
 from v182.sources.yfinance_bulk import download_history, DownloadResult
-from v182.mapping.etf_isin_resolver import fallback_specs
+from v182.mapping.etf_isin_resolver import fallback_specs, expected_mic
 from v182.sources.marketstack_eod import fetch_eod_history, save_marketstack_cache
+from v182.sources.marketstack_symbols import resolve_marketstack_symbols
 from v182.io.frames import is_missing
 
 
@@ -32,8 +33,9 @@ def download_history_with_fallback(
     cache_dir: str,
     cfg: dict,
     openfigi_map_path: str | Path,
+    marketstack_symbol_cache_path: str | Path | None = None,
 ) -> DownloadResult:
-    """Primary Yahoo OHLCV plus OpenFIGI symbol repair and Marketstack fallback."""
+    """Primary Yahoo OHLCV → OpenFIGI repair → Marketstack symbol resolution/EOD."""
     valid = df[df["yahoo_ticker"].apply(lambda v: not is_missing(v))]
     batch_key = "actions_batch_size" if universe == "ACTION" else "etf_batch_size"
     yf_cfg = cfg.get("yfinance", {})
@@ -60,6 +62,10 @@ def download_history_with_fallback(
         "openfigi_specs": 0,
         "openfigi_repair_attempted": 0,
         "remaining_after_openfigi": 0,
+        "marketstack_symbol_resolution_attempted": 0,
+        "marketstack_symbol_resolution_successful": 0,
+        "marketstack_symbol_cache_hits": 0,
+        "marketstack_symbol_failures": [],
         "marketstack_attempted": 0,
         "marketstack_failures": [],
         "marketstack_key_present": bool(os.environ.get("MARKETSTACK_API_KEY")),
@@ -68,6 +74,9 @@ def download_history_with_fallback(
     specs = fallback_specs(valid, sorted(remaining), openfigi_map_path, universe)
     diagnostics["openfigi_specs"] = len(specs)
 
+    # OpenFIGI repairs Yahoo symbols only when it offers a different,
+    # MIC-constrained candidate. Marketstack symbols are resolved independently
+    # because its own ticker namespace can include exchange suffixes (SAN.PA).
     candidate_to_original = {}
     for original, spec in specs.items():
         candidate = str(spec.get("yahoo_candidate") or "").strip()
@@ -100,12 +109,29 @@ def download_history_with_fallback(
     ms_cfg = cfg.get("marketstack", {})
     if remaining and market_key and ms_cfg.get("enabled", True):
         priority = _priority_failed_rows(valid, remaining, universe)
+        symbol_cache = Path(marketstack_symbol_cache_path or Path(openfigi_map_path).with_name("V18.2_MARKETSTACK_SYMBOL_MAP.csv"))
+        symbol_result = resolve_marketstack_symbols(
+            priority,
+            universe,
+            symbol_cache,
+            market_key,
+            max_new_resolutions=int(ms_cfg.get("max_new_symbol_resolutions_per_run", 1) or 1),
+            min_confidence=float(ms_cfg.get("symbol_min_confidence", 0.72) or 0.72),
+            resolved_ttl_days=int(ms_cfg.get("symbol_resolved_ttl_days", 90) or 90),
+            negative_ttl_days=int(ms_cfg.get("symbol_negative_ttl_days", 30) or 30),
+            delay_seconds=float(ms_cfg.get("delay_seconds", 0.25) or 0.25),
+        )
+        diagnostics["marketstack_symbol_resolution_attempted"] = symbol_result.api_attempted
+        diagnostics["marketstack_symbol_resolution_successful"] = symbol_result.api_successful
+        diagnostics["marketstack_symbol_cache_hits"] = symbol_result.cache_hits
+        diagnostics["marketstack_symbol_failures"] = symbol_result.failures
+
         requests_spec = []
+        max_eod = int(os.environ.get("MARKETSTACK_MAX_SYMBOLS_PER_RUN") or ms_cfg.get("max_symbols_per_run", 3))
         for _, row in priority.iterrows():
             original = str(row.get("yahoo_ticker") or "").strip()
-            spec = specs.get(original, {})
-            symbol = str(spec.get("marketstack_symbol") or "").strip()
-            mic = str(spec.get("marketstack_mic") or "").strip()
+            symbol = symbol_result.resolved.get(original, "")
+            mic = expected_mic(original, str(row.get("isin") or ""))
             if not symbol or not mic:
                 continue
             requests_spec.append({
@@ -113,11 +139,14 @@ def download_history_with_fallback(
                 "symbol": symbol,
                 "expected_mic": mic,
             })
+            if len(requests_spec) >= max(0, max_eod):
+                break
+
         ms = fetch_eod_history(
             requests_spec=requests_spec,
             api_key=market_key,
             history_days=int(ms_cfg.get("history_days", 365)),
-            max_symbols=int(os.environ.get("MARKETSTACK_MAX_SYMBOLS_PER_RUN") or ms_cfg.get("max_symbols_per_run", 3)),
+            max_symbols=max_eod,
             auto_adjust=bool(yf_cfg.get("auto_adjust", True)),
             min_rows=int(ms_cfg.get("min_rows", 60)),
             delay_seconds=float(ms_cfg.get("delay_seconds", 0.25)),
