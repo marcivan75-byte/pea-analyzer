@@ -52,7 +52,7 @@ def _frames():
         "ohlcv_success_min_pct": 90.0, "coverage_regression_tolerance_points": 0.0,
         "fundamentals_availability_min_pct": 40.0, "consensus_availability_min_pct": 40.0,
         "openfigi_transient_failure_max_pct": 25.0,
-    }, "marketstack": {"max_symbols_per_run": 3}}
+    }, "marketstack": {"max_symbols_per_run": 3, "max_new_symbol_resolutions_per_run": 1}}
     return actions, etf, cov, cfg
 
 
@@ -77,6 +77,7 @@ def test_quality_gate_blocks_marketstack_path_not_invoked_when_needed(monkeypatc
     actions, etf, cov, cfg = _frames()
     diagnostics = {
         "remaining_after_openfigi": 10, "marketstack_key_present": True,
+        "marketstack_symbol_resolution_attempted": 0, "marketstack_symbol_cache_hits": 0,
         "marketstack_attempted": 0, "marketstack_failures": [],
     }
     metrics = {
@@ -88,15 +89,61 @@ def test_quality_gate_blocks_marketstack_path_not_invoked_when_needed(monkeypatc
     }
     result = run_quality_gates(actions, etf, cov, cov, cfg, metrics)
     assert not result.passed
-    assert any(c["check"] == "wave_01_marketstack_invoked_if_needed" and not c["passed"] for c in result.checks)
+    assert any(c["check"] == "wave_01_marketstack_path_invoked_if_needed" and not c["passed"] for c in result.checks)
 
 
-def test_quality_gate_blocks_total_marketstack_transport_failure(monkeypatch):
+def test_quality_gate_accepts_legitimate_marketstack_identity_no_match(monkeypatch):
     from v182.audit.quality import run_quality_gates
     monkeypatch.delenv("MARKETSTACK_MAX_SYMBOLS_PER_RUN", raising=False)
     actions, etf, cov, cfg = _frames()
     diagnostics = {
         "remaining_after_openfigi": 10, "marketstack_key_present": True,
+        "marketstack_symbol_resolution_attempted": 1,
+        "marketstack_symbol_cache_hits": 0,
+        "marketstack_symbol_failures": [{"reason": "NO_MATCH"}],
+        "marketstack_attempted": 0, "marketstack_failures": [],
+    }
+    metrics = {
+        "WAVE_00_OPENFIGI": {"api_isins_requested": 0, "transient_failures": 0, "authenticated": True},
+        "WAVE_01": {"requested": 100, "successful": 95, "diagnostics": diagnostics},
+        "WAVE_02": {"requested": 100, "successful": 95, "diagnostics": {}},
+        "WAVE_04": {"requested": 300, "available": 200, "available_pct": 66.7},
+        "WAVE_05": {"requested": 300, "available": 200, "available_pct": 66.7},
+    }
+    result = run_quality_gates(actions, etf, cov, cov, cfg, metrics)
+    assert result.passed
+
+
+def test_quality_gate_blocks_total_marketstack_resolver_transport_failure(monkeypatch):
+    from v182.audit.quality import run_quality_gates
+    monkeypatch.delenv("MARKETSTACK_MAX_SYMBOLS_PER_RUN", raising=False)
+    actions, etf, cov, cfg = _frames()
+    diagnostics = {
+        "remaining_after_openfigi": 10, "marketstack_key_present": True,
+        "marketstack_symbol_resolution_attempted": 1,
+        "marketstack_symbol_failures": [{"reason": "HTTPError"}],
+        "marketstack_symbol_cache_hits": 0,
+        "marketstack_attempted": 0, "marketstack_failures": [],
+    }
+    metrics = {
+        "WAVE_00_OPENFIGI": {"api_isins_requested": 0, "transient_failures": 0, "authenticated": True},
+        "WAVE_01": {"requested": 100, "successful": 95, "diagnostics": diagnostics},
+        "WAVE_02": {"requested": 100, "successful": 95, "diagnostics": {}},
+        "WAVE_04": {"requested": 300, "available": 200, "available_pct": 66.7},
+        "WAVE_05": {"requested": 300, "available": 200, "available_pct": 66.7},
+    }
+    result = run_quality_gates(actions, etf, cov, cov, cfg, metrics)
+    assert not result.passed
+    assert any(c["check"] == "wave_01_marketstack_resolver_transport_health" and not c["passed"] for c in result.checks)
+
+
+def test_quality_gate_blocks_total_marketstack_eod_transport_failure(monkeypatch):
+    from v182.audit.quality import run_quality_gates
+    monkeypatch.delenv("MARKETSTACK_MAX_SYMBOLS_PER_RUN", raising=False)
+    actions, etf, cov, cfg = _frames()
+    diagnostics = {
+        "remaining_after_openfigi": 10, "marketstack_key_present": True,
+        "marketstack_symbol_resolution_attempted": 0, "marketstack_symbol_cache_hits": 3,
         "marketstack_attempted": 3,
         "marketstack_failures": [
             {"reason": "HTTPError"}, {"reason": "HTTPError"}, {"reason": "API_ERROR"},
@@ -111,4 +158,4 @@ def test_quality_gate_blocks_total_marketstack_transport_failure(monkeypatch):
     }
     result = run_quality_gates(actions, etf, cov, cov, cfg, metrics)
     assert not result.passed
-    assert any(c["check"] == "wave_01_marketstack_not_total_transport_failure" and not c["passed"] for c in result.checks)
+    assert any(c["check"] == "wave_01_marketstack_eod_transport_health" and not c["passed"] for c in result.checks)
