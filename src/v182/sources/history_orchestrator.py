@@ -65,6 +65,8 @@ def download_history_with_fallback(
         "marketstack_symbol_resolution_attempted": 0,
         "marketstack_symbol_resolution_successful": 0,
         "marketstack_symbol_cache_hits": 0,
+        "marketstack_symbol_negative_cache_hits": 0,
+        "marketstack_symbol_deferred": 0,
         "marketstack_symbol_failures": [],
         "marketstack_attempted": 0,
         "marketstack_failures": [],
@@ -74,9 +76,6 @@ def download_history_with_fallback(
     specs = fallback_specs(valid, sorted(remaining), openfigi_map_path, universe)
     diagnostics["openfigi_specs"] = len(specs)
 
-    # OpenFIGI repairs Yahoo symbols only when it offers a different,
-    # MIC-constrained candidate. Marketstack symbols are resolved independently
-    # because its own ticker namespace can include exchange suffixes (SAN.PA).
     candidate_to_original = {}
     for original, spec in specs.items():
         candidate = str(spec.get("yahoo_candidate") or "").strip()
@@ -124,6 +123,8 @@ def download_history_with_fallback(
         diagnostics["marketstack_symbol_resolution_attempted"] = symbol_result.api_attempted
         diagnostics["marketstack_symbol_resolution_successful"] = symbol_result.api_successful
         diagnostics["marketstack_symbol_cache_hits"] = symbol_result.cache_hits
+        diagnostics["marketstack_symbol_negative_cache_hits"] = symbol_result.negative_cache_hits
+        diagnostics["marketstack_symbol_deferred"] = symbol_result.deferred
         diagnostics["marketstack_symbol_failures"] = symbol_result.failures
 
         requests_spec = []
