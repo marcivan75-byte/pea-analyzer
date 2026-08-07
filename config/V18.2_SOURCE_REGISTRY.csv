@@ -1,13 +1,14 @@
-﻿ID;Source;Mode;Evidence;Freshness days;Universe;Coverage;Priority rank
-SRC001;Yahoo Finance / yfinance;NO_KEY_BULK;C;1;Actions+ETF;OHLCV, volumes, corporate information, estimates when exposed;1
-SRC002;Marketstack;API;B;1;Actions+ETF;OHLCV gap filling and validation;2
-SRC003;Alpha Vantage;API;B;1;Actions+ETF;OHLCV and fundamentals gap filling;3
-SRC004;Boursorama Bulk;PUBLIC_TABLE;B;7;Actions+ETF;Consensus, Morningstar, market and ETF tables;2
-SRC005;Zonebourse Bulk;PUBLIC_TABLE;B;7;Actions;Consensus, estimates and revisions;2
-SRC006;ABC Bourse Bulk;PUBLIC_TABLE;B;30;ETF;TER, AUM, benchmark, distribution, theme;2
-SRC007;Issuer / KID / Factsheet;OFFICIAL;A;90;Actions+ETF;Official structure and fundamentals;3
-SRC008;AMF / Euronext;OFFICIAL;A;1;Actions+ETF;Regulatory events and identity;2
-SRC009;Finnhub;API;B;1;Actions;Consensus, news and intermarket gaps;3
-SRC010;FRED;OFFICIAL_API;A;7;Actions+ETF;Macro Regime Score;2
-SRC011;EIA;OFFICIAL_API;A;7;Actions+ETF;Energy Transmission Score;2
-SRC012;GDELT;PUBLIC_API;C;1;Actions;Bulk news discovery;4
+ID;Source;Mode;Evidence;Freshness days;Universe;Coverage;Priority rank
+SRC001;Yahoo Finance / yfinance;NO_KEY_BULK;C;1;Actions+ETF;Primary OHLCV, volumes, corporate information and estimates when exposed;1
+SRC002;OpenFIGI v3;OFFICIAL_IDENTIFIER_API;A;30;Actions+ETF;ISIN to FIGI/ticker/exchange/MIC mapping and symbol repair;1
+SRC003;Marketstack v2;API_FALLBACK;B;1;Actions+ETF;EOD OHLCV gap filling after Yahoo/OpenFIGI repair, quota-capped;2
+SRC004;Alpha Vantage;API;B;1;Actions+ETF;OHLCV and fundamentals gap filling;3
+SRC005;Boursorama Bulk;PUBLIC_TABLE;B;7;Actions+ETF;Consensus, Morningstar, market and ETF tables;2
+SRC006;Zonebourse Bulk;PUBLIC_TABLE;B;7;Actions;Consensus, estimates and revisions;2
+SRC007;ABC Bourse Bulk;PUBLIC_TABLE;B;30;ETF;TER, AUM, benchmark, distribution, theme;2
+SRC008;Issuer / KID / Factsheet;OFFICIAL;A;90;Actions+ETF;Official structure and fundamentals;3
+SRC009;AMF / Euronext;OFFICIAL;A;1;Actions+ETF;Regulatory events and identity;2
+SRC010;Finnhub;API;B;1;Actions;Consensus, news and intermarket gaps;3
+SRC011;FRED;OFFICIAL_API;A;7;Actions+ETF;Macro Regime Score;2
+SRC012;EIA;OFFICIAL_API;A;7;Actions+ETF;Energy Transmission Score;2
+SRC013;GDELT;PUBLIC_API;C;1;Actions;Bulk news discovery;4
