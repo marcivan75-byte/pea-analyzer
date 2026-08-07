@@ -40,24 +40,6 @@ jobs:
           ruff check --select E9,F63,F7,F82 src tests
           pytest -q
 
-      - name: MarketBeat live forecast schema smoke
-        env:
-          MARKETBEAT_API_KEY: ${{ secrets.MARKETBEAT_API_KEY }}
-        run: |
-          python - <<'PY'
-          import os
-          from v182.sources.marketbeat_parse import MarketBeatParseClient, parse_forecast
-          key = os.environ.get('MARKETBEAT_API_KEY', '').strip()
-          assert key, 'MARKETBEAT_API_KEY_MISSING'
-          client = MarketBeatParseClient(key, min_interval_seconds=0)
-          payload = client.get_stock_forecast('SNY', 'NASDAQ')
-          fields = parse_forecast(payload)
-          assert fields.get('mb_target_price') is not None, fields
-          assert fields.get('mb_target_change_1m_pct') is not None, fields
-          assert fields.get('mb_consensus_score_100') is not None, fields
-          print('MARKETBEAT_FORECAST_SMOKE_OK', fields.get('mb_consensus_rating'), fields.get('mb_target_currency'))
-          PY
-
       - name: Execute full V18.2 pipeline
         env:
           V182_RUN_ID: full-audit-${{ github.run_id }}-${{ github.run_attempt }}
@@ -68,6 +50,9 @@ jobs:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
         run: python -m v182.reporting.run
+
+      - name: Ensure committee scenario coverage
+        run: python -m v182.decision.scenario_fallback
 
       - name: Compute baseline analyst momentum
         run: python -m v182.decision.analyst_momentum
@@ -91,6 +76,7 @@ jobs:
           test -s outputs/history/V18.2_CONSENSUS_SNAPSHOTS.csv
           test -s outputs/history/V18.2_ANALYST_REVISIONS.csv
           test -s outputs/audit/V18.2_ANALYST_MOMENTUM_METRICS.json
+          test -s outputs/audit/V18.2_SCENARIO_METRICS.json
           test -s outputs/audit/V18.2_QUALITY_GATES.json
           test -s outputs/audit/V18.2_COVERAGE_BEFORE_AFTER.json
           test -s outputs/audit/V18.2_SOURCE_FALLBACK_METRICS.json
@@ -135,6 +121,12 @@ jobs:
           assert 'target_change_12m_abs' in committee.columns
           assert {'target_source', 'consensus_source'}.issubset(set(history.columns))
 
+          scenario = json.loads(Path('outputs/audit/V18.2_SCENARIO_METRICS.json').read_text())
+          assert scenario['execution_gate'] == 'SHADOW_BLOCKED', scenario
+          assert int(scenario.get('selected_rows', 0)) > 0, scenario
+          assert int(scenario.get('scenario_isins', 0)) > 0, scenario
+          assert int(scenario.get('scenario_observations', 0)) >= int(scenario.get('scenario_isins', 0)) * 5, scenario
+
           analyst_metrics = json.loads(Path('outputs/audit/V18.2_ANALYST_MOMENTUM_METRICS.json').read_text())
           assert analyst_metrics['execution_gate'] == 'SHADOW_BLOCKED'
           assert float(analyst_metrics['overall_weight']) == 0.15
@@ -148,8 +140,12 @@ jobs:
           assert mb.get('success') is True, mb
           assert int(mb.get('selected', 0)) > 0, mb
           assert int(mb.get('api_calls', 0)) > 0, mb
+          assert int(mb.get('successful', 0)) >= 1, mb
+          assert int(mb.get('observations', 0)) > 0, mb
+          assert int(mb.get('quarantined', 0)) == 0, mb
           overlay = analyst_metrics.get('marketbeat_overlay') or {}
           assert int(overlay.get('committee_rows', 0)) == len(committee), overlay
+          assert int(overlay.get('rows', 0)) >= 1, overlay
 
           metrics = json.loads(Path('outputs/audit/V18.2_SOURCE_FALLBACK_METRICS.json').read_text())
           for key in ('wave01_actions', 'wave02_etf'):
@@ -174,6 +170,15 @@ jobs:
           assert energy.get('source') == 'EIA'
           assert energy.get('energy_as_of')
 
+          quarantine_path = Path('outputs/gaps/V18.2_QUARANTINE.csv')
+          if quarantine_path.exists() and quarantine_path.stat().st_size > 0:
+              quarantine = pd.read_csv(quarantine_path, sep=';', encoding='utf-8-sig', dtype=str)
+              macro_conflicts = quarantine[
+                  (quarantine.get('field') == 'macro_curve_10y2y') &
+                  (quarantine.get('reason') == 'CONFLICT_EQUAL_EVIDENCE')
+              ]
+              assert len(macro_conflicts) == 0, f'MASS_FRED_FALSE_CONFLICTS={len(macro_conflicts)}'
+
           assert '_field_provenance_json' in actions.columns
           assert '_field_provenance_json' in etf.columns
           print('FULL_AUDIT_INVARIANTS_OK')
@@ -190,6 +195,7 @@ jobs:
               'quality': 'outputs/audit/V18.2_QUALITY_GATES.json',
               'coverage': 'outputs/audit/V18.2_COVERAGE_BEFORE_AFTER.json',
               'sources': 'outputs/audit/V18.2_SOURCE_FALLBACK_METRICS.json',
+              'scenarios': 'outputs/audit/V18.2_SCENARIO_METRICS.json',
               'analyst_momentum': 'outputs/audit/V18.2_ANALYST_MOMENTUM_METRICS.json',
               'macro': 'outputs/context/V18.2_MACRO_CONTEXT.json',
               'energy': 'outputs/context/V18.2_ENERGY_CONTEXT.json',
