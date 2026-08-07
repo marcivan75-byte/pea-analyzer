@@ -14,7 +14,7 @@ permissions:
 
 concurrency:
   group: v18-2-full-audit-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   full-audit:
@@ -69,6 +69,9 @@ jobs:
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
         run: python -m v182.reporting.run
 
+      - name: Audit residual OHLCV gaps
+        run: python -m v182.audit.ohlcv_gaps
+
       - name: Ensure committee scenario coverage
         run: python -m v182.decision.scenario_fallback
 
@@ -95,6 +98,9 @@ jobs:
           test -s outputs/history/V18.2_ANALYST_REVISIONS.csv
           test -s outputs/audit/V18.2_ANALYST_MOMENTUM_METRICS.json
           test -s outputs/audit/V18.2_SCENARIO_METRICS.json
+          test -s outputs/audit/V18.2_OHLCV_GAP_METRICS.json
+          test -s outputs/gaps/V18.2_OHLCV_ACTION_GAPS.csv
+          test -s outputs/gaps/V18.2_OHLCV_ETF_GAPS.csv
           test -s outputs/audit/V18.2_QUALITY_GATES.json
           test -s outputs/audit/V18.2_COVERAGE_BEFORE_AFTER.json
           test -s outputs/audit/V18.2_SOURCE_FALLBACK_METRICS.json
@@ -138,6 +144,13 @@ jobs:
           assert required_analyst.issubset(set(actions.columns)), required_analyst - set(actions.columns)
           assert 'target_change_12m_abs' in committee.columns
           assert {'target_source', 'consensus_source'}.issubset(set(history.columns))
+
+          gap = json.loads(Path('outputs/audit/V18.2_OHLCV_GAP_METRICS.json').read_text())
+          assert int(gap['actions_total']) == 1486, gap
+          assert int(gap['etf_total']) == 102, gap
+          assert float(gap['actions_last_close_coverage_pct']) >= 90.0, gap
+          assert float(gap['etf_last_close_coverage_pct']) >= 90.0, gap
+          assert gap['status'] == 'ACTIONABLE_RESIDUAL_GAPS', gap
 
           scenario = json.loads(Path('outputs/audit/V18.2_SCENARIO_METRICS.json').read_text())
           assert scenario['execution_gate'] == 'SHADOW_BLOCKED', scenario
@@ -213,6 +226,7 @@ jobs:
               'quality': 'outputs/audit/V18.2_QUALITY_GATES.json',
               'coverage': 'outputs/audit/V18.2_COVERAGE_BEFORE_AFTER.json',
               'sources': 'outputs/audit/V18.2_SOURCE_FALLBACK_METRICS.json',
+              'ohlcv_gaps': 'outputs/audit/V18.2_OHLCV_GAP_METRICS.json',
               'scenarios': 'outputs/audit/V18.2_SCENARIO_METRICS.json',
               'analyst_momentum': 'outputs/audit/V18.2_ANALYST_MOMENTUM_METRICS.json',
               'macro': 'outputs/context/V18.2_MACRO_CONTEXT.json',
