@@ -174,8 +174,9 @@
     "coverage_regression_tolerance_points": 0.0,
     "block_on_empty_output": true,
     "block_on_duplicate_isin": true,
-    "fundamentals_availability_min_pct": 40.0,
-    "consensus_availability_min_pct": 40.0,
+    "fundamentals_availability_min_pct": 90.0,
+    "consensus_availability_min_pct": 90.0,
+    "openfigi_mapping_coverage_min_pct": 70.0,
     "openfigi_transient_failure_max_pct": 25.0,
     "fail_active_api_on_runtime_error": true
   },
