@@ -6,16 +6,20 @@ from v182.features.ohlcv_features import calculate
 from v182.io.frames import apply_observations
 from v182.reporting.waves import wave8_scenarios, resolve_etf_tickers, _obs
 
+
 def test_missing_never_replaces():
     existing={"value":10,"evidence_level":"B","as_of":"2026-01-01"}
     incoming={"value":None,"evidence_level":"A","as_of":"2026-02-01","validation_status":"VALIDATED"}
     assert decide(existing,incoming).action=="KEEP"
 
+
 def test_bulk_history_is_high_priority():
     assert priority("YFINANCE_BULK_HISTORY",5)>priority("AMF_FINNHUB_GDELT",5)
 
+
 def test_input_required_has_no_fake_gain():
     assert priority("USER_AND_BROKER_INPUT",5)==10
+
 
 def test_ohlcv_features_from_synthetic_series():
     dates = pd.date_range("2021-01-01", periods=1300, freq="B")
@@ -30,6 +34,7 @@ def test_ohlcv_features_from_synthetic_series():
     assert feats["rsi14"] is not None
     assert feats["perf_1y_pct"] is not None
 
+
 def test_apply_observations_inserts_on_empty_field():
     master = pd.DataFrame([{"isin": "FR0000000001", "name": "TEST", "rsi14": "NON_OBSERVE",
                              "evidence_level": "D", "as_of_date": "2026-01-01"}])
@@ -37,6 +42,7 @@ def test_apply_observations_inserts_on_empty_field():
     updated, quarantine = apply_observations(master, obs)
     assert updated.iloc[0]["rsi14"] == "55.3"
     assert quarantine == []
+
 
 def test_apply_observations_quarantines_equal_evidence_conflict():
     master = pd.DataFrame([{"isin": "FR0000000001", "name": "TEST", "rsi14": "60.0",
@@ -47,6 +53,7 @@ def test_apply_observations_quarantines_equal_evidence_conflict():
     assert updated.iloc[0]["rsi14"] == "60.0"
     assert len(quarantine) == 1
 
+
 def test_wave8_scenarios_are_symmetric_on_flat_trend():
     actions = pd.DataFrame([{"isin": "FR0000000002", "last_close": "100.0",
                               "atr14": "2.0", "perf_3m_pct": "0.0"}])
@@ -55,21 +62,13 @@ def test_wave8_scenarios_are_symmetric_on_flat_trend():
     assert fields["scenario_bull_pct"] == -fields["scenario_bear_pct"]
     assert fields["invalidation_level"] == 96.0
 
+
 def test_resolve_etf_tickers_flags_gap_when_mapping_missing():
     etf_df = pd.DataFrame([{"isin": "FR0013380607", "name": "Amundi CAC 40"}])
     merged, gaps = resolve_etf_tickers(etf_df, "/tmp/does_not_exist.csv")
     assert len(gaps) == 1
     assert gaps.iloc[0]["status"] == "INPUT_REQUIRED"
 
-def test_openfigi_pick_best_match_prefers_paris_over_other_exchanges():
-    from v182.mapping.etf_isin_resolver import pick_best_match
-    matches = [{"exchCode": "GR", "ticker": "AMEC"}, {"exchCode": "PA", "ticker": "CAC"}]
-    best = pick_best_match(matches)
-    assert best["exchCode"] == "PA"
-
-def test_openfigi_pick_best_match_returns_none_for_unknown_exchange():
-    from v182.mapping.etf_isin_resolver import pick_best_match
-    assert pick_best_match([{"exchCode": "ZZ", "ticker": "XXX"}]) is None
 
 def test_build_etf_ticker_map_writes_gaps_for_unresolved_isin(tmp_path):
     from unittest.mock import patch
@@ -78,13 +77,52 @@ def test_build_etf_ticker_map_writes_gaps_for_unresolved_isin(tmp_path):
     pd.DataFrame([{"isin": "FR0013380607", "name": "Amundi CAC 40"},
                   {"isin": "XX0000000000", "name": "Unknown"}]).to_csv(
         etf_master, sep=";", index=False, encoding="utf-8-sig")
-    fake = {"FR0013380607": [{"exchCode": "PA", "ticker": "CAC"}],
-            "XX0000000000": [{"exchCode": "ZZ", "ticker": "NOPE"}]}
+    fake = {
+        "FR0013380607": [{"exchCode": "FP", "ticker": "CAC", "marketSector": "Equity", "securityType2": "ETF"}],
+        "XX0000000000": [{"exchCode": "ZZ", "ticker": "NOPE", "marketSector": "Equity", "securityType2": "ETF"}],
+    }
     with patch("v182.mapping.etf_isin_resolver.resolve_isins", return_value=fake):
         summary = build_etf_ticker_map(etf_master, tmp_path / "map.csv", tmp_path / "gaps.csv")
     assert summary == {"requested": 2, "resolved": 1, "gaps": 1}
     mapped = pd.read_csv(tmp_path / "map.csv", sep=";", encoding="utf-8-sig")
     assert mapped.iloc[0]["yahoo_ticker"] == "CAC.PA"
+
+
+def test_wave3_prefers_longer_fallback_history_over_short_yahoo_fragment(tmp_path):
+    from v182.reporting.waves import wave3_derived_features
+
+    short_dates = pd.date_range("2026-01-01", periods=10, freq="B")
+    long_dates = pd.date_range("2025-09-01", periods=80, freq="B")
+    short = pd.DataFrame({
+        "Open": np.arange(10)+1, "High": np.arange(10)+2, "Low": np.arange(10),
+        "Close": np.arange(10)+1, "Volume": 1000,
+    }, index=short_dates)
+    long = pd.DataFrame({
+        "Open": np.arange(80)+100, "High": np.arange(80)+101, "Low": np.arange(80)+99,
+        "Close": np.arange(80)+100, "Volume": 2000,
+    }, index=long_dates)
+    pd.concat({"AI.PA": short}, axis=1).to_parquet(tmp_path / "history_yahoo_primary_00000.parquet")
+    pd.concat({"AI.PA": long}, axis=1).to_parquet(tmp_path / "history_marketstack_00000.parquet")
+
+    obs = wave3_derived_features(str(tmp_path), {"AI.PA": "FR0000120073"}, "ACTION")
+    last_close = [o for o in obs if o["field"] == "last_close"][0]
+    assert float(last_close["value"]) == 179.0
+    assert "MARKETSTACK" in last_close["source"]
+
+
+def test_load_seed_master_reuses_valid_previous_enrichment(tmp_path):
+    from v182.reporting.run import _load_seed_master
+
+    baseline = tmp_path / "baseline.csv"
+    enriched = tmp_path / "enriched.csv"
+    pd.DataFrame([{"isin":"FR1","name":"A","field":"NON_OBSERVE"}]).to_csv(
+        baseline, sep=";", index=False, encoding="utf-8-sig")
+    pd.DataFrame([{"isin":"FR1","name":"A","field":"42"}]).to_csv(
+        enriched, sep=";", index=False, encoding="utf-8-sig")
+    loaded, source = _load_seed_master(baseline, enriched)
+    assert source == "PREVIOUS_ENRICHED_OUTPUT"
+    assert loaded.iloc[0]["field"] == "42"
+
 
 def test_wave5_finnhub_targets_committee_watch_only(tmp_path):
     from unittest.mock import patch
@@ -118,6 +156,7 @@ def test_wave5_normalizes_existing_yahoo_consensus_without_finnhub_call(tmp_path
     assert fields["n_analysts"] == "18"
     assert meta["normalized_yf_tickers"] == 1
 
+
 def test_wave6_etf_info_maps_dividend_yield_only():
     from unittest.mock import patch
     from v182.reporting.waves import wave6_etf_info
@@ -127,6 +166,7 @@ def test_wave6_etf_info_maps_dividend_yield_only():
     with patch("v182.reporting.waves.collect_info", return_value=(fake_obs, [])):
         obs, _ = wave6_etf_info(etf_df, cfg)
     assert {o["field"] for o in obs} == {"dividend_yield_pct", "dividend_data_status"}
+
 
 def test_wave7_worklist_includes_conflicts_and_critical_pea_gaps():
     from v182.reporting.wave7_worklist import build_worklist
@@ -151,9 +191,9 @@ def test_checkpoint_is_scoped_per_run(tmp_path):
     assert a.done('WAVE_01') is True
     assert b.done('WAVE_01') is False
 
+
 def test_quality_gate_accepts_complete_referentials():
     from v182.audit.quality import run_quality_gates
-    import pandas as pd
     actions=pd.DataFrame([{'isin':f'FR{i:010d}','yahoo_ticker':'X.PA'} for i in range(1486)])
     etf=pd.DataFrame([{'isin':f'LU{i:010d}','yahoo_ticker':'Y.PA'} for i in range(102)])
     cov={'ACTION':{'coverage_pct':80.0},'ETF':{'coverage_pct':70.0}}
@@ -162,8 +202,8 @@ def test_quality_gate_accepts_complete_referentials():
     result=run_quality_gates(actions,etf,cov,cov,cfg,metrics)
     assert result.passed
 
+
 def test_etf_ticker_map_is_complete():
-    import pandas as pd
     m=pd.read_csv('config/V18.2_ETF_TICKER_MAP.csv',sep=';',encoding='utf-8-sig',dtype=str)
     assert len(m)==102
     assert m['isin'].nunique()==102
@@ -171,7 +211,6 @@ def test_etf_ticker_map_is_complete():
 
 
 def test_resolve_etf_tickers_works_when_master_already_has_ticker(tmp_path):
-    import pandas as pd
     from v182.reporting.waves import resolve_etf_tickers
     master=pd.DataFrame([{"isin":"FR0013380607","name":"CAC","yahoo_ticker":"OLD.PA"}])
     mapping=tmp_path/'map.csv'
