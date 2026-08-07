@@ -5,7 +5,7 @@ import json
 import sys
 import os
 
-from v182.io.frames import load_master, save_master
+from v182.io.frames import load_master, save_master, is_missing
 from v182.audit.completeness import completeness
 from v182.state.checkpoint import Checkpoint
 from v182.reporting import waves
@@ -27,6 +27,38 @@ def _fields(df):
     return [c for c in df.columns if c not in skip]
 
 
+def _load_seed_master(input_path: Path, enriched_path: Path):
+    """Start from the last validated enriched master when it is compatible.
+
+    The former pipeline always restarted from `inputs/`, so API enrichment was
+    lost between merged refreshes. We now reuse the previous enriched output
+    only when row count and the full ISIN set still match the authoritative
+    input universe. Missing baseline fields are filled from the input file.
+    """
+    baseline = load_master(input_path)
+    if not enriched_path.exists():
+        return baseline, "BASELINE_INPUT"
+    try:
+        previous = load_master(enriched_path)
+        if len(previous) != len(baseline):
+            return baseline, "BASELINE_INPUT_ROW_MISMATCH"
+        if set(previous["isin"].astype(str)) != set(baseline["isin"].astype(str)):
+            return baseline, "BASELINE_INPUT_ISIN_MISMATCH"
+
+        prev = previous.set_index("isin", drop=False)
+        base = baseline.set_index("isin", drop=False)
+        for col in baseline.columns:
+            if col not in prev.columns:
+                prev[col] = base[col]
+            else:
+                mask = prev[col].apply(is_missing)
+                if mask.any():
+                    prev.loc[mask, col] = base.loc[mask, col]
+        return prev.reset_index(drop=True), "PREVIOUS_ENRICHED_OUTPUT"
+    except Exception:
+        return baseline, "BASELINE_INPUT_INVALID_PREVIOUS_OUTPUT"
+
+
 def run() -> None:
     cfg = _load_cfg()
     run_id = os.environ.get("V182_RUN_ID") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -35,8 +67,15 @@ def run() -> None:
     (OUTPUTS / "gaps").mkdir(parents=True, exist_ok=True)
     (OUTPUTS / "audit").mkdir(parents=True, exist_ok=True)
 
-    actions_df = load_master(INPUTS / "V18.2_PEA_ACTIONS_MASTER.csv")
-    etf_df = load_master(INPUTS / "V18.2_PEA_ETF_MASTER.csv")
+    actions_df, actions_seed = _load_seed_master(
+        INPUTS / "V18.2_PEA_ACTIONS_MASTER.csv",
+        OUTPUTS / "V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv",
+    )
+    etf_df, etf_seed = _load_seed_master(
+        INPUTS / "V18.2_PEA_ETF_MASTER.csv",
+        OUTPUTS / "V18.2_PEA_ETF_MASTER_ENRICHED.csv",
+    )
+    print(f"Sources de départ — Actions: {actions_seed} | ETF: {etf_seed}")
 
     before = {
         "ACTION": completeness(actions_df.to_dict("records"), _fields(actions_df)),
@@ -47,19 +86,24 @@ def run() -> None:
     quarantine_log: list[dict] = []
     wave_metrics: dict[str, dict] = {}
 
-    # WAVE 00A — cache d'identifiants OpenFIGI pour Actions + ETF.
-    # Le premier run résout les ISIN manquants; les suivants réutilisent le cache.
+    # WAVE 00A — OpenFIGI cache for Actions + ETF. Resolved entries are reused;
+    # definitive negatives expire; transient API failures are never cached.
     openfigi_map_path = CONFIG / "V18.2_OPENFIGI_MASTER_MAP.csv"
     from v182.mapping.etf_isin_resolver import build_openfigi_master_map
+    of_cfg = cfg.get("openfigi", {})
     openfigi_summary = build_openfigi_master_map(
-        actions_df, etf_df, openfigi_map_path, api_key=os.environ.get("OPENFIGI_API_KEY")
+        actions_df,
+        etf_df,
+        openfigi_map_path,
+        api_key=os.environ.get("OPENFIGI_API_KEY"),
+        negative_cache_days=int(of_cfg.get("negative_cache_days", 30) or 30),
     )
     wave_metrics["WAVE_00_OPENFIGI"] = openfigi_summary
     checkpoint.mark("WAVE_00_OPENFIGI", "DONE", **openfigi_summary)
     print(
         f"WAVE_00_OPENFIGI — {openfigi_summary['resolved']}/{openfigi_summary['records']} identifiants résolus "
         f"({openfigi_summary['coverage_pct']}%), {openfigi_summary['api_isins_requested']} ISIN interrogés via API, "
-        f"authentifié={openfigi_summary['authenticated']}"
+        f"transitoires={openfigi_summary['transient_failures']}, authentifié={openfigi_summary['authenticated']}"
     )
 
     if not checkpoint.done("WAVE_00_ETF_TICKERS"):
@@ -91,9 +135,7 @@ def run() -> None:
     from v182.sources.history_orchestrator import download_history_with_fallback
 
     if not checkpoint.done("WAVE_01"):
-        result = download_history_with_fallback(
-            actions_df, "ACTION", str(CACHE / "actions"), cfg, openfigi_map_path
-        )
+        result = download_history_with_fallback(actions_df, "ACTION", str(CACHE / "actions"), cfg, openfigi_map_path)
         checkpoint.mark(
             "WAVE_01", "DONE", requested=result.requested, successful=len(result.successful),
             failed=len(result.failed), source_counts=result.source_counts, diagnostics=result.diagnostics,
@@ -115,9 +157,7 @@ def run() -> None:
         etf_gaps.to_csv(OUTPUTS / "gaps" / "V18.2_ETF_TICKER_GAPS.csv", sep=";", index=False, encoding="utf-8-sig")
         print(f"WAVE_02 — {len(etf_gaps)} ISIN ETF sans ticker mappé -> INPUT_REQUIRED")
     if not checkpoint.done("WAVE_02"):
-        result = download_history_with_fallback(
-            etf_with_tickers, "ETF", str(CACHE / "etf"), cfg, openfigi_map_path
-        )
+        result = download_history_with_fallback(etf_with_tickers, "ETF", str(CACHE / "etf"), cfg, openfigi_map_path)
         checkpoint.mark(
             "WAVE_02", "DONE", requested=result.requested, successful=len(result.successful),
             failed=len(result.failed), source_counts=result.source_counts, diagnostics=result.diagnostics,
@@ -136,6 +176,7 @@ def run() -> None:
 
     (OUTPUTS / "audit" / "V18.2_SOURCE_FALLBACK_METRICS.json").write_text(
         json.dumps({
+            "seed": {"actions": actions_seed, "etf": etf_seed},
             "openfigi": wave_metrics.get("WAVE_00_OPENFIGI", {}),
             "wave01_actions": wave_metrics.get("WAVE_01", {}),
             "wave02_etf": wave_metrics.get("WAVE_02", {}),
