@@ -46,7 +46,9 @@ jobs:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
-        run: python -m v182.reporting.run
+        run: |
+          python -m v182.reporting.run
+          python -m v182.decision.analyst_momentum
 
       - name: Validate complete outputs and invariants
         run: |
@@ -55,6 +57,10 @@ jobs:
           test -s outputs/V18.2_PEA_ACTIONS_ACTUALISE.xlsx
           test -s outputs/V18.2_PEA_ETF_ACTUALISE.xlsx
           test -s outputs/V18.2_RUN_REPORT.xlsx
+          test -s outputs/V18.2_COMMITTEE_ANALYST_MOMENTUM.csv
+          test -s outputs/history/V18.2_CONSENSUS_SNAPSHOTS.csv
+          test -s outputs/history/V18.2_ANALYST_REVISIONS.csv
+          test -s outputs/audit/V18.2_ANALYST_MOMENTUM_METRICS.json
           test -s outputs/audit/V18.2_QUALITY_GATES.json
           test -s outputs/audit/V18.2_COVERAGE_BEFORE_AFTER.json
           test -s outputs/audit/V18.2_SOURCE_FALLBACK_METRICS.json
@@ -78,6 +84,21 @@ jobs:
           assert etf['isin'].nunique() == 102
           assert actions['yahoo_ticker'].notna().all()
           assert etf['yahoo_ticker'].notna().all()
+
+          required_analyst = {
+              'target_upside_abs', 'target_upside_pct', 'target_change_run_abs',
+              'target_change_run_pct', 'target_change_1m_abs', 'target_change_1m_pct',
+              'target_change_3m_abs', 'target_change_3m_pct', 'consensus_score_100',
+              'consensus_delta_run', 'consensus_delta_1m', 'consensus_delta_3m',
+              'target_revision_acceleration', 'analyst_momentum_score',
+              'committee_analyst_signal', 'committee_analyst_gate',
+              'committee_review_required', 'committee_score_with_analyst_momentum',
+          }
+          assert required_analyst.issubset(set(actions.columns)), required_analyst - set(actions.columns)
+
+          analyst_metrics = json.loads(Path('outputs/audit/V18.2_ANALYST_MOMENTUM_METRICS.json').read_text())
+          assert analyst_metrics['execution_gate'] == 'SHADOW_BLOCKED'
+          assert float(analyst_metrics['overall_weight']) == 0.15
 
           metrics = json.loads(Path('outputs/audit/V18.2_SOURCE_FALLBACK_METRICS.json').read_text())
           for key in ('wave01_actions', 'wave02_etf'):
@@ -118,6 +139,7 @@ jobs:
               'quality': 'outputs/audit/V18.2_QUALITY_GATES.json',
               'coverage': 'outputs/audit/V18.2_COVERAGE_BEFORE_AFTER.json',
               'sources': 'outputs/audit/V18.2_SOURCE_FALLBACK_METRICS.json',
+              'analyst_momentum': 'outputs/audit/V18.2_ANALYST_MOMENTUM_METRICS.json',
               'macro': 'outputs/context/V18.2_MACRO_CONTEXT.json',
               'energy': 'outputs/context/V18.2_ENERGY_CONTEXT.json',
           }.items():
