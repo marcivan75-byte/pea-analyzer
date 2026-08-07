@@ -20,8 +20,6 @@ def test_yahoo_continuous_recommendation_mean_precedes_discrete_consensus_score(
         "recommendation_mean_yf": "2.2",
         "recommendation_key_yf": "buy",
     })
-    # Yahoo 2.2 on the 1=Strong Buy / 5=Strong Sell scale maps to 70/100.
-    # Using the discrete BUY bucket instead would incorrectly flatten it to 75.
     assert consensus_score_100(row) == 70.0
 
 
@@ -76,7 +74,7 @@ def test_broker_aliases_receive_reputation_weight(tmp_path):
 
 
 def test_marketbeat_parse_requires_key():
-    with pytest.raises(ValueError, match="PARSE_API_KEY"):
+    with pytest.raises(ValueError, match="MARKETBEAT_API_KEY"):
         MarketBeatParseClient("")
 
 
@@ -93,7 +91,7 @@ def test_marketbeat_parse_429_is_sanitized_without_key_leak():
     assert kwargs["headers"]["X-API-Key"] == "secret-not-to-log"
 
 
-def test_marketbeat_parse_resolve_issuer_uses_name_match():
+def test_marketbeat_safe_issuer_resolution_requires_local_listing_evidence():
     response = Mock()
     response.status_code = 200
     response.raise_for_status.return_value = None
@@ -101,18 +99,22 @@ def test_marketbeat_parse_resolve_issuer_uses_name_match():
         "status": "success",
         "data": {
             "items": [
-                {"name": "Unrelated Corp", "ticker": "XXX"},
+                {"name": "Unrelated Corp", "ticker": "XXX", "exchange": "NASDAQ"},
                 {"name": "Sanofi SA", "ticker": "SNY", "exchange": "NASDAQ"},
+                {"name": "Sanofi", "ticker": "SAN", "exchange": "EPA"},
             ]
         },
     }
     session = Mock()
     session.get.return_value = response
     client = MarketBeatParseClient("key", min_interval_seconds=0, session=session)
-    resolved = client.resolve_issuer("Sanofi")
+    resolved = client.resolve_issuer_listing("Sanofi", "SAN.PA")
     assert resolved is not None
-    assert resolved["ticker"] == "SNY"
-    assert resolved["_match_score"] >= 0.72
+    assert resolved["marketbeat_ticker"] == "SNY"
+    assert resolved["marketbeat_exchange"] == "NASDAQ"
+    assert resolved["local_marketbeat_ticker"] == "SAN"
+    assert resolved["match_type"] == "US_ANALYST_PROXY"
+    assert resolved["match_score"] >= 0.88
 
 
 def test_online_workflow_restores_persistent_consensus_history():
