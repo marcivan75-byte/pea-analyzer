@@ -1,2 +1,22 @@
 broker;weight;status;note
-J.P. Morgan;1.30;CONFIRMED;Existing benchmark top-tier weight, all unlisted brokers default to 1.00 until the benchmark referential is completed
+J.P. Morgan;1.30;CONFIRMED;Top-tier benchmark
+Goldman Sachs;1.30;CONFIRMED;Top-tier benchmark
+Morgan Stanley;1.28;CONFIRMED;Top-tier benchmark
+UBS;1.28;CONFIRMED;Top-tier benchmark
+Bank of America;1.27;CONFIRMED;Top-tier benchmark
+Deutsche Bank;1.20;CONFIRMED;Benchmark
+Barclays;1.18;CONFIRMED;Benchmark
+Citi;1.18;CONFIRMED;Benchmark
+HSBC;1.16;CONFIRMED;Benchmark
+Jefferies;1.15;CONFIRMED;Benchmark
+Bernstein;1.14;CONFIRMED;Benchmark
+Kepler;1.12;CONFIRMED;Benchmark
+Oddo BHF;1.11;CONFIRMED;Benchmark
+Berenberg;1.10;CONFIRMED;Benchmark
+ING;1.08;CONFIRMED;Benchmark
+RBC;1.08;CONFIRMED;Benchmark
+Equita;1.05;CONFIRMED;Benchmark
+Santander;1.05;CONFIRMED;Benchmark
+DZ Bank;1.04;CONFIRMED;Benchmark
+AlphaValue;1.00;CONFIRMED;Benchmark baseline
+Baader;1.00;CONFIRMED;Benchmark baseline
