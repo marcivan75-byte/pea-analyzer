@@ -1,4 +1,7 @@
-STATUS=STALE_NOT_RELEASE_VALIDATED
-REASON=The previous SHA256 manifest predates the second audit and no longer matches the branch contents.
-ACTION=Regenerate the complete SHA256 manifest only after static CI, API smoke validation and the full pipeline run pass on the exact final release commit.
-DO_NOT_USE_FOR_RELEASE_VALIDATION=true
+STATUS=RUNTIME_EXACT_SHA_EVIDENCE_REQUIRED
+VERSION=18.2.1
+AUTHORITATIVE_CHECKSUM_FILE=outputs/release/V18.2_TRACKED_FILES_SHA256.txt
+GENERATOR=python -m v182.audit.release_evidence
+POLICY=Checksums are generated during the exact candidate full-audit run so they always correspond to the tested commit SHA.
+STATIC_PASS_CERTIFICATE=false
+DIRECT_MAIN_MERGE=false
