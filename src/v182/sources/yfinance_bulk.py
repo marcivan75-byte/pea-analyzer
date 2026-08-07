@@ -12,6 +12,7 @@ class DownloadResult:
     failed: list[str]
     cache_file: str | None
     source_counts: dict[str, int] = field(default_factory=dict)
+    diagnostics: dict = field(default_factory=dict)
 
 
 def _ticker_has_data(frame, ticker: str, min_rows: int = 20) -> bool:
@@ -118,7 +119,6 @@ def download_history(
         if not retry_symbols:
             break
         time.sleep(max(0.0, float(retry_backoff_seconds)) * attempt)
-        # Clear only the retry candidates; each retry repopulates failures.
         failed_fetch = set()
         fetch_batches(retry_symbols, max(1, min(int(retry_batch_size), int(batch_size))), f"retry{attempt}")
 
@@ -131,5 +131,5 @@ def download_history(
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     return DownloadResult(
         len(clean), sorted(successful), failed_canonical, str(manifest),
-        source_counts={"yfinance": len(successful)},
+        source_counts={"yfinance": len(successful)}, diagnostics={},
     )
