@@ -1,4 +1,11 @@
-STATUS=STALE_NOT_RELEASE_VALIDATED
-REASON=The previous SHA256 manifest predates the second audit and no longer matches the branch contents.
-ACTION=Regenerate the complete SHA256 manifest only after static CI, API smoke validation and the full pipeline run pass on the exact final release commit.
-DO_NOT_USE_FOR_RELEASE_VALIDATION=true
+STATUS=PREPRODUCTION_VALIDATED_EVIDENCE
+VALIDATED_CODE_COMMIT=89eb454e12e40a6560a97332a552caaf96585465
+FULL_AUDIT_RUN_ID=31184702729
+FULL_AUDIT_ARTIFACT_ID=8997393689
+FULL_AUDIT_ARTIFACT_SHA256=8feea9d659ff67c7e6feffea446720eae20fdc3f6484064e1200e053d28a4416
+FULL_AUDIT_CONCLUSION=success
+QUALITY_GATES=passed
+TESTS=69/69
+NOTE=This digest authenticates the complete GitHub Actions audit artifact for the validated code commit. Metadata-only release commits made after the audit do not change the validated code snapshot.
+MAIN_MODIFIED=false
+MAIN_MERGE_ALLOWED=false
