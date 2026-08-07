@@ -17,10 +17,8 @@
       "yfinance",
       "OpenFIGI v3",
       "Marketstack v2",
-      "Finnhub"
-    ],
-    "implemented_pending_live_api_smoke": [
-      "Alpha Vantage OHLCV",
+      "Alpha Vantage TIME_SERIES_DAILY",
+      "Finnhub",
       "FRED",
       "EIA"
     ],
@@ -146,14 +144,14 @@
   ],
   "fallback_policy": [
     ["IDENTIFIERS", "OpenFIGI v3 ISIN+MIC [OPERATIONAL]", "Issuer/Euronext [PLANNED]", ""],
-    ["OHLCV", "yfinance [OPERATIONAL]", "OpenFIGI symbol repair + yfinance [OPERATIONAL]", "Marketstack v2 [OPERATIONAL]", "Alpha Vantage TIME_SERIES_DAILY [IMPLEMENTED_PENDING_SMOKE]", "Issuer/Euronext [PLANNED]"],
+    ["OHLCV", "yfinance [OPERATIONAL]", "OpenFIGI symbol repair + yfinance [OPERATIONAL]", "Marketstack v2 [OPERATIONAL]", "Alpha Vantage TIME_SERIES_DAILY [OPERATIONAL]", "Issuer/Euronext [PLANNED]"],
     ["FUNDAMENTALS_ACTIONS", "yfinance [OPERATIONAL]", "Issuer [PLANNED]", "Zonebourse [PLANNED]", "", ""],
     ["CONSENSUS_ACTIONS", "yfinance [OPERATIONAL]", "Finnhub [OPERATIONAL]", "Boursorama [PLANNED]", "Zonebourse [PLANNED]"],
     ["ETF_COSTS_AUM", "ABC Bourse [PLANNED]", "Issuer/KID [PLANNED]", "Boursorama [PLANNED]", ""],
     ["ETF_MORNINGSTAR", "Boursorama [PLANNED]", "Morningstar-authorized source [PLANNED]", "", ""],
     ["NEWS_EVENTS", "AMF/Issuer [PLANNED]", "Finnhub news [PLANNED]", "GDELT [PLANNED]", "Boursorama/Zonebourse [PLANNED]"],
-    ["MACRO", "FRED [IMPLEMENTED_PENDING_SMOKE]", "", "", ""],
-    ["ENERGY", "EIA [IMPLEMENTED_PENDING_SMOKE]", "", "", ""]
+    ["MACRO", "FRED [OPERATIONAL]", "", "", ""],
+    ["ENERGY", "EIA [OPERATIONAL]", "", "", ""]
   ],
   "merge_policy": {
     "primary_key": "isin",
