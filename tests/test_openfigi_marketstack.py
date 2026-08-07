@@ -1,6 +1,16 @@
 from unittest.mock import MagicMock, patch
+import json
 import pandas as pd
 import numpy as np
+
+
+def test_pipeline_modules_and_config_load():
+    import v182.reporting.run  # noqa: F401
+    import v182.sources.history_orchestrator  # noqa: F401
+    import v182.sources.marketstack_eod  # noqa: F401
+    cfg = json.load(open("config/V18.2_MASTER_CONFIG.json", encoding="utf-8"))
+    assert cfg["openfigi"]["api_version"] == "v3"
+    assert cfg["marketstack"]["enabled"] is True
 
 
 def test_yfinance_empty_columns_are_not_success():
