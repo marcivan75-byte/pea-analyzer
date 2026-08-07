@@ -124,24 +124,27 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -c constraints-ci.txt -e .
-      - name: Alpha Vantage symbol resolution and fundamentals
+      - name: Alpha Vantage global symbol and daily OHLCV
         env:
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
         run: |
           python - <<'PY'
-          import os, tempfile
+          import os, tempfile, time
           from pathlib import Path
-          from v182.sources.alpha_vantage import resolve_and_fetch_overview
+          from v182.sources.alpha_vantage import resolve_symbol, fetch_daily_history
           key = os.environ.get('ALPHA_VANTAGE_API_KEY', '').strip()
           assert key, 'ALPHA_VANTAGE_API_KEY_MISSING'
           security = {'isin': 'GB0008847096', 'name': 'Tesco', 'yahoo_ticker': 'TSCO.L', 'country': 'GB'}
           with tempfile.TemporaryDirectory() as tmp:
-              fields, meta = resolve_and_fetch_overview(security, key, cache_path=Path(tmp) / 'alpha.csv', delay_seconds=1.15, min_match_score=0.60)
-              assert meta.get('symbol'), f'ALPHA_SYMBOL_RESOLUTION_FAILED: {meta}'
-              assert meta.get('resolution_api_calls') == 1, meta
-              assert meta.get('overview_api_calls') == 1, meta
-              assert fields, 'ALPHA_OVERVIEW_NO_FIELDS'
-              print('ALPHA_VANTAGE_SMOKE_OK', meta['symbol'], len(fields))
+              resolution = resolve_symbol(security, key, cache_path=Path(tmp) / 'alpha.csv', min_match_score=0.60)
+              assert resolution.symbol, f'ALPHA_SYMBOL_RESOLUTION_FAILED: {resolution}'
+              assert resolution.api_calls == 1, resolution
+              time.sleep(1.15)
+              history = fetch_daily_history(resolution.symbol, key, 'TSCO.L', min_rows=60, outputsize='compact')
+              assert not history.failures, f'ALPHA_DAILY_FAILED: {history.failures}'
+              assert 'TSCO.L' in history.frames
+              assert len(history.frames['TSCO.L']) >= 60
+              print('ALPHA_VANTAGE_SMOKE_OK', resolution.symbol, len(history.frames['TSCO.L']))
           PY
 
   fred:
