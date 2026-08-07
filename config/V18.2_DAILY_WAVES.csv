@@ -1,9 +1,12 @@
-﻿Wave;Agent;Scope;Output;Reason
-WAVE_01;YFINANCE_HISTORY_ACTIONS;All mapped action tickers;OHLCV 5y daily;Highest bulk gain
-WAVE_02;YFINANCE_HISTORY_ETF;All mapped ETF tickers;OHLCV 5y daily;Highest bulk gain
-WAVE_03;DERIVED_FEATURES;Rows with OHLCV;Technical and risk indicators;No external calls
-WAVE_04;YFINANCE_INFO_ACTIONS;Actions prioritized by Committee/Watch;Fundamentals and estimates;Rate controlled
-WAVE_05;BOURSORAMA_ZONEBOURSE;Actions in stage 2;Consensus and deltas;Bulk public tables
-WAVE_06;ABC_BOURSE_BOURSORAMA_ETF;All ETF;TER, AUM, benchmark, Morningstar;Bulk public tables
-WAVE_07;OFFICIAL_SOURCES;Conflicts and critical gaps;Issuer, AMF, Euronext;Evidence A
-WAVE_08;SCENARIOS;Shortlists only;B/C/H, EV, invalidation;Internal
+Wave;Agent;Scope;Output;Reason;Implementation status
+WAVE_00_OPENFIGI;OPENFIGI_IDENTIFIER_CACHE;Actions + ETF;ISIN/FIGI/ticker/MIC cache;Safe identity and symbol repair;OPERATIONAL
+WAVE_00_ETF_TICKERS;ETF_TICKER_MAP;All ETF;Validated Yahoo ticker map;Input prerequisite;OPERATIONAL
+WAVE_01;YFINANCE_HISTORY_ACTIONS;All mapped action tickers;OHLCV 5y daily + OpenFIGI/Marketstack fallback;Highest bulk gain;OPERATIONAL
+WAVE_02;YFINANCE_HISTORY_ETF;All mapped ETF tickers;OHLCV 5y daily + OpenFIGI/Marketstack fallback;Highest bulk gain;OPERATIONAL
+WAVE_03;DERIVED_FEATURES;Rows with OHLCV;Technical and risk indicators;No external calls;OPERATIONAL
+WAVE_04;YFINANCE_INFO_ACTIONS;Actions prioritized by Committee/Watch;Fundamentals and estimates;Rate controlled and TTL refresh;OPERATIONAL
+WAVE_05;YFINANCE_FINNHUB_CONSENSUS;Priority Actions;Normalized Yahoo consensus + Finnhub fallback;Current implemented consensus path;OPERATIONAL
+WAVE_06;YFINANCE_ETF_INFO;All mapped ETF;Dividend data when exposed;Current implemented ETF info path;OPERATIONAL_LIMITED
+WAVE_05_06_SCRAPING_FALLBACK;PUBLIC_TABLE_SELECTORS;Configured selectors only;Public table fallback fields;No active selectors in current config;PLANNED_NOT_CONFIGURED
+WAVE_07;OFFICIAL_OVERRIDES;Quarantined conflicts with manual override;Evidence A replacement;Not an automatic AMF/Euronext ingestion;OPERATIONAL_MANUAL_ONLY
+WAVE_08;SCENARIOS;Committee/Watch shortlist only;Bull/base/bear and invalidation;Internal;OPERATIONAL
