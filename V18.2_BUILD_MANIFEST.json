@@ -1,25 +1,35 @@
 {
-  "version": "18.2.1-operational",
+  "version": "18.2.1-preproduction-audit2",
   "baseline": "18.2.0",
-  "release_status": "VALIDATED_OPERATIONAL",
-  "actions_rows": 1486,
-  "actions_tickers": 1486,
-  "etf_rows": 102,
-  "etf_tickers": 102,
-  "tests": "18 passed",
+  "release_status": "PREPRODUCTION_BLOCKED_PENDING_FINAL_FULL_RUN",
+  "actions_rows_expected": 1486,
+  "etf_rows_expected": 102,
+  "test_status": "PENDING_LATEST_SECOND_AUDIT_CI",
   "workflow": "artifact + controlled pull request",
   "checkpoints": "per run",
-  "quality_gates": [
-    "row counts",
-    "unique ISIN",
-    "100% ticker coverage",
-    "no coverage regression",
-    "OHLCV success >=90%"
+  "operational_sources": [
+    "yfinance",
+    "OpenFIGI v3",
+    "Marketstack v2",
+    "Finnhub"
   ],
-  "excel_outputs": [
-    "V18.2_PEA_ACTIONS_ACTUALISE.xlsx",
-    "V18.2_PEA_ETF_ACTUALISE.xlsx",
-    "V18.2_RUN_REPORT.xlsx"
+  "planned_not_implemented_or_not_configured": [
+    "Alpha Vantage",
+    "FRED",
+    "EIA",
+    "Boursorama",
+    "Zonebourse",
+    "ABC Bourse",
+    "AMF/Euronext automatic ingestion",
+    "Morningstar",
+    "GDELT"
+  ],
+  "required_before_release": [
+    "latest static CI green",
+    "latest OpenFIGI/Marketstack smoke green",
+    "full V18.2 run on exact final commit green",
+    "review of functional coverage gaps",
+    "regenerate release validation and SHA256 manifest"
   ],
   "secrets_included": false
 }
