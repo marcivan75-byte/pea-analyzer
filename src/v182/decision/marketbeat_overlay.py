@@ -170,11 +170,30 @@ def _final_gate(
     return "NEUTRAL", "NEUTRAL", False, worst
 
 
-def _select_marketbeat_rows(actions: pd.DataFrame, max_issuers: int) -> list[dict]:
+def _resolved_marketbeat_isins(mapping_path: Path | None) -> set[str]:
+    if mapping_path is None or not mapping_path.exists():
+        return set()
+    try:
+        mapping = pd.read_csv(mapping_path, sep=";", encoding="utf-8-sig", dtype=str)
+    except Exception:
+        return set()
+    if "isin" not in mapping.columns or "status" not in mapping.columns:
+        return set()
+    resolved = mapping[mapping["status"].fillna("").str.upper().eq("RESOLVED")]
+    return set(resolved["isin"].dropna().astype(str))
+
+
+def _select_marketbeat_rows(
+    actions: pd.DataFrame,
+    max_issuers: int,
+    mapping_path: Path | None = None,
+) -> list[dict]:
     shortlist, _ = _committee_selection(actions, limit=300)
     if shortlist.empty:
         return []
     ranked = shortlist.copy()
+    resolved_isins = _resolved_marketbeat_isins(mapping_path)
+    ranked["_mb_cached"] = ranked["isin"].astype(str).isin(resolved_isins).astype(int)
     analysts = pd.Series(float("nan"), index=ranked.index, dtype=float)
     if "n_analysts" in ranked.columns:
         analysts = pd.to_numeric(ranked["n_analysts"], errors="coerce")
@@ -187,10 +206,11 @@ def _select_marketbeat_rows(actions: pd.DataFrame, max_issuers: int) -> list[dic
         else 0.0
     )
     ranked = ranked.sort_values(
-        ["_mb_analysts", "_mb_score"],
-        ascending=[False, False],
+        ["_mb_cached", "_mb_analysts", "_mb_score"],
+        ascending=[False, False, False],
         na_position="last",
-    ).drop(columns=["_mb_analysts", "_mb_score"])
+        kind="stable",
+    ).drop(columns=["_mb_cached", "_mb_analysts", "_mb_score"])
     required = [column for column in ["isin", "name", "yahoo_ticker"] if column in ranked.columns]
     if len(required) < 3:
         return []
@@ -222,11 +242,12 @@ def apply_marketbeat_overlay(root: Path | None = None) -> dict:
 
     if enabled and api_key:
         max_issuers = max(0, int(mb_cfg.get("max_issuers_per_run", 3) or 0))
-        securities = _select_marketbeat_rows(actions, max_issuers)
+        mapping_path = config_dir / "V18.2_MARKETBEAT_SYMBOL_MAP.csv"
+        securities = _select_marketbeat_rows(actions, max_issuers, mapping_path)
         records, failures, runtime = collect_selective_forecasts(
             securities,
             api_key,
-            mapping_path=config_dir / "V18.2_MARKETBEAT_SYMBOL_MAP.csv",
+            mapping_path=mapping_path,
             max_issuers=max_issuers,
             mapping_ttl_days=int(mb_cfg.get("mapping_ttl_days", 90) or 90),
             unresolved_ttl_days=int(mb_cfg.get("unresolved_ttl_days", 7) or 7),
