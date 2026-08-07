@@ -42,6 +42,8 @@ jobs:
           test -s outputs/V18.2_PEA_ACTIONS_ACTUALISE.xlsx
           test -s outputs/V18.2_PEA_ETF_ACTUALISE.xlsx
           test -s outputs/V18.2_RUN_REPORT.xlsx
+          test -s outputs/audit/V18.2_SOURCE_FALLBACK_METRICS.json
+          test -s config/V18.2_OPENFIGI_MASTER_MAP.csv
           python - <<'PY'
           import json
           q=json.load(open('outputs/audit/V18.2_QUALITY_GATES.json'))
@@ -59,6 +61,7 @@ jobs:
             outputs/gaps/**
             state/runs/**
             config/V18.2_FINNHUB_SYMBOL_MAP.csv
+            config/V18.2_OPENFIGI_MASTER_MAP.csv
           retention-days: 30
       - name: Create controlled refresh pull request
         uses: peter-evans/create-pull-request@v8
@@ -70,9 +73,11 @@ jobs:
           title: "V18.2 automated data refresh ${{ github.run_id }}"
           body: |
             Automated V18.2 refresh. Quality gates passed.
+            OpenFIGI identifier cache and Marketstack fallback diagnostics are included.
             Review coverage, gaps and Excel reports before merging.
           add-paths: |
             state/runs/**
             outputs/**
             config/V18.2_ETF_TICKER_MAP.csv
             config/V18.2_FINNHUB_SYMBOL_MAP.csv
+            config/V18.2_OPENFIGI_MASTER_MAP.csv
