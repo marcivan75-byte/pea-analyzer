@@ -53,8 +53,14 @@ jobs:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
         run: python -m v182.reporting.run
-      - name: Compute analyst momentum and committee impact
+      - name: Compute baseline analyst momentum
         run: python -m v182.decision.analyst_momentum
+      - name: Apply selective MarketBeat consensus cross-check
+        env:
+          MARKETBEAT_API_KEY: ${{ secrets.MARKETBEAT_API_KEY }}
+        run: python -m v182.decision.marketbeat_overlay
+      - name: Finalize committee target fields
+        run: python -m v182.decision.committee_finalize
       - name: Verify required outputs
         run: |
           test -s outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv
@@ -76,10 +82,23 @@ jobs:
           import pandas as pd
           q=json.load(open('outputs/audit/V18.2_QUALITY_GATES.json'))
           assert q['passed'], q
+          actions = pd.read_csv('outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv', sep=';', encoding='utf-8-sig')
           committee = pd.read_csv('outputs/V18.2_COMMITTEE_ANALYST_MOMENTUM.csv', sep=';', encoding='utf-8-sig')
           assert len(committee) > 0, 'EMPTY_COMMITTEE_ANALYST_OUTPUT'
+          required = {
+              'target_change_12m_abs', 'target_change_12m_pct',
+              'target_revision_signal_pct', 'consensus_change_signal',
+              'marketbeat_confirmation_state', 'marketbeat_risk_revision_pct',
+              'analyst_momentum_score_pre_marketbeat',
+          }
+          assert required.issubset(actions.columns), required - set(actions.columns)
+          assert 'target_change_12m_abs' in committee.columns
           metrics=json.load(open('outputs/audit/V18.2_ANALYST_MOMENTUM_METRICS.json'))
           assert int(metrics.get('committee_rows', 0)) == len(committee), metrics
+          mb = metrics.get('marketbeat') or {}
+          assert mb.get('enabled') is True, mb
+          assert mb.get('key_present') is True, mb
+          assert mb.get('success') is True, mb
           PY
       - name: Upload Excel and audit artifacts
         if: always()
@@ -98,6 +117,7 @@ jobs:
             config/V18.2_FINNHUB_SYMBOL_MAP.csv
             config/V18.2_OPENFIGI_MASTER_MAP.csv
             config/V18.2_MARKETSTACK_SYMBOL_MAP.csv
+            config/V18.2_MARKETBEAT_SYMBOL_MAP.csv
           retention-days: 30
       - name: Create controlled refresh pull request
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
@@ -109,8 +129,8 @@ jobs:
           title: "V18.2 automated data refresh ${{ github.run_id }}"
           body: |
             Automated V18.2 refresh. Quality gates passed.
-            Identifier caches, API context files, analyst-momentum history and fallback diagnostics are included.
-            Review coverage, gaps, committee analyst gates and Excel reports before merging.
+            Identifier caches, API context files, analyst-momentum history, MarketBeat cross-check and fallback diagnostics are included.
+            Review coverage, target revisions in value/% and committee analyst gates before merging.
           add-paths: |
             state/runs/**
             outputs/**
@@ -119,3 +139,4 @@ jobs:
             config/V18.2_FINNHUB_SYMBOL_MAP.csv
             config/V18.2_OPENFIGI_MASTER_MAP.csv
             config/V18.2_MARKETSTACK_SYMBOL_MAP.csv
+            config/V18.2_MARKETBEAT_SYMBOL_MAP.csv
