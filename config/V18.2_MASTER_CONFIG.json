@@ -7,10 +7,32 @@
   "api_keys": {
     "MARKETSTACK_API_KEY": "environment",
     "OPENFIGI_API_KEY": "environment",
-    "ALPHA_VANTAGE_API_KEY": "environment",
+    "ALPHA_VANTAGE_API_KEY": "environment_planned_connector",
     "FINNHUB_API_KEY": "environment",
-    "FRED_API_KEY": "environment",
-    "EIA_API_KEY": "environment"
+    "FRED_API_KEY": "environment_planned_connector",
+    "EIA_API_KEY": "environment_planned_connector"
+  },
+  "source_activation": {
+    "operational_and_tested": [
+      "yfinance",
+      "OpenFIGI v3",
+      "Marketstack v2",
+      "Finnhub"
+    ],
+    "configured_but_connector_not_implemented": [
+      "Alpha Vantage",
+      "FRED",
+      "EIA"
+    ],
+    "planned_public_or_official_fallback_not_configured": [
+      "Boursorama",
+      "Zonebourse",
+      "ABC Bourse",
+      "Issuer/KID/Factsheet scraping",
+      "AMF/Euronext event ingestion",
+      "Morningstar-authorized source",
+      "GDELT"
+    ]
   },
   "yfinance": {
     "enabled": true,
@@ -59,7 +81,7 @@
     "delay_seconds": 0.25,
     "require_exact_exchange_mic": true,
     "quota_policy": "CONSERVATIVE_FREE_PLAN_DEFAULT",
-    "quota_note": "Default worst case is 3 EOD ticker lookups plus 1 new ticker-resolution request per weekday run, about 88 calls over 22 weekdays; resolved ticker mappings are cached so normal usage should be lower. Override only when the account allowance is known."
+    "quota_note": "Default worst case is 3 EOD requests plus 1 new ticker-resolution request per weekday run. Resolved and negative ticker mappings are cached; raise limits only after confirming the account allowance."
   },
   "derived_features": [
     "perf_1m_pct",
@@ -88,22 +110,23 @@
     "positive_reversal_flag"
   ],
   "fallback_policy": [
-    ["IDENTIFIERS", "OpenFIGI v3 ISIN+MIC", "Issuer/Euronext", ""],
-    ["OHLCV", "yfinance", "OpenFIGI symbol repair + yfinance", "Marketstack tickerslist name+MIC -> exact-MIC EOD", "Alpha Vantage", "Issuer/Euronext"],
-    ["FUNDAMENTALS_ACTIONS", "yfinance", "Alpha Vantage", "Issuer", "Zonebourse"],
-    ["CONSENSUS_ACTIONS", "Boursorama", "Zonebourse", "yfinance", "Finnhub"],
-    ["ETF_COSTS_AUM", "ABC Bourse", "Issuer/KID", "Boursorama", ""],
-    ["ETF_MORNINGSTAR", "Boursorama", "Morningstar-authorized source", "", ""],
-    ["NEWS_EVENTS", "AMF/Issuer", "Finnhub", "GDELT", "Boursorama/Zonebourse"],
-    ["MACRO", "FRED", "", "", ""],
-    ["ENERGY", "EIA", "", "", ""]
+    ["IDENTIFIERS", "OpenFIGI v3 ISIN+MIC [OPERATIONAL]", "Issuer/Euronext [PLANNED]", ""],
+    ["OHLCV", "yfinance [OPERATIONAL]", "OpenFIGI symbol repair + yfinance [OPERATIONAL]", "Marketstack tickerslist name+MIC -> exact-MIC EOD [OPERATIONAL]", "Alpha Vantage [PLANNED]", "Issuer/Euronext [PLANNED]"],
+    ["FUNDAMENTALS_ACTIONS", "yfinance [OPERATIONAL]", "Alpha Vantage [PLANNED]", "Issuer [PLANNED]", "Zonebourse [PLANNED]"],
+    ["CONSENSUS_ACTIONS", "yfinance [OPERATIONAL]", "Finnhub [OPERATIONAL]", "Boursorama [PLANNED]", "Zonebourse [PLANNED]"],
+    ["ETF_COSTS_AUM", "ABC Bourse [PLANNED]", "Issuer/KID [PLANNED]", "Boursorama [PLANNED]", ""],
+    ["ETF_MORNINGSTAR", "Boursorama [PLANNED]", "Morningstar-authorized source [PLANNED]", "", ""],
+    ["NEWS_EVENTS", "AMF/Issuer [PLANNED]", "Finnhub news [PLANNED]", "GDELT [PLANNED]", "Boursorama/Zonebourse [PLANNED]"],
+    ["MACRO", "FRED [PLANNED]", "", "", ""],
+    ["ENERGY", "EIA [PLANNED]", "", "", ""]
   ],
   "merge_policy": {
     "primary_key": "isin",
     "never_replace_observed_with_missing": true,
     "prefer_higher_evidence": true,
     "prefer_fresher_equal_evidence": true,
-    "quarantine_conflicts": true
+    "quarantine_conflicts": true,
+    "persist_field_level_provenance": true
   },
   "execution_gate": "SHADOW_BLOCKED",
   "quality_gates": {
@@ -129,6 +152,9 @@
     "delay_seconds": 1.05,
     "max_retries": 2,
     "resolve_symbols_by_isin": true,
-    "cache_symbol_map": true
+    "cache_symbol_map": true,
+    "resolved_cache_ttl_days": 90,
+    "unresolved_cache_ttl_days": 30,
+    "lookup_min_score": 8
   }
 }
