@@ -41,29 +41,74 @@ def resolve_etf_tickers(etf_df: pd.DataFrame, mapping_path: str | Path) -> tuple
     return merged, gaps
 
 
+def _history_source(path: Path) -> tuple[str, int]:
+    name = path.name.lower()
+    if "marketstack" in name:
+        return "MARKETSTACK", 1
+    if "openfigi_repair" in name:
+        return "YFINANCE_OPENFIGI_REPAIR", 2
+    return "YFINANCE", 3
+
+
+def _history_rank(frame: pd.DataFrame, source_priority: int) -> tuple[int, int, int]:
+    """Prefer the longest usable series, then the freshest, then source priority."""
+    if "Close" not in frame.columns:
+        return (0, 0, source_priority)
+    close = pd.to_numeric(frame["Close"], errors="coerce").dropna()
+    if close.empty:
+        return (0, 0, source_priority)
+    try:
+        last = pd.to_datetime(close.index[-1], utc=True).value
+    except Exception:
+        last = 0
+    return (len(close), int(last), source_priority)
+
+
 def wave3_derived_features(cache_dir: str, ticker_isin_map: dict[str, str], universe: str) -> list[dict]:
-    observations, per_ticker_perf_1y, per_ticker_indicators = [], {}, {}
+    """Derive indicators from the best available history for each ISIN.
+
+    A short/partial Yahoo frame must never overwrite a fuller Marketstack or
+    OpenFIGI-repaired history simply because its parquet filename sorts later.
+    """
+    observations, per_ticker_perf_1y = [], {}
+    best_frames: dict[str, tuple[tuple[int, int, int], pd.DataFrame, str]] = {}
+
     for parquet_file in sorted(Path(cache_dir).glob("history_*.parquet")):
         frame = pd.read_parquet(parquet_file)
         if not hasattr(frame.columns, "levels"):
             continue
+        source_name, source_priority = _history_source(parquet_file)
         for ticker in frame.columns.get_level_values(0).unique():
             isin = ticker_isin_map.get(ticker)
             if isin is None:
                 continue
-            indicators = calculate_features(frame[ticker])
-            if not indicators:
+            sub = frame[ticker]
+            rank = _history_rank(sub, source_priority)
+            if rank[0] == 0:
                 continue
-            per_ticker_indicators[isin] = indicators
-            if indicators.get("perf_1y_pct") is not None:
-                per_ticker_perf_1y[isin] = indicators["perf_1y_pct"]
+            current = best_frames.get(isin)
+            if current is None or rank > current[0]:
+                best_frames[isin] = (rank, sub, source_name)
+
+    per_ticker_indicators: dict[str, tuple[dict, str]] = {}
+    for isin, (_, frame, source_name) in best_frames.items():
+        indicators = calculate_features(frame)
+        if not indicators:
+            continue
+        per_ticker_indicators[isin] = (indicators, source_name)
+        if indicators.get("perf_1y_pct") is not None:
+            per_ticker_perf_1y[isin] = indicators["perf_1y_pct"]
+
     median_perf = pd.Series(per_ticker_perf_1y).median() if per_ticker_perf_1y else 0.0
-    for isin, indicators in per_ticker_indicators.items():
+    for isin, (indicators, source_name) in per_ticker_indicators.items():
+        source = f"INTERNAL_FROM_OHLCV_{source_name}"
         for field, value in indicators.items():
             if value is not None:
-                observations.append(_obs(universe, isin, field, value, "INTERNAL_FROM_OHLCV", "C"))
+                observations.append(_obs(universe, isin, field, value, source, "C"))
         if indicators.get("perf_1y_pct") is not None:
-            observations.append(_obs(universe, isin, "relative_strength", round(indicators["perf_1y_pct"] - median_perf, 3), "INTERNAL_FROM_OHLCV", "C"))
+            observations.append(_obs(
+                universe, isin, "relative_strength", round(indicators["perf_1y_pct"] - median_perf, 3), source, "C"
+            ))
     return observations
 
 
