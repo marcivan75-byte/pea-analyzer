@@ -64,12 +64,7 @@ def resolve_one(
     min_confidence: float = 0.72,
     timeout: int = 30,
 ) -> tuple[dict | None, dict | None]:
-    """Resolve one Marketstack-specific ticker by company name + exact MIC.
-
-    Returns ``(match, failure)``. A no-match/low-confidence outcome is a normal
-    data gap, while HTTP/API exceptions are reported distinctly for quality
-    gates. No ambiguous symbol is accepted automatically.
-    """
+    """Resolve one Marketstack-specific ticker by company name + exact MIC."""
     import requests
 
     if not api_key:
@@ -99,8 +94,6 @@ def resolve_one(
             candidate_name = str(row.get("name") or "")
             score = _name_score(name, candidate_name)
             ticker = str(row.get("ticker") or row.get("symbol") or "").strip()
-            # Exact Marketstack representation of the Yahoo symbol is a strong
-            # secondary signal, but never bypasses the MIC requirement.
             if ticker.upper() == str(original_yahoo_ticker or "").upper():
                 score = max(score, 0.95)
             scored.append((score, ticker, candidate_name, row))
@@ -181,8 +174,9 @@ def resolve_marketstack_symbols(
             continue
 
         old = by_key.get((universe, isin))
-        if old is not None and _fresh(old, resolved_ttl_days, negative_ttl_days):
-            if str(old.get("status") or "").upper() == "RESOLVED" and str(old.get("expected_mic") or "").upper() == mic:
+        old_same_mic = old is not None and str(old.get("expected_mic") or "").upper() == mic
+        if old_same_mic and _fresh(old, resolved_ttl_days, negative_ttl_days):
+            if str(old.get("status") or "").upper() == "RESOLVED":
                 symbol = str(old.get("marketstack_symbol") or "").strip()
                 if symbol:
                     resolved[original] = symbol
@@ -210,7 +204,6 @@ def resolve_marketstack_symbols(
             failure = {"ticker": original, "isin": isin, **(failure or {"reason": "UNKNOWN"})}
             failures.append(failure)
             reason = str(failure.get("reason") or "")
-            # Cache only definitive identity outcomes, never auth/transport/API errors.
             if reason in {"NO_MATCH", "LOW_CONFIDENCE", "AMBIGUOUS", "INSUFFICIENT_IDENTITY"}:
                 replacements.append({
                     "universe": universe, "isin": isin, "name": name,
