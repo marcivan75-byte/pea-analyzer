@@ -5,6 +5,7 @@ import pandas as pd
 
 MISSING_TOKEN = "NON_OBSERVE"
 FIELD_PROVENANCE_COLUMN = "_field_provenance_json"
+EVIDENCE_RANK = {"A": 4, "B": 3, "C": 2, "D": 1}
 
 TECHNICAL_FIELDS = {
     "last_close", "volume", "mm20", "mm50", "mm100", "mm200", "rsi14",
@@ -32,12 +33,10 @@ SCENARIO_FIELDS = {
 
 
 def load_master(path: str | Path) -> pd.DataFrame:
-    """Charge un référentiel maître CSV séparé par ';' en UTF-8 BOM."""
     return pd.read_csv(path, sep=";", encoding="utf-8-sig", dtype=str, keep_default_na=True)
 
 
 def save_master(frame: pd.DataFrame, path: str | Path) -> None:
-    """Réécrit un référentiel maître dans le format de stockage V18.2."""
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(out, sep=";", encoding="utf-8-sig", index=False)
@@ -99,13 +98,6 @@ def _write_field_provenance(frame: pd.DataFrame, isin: str, field: str, obs: dic
 
 
 def _existing_meta(frame: pd.DataFrame, isin: str, field: str, current_value) -> dict | None:
-    """Return provenance for the exact stored field whenever available.
-
-    New enriched masters persist field-level provenance in a private JSON
-    column. Legacy row/group metadata are retained only as a migration fallback.
-    This prevents an update to one fundamental from lowering the protection of
-    another field that came from an official source.
-    """
     if is_missing(current_value):
         return None
 
@@ -125,18 +117,10 @@ def _existing_meta(frame: pd.DataFrame, isin: str, field: str, current_value) ->
     if field in TECHNICAL_FIELDS:
         source = str(_safe_cell(frame, isin, "ta_source", ""))
         evidence = _source_evidence(source, "C") if source else "C"
-        as_of = str(
-            _safe_cell(frame, isin, "ta_as_of", "")
-            or _safe_cell(frame, isin, "perf_as_of", "")
-            or row_as_of
-        )
+        as_of = str(_safe_cell(frame, isin, "ta_as_of", "") or _safe_cell(frame, isin, "perf_as_of", "") or row_as_of)
     elif field.endswith("_yf"):
         evidence = "C"
-        as_of = str(
-            _safe_cell(frame, isin, "yf_consensus_as_of", "")
-            or _safe_cell(frame, isin, "fundamentals_as_of", "")
-            or row_as_of
-        )
+        as_of = str(_safe_cell(frame, isin, "yf_consensus_as_of", "") or _safe_cell(frame, isin, "fundamentals_as_of", "") or row_as_of)
     elif field in FUNDAMENTAL_FIELDS:
         source = str(_safe_cell(frame, isin, "fundamentals_source", ""))
         if source:
@@ -146,11 +130,7 @@ def _existing_meta(frame: pd.DataFrame, isin: str, field: str, current_value) ->
         source = str(_safe_cell(frame, isin, "consensus_source", ""))
         if source:
             evidence = _source_evidence(source, row_evidence)
-        as_of = str(
-            _safe_cell(frame, isin, "consensus_delta_as_of", "")
-            or _safe_cell(frame, isin, "yf_consensus_as_of", "")
-            or row_as_of
-        )
+        as_of = str(_safe_cell(frame, isin, "consensus_delta_as_of", "") or _safe_cell(frame, isin, "yf_consensus_as_of", "") or row_as_of)
     elif field in SCENARIO_FIELDS:
         evidence = "C"
         as_of = str(_safe_cell(frame, isin, "ta_as_of", "") or row_as_of)
@@ -158,12 +138,17 @@ def _existing_meta(frame: pd.DataFrame, isin: str, field: str, current_value) ->
     return {"value": current_value, "evidence_level": evidence, "as_of": as_of}
 
 
-def _update_companion_provenance(frame: pd.DataFrame, isin: str, field: str, obs: dict) -> None:
-    """Maintain legacy human-readable group metadata.
+def _group_can_be_updated(frame: pd.DataFrame, isin: str, source_column: str, obs: dict) -> bool:
+    current_source = str(_safe_cell(frame, isin, source_column, ""))
+    if not current_source:
+        return True
+    current_rank = EVIDENCE_RANK.get(_source_evidence(current_source, "D"), 0)
+    incoming_rank = EVIDENCE_RANK.get(str(obs.get("evidence_level") or _source_evidence(obs.get("source"), "D")), 0)
+    return incoming_rank >= current_rank
 
-    These columns are no longer authoritative for merge decisions once field
-    provenance exists, but remain useful in reports and for refresh planning.
-    """
+
+def _update_companion_provenance(frame: pd.DataFrame, isin: str, field: str, obs: dict) -> None:
+    """Maintain legacy group metadata without allowing evidence downgrades."""
     source = str(obs.get("source") or "")
     collected_at = str(obs.get("collected_at") or obs.get("as_of") or "")
     as_of = str(obs.get("as_of") or collected_at)
@@ -178,31 +163,28 @@ def _update_companion_provenance(frame: pd.DataFrame, isin: str, field: str, obs
         if "perf_data_status" in frame.columns and field.startswith("perf_"):
             frame.at[isin, "perf_data_status"] = "OK"
 
-    if field.endswith("_yf") and "yf_consensus_as_of" in frame.columns:
+    if (field.endswith("_yf") or field == "yf_status") and "yf_consensus_as_of" in frame.columns:
         frame.at[isin, "yf_consensus_as_of"] = collected_at or as_of
 
     if field in FUNDAMENTAL_FIELDS:
-        if "fundamentals_source" in frame.columns:
-            frame.at[isin, "fundamentals_source"] = source
-        if "fundamentals_as_of" in frame.columns:
-            frame.at[isin, "fundamentals_as_of"] = collected_at or as_of
+        can_update = _group_can_be_updated(frame, isin, "fundamentals_source", obs)
+        if can_update:
+            if "fundamentals_source" in frame.columns:
+                frame.at[isin, "fundamentals_source"] = source
+            if "fundamentals_as_of" in frame.columns:
+                frame.at[isin, "fundamentals_as_of"] = collected_at or as_of
         if "fundamentals_status" in frame.columns:
             frame.at[isin, "fundamentals_status"] = "OK"
 
     if field in CONSENSUS_FIELDS:
-        if "consensus_source" in frame.columns:
+        can_update = _group_can_be_updated(frame, isin, "consensus_source", obs)
+        if can_update and "consensus_source" in frame.columns:
             frame.at[isin, "consensus_source"] = source
         if field.endswith("_yf") and "yf_consensus_as_of" in frame.columns:
             frame.at[isin, "yf_consensus_as_of"] = collected_at or as_of
 
 
 def apply_observations(frame: pd.DataFrame, observations: list[dict]) -> tuple[pd.DataFrame, list[dict]]:
-    """Apply validated observations without replacing observed values by missing.
-
-    Merge decisions are field-aware and their provenance is persisted so that
-    later scheduled runs can refresh dynamic values without compromising
-    higher-evidence observations stored on the same security row.
-    """
     from v182.core.merge import decide
 
     frame = frame.set_index("isin", drop=False)
