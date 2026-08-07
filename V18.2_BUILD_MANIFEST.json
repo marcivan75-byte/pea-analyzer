@@ -1,35 +1,77 @@
 {
-  "version": "18.2.1-preproduction-audit2",
+  "version": "18.2.1-preproduction-validated",
   "baseline": "18.2.0",
-  "release_status": "PREPRODUCTION_BLOCKED_PENDING_FINAL_FULL_RUN",
+  "release_status": "PREPRODUCTION_VALIDATED_NOT_MERGED",
+  "validated_code_commit": "89eb454e12e40a6560a97332a552caaf96585465",
+  "full_audit": {
+    "workflow": "V18.2 Full Preproduction Audit",
+    "run_id": 31184702729,
+    "conclusion": "success",
+    "completed_at": "2026-08-07T14:26:49Z",
+    "artifact_id": 8997393689,
+    "artifact_name": "V18.2-full-audit-31184702729",
+    "artifact_sha256": "8feea9d659ff67c7e6feffea446720eae20fdc3f6484064e1200e053d28a4416"
+  },
   "actions_rows_expected": 1486,
   "etf_rows_expected": 102,
-  "test_status": "PENDING_LATEST_SECOND_AUDIT_CI",
-  "workflow": "artifact + controlled pull request",
-  "checkpoints": "per run",
+  "tests": {
+    "pytest": "69/69 passed",
+    "dependency_check": "passed",
+    "compileall": "passed",
+    "ruff_critical": "passed"
+  },
+  "quality_gates": {
+    "overall": "passed",
+    "actions_ticker_coverage_pct": 100.0,
+    "etf_ticker_coverage_pct": 100.0,
+    "wave_01_ohlcv_success_pct": 94.92,
+    "wave_02_ohlcv_success_pct": 99.02,
+    "openfigi_mapping_coverage_pct": 73.05,
+    "wave_04_fundamentals_availability_pct": 98.0,
+    "wave_05_consensus_availability_pct": 96.0
+  },
+  "source_accounting": {
+    "wave_01": {
+      "successful": 1401,
+      "yfinance": 1035,
+      "yfinance_openfigi_repair": 365,
+      "marketstack": 1,
+      "alpha_vantage": 0
+    },
+    "wave_02": {
+      "successful": 101,
+      "yfinance": 100,
+      "yfinance_openfigi_repair": 1,
+      "marketstack": 0,
+      "alpha_vantage": 0
+    }
+  },
   "operational_sources": [
     "yfinance",
     "OpenFIGI v3",
     "Marketstack v2",
-    "Finnhub"
+    "Alpha Vantage TIME_SERIES_DAILY fallback",
+    "Finnhub consensus fallback",
+    "FRED macro context",
+    "EIA energy context"
+  ],
+  "known_non_blocking_limits": [
+    "75 Action OHLCV gaps and 1 ETF OHLCV gap remain, while both universes stay above the 90% quality threshold.",
+    "Finnhub returned no recommendation data for the 109 fallback attempts in this run; 288/300 consensus records remain available from the primary Yahoo path.",
+    "Marketstack symbol resolution is intentionally limited to one new resolution per run and three EOD requests globally; WAVE_02 correctly recorded shared resolution-budget exhaustion.",
+    "Alpha Vantage attempted one unresolved Action and rejected it for insufficient country-match confidence; no unsafe symbol substitution occurred."
   ],
   "planned_not_implemented_or_not_configured": [
-    "Alpha Vantage",
-    "FRED",
-    "EIA",
     "Boursorama",
     "Zonebourse",
     "ABC Bourse",
     "AMF/Euronext automatic ingestion",
-    "Morningstar",
+    "Morningstar-authorized source",
     "GDELT"
   ],
-  "required_before_release": [
-    "latest static CI green",
-    "latest OpenFIGI/Marketstack smoke green",
-    "full V18.2 run on exact final commit green",
-    "review of functional coverage gaps",
-    "regenerate release validation and SHA256 manifest"
-  ],
-  "secrets_included": false
+  "workflow": "artifact + controlled pull request",
+  "checkpoints": "per run",
+  "secrets_included": false,
+  "main_modified": false,
+  "main_merge_allowed": false
 }
