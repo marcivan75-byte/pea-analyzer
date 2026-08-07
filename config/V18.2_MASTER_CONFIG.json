@@ -48,13 +48,18 @@
   "marketstack": {
     "enabled": true,
     "endpoint": "/v2/eod",
+    "ticker_list_endpoint": "/v2/tickerslist",
     "history_days": 365,
     "max_symbols_per_run": 3,
+    "max_new_symbol_resolutions_per_run": 1,
+    "symbol_min_confidence": 0.72,
+    "symbol_resolved_ttl_days": 90,
+    "symbol_negative_ttl_days": 30,
     "min_rows": 60,
     "delay_seconds": 0.25,
     "require_exact_exchange_mic": true,
     "quota_policy": "CONSERVATIVE_FREE_PLAN_DEFAULT",
-    "quota_note": "Default 3 symbols/run leaves headroom under a 100 requests/month free allowance even with weekday scheduling; override only when the account allowance is known."
+    "quota_note": "Default worst case is 3 EOD ticker lookups plus 1 new ticker-resolution request per weekday run, about 88 calls over 22 weekdays; resolved ticker mappings are cached so normal usage should be lower. Override only when the account allowance is known."
   },
   "derived_features": [
     "perf_1m_pct",
@@ -84,7 +89,7 @@
   ],
   "fallback_policy": [
     ["IDENTIFIERS", "OpenFIGI v3 ISIN+MIC", "Issuer/Euronext", ""],
-    ["OHLCV", "yfinance", "OpenFIGI symbol repair + yfinance", "Marketstack exact-MIC", "Alpha Vantage", "Issuer/Euronext"],
+    ["OHLCV", "yfinance", "OpenFIGI symbol repair + yfinance", "Marketstack tickerslist name+MIC -> exact-MIC EOD", "Alpha Vantage", "Issuer/Euronext"],
     ["FUNDAMENTALS_ACTIONS", "yfinance", "Alpha Vantage", "Issuer", "Zonebourse"],
     ["CONSENSUS_ACTIONS", "Boursorama", "Zonebourse", "yfinance", "Finnhub"],
     ["ETF_COSTS_AUM", "ABC Bourse", "Issuer/KID", "Boursorama", ""],
