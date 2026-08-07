@@ -1,6 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 import os
+import time
 
 from v182.sources.yfinance_bulk import download_history, DownloadResult
 from v182.mapping.etf_isin_resolver import fallback_specs, expected_mic
@@ -8,9 +9,10 @@ from v182.sources.marketstack_eod import fetch_eod_history, save_marketstack_cac
 from v182.sources.marketstack_symbols import resolve_marketstack_symbols
 from v182.io.frames import is_missing
 
-# The reporting pipeline executes Actions then ETF in the same Python process.
-# This state therefore enforces one Marketstack allowance across both waves.
+# Actions and ETF execute in the same Python process. External API budgets are
+# therefore shared across both universes rather than reset per wave.
 _MARKETSTACK_RUN_BUDGET = {"initialized": False, "eod_remaining": 0, "resolution_remaining": 0}
+_ALPHA_RUN_BUDGET = {"initialized": False, "securities_remaining": 0}
 
 
 def _priority_failed_rows(df, failed: set[str], universe: str):
@@ -60,6 +62,18 @@ def _consume_marketstack_budget(eod_used: int, resolution_used: int, explicit_ov
     )
 
 
+def _alpha_budget(cfg: dict) -> int:
+    alpha_cfg = cfg.get("alpha_vantage", {})
+    if not _ALPHA_RUN_BUDGET["initialized"]:
+        _ALPHA_RUN_BUDGET["securities_remaining"] = max(0, int(alpha_cfg.get("max_securities_per_run", 1) or 1))
+        _ALPHA_RUN_BUDGET["initialized"] = True
+    return int(_ALPHA_RUN_BUDGET["securities_remaining"])
+
+
+def _consume_alpha_budget(count: int = 1) -> None:
+    _ALPHA_RUN_BUDGET["securities_remaining"] = max(0, int(_ALPHA_RUN_BUDGET["securities_remaining"]) - int(count))
+
+
 def download_history_with_fallback(
     df,
     universe: str,
@@ -70,11 +84,7 @@ def download_history_with_fallback(
     marketstack_eod_budget: int | None = None,
     marketstack_resolution_budget: int | None = None,
 ) -> DownloadResult:
-    """Primary Yahoo OHLCV → OpenFIGI repair → Marketstack symbol resolution/EOD.
-
-    By default Actions and ETF share one process-wide Marketstack budget. The
-    optional explicit budgets exist for isolated tests or controlled callers.
-    """
+    """Yahoo → OpenFIGI/Yahoo repair → Marketstack → Alpha Vantage daily OHLCV."""
     valid = df[df["yahoo_ticker"].apply(lambda v: not is_missing(v))]
     batch_key = "actions_batch_size" if universe == "ACTION" else "etf_batch_size"
     yf_cfg = cfg.get("yfinance", {})
@@ -95,7 +105,12 @@ def download_history_with_fallback(
 
     successful = set(primary.successful)
     remaining = set(primary.failed)
-    source_counts = {"yfinance": len(successful), "yfinance_openfigi_repair": 0, "marketstack": 0}
+    source_counts = {
+        "yfinance": len(successful),
+        "yfinance_openfigi_repair": 0,
+        "marketstack": 0,
+        "alpha_vantage": 0,
+    }
     diagnostics = {
         "yahoo_failed_initial": len(remaining),
         "openfigi_specs": 0,
@@ -110,6 +125,12 @@ def download_history_with_fallback(
         "marketstack_attempted": 0,
         "marketstack_failures": [],
         "marketstack_key_present": bool(os.environ.get("MARKETSTACK_API_KEY")),
+        "remaining_after_marketstack": 0,
+        "alpha_key_present": bool(os.environ.get("ALPHA_VANTAGE_API_KEY")),
+        "alpha_security_attempted": 0,
+        "alpha_resolution_api_calls": 0,
+        "alpha_history_api_calls": 0,
+        "alpha_failures": [],
     }
 
     specs = fallback_specs(valid, sorted(remaining), openfigi_map_path, universe)
@@ -201,6 +222,63 @@ def download_history_with_fallback(
         _consume_marketstack_budget(ms.attempted, symbol_result.api_attempted, explicit_budget)
     elif remaining and market_key and ms_cfg.get("enabled", True):
         diagnostics["marketstack_budget_exhausted"] = True
+
+    diagnostics["remaining_after_marketstack"] = len(remaining)
+
+    alpha_key = os.environ.get("ALPHA_VANTAGE_API_KEY")
+    alpha_cfg = cfg.get("alpha_vantage", {})
+    alpha_budget = _alpha_budget(cfg)
+    diagnostics["alpha_security_budget_available"] = alpha_budget
+    if remaining and alpha_key and alpha_cfg.get("enabled", True) and alpha_budget > 0:
+        from v182.sources.alpha_vantage import resolve_symbol, fetch_daily_history, save_alpha_history_cache
+
+        priority = _priority_failed_rows(valid, remaining, universe)
+        if not priority.empty:
+            row = priority.iloc[0]
+            canonical = str(row.get("yahoo_ticker") or "").strip()
+            security = {
+                "isin": row.get("isin"), "name": row.get("name"),
+                "yahoo_ticker": canonical, "country": row.get("country"),
+            }
+            diagnostics["alpha_security_attempted"] = 1
+            _consume_alpha_budget(1)
+            try:
+                resolution = resolve_symbol(
+                    security,
+                    alpha_key,
+                    cache_path=Path(openfigi_map_path).with_name("V18.2_ALPHA_SYMBOL_MAP.csv"),
+                    min_match_score=float(alpha_cfg.get("symbol_min_match_score", 0.70) or 0.70),
+                    positive_ttl_days=int(alpha_cfg.get("symbol_positive_ttl_days", 90) or 90),
+                    negative_ttl_days=int(alpha_cfg.get("symbol_negative_ttl_days", 30) or 30),
+                )
+                diagnostics["alpha_resolution_api_calls"] = resolution.api_calls
+                if not resolution.symbol:
+                    diagnostics["alpha_failures"].append({
+                        "ticker": canonical, "reason": resolution.reason or "SYMBOL_UNRESOLVED",
+                    })
+                else:
+                    if resolution.api_calls:
+                        time.sleep(max(1.05, float(alpha_cfg.get("delay_seconds", 1.15) or 1.15)))
+                    alpha = fetch_daily_history(
+                        resolution.symbol,
+                        alpha_key,
+                        canonical_ticker=canonical,
+                        min_rows=int(alpha_cfg.get("history_min_rows", 60) or 60),
+                        outputsize="compact",
+                    )
+                    diagnostics["alpha_history_api_calls"] = alpha.api_calls
+                    diagnostics["alpha_failures"].extend(alpha.failures)
+                    save_alpha_history_cache(alpha.frames, cache_dir)
+                    alpha_success = set(alpha.frames)
+                    successful |= alpha_success
+                    remaining -= alpha_success
+                    source_counts["alpha_vantage"] = len(alpha_success)
+            except Exception as exc:
+                diagnostics["alpha_failures"].append({
+                    "ticker": canonical, "reason": type(exc).__name__, "detail": str(exc)[:240],
+                })
+    elif remaining and alpha_key and alpha_cfg.get("enabled", True):
+        diagnostics["alpha_budget_exhausted"] = True
 
     diagnostics["failed_final"] = len(remaining)
     return DownloadResult(
