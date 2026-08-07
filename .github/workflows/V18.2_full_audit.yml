@@ -1,0 +1,132 @@
+name: V18.2 Full Preproduction Audit
+
+on:
+  push:
+    branches:
+      - fix/v18-2-waves-resilience
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v18-2-full-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full-audit:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[full-audit]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install validated dependency set
+        run: pip install -c constraints-ci.txt -e .[test]
+
+      - name: Static and regression preflight
+        run: |
+          python -m pip check
+          python -m compileall -q src tests
+          ruff check --select E9,F63,F7,F82 src tests
+          pytest -q
+
+      - name: Execute full V18.2 pipeline
+        env:
+          V182_RUN_ID: full-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
+          OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+        run: python -m v182.reporting.run
+
+      - name: Validate complete outputs and invariants
+        run: |
+          test -s outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv
+          test -s outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
+          test -s outputs/V18.2_PEA_ACTIONS_ACTUALISE.xlsx
+          test -s outputs/V18.2_PEA_ETF_ACTUALISE.xlsx
+          test -s outputs/V18.2_RUN_REPORT.xlsx
+          test -s outputs/audit/V18.2_QUALITY_GATES.json
+          test -s outputs/audit/V18.2_COVERAGE_BEFORE_AFTER.json
+          test -s outputs/audit/V18.2_SOURCE_FALLBACK_METRICS.json
+          test -s outputs/context/V18.2_MACRO_CONTEXT.json
+          test -s outputs/context/V18.2_ENERGY_CONTEXT.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+
+          q = json.loads(Path('outputs/audit/V18.2_QUALITY_GATES.json').read_text())
+          assert q['passed'], q
+          failed = [c for c in q['checks'] if not c['passed']]
+          assert not failed, failed
+
+          actions = pd.read_csv('outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv', sep=';', encoding='utf-8-sig', dtype=str)
+          etf = pd.read_csv('outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv', sep=';', encoding='utf-8-sig', dtype=str)
+          assert len(actions) == 1486, len(actions)
+          assert len(etf) == 102, len(etf)
+          assert actions['isin'].nunique() == 1486
+          assert etf['isin'].nunique() == 102
+          assert actions['yahoo_ticker'].notna().all()
+          assert etf['yahoo_ticker'].notna().all()
+
+          metrics = json.loads(Path('outputs/audit/V18.2_SOURCE_FALLBACK_METRICS.json').read_text())
+          for key in ('wave01_actions', 'wave02_etf'):
+              wave = metrics[key]
+              assert wave['requested'] > 0
+              assert wave['successful'] / wave['requested'] >= 0.90, wave
+              sources = wave.get('source_counts') or {}
+              assert sum(int(v or 0) for v in sources.values()) == int(wave['successful']), (key, sources, wave)
+          assert 'wave04_alpha' not in metrics, 'obsolete Alpha fundamentals path survived'
+
+          macro = json.loads(Path('outputs/context/V18.2_MACRO_CONTEXT.json').read_text())
+          energy = json.loads(Path('outputs/context/V18.2_ENERGY_CONTEXT.json').read_text())
+          assert macro.get('source') == 'FRED'
+          assert macro.get('macro_as_of')
+          assert energy.get('source') == 'EIA'
+          assert energy.get('energy_as_of')
+
+          assert '_field_provenance_json' in actions.columns
+          assert '_field_provenance_json' in etf.columns
+          print('FULL_AUDIT_INVARIANTS_OK')
+          PY
+
+      - name: Produce audit summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          summary = {'run_id': '${{ github.run_id }}', 'head_sha': '${{ github.sha }}'}
+          for name, path in {
+              'quality': 'outputs/audit/V18.2_QUALITY_GATES.json',
+              'coverage': 'outputs/audit/V18.2_COVERAGE_BEFORE_AFTER.json',
+              'sources': 'outputs/audit/V18.2_SOURCE_FALLBACK_METRICS.json',
+              'macro': 'outputs/context/V18.2_MACRO_CONTEXT.json',
+              'energy': 'outputs/context/V18.2_ENERGY_CONTEXT.json',
+          }.items():
+              p = Path(path)
+              summary[name] = json.loads(p.read_text()) if p.exists() else {'missing': True}
+          Path('outputs/audit/V18.2_FULL_AUDIT_SUMMARY.json').write_text(json.dumps(summary, indent=2), encoding='utf-8')
+          PY
+
+      - name: Upload full audit evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: V18.2-full-audit-${{ github.run_id }}
+          path: |
+            outputs/**
+            state/**
+            config/V18.2_OPENFIGI_MASTER_MAP.csv
+            config/V18.2_MARKETSTACK_SYMBOL_MAP.csv
+            config/V18.2_ALPHA_SYMBOL_MAP.csv
+            config/V18.2_FINNHUB_SYMBOL_MAP.csv
+          retention-days: 30
