@@ -117,7 +117,7 @@ def _row_has_any(row: pd.Series, fields: list[str]) -> bool:
 
 def fundamentals_availability(actions_df: pd.DataFrame, top_n: int = 300) -> tuple[int, int, float]:
     priority_df = _priority_actions(actions_df, top_n)
-    fields = ["per_ttm_yf", "per_forward_yf", "pb", "roe_api", "roa", "debt_to_equity", "free_cash_flow", "marge_ebit", "marge_nette"]
+    fields = ["per_ttm", "per_forward", "per_ttm_yf", "per_forward_yf", "pb", "roe_api", "roa", "debt_to_equity", "free_cash_flow", "marge_ebit", "marge_nette"]
     available = sum(_row_has_any(row, fields) for _, row in priority_df.iterrows()); total = len(priority_df)
     return available, total, 100.0 if total == 0 else round(available / total * 100, 2)
 
@@ -180,6 +180,82 @@ def wave4_info_actions(actions_df: pd.DataFrame, cfg: dict, top_n: int = 300) ->
             "attempted": len(tickers), "skipped_fresh": max(0, len(priority_df) - len(needs_refresh)),
             "refresh_days": refresh_days, "refreshed_tickers": len(refreshed), "failures": len(failures)}
     return result, failures, meta
+
+
+def wave4_alpha_fallback(actions_df: pd.DataFrame, api_key: str, cache_path: str | Path,
+                         cfg: dict, top_n: int = 300) -> tuple[list[dict], list[dict], dict]:
+    """Fill a tiny number of priority fundamental gaps through Alpha Vantage.
+
+    The standard Alpha Vantage allowance is deliberately protected by a one-
+    security-per-run default. Symbol resolution is country constrained and
+    cached; each selected security consumes at most one search plus one
+    overview request.
+    """
+    from v182.sources.alpha_vantage import resolve_and_fetch_overview
+
+    priority = _priority_actions(actions_df, top_n)
+    alpha_cfg = cfg.get("alpha_vantage", {})
+    max_securities = max(0, int(alpha_cfg.get("max_securities_per_run", 1) or 1))
+    fields = ["per_ttm", "per_forward", "pb", "roe_api", "marge_ebit", "marge_nette", "dividend_yield_pct"]
+    if max_securities == 0 or priority.empty:
+        return [], [], {"attempted": 0, "success": 0, "api_calls": 0, "budget": max_securities}
+
+    ranked = priority.copy()
+    ranked["_alpha_missing"] = ranked.apply(lambda row: sum(field not in row.index or is_missing(row.get(field)) for field in fields), axis=1)
+    ranked = ranked[ranked["_alpha_missing"] > 0]
+    if "score_brut" in ranked.columns:
+        ranked["_alpha_score"] = pd.to_numeric(ranked["score_brut"], errors="coerce").fillna(-1e9)
+        ranked = ranked.sort_values(["_alpha_missing", "_alpha_score"], ascending=[False, False])
+    else:
+        ranked = ranked.sort_values("_alpha_missing", ascending=False)
+
+    result, failures = [], []
+    api_calls = 0
+    successes = 0
+    attempted = 0
+    for _, row in ranked.head(max_securities).iterrows():
+        attempted += 1
+        security = {k: row.get(k) for k in ("isin", "name", "yahoo_ticker", "country")}
+        try:
+            raw_fields, meta = resolve_and_fetch_overview(
+                security, api_key, cache_path=cache_path,
+                delay_seconds=float(alpha_cfg.get("delay_seconds", 0.2) or 0),
+                min_match_score=float(alpha_cfg.get("symbol_min_match_score", 0.70) or 0.70),
+                positive_ttl_days=int(alpha_cfg.get("symbol_positive_ttl_days", 90) or 90),
+                negative_ttl_days=int(alpha_cfg.get("symbol_negative_ttl_days", 30) or 30),
+            )
+            api_calls += int(meta.get("resolution_api_calls", 0) or 0) + int(meta.get("overview_api_calls", 0) or 0)
+            if not raw_fields:
+                failures.append({"isin": security["isin"], "reason": meta.get("reason") or "NO_FIELDS", "meta": meta})
+                continue
+            successes += 1
+            for item in raw_fields:
+                result.append(_obs("ACTION", security["isin"], item["field"], item["value"], "Alpha Vantage", "B"))
+        except Exception as exc:
+            text = str(exc)
+            failures.append({"isin": security["isin"], "reason": type(exc).__name__, "detail": text[:240]})
+            if "ALPHA_VANTAGE_API_ERROR" in text:
+                break
+    return result, failures, {"attempted": attempted, "success": successes, "api_calls": api_calls, "budget": max_securities}
+
+
+def wave_macro_fred(actions_df: pd.DataFrame, api_key: str) -> tuple[list[dict], dict]:
+    from v182.sources.fred_macro import fetch_macro_context
+
+    context = fetch_macro_context(api_key)
+    observations = []
+    for _, row in actions_df.iterrows():
+        isin = row.get("isin")
+        if is_missing(isin):
+            continue
+        for field in ("macro_vix", "macro_curve_10y2y"):
+            item = _obs("ACTION", isin, field, context[field], "FRED", "A")
+            item["as_of"] = context["series"][field]["date"]
+            observations.append(item)
+        as_of = _obs("ACTION", isin, "macro_as_of", context["macro_as_of"], "FRED", "A")
+        as_of["as_of"] = context["macro_as_of"]
+        observations.append(as_of)
+    return observations, context
 
 
 def _rating_from_yf(row: pd.Series) -> tuple[str | None, float | None]:
