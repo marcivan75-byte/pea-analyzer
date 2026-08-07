@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+import re
 from typing import Any
 
 import pandas as pd
@@ -45,6 +46,8 @@ MOMENTUM_FIELDS = [
     "consensus_source_count",
     "consensus_confidence",
     "consensus_as_of",
+    "target_source_canonical",
+    "consensus_source_canonical",
     "weighted_target_revision_30d_pct",
     "weighted_consensus_delta_30d",
     "target_revision_acceleration",
@@ -56,8 +59,9 @@ MOMENTUM_FIELDS = [
 ]
 
 SNAPSHOT_COLUMNS = [
-    "date", "isin", "source", "consensus_rating", "consensus_score_100",
-    "n_analysts", "strong_buy", "buy", "hold", "sell", "strong_sell",
+    "date", "isin", "source", "target_source", "consensus_source",
+    "consensus_rating", "consensus_score_100", "n_analysts",
+    "strong_buy", "buy", "hold", "sell", "strong_sell",
     "target_low", "target_mean", "target_high", "last_close",
 ]
 
@@ -98,9 +102,7 @@ def _num(value: Any) -> float | None:
         number = float(text)
     except (TypeError, ValueError):
         return None
-    if pd.isna(number):
-        return None
-    return number
+    return None if pd.isna(number) else number
 
 
 def _text(value: Any) -> str | None:
@@ -157,6 +159,17 @@ def _field_provenance(row: pd.Series) -> dict[str, dict]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _provenance_source(row: pd.Series, fields: list[str]) -> str | None:
+    provenance = _field_provenance(row)
+    for field in fields:
+        metadata = provenance.get(field)
+        if isinstance(metadata, dict):
+            source = _text(metadata.get("source"))
+            if source:
+                return source
+    return None
+
+
 def consensus_score_100(row: pd.Series) -> float | None:
     counts = {
         "strong_buy": _first_num(row, ["analyst_strong_buy", "strong_buy"]),
@@ -177,13 +190,15 @@ def consensus_score_100(row: pd.Series) -> float | None:
             )
             return round(weighted / total, 4)
 
-    legacy = _first_num(row, ["consensus_score"])
-    if legacy is not None and 1.0 <= legacy <= 5.0:
-        return round((legacy - 1.0) / 4.0 * 100.0, 4)
-
+    # Yahoo recommendationMean is continuous (1=Strong Buy, 5=Strong Sell)
+    # and therefore preserves more information than a discrete BUY/HOLD bucket.
     recommendation_mean = _first_num(row, ["recommendation_mean_yf"])
     if recommendation_mean is not None and 1.0 <= recommendation_mean <= 5.0:
         legacy = 6.0 - recommendation_mean
+        return round((legacy - 1.0) / 4.0 * 100.0, 4)
+
+    legacy = _first_num(row, ["consensus_score"])
+    if legacy is not None and 1.0 <= legacy <= 5.0:
         return round((legacy - 1.0) / 4.0 * 100.0, 4)
 
     rating = _first_text(row, ["consensus_rating", "consensus", "recommendation_key_yf"])
@@ -204,6 +219,30 @@ def _canonical_source(row: pd.Series) -> str:
     return "UNKNOWN"
 
 
+def _target_source(row: pd.Series) -> str:
+    source = _provenance_source(row, ["target_price", "target_mean_yf", "target_low_yf", "target_high_yf"])
+    if source:
+        return source
+    if _first_num(row, ["target_mean_yf"]) is not None:
+        return "yfinance"
+    return _canonical_source(row)
+
+
+def _consensus_primary_source(row: pd.Series) -> str:
+    source = _provenance_source(
+        row,
+        ["consensus_score", "consensus_rating", "consensus", "recommendation_mean_yf", "recommendation_key_yf"],
+    )
+    if source:
+        return source
+    explicit = _first_text(row, ["consensus_source"])
+    if explicit:
+        return explicit
+    if _first_num(row, ["recommendation_mean_yf"]) is not None or _first_text(row, ["recommendation_key_yf"]):
+        return "yfinance"
+    return _canonical_source(row)
+
+
 def _source_count(row: pd.Series) -> int:
     sources: set[str] = set()
     for field in [
@@ -216,7 +255,7 @@ def _source_count(row: pd.Series) -> int:
             for token in value.replace("|", ";").replace(",", ";").split(";"):
                 token = token.strip()
                 if token:
-                    sources.add(token.lower())
+                    sources.add(token.casefold())
 
     for field, metadata in _field_provenance(row).items():
         if field not in CONSENSUS_PROVENANCE_FIELDS or not isinstance(metadata, dict):
@@ -228,7 +267,7 @@ def _source_count(row: pd.Series) -> int:
     if not sources:
         source = _canonical_source(row)
         if source != "UNKNOWN":
-            sources.add(source.lower())
+            sources.add(source.casefold())
     return len(sources)
 
 
@@ -274,6 +313,7 @@ def _history_asof(
     cutoff: pd.Timestamp,
     *,
     source: str | None = None,
+    source_column: str = "source",
     strict: bool = False,
 ) -> pd.Series | None:
     if history.empty or "isin" not in history.columns or "date" not in history.columns:
@@ -281,13 +321,16 @@ def _history_asof(
     subset = history[history["isin"].astype(str) == str(isin)].copy()
     if subset.empty:
         return None
-    if source and source.upper() != "UNKNOWN" and "source" in subset.columns:
-        same_source = subset[
-            subset["source"].astype(str).str.casefold() == str(source).casefold()
-        ]
-        if same_source.empty:
-            return None
-        subset = same_source
+    if source and source.upper() != "UNKNOWN":
+        column = source_column if source_column in subset.columns else "source"
+        if column in subset.columns:
+            values = subset[column].astype(str)
+            fallback = subset["source"].astype(str) if "source" in subset.columns else values
+            effective = values.where(~values.str.upper().isin({"NAN", "NONE", ""}), fallback)
+            same_source = subset[effective.str.casefold() == str(source).casefold()]
+            if same_source.empty:
+                return None
+            subset = same_source
     subset["_date"] = pd.to_datetime(subset["date"], utc=True, errors="coerce")
     subset = subset[subset["_date"].notna()]
     subset = subset[subset["_date"] < cutoff] if strict else subset[subset["_date"] <= cutoff]
@@ -309,6 +352,27 @@ def _load_csv(path: Path, columns: list[str]) -> pd.DataFrame:
     return frame
 
 
+def _broker_key(value: Any) -> str:
+    raw = re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+    aliases = (
+        ("jpmorgan", "jpmorgan"),
+        ("goldmansachs", "goldmansachs"),
+        ("morganstanley", "morganstanley"),
+        ("bankofamerica", "bankofamerica"),
+        ("bofasecurities", "bankofamerica"),
+        ("deutschebank", "deutschebank"),
+        ("oddobhf", "oddobhf"),
+        ("royalbankofcanada", "rbc"),
+        ("rbc", "rbc"),
+        ("citigroup", "citi"),
+        ("citi", "citi"),
+    )
+    for prefix, canonical in aliases:
+        if raw.startswith(prefix):
+            return canonical
+    return raw
+
+
 def _broker_weight_map(path: Path | None) -> dict[str, float]:
     if path is None or not path.exists():
         return {}
@@ -323,7 +387,7 @@ def _broker_weight_map(path: Path | None) -> dict[str, float]:
         broker = _text(row.get("broker"))
         weight = _num(row.get("weight"))
         if broker and weight is not None and weight > 0:
-            result[broker.casefold()] = weight
+            result[_broker_key(broker)] = weight
     return result
 
 
@@ -361,14 +425,13 @@ def _revision_metrics(
         "BUY": 3, "OUTPERFORM": 3, "OVERWEIGHT": 3,
         "STRONG_BUY": 4,
     }
+    normalized_weights = {_broker_key(key): float(value) for key, value in broker_weights.items()}
     upgrades = downgrades = raises = cuts = 0
     target_weighted_sum = target_weight_sum = 0.0
     consensus_weighted_sum = consensus_weight_sum = 0.0
 
     for _, row in subset.iterrows():
-        broker = (_text(row.get("broker")) or "").casefold()
-        weight = broker_weights.get(broker, 1.0)
-
+        weight = normalized_weights.get(_broker_key(row.get("broker")), 1.0)
         old_rating = (_text(row.get("old_rating")) or "").upper().replace("-", "_").replace(" ", "_")
         new_rating = (_text(row.get("new_rating")) or "").upper().replace("-", "_").replace(" ", "_")
         if old_rating in rank and new_rating in rank:
@@ -407,12 +470,8 @@ def _revision_metrics(
         "target_cuts_30d": cuts if target_events else None,
         "net_target_revisions_30d": raises - cuts if target_events else None,
         "revision_breadth_30d": breadth,
-        "weighted_target_revision_30d_pct": (
-            round(target_weighted_sum / target_weight_sum, 4) if target_weight_sum else None
-        ),
-        "weighted_consensus_delta_30d": (
-            round(consensus_weighted_sum / consensus_weight_sum, 4) if consensus_weight_sum else None
-        ),
+        "weighted_target_revision_30d_pct": round(target_weighted_sum / target_weight_sum, 4) if target_weight_sum else None,
+        "weighted_consensus_delta_30d": round(consensus_weighted_sum / consensus_weight_sum, 4) if consensus_weight_sum else None,
     }
 
 
@@ -440,9 +499,7 @@ def _confidence(
 
 
 def _component_or_neutral(value: float | None, transform) -> float:
-    if value is None:
-        return 50.0
-    return _clip(float(transform(value)))
+    return 50.0 if value is None else _clip(float(transform(value)))
 
 
 def _momentum_score(values: dict[str, Any], cfg: dict) -> float:
@@ -450,27 +507,17 @@ def _momentum_score(values: dict[str, Any], cfg: dict) -> float:
     target_revision = values.get("target_change_1m_pct")
     if target_revision is None and values.get("target_change_3m_pct") is not None:
         target_revision = values["target_change_3m_pct"] / 3.0
-
-    target_revision_component = _component_or_neutral(target_revision, lambda x: 50.0 + x * 5.0)
     consensus_delta = values.get("consensus_delta_1m")
     if consensus_delta is None:
         consensus_delta = values.get("consensus_delta_run")
-    consensus_component = _component_or_neutral(consensus_delta, lambda x: 50.0 + x * 2.0)
-    upside_component = _component_or_neutral(values.get("target_upside_pct"), lambda x: 50.0 + x * 2.0)
-    breadth_component = _component_or_neutral(values.get("revision_breadth_30d"), lambda x: 50.0 + x / 2.0)
-    broker_component = _component_or_neutral(
-        values.get("weighted_target_revision_30d_pct"), lambda x: 50.0 + x * 5.0
-    )
-    confidence_component = values.get("consensus_confidence")
-    confidence_component = 50.0 if confidence_component is None else _clip(float(confidence_component))
 
     components = {
-        "target_revision": target_revision_component,
-        "consensus_change": consensus_component,
-        "target_upside": upside_component,
-        "revision_breadth": breadth_component,
-        "broker_quality": broker_component,
-        "confidence": confidence_component,
+        "target_revision": _component_or_neutral(target_revision, lambda x: 50.0 + x * 5.0),
+        "consensus_change": _component_or_neutral(consensus_delta, lambda x: 50.0 + x * 2.0),
+        "target_upside": _component_or_neutral(values.get("target_upside_pct"), lambda x: 50.0 + x * 2.0),
+        "revision_breadth": _component_or_neutral(values.get("revision_breadth_30d"), lambda x: 50.0 + x / 2.0),
+        "broker_quality": _component_or_neutral(values.get("weighted_target_revision_30d_pct"), lambda x: 50.0 + x * 5.0),
+        "confidence": 50.0 if values.get("consensus_confidence") is None else _clip(float(values["consensus_confidence"])),
     }
     default_weights = {
         "target_revision": 0.35,
@@ -480,14 +527,11 @@ def _momentum_score(values: dict[str, Any], cfg: dict) -> float:
         "broker_quality": 0.10,
         "confidence": 0.05,
     }
-    merged_weights = {**default_weights, **weights}
-    total_weight = sum(max(0.0, float(merged_weights.get(key, 0.0))) for key in components)
-    if total_weight <= 0:
+    merged = {**default_weights, **weights}
+    total = sum(max(0.0, float(merged.get(key, 0.0))) for key in components)
+    if total <= 0:
         return 50.0
-    score = sum(
-        components[key] * max(0.0, float(merged_weights.get(key, 0.0)))
-        for key in components
-    ) / total_weight
+    score = sum(components[key] * max(0.0, float(merged.get(key, 0.0))) for key in components) / total
     return round(_clip(score), 2)
 
 
@@ -507,15 +551,10 @@ def _signal_and_gate(values: dict[str, Any], cfg: dict) -> tuple[str, str, bool]
 
     review = bool(
         revision is not None
-        and (
-            revision <= mandatory
-            or (revision <= strong_neg and upside is not None and upside >= 15.0)
-        )
+        and (revision <= mandatory or (revision <= strong_neg and upside is not None and upside >= 15.0))
     )
     if review:
         return "STRONG_NEGATIVE", "BLOCK_NEW_BUY_REVIEW", True
-
-    # A material target cut must never be hidden by a high composite score.
     if revision is not None and revision <= strong_neg:
         return "STRONG_NEGATIVE", "PENALIZE_STRONG", False
     if revision is not None and revision <= neg:
@@ -534,6 +573,23 @@ def _signal_and_gate(values: dict[str, Any], cfg: dict) -> tuple[str, str, bool]
     return "NEUTRAL", "NEUTRAL", False
 
 
+def _committee_selection(frame: pd.DataFrame, limit: int = 300) -> tuple[pd.DataFrame, str]:
+    if frame.empty:
+        return frame.copy(), "EMPTY_UNIVERSE"
+    if "comite_status" in frame.columns:
+        status = frame["comite_status"].astype(str).str.upper().str.strip()
+        explicit = frame[status.isin({"COMMITTEE", "WATCH"})].copy()
+        if not explicit.empty:
+            return explicit, "EXPLICIT_COMMITTEE_WATCH"
+    if "score_brut" in frame.columns:
+        ranked = frame.copy()
+        ranked["_w09_score"] = pd.to_numeric(ranked["score_brut"], errors="coerce")
+        ranked = ranked[ranked["_w09_score"].notna()].sort_values("_w09_score", ascending=False)
+        if not ranked.empty:
+            return ranked.head(limit).drop(columns=["_w09_score"]), f"TOP_{limit}_SCORE_BRUT_FALLBACK"
+    return frame.head(limit).copy(), f"FIRST_{limit}_FALLBACK"
+
+
 def enrich_analyst_momentum(
     actions_df: pd.DataFrame,
     *,
@@ -550,15 +606,9 @@ def enrich_analyst_momentum(
     broker_weights = broker_weights or {}
 
     run_ts = pd.Timestamp(run_date) if run_date is not None else pd.Timestamp.now(tz="UTC")
-    if run_ts.tzinfo is None:
-        run_ts = run_ts.tz_localize("UTC")
-    else:
-        run_ts = run_ts.tz_convert("UTC")
+    run_ts = run_ts.tz_localize("UTC") if run_ts.tzinfo is None else run_ts.tz_convert("UTC")
     run_day = run_ts.strftime("%Y-%m-%d")
 
-    # pandas 3 uses strict Arrow-backed string columns for many string inputs.
-    # W09 deliberately writes numeric and boolean derived fields, so use object
-    # dtype in this working copy rather than mutating strict string arrays.
     out = actions_df.astype(object).copy()
     for field in MOMENTUM_FIELDS:
         if field not in out.columns:
@@ -567,10 +617,7 @@ def enrich_analyst_momentum(
             out[field] = out[field].astype(object)
 
     snapshots: list[dict] = []
-    scored = 0
-    reviews = 0
-    strong_positive = 0
-    no_analyst_data = 0
+    scored = reviews = strong_positive = no_analyst_data = 0
 
     for idx, row in out.iterrows():
         isin = _first_text(row, ["isin"])
@@ -586,23 +633,28 @@ def enrich_analyst_momentum(
         if rating:
             rating = rating.upper().replace("-", "_").replace(" ", "_")
         n_analysts = _first_num(row, ["n_analysts", "n_analysts_yf"])
-        source = _canonical_source(row)
+        target_source = _target_source(row)
+        consensus_source = _consensus_primary_source(row)
         source_count = _source_count(row)
         observed_at = _latest_observed_at(row)
         dispersion = _target_dispersion(target_low, target_high, target)
 
-        prev = _history_asof(history, isin, run_ts.normalize(), source=source, strict=True)
-        month = _history_asof(history, isin, run_ts - pd.DateOffset(months=1), source=source)
-        quarter = _history_asof(history, isin, run_ts - pd.DateOffset(months=3), source=source)
-        year = _history_asof(history, isin, run_ts - pd.DateOffset(months=12), source=source)
+        prev_target_row = _history_asof(history, isin, run_ts.normalize(), source=target_source, source_column="target_source", strict=True)
+        month_target_row = _history_asof(history, isin, run_ts - pd.DateOffset(months=1), source=target_source, source_column="target_source")
+        quarter_target_row = _history_asof(history, isin, run_ts - pd.DateOffset(months=3), source=target_source, source_column="target_source")
+        year_target_row = _history_asof(history, isin, run_ts - pd.DateOffset(months=12), source=target_source, source_column="target_source")
 
-        prev_target = _num(prev.get("target_mean")) if prev is not None else None
-        m1_target = _num(month.get("target_mean")) if month is not None else None
-        m3_target = _num(quarter.get("target_mean")) if quarter is not None else None
-        y1_target = _num(year.get("target_mean")) if year is not None else None
-        prev_score = _num(prev.get("consensus_score_100")) if prev is not None else None
-        m1_score = _num(month.get("consensus_score_100")) if month is not None else None
-        m3_score = _num(quarter.get("consensus_score_100")) if quarter is not None else None
+        prev_consensus_row = _history_asof(history, isin, run_ts.normalize(), source=consensus_source, source_column="consensus_source", strict=True)
+        month_consensus_row = _history_asof(history, isin, run_ts - pd.DateOffset(months=1), source=consensus_source, source_column="consensus_source")
+        quarter_consensus_row = _history_asof(history, isin, run_ts - pd.DateOffset(months=3), source=consensus_source, source_column="consensus_source")
+
+        prev_target = _num(prev_target_row.get("target_mean")) if prev_target_row is not None else None
+        m1_target = _num(month_target_row.get("target_mean")) if month_target_row is not None else None
+        m3_target = _num(quarter_target_row.get("target_mean")) if quarter_target_row is not None else None
+        y1_target = _num(year_target_row.get("target_mean")) if year_target_row is not None else None
+        prev_score = _num(prev_consensus_row.get("consensus_score_100")) if prev_consensus_row is not None else None
+        m1_score = _num(month_consensus_row.get("consensus_score_100")) if month_consensus_row is not None else None
+        m3_score = _num(quarter_consensus_row.get("consensus_score_100")) if quarter_consensus_row is not None else None
 
         revision_metrics = _revision_metrics(revisions, isin, run_ts, broker_weights)
         has_revision_data = any(value is not None for value in revision_metrics.values())
@@ -627,7 +679,7 @@ def enrich_analyst_momentum(
             "target_high": target_high,
             "target_dispersion_pct": dispersion,
             "consensus_score_100": score100,
-            "consensus_prev_run": _first_text(prev, ["consensus_rating"]) if prev is not None else None,
+            "consensus_prev_run": _first_text(prev_consensus_row, ["consensus_rating"]) if prev_consensus_row is not None else None,
             "consensus_delta_run": _abs_change(score100, prev_score),
             "consensus_score_1m_ago": m1_score,
             "consensus_delta_1m": _abs_change(score100, m1_score),
@@ -636,23 +688,20 @@ def enrich_analyst_momentum(
             "n_analysts": n_analysts,
             "consensus_source_count": source_count if has_analyst_data else 0,
             "consensus_as_of": observed_at,
+            "target_source_canonical": target_source,
+            "consensus_source_canonical": consensus_source,
             **revision_metrics,
         }
         if values["target_change_1m_pct"] is not None and values["target_change_3m_pct"] is not None:
-            values["target_revision_acceleration"] = round(
-                values["target_change_1m_pct"] - values["target_change_3m_pct"] / 3.0, 4
-            )
+            values["target_revision_acceleration"] = round(values["target_change_1m_pct"] - values["target_change_3m_pct"] / 3.0, 4)
         else:
             values["target_revision_acceleration"] = None
 
         base_score = _first_num(row, ["score_brut"])
-        overall_weight = float(analyst_cfg.get("overall_weight", 0.15))
-        overall_weight = max(0.0, min(1.0, overall_weight))
+        overall_weight = max(0.0, min(1.0, float(analyst_cfg.get("overall_weight", 0.15))))
 
         if has_analyst_data:
-            values["consensus_confidence"] = _confidence(
-                source_count, n_analysts, dispersion, observed_at, run_ts
-            )
+            values["consensus_confidence"] = _confidence(source_count, n_analysts, dispersion, observed_at, run_ts)
             values["analyst_momentum_score"] = _momentum_score(values, analyst_cfg)
             signal, gate, review = _signal_and_gate(values, analyst_cfg)
             values["committee_analyst_signal"] = signal
@@ -660,34 +709,31 @@ def enrich_analyst_momentum(
             values["committee_review_required"] = review
             values["committee_score_with_analyst_momentum"] = (
                 round(base_score * (1.0 - overall_weight) + values["analyst_momentum_score"] * overall_weight, 2)
-                if base_score is not None
-                else None
+                if base_score is not None else None
             )
         else:
-            # Missing analyst data is not negative evidence. Preserve the base
-            # committee score and expose a neutral gate without fabricating a
-            # pseudo-confidence or pseudo-momentum score.
             no_analyst_data += 1
-            review = False
             signal = "NEUTRAL"
+            review = False
             values["consensus_confidence"] = None
             values["analyst_momentum_score"] = None
             values["committee_analyst_signal"] = signal
             values["committee_analyst_gate"] = "NEUTRAL"
             values["committee_review_required"] = False
-            values["committee_score_with_analyst_momentum"] = (
-                round(base_score, 2) if base_score is not None else None
-            )
+            values["committee_score_with_analyst_momentum"] = round(base_score, 2) if base_score is not None else None
 
         for field, value in values.items():
             out.at[idx, field] = value
 
         if target is not None or score100 is not None:
             scored += 1
+            legacy_source = target_source if target is not None else consensus_source
             snapshots.append({
                 "date": run_day,
                 "isin": isin,
-                "source": source,
+                "source": legacy_source,
+                "target_source": target_source,
+                "consensus_source": consensus_source,
                 "consensus_rating": rating,
                 "consensus_score_100": score100,
                 "n_analysts": n_analysts,
@@ -705,14 +751,9 @@ def enrich_analyst_momentum(
         strong_positive += int(signal == "STRONG_POSITIVE")
 
     new_snapshots = pd.DataFrame(snapshots, columns=SNAPSHOT_COLUMNS)
-    if history.empty:
-        combined = new_snapshots
-    else:
-        combined = pd.concat([history[SNAPSHOT_COLUMNS], new_snapshots], ignore_index=True)
+    combined = new_snapshots if history.empty else pd.concat([history[SNAPSHOT_COLUMNS], new_snapshots], ignore_index=True)
     if not combined.empty:
-        combined = combined.drop_duplicates(
-            subset=["date", "isin", "source"], keep="last"
-        ).sort_values(["date", "isin", "source"]).reset_index(drop=True)
+        combined = combined.drop_duplicates(subset=["date", "isin", "source"], keep="last").sort_values(["date", "isin", "source"]).reset_index(drop=True)
 
     metrics = {
         "scored_or_snapshotted": scored,
@@ -762,39 +803,34 @@ def process_enriched_outputs(root: Path | None = None) -> dict:
     save_master(enriched, actions_path)
     snapshots.to_csv(history_path, sep=";", index=False, encoding="utf-8-sig")
     if not revisions_path.exists():
-        pd.DataFrame(columns=REVISION_COLUMNS).to_csv(
-            revisions_path, sep=";", index=False, encoding="utf-8-sig"
-        )
+        pd.DataFrame(columns=REVISION_COLUMNS).to_csv(revisions_path, sep=";", index=False, encoding="utf-8-sig")
 
-    shortlist = enriched
-    if "comite_status" in enriched.columns:
-        shortlist = enriched[enriched["comite_status"].isin(["COMMITTEE", "WATCH"])].copy()
+    shortlist, selection_basis = _committee_selection(enriched)
+    metrics["committee_selection_basis"] = selection_basis
+    metrics["committee_rows"] = len(shortlist)
     committee_fields = [
         field for field in [
             "isin", "name", "yahoo_ticker", "comite_status", "score_brut",
             "committee_score_with_analyst_momentum", "analyst_momentum_score",
-            "committee_analyst_signal", "committee_analyst_gate",
-            "committee_review_required", "target_price", "last_close",
-            "target_upside_abs", "target_upside_pct", "target_change_run_abs",
-            "target_change_run_pct", "target_change_1m_abs", "target_change_1m_pct",
-            "target_change_3m_abs", "target_change_3m_pct",
-            "target_revision_acceleration", "consensus_rating",
-            "consensus_score_100", "consensus_delta_run", "consensus_delta_1m",
-            "consensus_delta_3m", "upgrades_30d", "downgrades_30d",
+            "committee_analyst_signal", "committee_analyst_gate", "committee_review_required",
+            "target_price", "last_close", "target_upside_abs", "target_upside_pct",
+            "target_prev_run", "target_change_run_abs", "target_change_run_pct",
+            "target_1m_ago", "target_change_1m_abs", "target_change_1m_pct",
+            "target_3m_ago", "target_change_3m_abs", "target_change_3m_pct",
+            "target_12m_ago", "target_change_12m_pct", "target_revision_acceleration",
+            "target_source_canonical", "consensus_rating", "consensus_score_100",
+            "consensus_prev_run", "consensus_delta_run", "consensus_delta_1m", "consensus_delta_3m",
+            "consensus_source_canonical", "upgrades_30d", "downgrades_30d",
             "target_raises_30d", "target_cuts_30d", "revision_breadth_30d",
-            "weighted_target_revision_30d_pct", "n_analysts",
-            "consensus_source_count", "consensus_confidence", "consensus_as_of",
+            "weighted_target_revision_30d_pct", "weighted_consensus_delta_30d",
+            "n_analysts", "consensus_source_count", "consensus_confidence", "consensus_as_of",
         ] if field in shortlist.columns
     ]
     shortlist[committee_fields].to_csv(
         outputs / "V18.2_COMMITTEE_ANALYST_MOMENTUM.csv",
-        sep=";", index=False, encoding="utf-8-sig"
+        sep=";", index=False, encoding="utf-8-sig",
     )
-    export_master_excel(
-        enriched,
-        outputs / "V18.2_PEA_ACTIONS_ACTUALISE.xlsx",
-        "V18.2 Actions PEA actualisées",
-    )
+    export_master_excel(enriched, outputs / "V18.2_PEA_ACTIONS_ACTUALISE.xlsx", "V18.2 Actions PEA actualisées")
     (audit_dir / "V18.2_ANALYST_MOMENTUM_METRICS.json").write_text(
         json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -806,6 +842,7 @@ def main() -> None:
     print(
         "WAVE_09_ANALYST_MOMENTUM — "
         f"snapshots={metrics['snapshot_rows']} | "
+        f"committee_rows={metrics.get('committee_rows', 0)} | "
         f"reviews={metrics['mandatory_reviews']} | "
         f"strong_positive={metrics['strong_positive']}"
     )
