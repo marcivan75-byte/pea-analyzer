@@ -86,21 +86,37 @@ def test_build_etf_ticker_map_writes_gaps_for_unresolved_isin(tmp_path):
     mapped = pd.read_csv(tmp_path / "map.csv", sep=";", encoding="utf-8-sig")
     assert mapped.iloc[0]["yahoo_ticker"] == "CAC.PA"
 
-def test_wave5_finnhub_targets_committee_watch_only():
-    from unittest.mock import patch, MagicMock
+def test_wave5_finnhub_targets_committee_watch_only(tmp_path):
+    from unittest.mock import patch
     from v182.reporting.waves import wave5_consensus_finnhub
     actions_df = pd.DataFrame([
-        {"isin": "FR0000120073", "yahoo_ticker": "AI.PA", "comite_status": "COMMITTEE"},
-        {"isin": "FR0000000002", "yahoo_ticker": "XX.PA", "comite_status": "NONE"},
+        {"isin": "FR0000120073", "name": "AIR LIQUIDE", "yahoo_ticker": "AI.PA", "comite_status": "COMMITTEE",
+         "recommendation_key_yf": "NON_OBSERVE", "recommendation_mean_yf": "NON_OBSERVE"},
+        {"isin": "FR0000000002", "name": "OTHER", "yahoo_ticker": "XX.PA", "comite_status": "NONE",
+         "recommendation_key_yf": "NON_OBSERVE", "recommendation_mean_yf": "NON_OBSERVE"},
     ])
-    reco = [{"period": "2026-08-01", "strongBuy": 2, "buy": 3, "hold": 1, "sell": 0, "strongSell": 0}]
-    def fake_get(url, params=None, timeout=None):
-        resp = MagicMock(); resp.ok = True; resp.raise_for_status = lambda: None
-        resp.json = lambda: reco if "recommendation" in url else {"targetMean": 190.0}
-        return resp
-    with patch("requests.get", side_effect=fake_get):
-        obs, _ = wave5_consensus_finnhub(actions_df, api_key="fake")
+    fake_obs = [{"ticker": "AI.PA", "isin": "FR0000120073", "field": "consensus_rating", "value": "BUY", "source": "Finnhub"}]
+    with patch("v182.sources.finnhub_consensus.fetch_consensus", return_value=(fake_obs, [])):
+        obs, _, meta = wave5_consensus_finnhub(actions_df, api_key="fake", symbol_cache_path=tmp_path / "map.csv", cfg={"finnhub":{"delay_seconds":0}})
     assert {o["isin"] for o in obs} == {"FR0000120073"}
+    assert meta["attempted_finnhub"] == 1
+
+
+def test_wave5_normalizes_existing_yahoo_consensus_without_finnhub_call(tmp_path):
+    from unittest.mock import patch
+    from v182.reporting.waves import wave5_consensus_finnhub
+    actions_df = pd.DataFrame([{
+        "isin": "FR0000120073", "name": "AIR LIQUIDE", "yahoo_ticker": "AI.PA", "comite_status": "COMMITTEE",
+        "recommendation_key_yf": "buy", "recommendation_mean_yf": "2.0", "n_analysts_yf": "18", "target_mean_yf": "190"
+    }])
+    with patch("v182.sources.finnhub_consensus.fetch_consensus", return_value=([], [])) as fetch:
+        obs, _, meta = wave5_consensus_finnhub(actions_df, api_key="fake", symbol_cache_path=tmp_path / "map.csv", cfg={"finnhub":{"delay_seconds":0}})
+    fetch.assert_called_once()
+    assert fetch.call_args.args[0] == []
+    fields = {o["field"]: o["value"] for o in obs}
+    assert fields["consensus_rating"] == "BUY"
+    assert fields["n_analysts"] == "18"
+    assert meta["normalized_yf_tickers"] == 1
 
 def test_wave6_etf_info_maps_dividend_yield_only():
     from unittest.mock import patch
@@ -141,8 +157,9 @@ def test_quality_gate_accepts_complete_referentials():
     actions=pd.DataFrame([{'isin':f'FR{i:010d}','yahoo_ticker':'X.PA'} for i in range(1486)])
     etf=pd.DataFrame([{'isin':f'LU{i:010d}','yahoo_ticker':'Y.PA'} for i in range(102)])
     cov={'ACTION':{'coverage_pct':80.0},'ETF':{'coverage_pct':70.0}}
-    cfg={'quality_gates':{'actions_min_rows':1486,'etf_min_rows':102,'ticker_coverage_min_pct':100.0,'ohlcv_success_min_pct':90.0,'coverage_regression_tolerance_points':0.0}}
-    result=run_quality_gates(actions,etf,cov,cov,cfg,{'WAVE_01':{'requested':100,'successful':95},'WAVE_02':{'requested':100,'successful':90}})
+    cfg={'quality_gates':{'actions_min_rows':1486,'etf_min_rows':102,'ticker_coverage_min_pct':100.0,'ohlcv_success_min_pct':90.0,'coverage_regression_tolerance_points':0.0,'fundamentals_availability_min_pct':40.0,'consensus_availability_min_pct':40.0}}
+    metrics={'WAVE_01':{'requested':100,'successful':95},'WAVE_02':{'requested':100,'successful':90},'WAVE_04':{'requested':300,'available':150,'available_pct':50.0},'WAVE_05':{'requested':300,'available':140,'available_pct':46.67}}
+    result=run_quality_gates(actions,etf,cov,cov,cfg,metrics)
     assert result.passed
 
 def test_etf_ticker_map_is_complete():
@@ -162,3 +179,37 @@ def test_resolve_etf_tickers_works_when_master_already_has_ticker(tmp_path):
     merged,gaps=resolve_etf_tickers(master,mapping)
     assert merged.iloc[0]['yahoo_ticker']=='CACC.PA'
     assert gaps.empty
+
+
+def test_quality_gate_blocks_empty_critical_wave():
+    from v182.audit.quality import run_quality_gates
+    actions=pd.DataFrame([{'isin':f'FR{i:010d}','yahoo_ticker':'X.PA'} for i in range(1486)])
+    etf=pd.DataFrame([{'isin':f'LU{i:010d}','yahoo_ticker':'Y.PA'} for i in range(102)])
+    cov={'ACTION':{'coverage_pct':80.0},'ETF':{'coverage_pct':70.0}}
+    cfg={'quality_gates':{'actions_min_rows':1486,'etf_min_rows':102,'ticker_coverage_min_pct':100.0,'ohlcv_success_min_pct':90.0,'coverage_regression_tolerance_points':0.0,'fundamentals_availability_min_pct':40.0,'consensus_availability_min_pct':40.0}}
+    metrics={'WAVE_01':{'requested':100,'successful':100},'WAVE_02':{'requested':100,'successful':100},'WAVE_04':{'requested':300,'available':0,'available_pct':0.0},'WAVE_05':{'requested':300,'available':150,'available_pct':50.0}}
+    result=run_quality_gates(actions,etf,cov,cov,cfg,metrics)
+    assert not result.passed
+    assert any(c['check']=='wave_04_availability_pct' and not c['passed'] for c in result.checks)
+
+
+def test_finnhub_lookup_prefers_matching_exchange_symbol():
+    from v182.sources.finnhub_consensus import _pick_lookup_result
+    rows=[{'symbol':'AI.US','displaySymbol':'AI','type':'Common Stock'},
+          {'symbol':'AI.PA','displaySymbol':'AI.PA','type':'Common Stock'}]
+    assert _pick_lookup_result(rows,'AI.PA')['symbol']=='AI.PA'
+
+
+def test_yfinance_info_opens_circuit_after_repeated_rate_limits():
+    from unittest.mock import patch, MagicMock
+    import types, sys
+    from v182.sources.yfinance_info import collect_info
+    class RateLimitError(Exception): pass
+    fake=MagicMock()
+    fake.get_info.side_effect=RateLimitError('Too Many Requests')
+    fake.fast_info={}
+    fake_module=types.SimpleNamespace(Ticker=lambda ticker: fake)
+    with patch.dict(sys.modules, {'yfinance': fake_module}), patch('time.sleep'):
+        obs, failures=collect_info(['A.PA','B.PA','C.PA','D.PA'],delay_seconds=0,max_retries=0,max_consecutive_rate_limits=2)
+    assert obs==[]
+    assert any(f['reason']=='RATE_LIMIT_CIRCUIT_OPEN' for f in failures)
