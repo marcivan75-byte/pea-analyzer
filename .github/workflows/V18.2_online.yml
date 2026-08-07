@@ -48,6 +48,7 @@ jobs:
           assert q['passed'], q
           PY
       - name: Upload Excel and audit artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: V18.2-refresh-${{ github.run_id }}
@@ -57,6 +58,7 @@ jobs:
             outputs/audit/**
             outputs/gaps/**
             state/runs/**
+            config/V18.2_FINNHUB_SYMBOL_MAP.csv
           retention-days: 30
       - name: Create controlled refresh pull request
         uses: peter-evans/create-pull-request@v7
@@ -73,3 +75,4 @@ jobs:
             state/runs/**
             outputs/**
             config/V18.2_ETF_TICKER_MAP.csv
+            config/V18.2_FINNHUB_SYMBOL_MAP.csv
