@@ -47,33 +47,65 @@ def run() -> None:
     quarantine_log: list[dict] = []
     wave_metrics: dict[str, dict] = {}
 
+    # WAVE 00A — cache d'identifiants OpenFIGI pour Actions + ETF.
+    # Le premier run résout les ISIN manquants; les suivants réutilisent le cache.
+    openfigi_map_path = CONFIG / "V18.2_OPENFIGI_MASTER_MAP.csv"
+    from v182.mapping.etf_isin_resolver import build_openfigi_master_map
+    openfigi_summary = build_openfigi_master_map(
+        actions_df, etf_df, openfigi_map_path, api_key=os.environ.get("OPENFIGI_API_KEY")
+    )
+    wave_metrics["WAVE_00_OPENFIGI"] = openfigi_summary
+    checkpoint.mark("WAVE_00_OPENFIGI", "DONE", **openfigi_summary)
+    print(
+        f"WAVE_00_OPENFIGI — {openfigi_summary['resolved']}/{openfigi_summary['records']} identifiants résolus "
+        f"({openfigi_summary['coverage_pct']}%), {openfigi_summary['api_isins_requested']} ISIN interrogés via API, "
+        f"authentifié={openfigi_summary['authenticated']}"
+    )
+
     if not checkpoint.done("WAVE_00_ETF_TICKERS"):
         import pandas as pd
         map_path = CONFIG / "V18.2_ETF_TICKER_MAP.csv"
         existing_map = pd.read_csv(map_path, sep=";", encoding="utf-8-sig", dtype=str) if map_path.exists() else pd.DataFrame()
-        map_complete = (len(existing_map) == len(etf_df) and "yahoo_ticker" in existing_map.columns
-                        and existing_map["isin"].nunique() == len(etf_df)
-                        and (~existing_map["yahoo_ticker"].apply(lambda v: str(v or "").strip() == "")).all())
+        map_complete = (
+            len(existing_map) == len(etf_df)
+            and "yahoo_ticker" in existing_map.columns
+            and existing_map["isin"].nunique() == len(etf_df)
+            and (~existing_map["yahoo_ticker"].apply(lambda v: str(v or "").strip() == "")).all()
+        )
         if map_complete:
             summary = {"requested": len(etf_df), "resolved": len(etf_df), "gaps": 0, "source": "VALIDATED_STATIC_MAP"}
-            print("WAVE_00 — table ETF validée complète, OpenFIGI non appelé")
+            print("WAVE_00 — table ETF validée complète ; cache OpenFIGI disponible en repli")
         else:
             from v182.mapping.etf_isin_resolver import build_etf_ticker_map
             summary = build_etf_ticker_map(
                 etf_master_path=INPUTS / "V18.2_PEA_ETF_MASTER.csv",
                 output_map_path=map_path,
                 gaps_path=OUTPUTS / "gaps" / "V18.2_ETF_TICKER_OPENFIGI_GAPS.csv",
+                api_key=os.environ.get("OPENFIGI_API_KEY"),
             )
             print(f"WAVE_00 — OpenFIGI: {summary['resolved']}/{summary['requested']} tickers ETF résolus, {summary['gaps']} restent en gap")
         checkpoint.mark("WAVE_00_ETF_TICKERS", "DONE", **summary)
     else:
         print("WAVE_00 déjà DONE (checkpoint), skip")
 
+    from v182.sources.history_orchestrator import download_history_with_fallback
+
     if not checkpoint.done("WAVE_01"):
-        result = waves.wave_history(actions_df, "ACTION", str(CACHE / "actions"), cfg)
-        checkpoint.mark("WAVE_01", "DONE", requested=result.requested, successful=len(result.successful), failed=len(result.failed))
-        wave_metrics["WAVE_01"] = {"requested": result.requested, "successful": len(result.successful), "failed": len(result.failed)}
-        print(f"WAVE_01 — {len(result.successful)}/{result.requested} tickers Actions récupérés")
+        result = download_history_with_fallback(
+            actions_df, "ACTION", str(CACHE / "actions"), cfg, openfigi_map_path
+        )
+        checkpoint.mark(
+            "WAVE_01", "DONE", requested=result.requested, successful=len(result.successful),
+            failed=len(result.failed), source_counts=result.source_counts, diagnostics=result.diagnostics,
+        )
+        wave_metrics["WAVE_01"] = {
+            "requested": result.requested, "successful": len(result.successful), "failed": len(result.failed),
+            "source_counts": result.source_counts, "diagnostics": result.diagnostics,
+        }
+        print(
+            f"WAVE_01 — {len(result.successful)}/{result.requested} Actions OHLCV utilisables; "
+            f"sources={result.source_counts}; échecs finaux={len(result.failed)}"
+        )
     else:
         wave_metrics["WAVE_01"] = checkpoint.wave("WAVE_01")
         print("WAVE_01 déjà DONE (checkpoint), skip")
@@ -83,13 +115,32 @@ def run() -> None:
         etf_gaps.to_csv(OUTPUTS / "gaps" / "V18.2_ETF_TICKER_GAPS.csv", sep=";", index=False, encoding="utf-8-sig")
         print(f"WAVE_02 — {len(etf_gaps)} ISIN ETF sans ticker mappé -> INPUT_REQUIRED")
     if not checkpoint.done("WAVE_02"):
-        result = waves.wave_history(etf_with_tickers, "ETF", str(CACHE / "etf"), cfg)
-        checkpoint.mark("WAVE_02", "DONE", requested=result.requested, successful=len(result.successful), failed=len(result.failed))
-        wave_metrics["WAVE_02"] = {"requested": result.requested, "successful": len(result.successful), "failed": len(result.failed)}
-        print(f"WAVE_02 — {len(result.successful)}/{result.requested} tickers ETF récupérés")
+        result = download_history_with_fallback(
+            etf_with_tickers, "ETF", str(CACHE / "etf"), cfg, openfigi_map_path
+        )
+        checkpoint.mark(
+            "WAVE_02", "DONE", requested=result.requested, successful=len(result.successful),
+            failed=len(result.failed), source_counts=result.source_counts, diagnostics=result.diagnostics,
+        )
+        wave_metrics["WAVE_02"] = {
+            "requested": result.requested, "successful": len(result.successful), "failed": len(result.failed),
+            "source_counts": result.source_counts, "diagnostics": result.diagnostics,
+        }
+        print(
+            f"WAVE_02 — {len(result.successful)}/{result.requested} ETF OHLCV utilisables; "
+            f"sources={result.source_counts}; échecs finaux={len(result.failed)}"
+        )
     else:
         wave_metrics["WAVE_02"] = checkpoint.wave("WAVE_02")
         print("WAVE_02 déjà DONE (checkpoint), skip")
+
+    (OUTPUTS / "audit" / "V18.2_SOURCE_FALLBACK_METRICS.json").write_text(
+        json.dumps({
+            "openfigi": wave_metrics.get("WAVE_00_OPENFIGI", {}),
+            "wave01_actions": wave_metrics.get("WAVE_01", {}),
+            "wave02_etf": wave_metrics.get("WAVE_02", {}),
+        }, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     if not checkpoint.done("WAVE_03"):
         actions_map = dict(zip(actions_df["yahoo_ticker"], actions_df["isin"]))
@@ -110,9 +161,14 @@ def run() -> None:
         quarantine_log += q3
         available4, total4, pct4 = waves.fundamentals_availability(actions_df)
         wave_metrics["WAVE_04"] = {**meta4, "available": available4, "requested": total4, "available_pct": pct4}
-        checkpoint.mark("WAVE_04", "DONE", observed=len(obs4), failed=len(failures4), available=available4,
-                        requested=total4, available_pct=pct4, attempted=meta4["attempted"])
-        print(f"WAVE_04 — couverture fondamentaux {available4}/{total4} ({pct4}%), {meta4['attempted']} tickers interrogés, {len(obs4)} champs nouveaux, {len(failures4)} échecs")
+        checkpoint.mark(
+            "WAVE_04", "DONE", observed=len(obs4), failed=len(failures4), available=available4,
+            requested=total4, available_pct=pct4, attempted=meta4["attempted"],
+        )
+        print(
+            f"WAVE_04 — couverture fondamentaux {available4}/{total4} ({pct4}%), "
+            f"{meta4['attempted']} tickers interrogés, {len(obs4)} champs nouveaux, {len(failures4)} échecs"
+        )
     else:
         wave_metrics["WAVE_04"] = checkpoint.wave("WAVE_04")
         print("WAVE_04 déjà DONE (checkpoint), skip")
@@ -126,9 +182,15 @@ def run() -> None:
         quarantine_log += q5
         available5, total5, pct5 = waves.consensus_availability(actions_df)
         wave_metrics["WAVE_05"] = {**meta5, "available": available5, "requested": total5, "available_pct": pct5}
-        checkpoint.mark("WAVE_05", "DONE", observed=len(obs5), failed=len(failures5), available=available5,
-                        requested=total5, available_pct=pct5, attempted_finnhub=meta5["attempted_finnhub"])
-        print(f"WAVE_05 — couverture consensus {available5}/{total5} ({pct5}%), {meta5['normalized_yf_tickers']} tickers normalisés depuis Yahoo, {meta5['attempted_finnhub']} tentés via Finnhub, {len(failures5)} échecs")
+        checkpoint.mark(
+            "WAVE_05", "DONE", observed=len(obs5), failed=len(failures5), available=available5,
+            requested=total5, available_pct=pct5, attempted_finnhub=meta5["attempted_finnhub"],
+        )
+        print(
+            f"WAVE_05 — couverture consensus {available5}/{total5} ({pct5}%), "
+            f"{meta5['normalized_yf_tickers']} tickers normalisés depuis Yahoo, "
+            f"{meta5['attempted_finnhub']} tentés via Finnhub, {len(failures5)} échecs"
+        )
     elif not finnhub_key:
         available5, total5, pct5 = waves.consensus_availability(actions_df)
         wave_metrics["WAVE_05"] = {"available": available5, "requested": total5, "available_pct": pct5, "missing_key": True}
@@ -153,8 +215,10 @@ def run() -> None:
     if not checkpoint.done("WAVE_05_06_SCRAPING_FALLBACK") and selectors_cfg:
         for wave_id, spec in selectors_cfg.items():
             rows = actions_df if spec["universe"] == "ACTION" else etf_with_tickers
-            obs, failures = waves.wave_public_table(rows, spec["universe"], spec.get("field_map", {}),
-                spec["url_template"], spec.get("selectors", {}), spec["source_name"], spec.get("evidence", "B"))
+            obs, failures = waves.wave_public_table(
+                rows, spec["universe"], spec.get("field_map", {}), spec["url_template"],
+                spec.get("selectors", {}), spec["source_name"], spec.get("evidence", "B"),
+            )
             if spec["universe"] == "ACTION":
                 actions_df, q = apply_and_track(actions_df, obs)
             else:
@@ -178,7 +242,9 @@ def run() -> None:
     n_worklist = write_worklist(still_open, actions_df, OUTPUTS / "gaps" / "V18.2_WAVE07_WORKLIST.csv")
     print(f"WAVE_07 — check-list humaine écrite ({n_worklist} lignes) dans outputs/gaps/V18.2_WAVE07_WORKLIST.csv")
 
-    shortlist = set(actions_df.loc[actions_df.get("comite_status", "").isin(["COMMITTEE", "WATCH"]), "isin"]) if "comite_status" in actions_df.columns else set()
+    shortlist = set(
+        actions_df.loc[actions_df.get("comite_status", "").isin(["COMMITTEE", "WATCH"]), "isin"]
+    ) if "comite_status" in actions_df.columns else set()
     obs8 = waves.wave8_scenarios(actions_df, shortlist)
     actions_df, q8 = apply_and_track(actions_df, obs8)
     quarantine_log += q8
@@ -188,21 +254,30 @@ def run() -> None:
     save_master(etf_df, OUTPUTS / "V18.2_PEA_ETF_MASTER_ENRICHED.csv")
     if quarantine_log:
         import pandas as pd
-        pd.DataFrame(quarantine_log).to_csv(OUTPUTS / "gaps" / "V18.2_QUARANTINE.csv", sep=";", index=False, encoding="utf-8-sig")
+        pd.DataFrame(quarantine_log).to_csv(
+            OUTPUTS / "gaps" / "V18.2_QUARANTINE.csv", sep=";", index=False, encoding="utf-8-sig"
+        )
 
     after = {
         "ACTION": completeness(actions_df.to_dict("records"), _fields(actions_df)),
         "ETF": completeness(etf_df.to_dict("records"), _fields(etf_df)),
     }
     (OUTPUTS / "audit" / "V18.2_COVERAGE_BEFORE_AFTER.json").write_text(
-        json.dumps({"before": before, "after": after}, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"Couverture après run — Actions: {after['ACTION']['coverage_pct']}% (+{round(after['ACTION']['coverage_pct'] - before['ACTION']['coverage_pct'], 1)} pts) | ETF: {after['ETF']['coverage_pct']}% (+{round(after['ETF']['coverage_pct'] - before['ETF']['coverage_pct'], 1)} pts)")
+        json.dumps({"before": before, "after": after}, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(
+        f"Couverture après run — Actions: {after['ACTION']['coverage_pct']}% "
+        f"(+{round(after['ACTION']['coverage_pct'] - before['ACTION']['coverage_pct'], 1)} pts) | "
+        f"ETF: {after['ETF']['coverage_pct']}% "
+        f"(+{round(after['ETF']['coverage_pct'] - before['ETF']['coverage_pct'], 1)} pts)"
+    )
 
     from v182.audit.quality import run_quality_gates
     from v182.reporting.exports import export_master_excel, export_run_report
     quality = run_quality_gates(actions_df, etf_df, before, after, cfg, wave_metrics)
     (OUTPUTS / "audit" / "V18.2_QUALITY_GATES.json").write_text(
-        json.dumps({"passed": quality.passed, "checks": quality.checks}, ensure_ascii=False, indent=2), encoding="utf-8")
+        json.dumps({"passed": quality.passed, "checks": quality.checks}, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     export_master_excel(actions_df, OUTPUTS / "V18.2_PEA_ACTIONS_ACTUALISE.xlsx", "V18.2 Actions PEA actualisées")
     export_master_excel(etf_df, OUTPUTS / "V18.2_PEA_ETF_ACTUALISE.xlsx", "V18.2 ETF PEA actualisés")
     export_run_report(before, after, quality.checks, OUTPUTS / "V18.2_RUN_REPORT.xlsx")
