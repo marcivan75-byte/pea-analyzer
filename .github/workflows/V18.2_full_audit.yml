@@ -5,6 +5,7 @@ on:
     branches:
       - fix/v18-2-waves-resilience
       - feature/v18-2-consensus-momentum
+      - audit/v18-2-consensus-momentum-final
   workflow_dispatch:
 
 permissions:
@@ -79,27 +80,36 @@ jobs:
 
           actions = pd.read_csv('outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv', sep=';', encoding='utf-8-sig', dtype=str)
           etf = pd.read_csv('outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv', sep=';', encoding='utf-8-sig', dtype=str)
+          committee = pd.read_csv('outputs/V18.2_COMMITTEE_ANALYST_MOMENTUM.csv', sep=';', encoding='utf-8-sig', dtype=str)
+          history = pd.read_csv('outputs/history/V18.2_CONSENSUS_SNAPSHOTS.csv', sep=';', encoding='utf-8-sig', dtype=str)
           assert len(actions) == 1486, len(actions)
           assert len(etf) == 102, len(etf)
           assert actions['isin'].nunique() == 1486
           assert etf['isin'].nunique() == 102
           assert actions['yahoo_ticker'].notna().all()
           assert etf['yahoo_ticker'].notna().all()
+          assert len(committee) > 0, 'EMPTY_COMMITTEE_ANALYST_OUTPUT'
 
           required_analyst = {
               'target_upside_abs', 'target_upside_pct', 'target_change_run_abs',
               'target_change_run_pct', 'target_change_1m_abs', 'target_change_1m_pct',
               'target_change_3m_abs', 'target_change_3m_pct', 'consensus_score_100',
               'consensus_delta_run', 'consensus_delta_1m', 'consensus_delta_3m',
+              'target_source_canonical', 'consensus_source_canonical',
               'target_revision_acceleration', 'analyst_momentum_score',
               'committee_analyst_signal', 'committee_analyst_gate',
               'committee_review_required', 'committee_score_with_analyst_momentum',
           }
           assert required_analyst.issubset(set(actions.columns)), required_analyst - set(actions.columns)
+          assert {'target_source', 'consensus_source'}.issubset(set(history.columns))
 
           analyst_metrics = json.loads(Path('outputs/audit/V18.2_ANALYST_MOMENTUM_METRICS.json').read_text())
           assert analyst_metrics['execution_gate'] == 'SHADOW_BLOCKED'
           assert float(analyst_metrics['overall_weight']) == 0.15
+          assert int(analyst_metrics.get('committee_rows', 0)) == len(committee), analyst_metrics
+          assert analyst_metrics.get('committee_selection_basis') in {
+              'EXPLICIT_COMMITTEE_WATCH', 'TOP_300_SCORE_BRUT_FALLBACK', 'FIRST_300_FALLBACK'
+          }, analyst_metrics
 
           metrics = json.loads(Path('outputs/audit/V18.2_SOURCE_FALLBACK_METRICS.json').read_text())
           for key in ('wave01_actions', 'wave02_etf'):
