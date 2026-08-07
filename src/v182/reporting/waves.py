@@ -1,11 +1,10 @@
 from __future__ import annotations
 from pathlib import Path
 from datetime import datetime, timezone
-import json
 import pandas as pd
 
 from v182.sources.yfinance_bulk import download_history, DownloadResult
-from v182.sources.yfinance_info import collect_info, FIELDS as INFO_FIELDS
+from v182.sources.yfinance_info import collect_info
 from v182.features.ohlcv_features import calculate as calculate_features
 from v182.io.frames import is_missing
 
@@ -138,14 +137,36 @@ def consensus_availability(actions_df: pd.DataFrame, top_n: int = 300) -> tuple[
     return available, total, 100.0 if total == 0 else round(available / total * 100, 2)
 
 
+def _is_recent(value, max_age_days: int) -> bool:
+    if is_missing(value):
+        return False
+    try:
+        stamp = pd.to_datetime(value, utc=True, errors="coerce")
+        if pd.isna(stamp):
+            return False
+        cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=max(0, int(max_age_days)))
+        return stamp >= cutoff
+    except Exception:
+        return False
+
+
 def wave4_info_actions(actions_df: pd.DataFrame, cfg: dict, top_n: int = 300) -> tuple[list[dict], list[dict], dict]:
     import time
     priority_df = _priority_actions(actions_df, top_n)
     available_before, total, pct_before = fundamentals_availability(actions_df, top_n)
-    needs_refresh = priority_df[priority_df["yf_status"].fillna("").str.upper().ne("OK")] if "yf_status" in priority_df.columns else priority_df
+    yf_cfg = cfg.get("yfinance", {})
+    refresh_days = int(yf_cfg.get("fundamental_refresh_days", 7) or 7)
+
+    def requires_refresh(row: pd.Series) -> bool:
+        status = str(row.get("yf_status") or "").strip().upper()
+        if status != "OK":
+            return True
+        stamp = row.get("fundamentals_as_of")
+        return not _is_recent(stamp, refresh_days)
+
+    needs_refresh = priority_df[priority_df.apply(requires_refresh, axis=1)]
     ticker_to_isin = dict(zip(needs_refresh["yahoo_ticker"], needs_refresh["isin"]))
     tickers = [t for t in ticker_to_isin if not is_missing(t)]
-    yf_cfg = cfg.get("yfinance", {})
     initial_cooldown = float(yf_cfg.get("info_initial_cooldown_seconds", 0) or 0)
     if tickers and initial_cooldown:
         time.sleep(initial_cooldown)
@@ -162,7 +183,8 @@ def wave4_info_actions(actions_df: pd.DataFrame, cfg: dict, top_n: int = 300) ->
         result.append(_obs("ACTION", isin, row["field"], row["value"], row.get("source", "yfinance"), "C"))
         result.append(_obs("ACTION", isin, "yf_status", "OK", row.get("source", "yfinance"), "C"))
     meta = {"priority": total, "available_before": available_before, "available_before_pct": pct_before,
-            "attempted": len(tickers), "refreshed_tickers": len(refreshed), "failures": len(failures)}
+            "attempted": len(tickers), "skipped_fresh": max(0, len(priority_df) - len(needs_refresh)),
+            "refresh_days": refresh_days, "refreshed_tickers": len(refreshed), "failures": len(failures)}
     return result, failures, meta
 
 
