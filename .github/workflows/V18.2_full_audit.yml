@@ -6,6 +6,7 @@ on:
       - fix/v18-2-waves-resilience
       - feature/v18-2-consensus-momentum
       - audit/v18-2-consensus-momentum-final
+      - audit/v18-2-marketbeat-consensus-integration
   workflow_dispatch:
 
 permissions:
@@ -39,6 +40,24 @@ jobs:
           ruff check --select E9,F63,F7,F82 src tests
           pytest -q
 
+      - name: MarketBeat live forecast schema smoke
+        env:
+          MARKETBEAT_API_KEY: ${{ secrets.MARKETBEAT_API_KEY }}
+        run: |
+          python - <<'PY'
+          import os
+          from v182.sources.marketbeat_parse import MarketBeatParseClient, parse_forecast
+          key = os.environ.get('MARKETBEAT_API_KEY', '').strip()
+          assert key, 'MARKETBEAT_API_KEY_MISSING'
+          client = MarketBeatParseClient(key, min_interval_seconds=0)
+          payload = client.get_stock_forecast('SNY', 'NASDAQ')
+          fields = parse_forecast(payload)
+          assert fields.get('mb_target_price') is not None, fields
+          assert fields.get('mb_target_change_1m_pct') is not None, fields
+          assert fields.get('mb_consensus_score_100') is not None, fields
+          print('MARKETBEAT_FORECAST_SMOKE_OK', fields.get('mb_consensus_rating'), fields.get('mb_target_currency'))
+          PY
+
       - name: Execute full V18.2 pipeline
         env:
           V182_RUN_ID: full-audit-${{ github.run_id }}-${{ github.run_attempt }}
@@ -48,9 +67,18 @@ jobs:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
-        run: |
-          python -m v182.reporting.run
-          python -m v182.decision.analyst_momentum
+        run: python -m v182.reporting.run
+
+      - name: Compute baseline analyst momentum
+        run: python -m v182.decision.analyst_momentum
+
+      - name: Apply selective MarketBeat cross-check
+        env:
+          MARKETBEAT_API_KEY: ${{ secrets.MARKETBEAT_API_KEY }}
+        run: python -m v182.decision.marketbeat_overlay
+
+      - name: Finalize committee target fields
+        run: python -m v182.decision.committee_finalize
 
       - name: Validate complete outputs and invariants
         run: |
@@ -75,8 +103,7 @@ jobs:
 
           q = json.loads(Path('outputs/audit/V18.2_QUALITY_GATES.json').read_text())
           assert q['passed'], q
-          failed = [c for c in q['checks'] if not c['passed']]
-          assert not failed, failed
+          assert not [c for c in q['checks'] if not c['passed']], q['checks']
 
           actions = pd.read_csv('outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv', sep=';', encoding='utf-8-sig', dtype=str)
           etf = pd.read_csv('outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv', sep=';', encoding='utf-8-sig', dtype=str)
@@ -93,14 +120,19 @@ jobs:
           required_analyst = {
               'target_upside_abs', 'target_upside_pct', 'target_change_run_abs',
               'target_change_run_pct', 'target_change_1m_abs', 'target_change_1m_pct',
-              'target_change_3m_abs', 'target_change_3m_pct', 'consensus_score_100',
-              'consensus_delta_run', 'consensus_delta_1m', 'consensus_delta_3m',
-              'target_source_canonical', 'consensus_source_canonical',
+              'target_change_3m_abs', 'target_change_3m_pct',
+              'target_change_12m_abs', 'target_change_12m_pct',
+              'consensus_score_100', 'consensus_delta_run', 'consensus_delta_1m',
+              'consensus_delta_3m', 'target_source_canonical', 'consensus_source_canonical',
               'target_revision_acceleration', 'analyst_momentum_score',
-              'committee_analyst_signal', 'committee_analyst_gate',
-              'committee_review_required', 'committee_score_with_analyst_momentum',
+              'analyst_momentum_score_pre_marketbeat', 'target_revision_signal_pct',
+              'consensus_change_signal', 'marketbeat_confirmation_state',
+              'marketbeat_risk_revision_pct', 'committee_analyst_signal',
+              'committee_analyst_gate', 'committee_review_required',
+              'committee_score_with_analyst_momentum',
           }
           assert required_analyst.issubset(set(actions.columns)), required_analyst - set(actions.columns)
+          assert 'target_change_12m_abs' in committee.columns
           assert {'target_source', 'consensus_source'}.issubset(set(history.columns))
 
           analyst_metrics = json.loads(Path('outputs/audit/V18.2_ANALYST_MOMENTUM_METRICS.json').read_text())
@@ -110,6 +142,14 @@ jobs:
           assert analyst_metrics.get('committee_selection_basis') in {
               'EXPLICIT_COMMITTEE_WATCH', 'TOP_300_SCORE_BRUT_FALLBACK', 'FIRST_300_FALLBACK'
           }, analyst_metrics
+          mb = analyst_metrics.get('marketbeat') or {}
+          assert mb.get('enabled') is True, mb
+          assert mb.get('key_present') is True, mb
+          assert mb.get('success') is True, mb
+          assert int(mb.get('selected', 0)) > 0, mb
+          assert int(mb.get('api_calls', 0)) > 0, mb
+          overlay = analyst_metrics.get('marketbeat_overlay') or {}
+          assert int(overlay.get('committee_rows', 0)) == len(committee), overlay
 
           metrics = json.loads(Path('outputs/audit/V18.2_SOURCE_FALLBACK_METRICS.json').read_text())
           for key in ('wave01_actions', 'wave02_etf'):
@@ -171,4 +211,5 @@ jobs:
             config/V18.2_MARKETSTACK_SYMBOL_MAP.csv
             config/V18.2_ALPHA_SYMBOL_MAP.csv
             config/V18.2_FINNHUB_SYMBOL_MAP.csv
+            config/V18.2_MARKETBEAT_SYMBOL_MAP.csv
           retention-days: 30
