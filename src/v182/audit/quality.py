@@ -93,17 +93,30 @@ def run_quality_gates(actions: pd.DataFrame, etf: pd.DataFrame, before: dict, af
         negative_cache_hits = int(diagnostics.get("marketstack_symbol_negative_cache_hits", 0) or 0)
         deferred = int(diagnostics.get("marketstack_symbol_deferred", 0) or 0)
         budget_exhausted = bool(diagnostics.get("marketstack_budget_exhausted", False))
+        resolution_budget_known = "marketstack_resolution_budget_available" in diagnostics
+        resolution_budget_available = int(diagnostics.get("marketstack_resolution_budget_available", 0) or 0)
+        resolution_budget_exhausted = (
+            resolution_budget_known and deferred > 0 and resolution_budget_available <= 0
+        )
         market_needed = key_present and remaining_after_openfigi > 0
-        # Merely deferring symbols is not proof that the Marketstack path worked.
-        # Count only a real resolver/EOD attempt, a validated cache decision, or
-        # an explicitly exhausted shared budget as meaningful activity.
-        activity = eod_attempted + resolver_attempted + cache_hits + negative_cache_hits + int(budget_exhausted)
+        # Marketstack uses one shared Actions+ETF symbol-resolution budget. A
+        # later wave may therefore defer unresolved symbols after WAVE_01 has
+        # legitimately consumed that budget. Accept only explicit runtime
+        # evidence that the shared resolution budget is exhausted; a generic
+        # deferred-only diagnostic without the budget field must still fail.
+        activity = (
+            eod_attempted
+            + resolver_attempted
+            + cache_hits
+            + negative_cache_hits
+            + int(budget_exhausted or resolution_budget_exhausted)
+        )
         checks.append(_check(
             f"{wave_id.lower()}_marketstack_path_invoked_if_needed",
             (not market_needed) or activity > 0,
             activity,
             ">0 when key present and Yahoo/OpenFIGI gaps remain",
-            f"remaining_after_openfigi={remaining_after_openfigi}; key_present={key_present}; resolver={resolver_attempted}; cache={cache_hits}; negative_cache={negative_cache_hits}; deferred={deferred}; budget_exhausted={budget_exhausted}; eod={eod_attempted}",
+            f"remaining_after_openfigi={remaining_after_openfigi}; key_present={key_present}; resolver={resolver_attempted}; cache={cache_hits}; negative_cache={negative_cache_hits}; deferred={deferred}; resolution_budget_known={resolution_budget_known}; resolution_budget_available={resolution_budget_available}; resolution_budget_exhausted={resolution_budget_exhausted}; budget_exhausted={budget_exhausted}; eod={eod_attempted}",
         ))
 
         symbol_failures = diagnostics.get("marketstack_symbol_failures", []) or []
