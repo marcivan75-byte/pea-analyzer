@@ -8,6 +8,10 @@ from v182.sources.marketstack_eod import fetch_eod_history, save_marketstack_cac
 from v182.sources.marketstack_symbols import resolve_marketstack_symbols
 from v182.io.frames import is_missing
 
+# The reporting pipeline executes Actions then ETF in the same Python process.
+# This state therefore enforces one Marketstack allowance across both waves.
+_MARKETSTACK_RUN_BUDGET = {"initialized": False, "eod_remaining": 0, "resolution_remaining": 0}
+
 
 def _priority_failed_rows(df, failed: set[str], universe: str):
     rows = df[df["yahoo_ticker"].astype(str).isin(failed)].copy()
@@ -27,6 +31,35 @@ def _priority_failed_rows(df, failed: set[str], universe: str):
     return rows
 
 
+def _marketstack_budget(cfg: dict, eod_override: int | None, resolution_override: int | None) -> tuple[int, int]:
+    ms_cfg = cfg.get("marketstack", {})
+    if eod_override is not None or resolution_override is not None:
+        configured_eod = int(os.environ.get("MARKETSTACK_MAX_SYMBOLS_PER_RUN") or ms_cfg.get("max_symbols_per_run", 3))
+        configured_resolution = int(ms_cfg.get("max_new_symbol_resolutions_per_run", 1) or 1)
+        return (
+            max(0, int(eod_override if eod_override is not None else configured_eod)),
+            max(0, int(resolution_override if resolution_override is not None else configured_resolution)),
+        )
+    if not _MARKETSTACK_RUN_BUDGET["initialized"]:
+        _MARKETSTACK_RUN_BUDGET["eod_remaining"] = max(
+            0, int(os.environ.get("MARKETSTACK_MAX_SYMBOLS_PER_RUN") or ms_cfg.get("max_symbols_per_run", 3))
+        )
+        _MARKETSTACK_RUN_BUDGET["resolution_remaining"] = max(
+            0, int(ms_cfg.get("max_new_symbol_resolutions_per_run", 1) or 1)
+        )
+        _MARKETSTACK_RUN_BUDGET["initialized"] = True
+    return int(_MARKETSTACK_RUN_BUDGET["eod_remaining"]), int(_MARKETSTACK_RUN_BUDGET["resolution_remaining"])
+
+
+def _consume_marketstack_budget(eod_used: int, resolution_used: int, explicit_override: bool) -> None:
+    if explicit_override:
+        return
+    _MARKETSTACK_RUN_BUDGET["eod_remaining"] = max(0, int(_MARKETSTACK_RUN_BUDGET["eod_remaining"]) - int(eod_used))
+    _MARKETSTACK_RUN_BUDGET["resolution_remaining"] = max(
+        0, int(_MARKETSTACK_RUN_BUDGET["resolution_remaining"]) - int(resolution_used)
+    )
+
+
 def download_history_with_fallback(
     df,
     universe: str,
@@ -39,8 +72,8 @@ def download_history_with_fallback(
 ) -> DownloadResult:
     """Primary Yahoo OHLCV → OpenFIGI repair → Marketstack symbol resolution/EOD.
 
-    Marketstack budgets may be supplied by the run orchestrator so the Actions
-    and ETF waves share one global quota rather than each consuming a full cap.
+    By default Actions and ETF share one process-wide Marketstack budget. The
+    optional explicit budgets exist for isolated tests or controlled callers.
     """
     valid = df[df["yahoo_ticker"].apply(lambda v: not is_missing(v))]
     batch_key = "actions_batch_size" if universe == "ACTION" else "etf_batch_size"
@@ -77,8 +110,6 @@ def download_history_with_fallback(
         "marketstack_attempted": 0,
         "marketstack_failures": [],
         "marketstack_key_present": bool(os.environ.get("MARKETSTACK_API_KEY")),
-        "marketstack_eod_budget": marketstack_eod_budget,
-        "marketstack_resolution_budget": marketstack_resolution_budget,
     }
 
     specs = fallback_specs(valid, sorted(remaining), openfigi_map_path, universe)
@@ -114,11 +145,14 @@ def download_history_with_fallback(
     diagnostics["remaining_after_openfigi"] = len(remaining)
     market_key = os.environ.get("MARKETSTACK_API_KEY")
     ms_cfg = cfg.get("marketstack", {})
-    if remaining and market_key and ms_cfg.get("enabled", True):
+    explicit_budget = marketstack_eod_budget is not None or marketstack_resolution_budget is not None
+    eod_budget, resolution_budget = _marketstack_budget(cfg, marketstack_eod_budget, marketstack_resolution_budget)
+    diagnostics["marketstack_eod_budget_available"] = eod_budget
+    diagnostics["marketstack_resolution_budget_available"] = resolution_budget
+
+    if remaining and market_key and ms_cfg.get("enabled", True) and (eod_budget > 0 or resolution_budget > 0):
         priority = _priority_failed_rows(valid, remaining, universe)
         symbol_cache = Path(marketstack_symbol_cache_path or Path(openfigi_map_path).with_name("V18.2_MARKETSTACK_SYMBOL_MAP.csv"))
-        configured_resolution = int(ms_cfg.get("max_new_symbol_resolutions_per_run", 1) or 1)
-        resolution_budget = configured_resolution if marketstack_resolution_budget is None else max(0, int(marketstack_resolution_budget))
         symbol_result = resolve_marketstack_symbols(
             priority,
             universe,
@@ -137,8 +171,6 @@ def download_history_with_fallback(
         diagnostics["marketstack_symbol_deferred"] = symbol_result.deferred
         diagnostics["marketstack_symbol_failures"] = symbol_result.failures
 
-        configured_eod = int(os.environ.get("MARKETSTACK_MAX_SYMBOLS_PER_RUN") or ms_cfg.get("max_symbols_per_run", 3))
-        max_eod = configured_eod if marketstack_eod_budget is None else max(0, int(marketstack_eod_budget))
         requests_spec = []
         for _, row in priority.iterrows():
             original = str(row.get("yahoo_ticker") or "").strip()
@@ -146,19 +178,15 @@ def download_history_with_fallback(
             mic = expected_mic(original, str(row.get("isin") or ""))
             if not symbol or not mic:
                 continue
-            requests_spec.append({
-                "canonical_ticker": original,
-                "symbol": symbol,
-                "expected_mic": mic,
-            })
-            if len(requests_spec) >= max_eod:
+            requests_spec.append({"canonical_ticker": original, "symbol": symbol, "expected_mic": mic})
+            if len(requests_spec) >= eod_budget:
                 break
 
         ms = fetch_eod_history(
             requests_spec=requests_spec,
             api_key=market_key,
             history_days=int(ms_cfg.get("history_days", 365)),
-            max_symbols=max_eod,
+            max_symbols=eod_budget,
             auto_adjust=bool(yf_cfg.get("auto_adjust", True)),
             min_rows=int(ms_cfg.get("min_rows", 60)),
             delay_seconds=float(ms_cfg.get("delay_seconds", 0.25)),
@@ -170,6 +198,9 @@ def download_history_with_fallback(
         source_counts["marketstack"] = len(market_success)
         diagnostics["marketstack_attempted"] = ms.attempted
         diagnostics["marketstack_failures"] = ms.failures
+        _consume_marketstack_budget(ms.attempted, symbol_result.api_attempted, explicit_budget)
+    elif remaining and market_key and ms_cfg.get("enabled", True):
+        diagnostics["marketstack_budget_exhausted"] = True
 
     diagnostics["failed_final"] = len(remaining)
     return DownloadResult(
