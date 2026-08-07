@@ -61,36 +61,57 @@ def run_quality_gates(actions: pd.DataFrame, etf: pd.DataFrame, before: dict, af
         diagnostics = m.get("diagnostics") or {}
         remaining_after_openfigi = int(diagnostics.get("remaining_after_openfigi", 0) or 0)
         key_present = bool(diagnostics.get("marketstack_key_present", False))
-        attempted = int(diagnostics.get("marketstack_attempted", 0) or 0)
+        eod_attempted = int(diagnostics.get("marketstack_attempted", 0) or 0)
+        resolver_attempted = int(diagnostics.get("marketstack_symbol_resolution_attempted", 0) or 0)
+        cache_hits = int(diagnostics.get("marketstack_symbol_cache_hits", 0) or 0)
         market_needed = key_present and remaining_after_openfigi > 0
+        path_activity = eod_attempted + resolver_attempted + cache_hits
         checks.append(_check(
-            f"{wave_id.lower()}_marketstack_invoked_if_needed",
-            (not market_needed) or attempted > 0,
-            attempted,
+            f"{wave_id.lower()}_marketstack_path_invoked_if_needed",
+            (not market_needed) or path_activity > 0,
+            path_activity,
             ">0 when key present and Yahoo/OpenFIGI gaps remain",
-            f"remaining_after_openfigi={remaining_after_openfigi}; key_present={key_present}",
+            f"remaining_after_openfigi={remaining_after_openfigi}; key_present={key_present}; resolver={resolver_attempted}; cache_hits={cache_hits}; eod={eod_attempted}",
+        ))
+
+        symbol_failures = diagnostics.get("marketstack_symbol_failures", []) or []
+        resolver_transport = sum(_transport_failure(f.get("reason", "")) for f in symbol_failures if isinstance(f, dict))
+        checks.append(_check(
+            f"{wave_id.lower()}_marketstack_resolver_transport_health",
+            resolver_attempted == 0 or resolver_transport < resolver_attempted,
+            resolver_transport,
+            f"<{resolver_attempted}" if resolver_attempted else "not applicable",
+            f"resolver_attempted={resolver_attempted}; resolver_failures={len(symbol_failures)}",
         ))
 
         failures = diagnostics.get("marketstack_failures", []) or []
         transport_failures = sum(_transport_failure(f.get("reason", "")) for f in failures if isinstance(f, dict))
         checks.append(_check(
-            f"{wave_id.lower()}_marketstack_not_total_transport_failure",
-            attempted == 0 or transport_failures < attempted,
+            f"{wave_id.lower()}_marketstack_eod_transport_health",
+            eod_attempted == 0 or transport_failures < eod_attempted,
             transport_failures,
-            f"<{attempted}" if attempted else "not applicable",
-            f"attempted={attempted}; total_failures={len(failures)}",
+            f"<{eod_attempted}" if eod_attempted else "not applicable",
+            f"eod_attempted={eod_attempted}; eod_failures={len(failures)}",
         ))
 
-        configured_max = int(cfg.get("marketstack", {}).get("max_symbols_per_run", 3) or 3)
+        market_cfg = cfg.get("marketstack", {})
+        configured_max = int(market_cfg.get("max_symbols_per_run", 3) or 3)
         try:
             effective_max = int(os.environ.get("MARKETSTACK_MAX_SYMBOLS_PER_RUN") or configured_max)
         except ValueError:
             effective_max = configured_max
         checks.append(_check(
-            f"{wave_id.lower()}_marketstack_quota_cap",
-            attempted <= max(0, effective_max),
-            attempted,
+            f"{wave_id.lower()}_marketstack_eod_quota_cap",
+            eod_attempted <= max(0, effective_max),
+            eod_attempted,
             max(0, effective_max),
+        ))
+        resolver_max = int(market_cfg.get("max_new_symbol_resolutions_per_run", 1) or 1)
+        checks.append(_check(
+            f"{wave_id.lower()}_marketstack_resolver_quota_cap",
+            resolver_attempted <= max(0, resolver_max),
+            resolver_attempted,
+            max(0, resolver_max),
         ))
 
     openfigi = wave_metrics.get("WAVE_00_OPENFIGI", {}) or {}
