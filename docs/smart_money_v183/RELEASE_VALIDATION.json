@@ -1,0 +1,15 @@
+{
+  "version": "18.3.0rc0",
+  "module": "SMART_MONEY_V1",
+  "status": "PREINTEGRATION_READY_SHADOW_ONLY",
+  "tests_passed": 17,
+  "compileall_passed": true,
+  "secret_scan_clean": true,
+  "github_modified": false,
+  "known_blockers_before_active_scoring": [
+    "Validate stable machine ingestion for AMF BDIF insider and threshold documents",
+    "Implement issuer adapters and coverage map for ETF AUM/NAV/shares outstanding",
+    "Run historical no-lookahead backtests and walk-forward calibration",
+    "Run four integration audits on the feature branch before merge"
+  ]
+}

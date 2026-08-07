@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PEA Analyzer V18.3 Smart Money Event",
+  "type": "object",
+  "required": ["event_id", "universe", "isin", "event_type", "event_subtype", "source", "evidence_level", "validation_status", "publication_date"],
+  "properties": {
+    "event_id": {"type": "string", "minLength": 16},
+    "universe": {"enum": ["ACTION", "ETF"]},
+    "isin": {"type": "string", "pattern": "^[A-Z]{2}[A-Z0-9]{9}[0-9]$"},
+    "event_type": {"enum": ["INSIDER", "THRESHOLD", "SHORT", "ETF_FLOW", "TAPE"]},
+    "direction": {"enum": [-1, 0, 1]},
+    "evidence_level": {"enum": ["A", "B", "C", "D"]},
+    "validation_status": {"enum": ["VALIDATED", "ISIN_MATCHED", "AUTO_MATCH", "REVIEW", "REJECTED"]},
+    "publication_date": {"type": "string", "format": "date"},
+    "transaction_date": {"type": ["string", "null"], "format": "date"},
+    "short_position_pct": {"type": ["number", "null"], "minimum": 0},
+    "threshold_pct": {"type": ["number", "null"], "minimum": 0}
+  },
+  "additionalProperties": true
+}
