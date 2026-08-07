@@ -15,18 +15,6 @@ COUNTRY_ALIASES = {
     "NO": {"norway"}, "LU": {"luxembourg"}, "CH": {"switzerland"}, "GB": {"united kingdom", "uk"},
 }
 
-OVERVIEW_FIELDS = {
-    "MarketCapitalization": "market_cap",
-    "PERatio": "per_ttm",
-    "ForwardPE": "per_forward",
-    "PriceToBookRatio": "pb",
-    "ReturnOnEquityTTM": "roe_api",
-    "OperatingMarginTTM": "marge_ebit",
-    "ProfitMargin": "marge_nette",
-    "DividendYield": "dividend_yield_pct",
-    "Beta": "beta",
-}
-
 
 @dataclass(frozen=True)
 class AlphaResolutionResult:
@@ -36,6 +24,13 @@ class AlphaResolutionResult:
     match_score: float = 0.0
     api_calls: int = 0
     reason: str = ""
+
+
+@dataclass(frozen=True)
+class AlphaHistoryResult:
+    frames: dict[str, object]
+    failures: list[dict]
+    api_calls: int
 
 
 def _api_error(body) -> str | None:
@@ -65,13 +60,7 @@ def _request(
     rate_retry_wait_seconds: float = 1.15,
     **params,
 ) -> dict:
-    """Call Alpha Vantage and distinguish transient per-second throttling.
-
-    Alpha Vantage can return HTTP 200 with an `Information` payload when free
-    requests arrive too close together. That response is retried after >1 s.
-    Daily quota, entitlement and other API errors remain hard failures and are
-    never hidden by retry loops.
-    """
+    """Call Alpha Vantage and retry only transient per-second throttling."""
     import requests
 
     if not api_key:
@@ -220,37 +209,54 @@ def resolve_symbol(security: dict, api_key: str, cache_path: str | Path | None =
     return AlphaResolutionResult(None, "API", api_calls=1, reason=reason)
 
 
-def fetch_overview(symbol: str, api_key: str) -> list[dict]:
-    body = _request(api_key, "OVERVIEW", symbol=symbol)
-    if not body or str(body.get("Symbol") or "").strip().upper() != str(symbol).strip().upper():
-        raise RuntimeError("ALPHA_VANTAGE_OVERVIEW_IDENTITY_MISMATCH")
-    observations = []
-    for source_field, target_field in OVERVIEW_FIELDS.items():
-        raw = body.get(source_field)
-        if raw in (None, "", "None", "-"):
-            continue
-        try:
-            value = float(raw)
-        except (TypeError, ValueError):
-            continue
-        observations.append({"field": target_field, "value": value})
-    if not observations:
-        raise RuntimeError("ALPHA_VANTAGE_OVERVIEW_NO_USABLE_FIELDS")
-    return observations
+def fetch_daily_history(symbol: str, api_key: str, canonical_ticker: str,
+                        min_rows: int = 60, outputsize: str = "compact") -> AlphaHistoryResult:
+    """Fetch raw global daily OHLCV using the documented TIME_SERIES_DAILY API."""
+    import pandas as pd
+
+    try:
+        body = _request(api_key, "TIME_SERIES_DAILY", symbol=symbol, outputsize=outputsize)
+        meta = body.get("Meta Data") if isinstance(body, dict) else None
+        returned_symbol = str((meta or {}).get("2. Symbol") or "").strip()
+        if returned_symbol and returned_symbol.upper() != str(symbol).strip().upper():
+            return AlphaHistoryResult({}, [{"ticker": canonical_ticker, "symbol": symbol,
+                                            "reason": "IDENTITY_MISMATCH", "returned_symbol": returned_symbol}], 1)
+        series = body.get("Time Series (Daily)") if isinstance(body, dict) else None
+        if not isinstance(series, dict) or not series:
+            return AlphaHistoryResult({}, [{"ticker": canonical_ticker, "symbol": symbol,
+                                            "reason": "NO_DAILY_SERIES"}], 1)
+        records = []
+        for date, row in series.items():
+            if not isinstance(row, dict):
+                continue
+            records.append({
+                "Date": pd.to_datetime(date, utc=True),
+                "Open": row.get("1. open"), "High": row.get("2. high"),
+                "Low": row.get("3. low"), "Close": row.get("4. close"),
+                "Volume": row.get("5. volume"),
+            })
+        frame = pd.DataFrame(records).drop_duplicates("Date").sort_values("Date").set_index("Date")
+        for col in ["Open", "High", "Low", "Close", "Volume"]:
+            frame[col] = pd.to_numeric(frame[col], errors="coerce")
+        frame = frame.dropna(subset=["Close"])
+        if len(frame) < int(min_rows):
+            return AlphaHistoryResult({}, [{"ticker": canonical_ticker, "symbol": symbol,
+                                            "reason": "INSUFFICIENT_ROWS", "rows": len(frame)}], 1)
+        return AlphaHistoryResult({canonical_ticker: frame}, [], 1)
+    except Exception as exc:
+        return AlphaHistoryResult({}, [{"ticker": canonical_ticker, "symbol": symbol,
+                                        "reason": type(exc).__name__, "detail": str(exc)[:240]}], 1)
 
 
-def resolve_and_fetch_overview(security: dict, api_key: str, cache_path: str | Path | None = None,
-                               delay_seconds: float = 1.15, **resolver_kwargs) -> tuple[list[dict], dict]:
-    resolution = resolve_symbol(security, api_key, cache_path=cache_path, **resolver_kwargs)
-    meta = {"symbol": resolution.symbol, "resolution_source": resolution.source,
-            "resolution_api_calls": resolution.api_calls, "reason": resolution.reason,
-            "region": resolution.region, "match_score": resolution.match_score,
-            "overview_api_calls": 0}
-    if not resolution.symbol:
-        return [], meta
-    # A cached symbol consumes no search request, so no mandatory inter-call wait.
-    if resolution.api_calls and delay_seconds:
-        time.sleep(max(1.05, float(delay_seconds)))
-    fields = fetch_overview(resolution.symbol, api_key)
-    meta["overview_api_calls"] = 1
-    return fields, meta
+def save_alpha_history_cache(frames: dict[str, object], cache_dir: str | Path,
+                             prefix: str = "history_alphavantage") -> str | None:
+    import pandas as pd
+
+    if not frames:
+        return None
+    cache = Path(cache_dir)
+    cache.mkdir(parents=True, exist_ok=True)
+    combined = pd.concat({ticker: frame for ticker, frame in sorted(frames.items())}, axis=1)
+    output = cache / f"{prefix}_00000.parquet"
+    combined.to_parquet(output)
+    return str(output)
