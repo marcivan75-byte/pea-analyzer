@@ -18,8 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -49,7 +49,7 @@ jobs:
           PY
       - name: Upload Excel and audit artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: V18.2-refresh-${{ github.run_id }}
           path: |
@@ -61,7 +61,7 @@ jobs:
             config/V18.2_FINNHUB_SYMBOL_MAP.csv
           retention-days: 30
       - name: Create controlled refresh pull request
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           branch: automation/v18-2-refresh-${{ github.run_id }}
