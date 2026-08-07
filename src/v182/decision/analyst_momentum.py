@@ -79,6 +79,13 @@ RATING_SCORE_100 = {
     "STRONG_SELL": 0.0,
 }
 
+CONSENSUS_PROVENANCE_FIELDS = {
+    "consensus", "consensus_rating", "consensus_score", "n_analysts",
+    "target_price", "buy_n", "hold_n", "sell_n", "strong_buy", "strong_sell",
+    "recommendation_key_yf", "recommendation_mean_yf", "target_mean_yf",
+    "target_high_yf", "target_low_yf", "n_analysts_yf",
+}
+
 
 def _num(value: Any) -> float | None:
     if value is None:
@@ -137,6 +144,17 @@ def _abs_change(current: float | None, previous: float | None) -> float | None:
     if current is None or previous is None:
         return None
     return round(current - previous, 6)
+
+
+def _field_provenance(row: pd.Series) -> dict[str, dict]:
+    raw = _first_text(row, ["_field_provenance_json"])
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def consensus_score_100(row: pd.Series) -> float | None:
@@ -199,6 +217,14 @@ def _source_count(row: pd.Series) -> int:
                 token = token.strip()
                 if token:
                     sources.add(token.lower())
+
+    for field, metadata in _field_provenance(row).items():
+        if field not in CONSENSUS_PROVENANCE_FIELDS or not isinstance(metadata, dict):
+            continue
+        source = _text(metadata.get("source"))
+        if source:
+            sources.add(source.casefold())
+
     if not sources:
         source = _canonical_source(row)
         if source != "UNKNOWN":
@@ -209,18 +235,27 @@ def _source_count(row: pd.Series) -> int:
 def _latest_observed_at(row: pd.Series) -> str | None:
     candidates: list[pd.Timestamp] = []
     raw_values: list[str] = []
-    for field in [
-        "observed_at_target_price", "observed_at_target_mean_yf",
-        "observed_at_consensus_score", "observed_at_consensus_rating",
-        "yf_consensus_as_of", "fundamentals_as_of",
-    ]:
-        text = _first_text(row, [field])
+
+    def add_candidate(value: Any) -> None:
+        text = _text(value)
         if not text:
-            continue
+            return
         stamp = pd.to_datetime(text, utc=True, errors="coerce")
         if pd.notna(stamp):
             candidates.append(stamp)
             raw_values.append(text)
+
+    for field in [
+        "observed_at_target_price", "observed_at_target_mean_yf",
+        "observed_at_consensus_score", "observed_at_consensus_rating",
+        "yf_consensus_as_of",
+    ]:
+        add_candidate(row.get(field) if field in row.index else None)
+
+    for field, metadata in _field_provenance(row).items():
+        if field in CONSENSUS_PROVENANCE_FIELDS and isinstance(metadata, dict):
+            add_candidate(metadata.get("as_of"))
+
     if not candidates:
         return None
     idx = max(range(len(candidates)), key=lambda i: candidates[i])
@@ -233,12 +268,26 @@ def _target_dispersion(low: float | None, high: float | None, mean: float | None
     return round((high - low) / abs(mean) * 100.0, 4)
 
 
-def _history_asof(history: pd.DataFrame, isin: str, cutoff: pd.Timestamp, *, strict: bool = False) -> pd.Series | None:
+def _history_asof(
+    history: pd.DataFrame,
+    isin: str,
+    cutoff: pd.Timestamp,
+    *,
+    source: str | None = None,
+    strict: bool = False,
+) -> pd.Series | None:
     if history.empty or "isin" not in history.columns or "date" not in history.columns:
         return None
     subset = history[history["isin"].astype(str) == str(isin)].copy()
     if subset.empty:
         return None
+    if source and source.upper() != "UNKNOWN" and "source" in subset.columns:
+        same_source = subset[
+            subset["source"].astype(str).str.casefold() == str(source).casefold()
+        ]
+        if same_source.empty:
+            return None
+        subset = same_source
     subset["_date"] = pd.to_datetime(subset["date"], utc=True, errors="coerce")
     subset = subset[subset["_date"].notna()]
     subset = subset[subset["_date"] < cutoff] if strict else subset[subset["_date"] <= cutoff]
@@ -466,6 +515,12 @@ def _signal_and_gate(values: dict[str, Any], cfg: dict) -> tuple[str, str, bool]
     if review:
         return "STRONG_NEGATIVE", "BLOCK_NEW_BUY_REVIEW", True
 
+    # A material target cut must never be hidden by a high composite score.
+    if revision is not None and revision <= strong_neg:
+        return "STRONG_NEGATIVE", "PENALIZE_STRONG", False
+    if revision is not None and revision <= neg:
+        return "NEGATIVE", "PENALIZE", False
+
     corroborated = (
         (consensus_delta is not None and consensus_delta > 0)
         or (breadth is not None and breadth > 0)
@@ -474,9 +529,7 @@ def _signal_and_gate(values: dict[str, Any], cfg: dict) -> tuple[str, str, bool]
         return "STRONG_POSITIVE", "BOOST", False
     if score >= 60.0 or (revision is not None and revision >= pos):
         return "POSITIVE", "SUPPORT", False
-    if revision is not None and revision <= strong_neg:
-        return "STRONG_NEGATIVE", "PENALIZE_STRONG", False
-    if score < 40.0 or (revision is not None and revision <= neg):
+    if score < 40.0:
         return "NEGATIVE", "PENALIZE", False
     return "NEUTRAL", "NEUTRAL", False
 
@@ -503,15 +556,21 @@ def enrich_analyst_momentum(
         run_ts = run_ts.tz_convert("UTC")
     run_day = run_ts.strftime("%Y-%m-%d")
 
-    out = actions_df.copy()
+    # pandas 3 uses strict Arrow-backed string columns for many string inputs.
+    # W09 deliberately writes numeric and boolean derived fields, so use object
+    # dtype in this working copy rather than mutating strict string arrays.
+    out = actions_df.astype(object).copy()
     for field in MOMENTUM_FIELDS:
         if field not in out.columns:
             out[field] = None
+        else:
+            out[field] = out[field].astype(object)
 
     snapshots: list[dict] = []
     scored = 0
     reviews = 0
     strong_positive = 0
+    no_analyst_data = 0
 
     for idx, row in out.iterrows():
         isin = _first_text(row, ["isin"])
@@ -532,10 +591,10 @@ def enrich_analyst_momentum(
         observed_at = _latest_observed_at(row)
         dispersion = _target_dispersion(target_low, target_high, target)
 
-        prev = _history_asof(history, isin, run_ts.normalize(), strict=True)
-        month = _history_asof(history, isin, run_ts - pd.Timedelta(days=28))
-        quarter = _history_asof(history, isin, run_ts - pd.Timedelta(days=84))
-        year = _history_asof(history, isin, run_ts - pd.Timedelta(days=350))
+        prev = _history_asof(history, isin, run_ts.normalize(), source=source, strict=True)
+        month = _history_asof(history, isin, run_ts - pd.DateOffset(months=1), source=source)
+        quarter = _history_asof(history, isin, run_ts - pd.DateOffset(months=3), source=source)
+        year = _history_asof(history, isin, run_ts - pd.DateOffset(months=12), source=source)
 
         prev_target = _num(prev.get("target_mean")) if prev is not None else None
         m1_target = _num(month.get("target_mean")) if month is not None else None
@@ -546,6 +605,8 @@ def enrich_analyst_momentum(
         m3_score = _num(quarter.get("consensus_score_100")) if quarter is not None else None
 
         revision_metrics = _revision_metrics(revisions, isin, run_ts, broker_weights)
+        has_revision_data = any(value is not None for value in revision_metrics.values())
+        has_analyst_data = target is not None or score100 is not None or has_revision_data
 
         values: dict[str, Any] = {
             "target_price": target,
@@ -573,8 +634,8 @@ def enrich_analyst_momentum(
             "consensus_score_3m_ago": m3_score,
             "consensus_delta_3m": _abs_change(score100, m3_score),
             "n_analysts": n_analysts,
-            "consensus_source_count": source_count,
-            "consensus_as_of": observed_at or run_day,
+            "consensus_source_count": source_count if has_analyst_data else 0,
+            "consensus_as_of": observed_at,
             **revision_metrics,
         }
         if values["target_change_1m_pct"] is not None and values["target_change_3m_pct"] is not None:
@@ -584,23 +645,39 @@ def enrich_analyst_momentum(
         else:
             values["target_revision_acceleration"] = None
 
-        values["consensus_confidence"] = _confidence(
-            source_count, n_analysts, dispersion, observed_at, run_ts
-        )
-        values["analyst_momentum_score"] = _momentum_score(values, analyst_cfg)
-        signal, gate, review = _signal_and_gate(values, analyst_cfg)
-        values["committee_analyst_signal"] = signal
-        values["committee_analyst_gate"] = gate
-        values["committee_review_required"] = review
-
         base_score = _first_num(row, ["score_brut"])
         overall_weight = float(analyst_cfg.get("overall_weight", 0.15))
         overall_weight = max(0.0, min(1.0, overall_weight))
-        values["committee_score_with_analyst_momentum"] = (
-            round(base_score * (1.0 - overall_weight) + values["analyst_momentum_score"] * overall_weight, 2)
-            if base_score is not None
-            else None
-        )
+
+        if has_analyst_data:
+            values["consensus_confidence"] = _confidence(
+                source_count, n_analysts, dispersion, observed_at, run_ts
+            )
+            values["analyst_momentum_score"] = _momentum_score(values, analyst_cfg)
+            signal, gate, review = _signal_and_gate(values, analyst_cfg)
+            values["committee_analyst_signal"] = signal
+            values["committee_analyst_gate"] = gate
+            values["committee_review_required"] = review
+            values["committee_score_with_analyst_momentum"] = (
+                round(base_score * (1.0 - overall_weight) + values["analyst_momentum_score"] * overall_weight, 2)
+                if base_score is not None
+                else None
+            )
+        else:
+            # Missing analyst data is not negative evidence. Preserve the base
+            # committee score and expose a neutral gate without fabricating a
+            # pseudo-confidence or pseudo-momentum score.
+            no_analyst_data += 1
+            review = False
+            signal = "NEUTRAL"
+            values["consensus_confidence"] = None
+            values["analyst_momentum_score"] = None
+            values["committee_analyst_signal"] = signal
+            values["committee_analyst_gate"] = "NEUTRAL"
+            values["committee_review_required"] = False
+            values["committee_score_with_analyst_momentum"] = (
+                round(base_score, 2) if base_score is not None else None
+            )
 
         for field, value in values.items():
             out.at[idx, field] = value
@@ -639,10 +716,12 @@ def enrich_analyst_momentum(
 
     metrics = {
         "scored_or_snapshotted": scored,
+        "no_analyst_data": no_analyst_data,
         "mandatory_reviews": reviews,
         "strong_positive": strong_positive,
         "snapshot_rows": len(combined),
         "overall_weight": float(analyst_cfg.get("overall_weight", 0.15)),
+        "history_comparison_policy": "SAME_CANONICAL_SOURCE_ONLY",
         "execution_gate": "SHADOW_BLOCKED",
     }
     return out, combined, metrics
