@@ -21,6 +21,31 @@ def test_readme_documents_marketbeat_and_seven_api_secrets():
     assert "scenario_fallback" in text
 
 
+def test_full_audit_is_durable_and_generates_exact_sha_evidence():
+    text = Path(".github/workflows/V18.2_full_audit.yml").read_text(encoding="utf-8")
+    assert "cancel-in-progress: false" in text
+    assert "python -m v182.audit.ohlcv_gaps" in text
+    assert "python -m v182.audit.release_evidence" in text
+    assert 'V182_REQUIRE_RELEASE_READY: "1"' in text
+    assert "V18.2_RELEASE_EVIDENCE.json" in text
+
+
+def test_api_smoke_covers_all_seven_services_on_final_branch():
+    text = Path(".github/workflows/V18.2_api_smoke.yml").read_text(encoding="utf-8")
+    assert "audit/v18-2-consensus-momentum-final" in text
+    assert "cancel-in-progress: false" in text
+    for marker in (
+        "OPENFIGI_SMOKE_OK",
+        "MARKETSTACK_SMOKE_OK",
+        "FINNHUB_SMOKE_OK",
+        "ALPHA_VANTAGE_SMOKE_OK",
+        "FRED_SMOKE_OK",
+        "EIA_SMOKE_OK",
+        "MARKETBEAT_SMOKE_OK",
+    ):
+        assert marker in text
+
+
 def test_ohlcv_gap_audit_writes_actionable_lists(tmp_path):
     outputs = tmp_path / "outputs"
     (outputs / "audit").mkdir(parents=True)
