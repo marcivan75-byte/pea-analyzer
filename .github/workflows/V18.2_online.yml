@@ -53,6 +53,8 @@ jobs:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
         run: python -m v182.reporting.run
+      - name: Ensure committee scenario coverage
+        run: python -m v182.decision.scenario_fallback
       - name: Compute baseline analyst momentum
         run: python -m v182.decision.analyst_momentum
       - name: Apply selective MarketBeat consensus cross-check
@@ -72,6 +74,7 @@ jobs:
           test -s outputs/history/V18.2_CONSENSUS_SNAPSHOTS.csv
           test -s outputs/history/V18.2_ANALYST_REVISIONS.csv
           test -s outputs/audit/V18.2_ANALYST_MOMENTUM_METRICS.json
+          test -s outputs/audit/V18.2_SCENARIO_METRICS.json
           test -s outputs/audit/V18.2_SOURCE_FALLBACK_METRICS.json
           test -s outputs/context/V18.2_MACRO_CONTEXT.json
           test -s outputs/context/V18.2_ENERGY_CONTEXT.json
@@ -93,6 +96,8 @@ jobs:
           }
           assert required.issubset(actions.columns), required - set(actions.columns)
           assert 'target_change_12m_abs' in committee.columns
+          scenario=json.load(open('outputs/audit/V18.2_SCENARIO_METRICS.json'))
+          assert int(scenario.get('scenario_isins', 0)) > 0, scenario
           metrics=json.load(open('outputs/audit/V18.2_ANALYST_MOMENTUM_METRICS.json'))
           assert int(metrics.get('committee_rows', 0)) == len(committee), metrics
           mb = metrics.get('marketbeat') or {}
@@ -129,7 +134,7 @@ jobs:
           title: "V18.2 automated data refresh ${{ github.run_id }}"
           body: |
             Automated V18.2 refresh. Quality gates passed.
-            Identifier caches, API context files, analyst-momentum history, MarketBeat cross-check and fallback diagnostics are included.
+            Identifier caches, API context files, scenario fallback, analyst-momentum history, MarketBeat cross-check and fallback diagnostics are included.
             Review coverage, target revisions in value/% and committee analyst gates before merging.
           add-paths: |
             state/runs/**
