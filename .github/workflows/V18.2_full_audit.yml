@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - fix/v18-2-waves-resilience
+      - feature/v18-2-consensus-momentum
   workflow_dispatch:
 
 permissions:
