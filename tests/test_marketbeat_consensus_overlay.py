@@ -41,6 +41,7 @@ def test_live_validated_forecast_schema_normalizes_target_and_consensus_changes(
     assert fields["mb_target_1m_ago"] == 51.0
     assert round(fields["mb_target_change_1m_abs"], 2) == -1.50
     assert round(fields["mb_target_change_1m_pct"], 2) == -2.94
+    assert round(fields["mb_target_change_12m_abs"], 2) == -12.50
     assert round(fields["mb_target_change_12m_pct"], 2) == -20.16
     assert fields["mb_n_analysts"] == 15
     assert fields["mb_consensus_rating"] == "HOLD"
@@ -69,6 +70,28 @@ def test_adr_proxy_is_rejected_without_local_ticker_evidence():
         {"ticker": "SNY", "exchange": "NASDAQ", "name": "Sanofi"},
     ]
     assert client.resolve_issuer_listing("Sanofi", "SAN.PA") is None
+
+
+def test_same_ticker_us_proxy_requires_distinct_non_us_local_listing_evidence():
+    client = MarketBeatParseClient("dummy", min_interval_seconds=0)
+    client.search_stocks = lambda query: [
+        {"ticker": "SAP", "exchange": "NYSE", "name": "SAP SE"},
+        {"ticker": "SAP", "exchange": "ETR", "name": "SAP SE"},
+    ]
+    mapping = client.resolve_issuer_listing("SAP SE", "SAP.DE")
+    assert mapping is not None
+    assert mapping["marketbeat_ticker"] == "SAP"
+    assert mapping["marketbeat_exchange"] == "NYSE"
+    assert mapping["local_marketbeat_exchange"] == "ETR"
+    assert mapping["match_type"] == "US_ANALYST_PROXY"
+
+
+def test_same_ticker_us_only_candidate_is_not_accepted_as_local_evidence():
+    client = MarketBeatParseClient("dummy", min_interval_seconds=0)
+    client.search_stocks = lambda query: [
+        {"ticker": "SAP", "exchange": "NYSE", "name": "SAP SE"},
+    ]
+    assert client.resolve_issuer_listing("SAP SE", "SAP.DE") is None
 
 
 def test_marketbeat_is_only_30_percent_when_local_revision_exists():
