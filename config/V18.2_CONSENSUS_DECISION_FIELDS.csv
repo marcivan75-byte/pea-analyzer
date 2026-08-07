@@ -1,22 +1,23 @@
 Field;Type;Description;Decision impact;Source/Calculation;Freshness
-target_price;number;Canonical current local/share target price;Base for upside and target-revision calculations;Yahoo/Boursorama/Zonebourse/Finnhub canonical merge;7d
+target_price;number;Canonical current local/share target price;Base for local upside and target-revision calculations;Yahoo/Boursorama/Zonebourse/Finnhub canonical merge;7d
 target_prev_run;number;Target captured at prior run from the same target source;S-1 comparison;Internal history;run
-target_change_run_abs;number;Current target minus prior-run target, same currency and same source;Primary committee display: absolute target change;Calculated;run
-target_change_run_pct;number;Target change vs prior run in percent, same source;Primary revision signal;Calculated;run
-target_1m_ago;number;Latest same-source target at or before one calendar month ago;Reference for 1m revision;Internal history;1 calendar month
-target_change_1m_abs;number;Current target minus 1m target;High-priority committee criterion;Calculated;run
-target_change_1m_pct;number;1m target revision in percent;35% target-revision component and threshold gates;Calculated;run
-target_3m_ago;number;Latest same-source target at or before three calendar months ago;Reference for 3m trend;Internal history;3 calendar months
-target_change_3m_abs;number;Current target minus 3m target;Medium-term target trend;Calculated;run
-target_change_3m_pct;number;3m target revision in percent;Fallback/confirmation for target-revision component;Calculated;run
-target_12m_ago;number;Latest same-source target at or before twelve calendar months ago;Long-term context;Internal history;12 calendar months
-target_change_12m_pct;number;12m target revision in percent;Long-term context, no direct gate;Calculated;run
-target_upside_abs;number;Current target minus current local PEA price;Displays potential in currency;Calculated;run
-target_upside_pct;number;Current target upside vs current local PEA price;15% analyst-momentum component;Calculated;run
-target_low;number;Lowest current target;Dispersion/risk;Canonical provider;7d
-target_high;number;Highest current target;Dispersion/risk;Canonical provider;7d
+target_change_run_abs;number;Current local target minus prior-run target, same currency and same source;Primary committee display: S-1 target change in value;Calculated;run
+target_change_run_pct;number;Local target change vs prior run in percent, same source;Primary revision signal and risk gate;Calculated;run
+target_1m_ago;number;Latest same-source local target at or before one calendar month ago;Reference for 1m revision;Internal history;1 calendar month
+target_change_1m_abs;number;Current local target minus 1m target;High-priority committee criterion in value;Calculated;run
+target_change_1m_pct;number;1m local target revision in percent;35% target-revision component and threshold gates;Calculated;run
+target_3m_ago;number;Latest same-source local target at or before three calendar months ago;Reference for 3m trend;Internal history;3 calendar months
+target_change_3m_abs;number;Current local target minus 3m target;Medium-term target trend in value;Calculated;run
+target_change_3m_pct;number;3m local target revision in percent;Fallback/confirmation for target-revision component;Calculated;run
+target_12m_ago;number;Latest same-source local target at or before twelve calendar months ago;Long-term reference;Internal history;12 calendar months
+target_change_12m_abs;number;Current local target minus 12m target in same target currency;Long-term change displayed in value;Calculated;run
+target_change_12m_pct;number;12m local target revision in percent;Long-term trend context;Calculated;run
+target_upside_abs;number;Current canonical target minus current local PEA price;Displays local potential in currency;Calculated;run
+target_upside_pct;number;Current canonical target upside vs current local PEA price;15% analyst-momentum component;Calculated;run
+target_low;number;Lowest current canonical target;Dispersion/risk;Canonical provider;7d
+target_high;number;Highest current canonical target;Dispersion/risk;Canonical provider;7d
 target_dispersion_pct;number;(high-low)/mean target;Confidence penalty when analysts diverge;Calculated;run
-target_source_canonical;text;Canonical provider used for target history;Prevents false target changes when provider changes;Field provenance/canonical merge;run
+target_source_canonical;text;Canonical provider used for local target history;Prevents false target changes when provider changes;Field provenance/canonical merge;run
 consensus_score_100;number;Canonical consensus normalized 0-100;Common scale for change measurement;Calculated from canonical provider;run
 consensus_prev_run;text;Prior-run consensus rating from the same consensus source;S-1 display;Internal history;run
 consensus_delta_run;number;Change in normalized consensus score vs prior run, same source;20% consensus-change component;Calculated;run
@@ -25,21 +26,51 @@ consensus_delta_1m;number;Consensus score change vs 1m;Primary consensus-dynamic
 consensus_score_3m_ago;number;Same-source consensus score at three-calendar-month cutoff;Reference for quarterly change;Internal history;3 calendar months
 consensus_delta_3m;number;Consensus score change vs 3m;Medium-term confirmation;Calculated;run
 consensus_source_canonical;text;Canonical provider used for consensus history;Prevents false consensus changes when provider changes;Field provenance/canonical merge;run
-upgrades_30d;integer;Broker recommendation upgrades over 30d;Breadth and momentum;Revision event history;30d
-downgrades_30d;integer;Broker recommendation downgrades over 30d;Breadth and risk;Revision event history;30d
+upgrades_30d;integer;Individual broker recommendation upgrades over 30d when a broker-level source is available;Breadth and momentum;Revision event history;30d
+downgrades_30d;integer;Individual broker recommendation downgrades over 30d when available;Breadth and risk;Revision event history;30d
 net_upgrades_30d;integer;Upgrades minus downgrades;Direction of broker actions;Calculated;30d
-target_raises_30d;integer;Broker target raises over 30d;Revision breadth;Revision event history;30d
-target_cuts_30d;integer;Broker target cuts over 30d;Revision breadth and risk;Revision event history;30d
-net_target_revisions_30d;integer;Target raises minus target cuts;Direction of target revisions;Calculated;30d
+target_raises_30d;integer;Individual broker target raises over 30d when available;Revision breadth;Revision event history;30d
+target_cuts_30d;integer;Individual broker target cuts over 30d when available;Revision breadth and risk;Revision event history;30d
+net_target_revisions_30d;integer;Target raises minus target cuts;Direction of broker revisions;Calculated;30d
 revision_breadth_30d;number;Net target/broker event breadth, -100 to +100;15% analyst-momentum component;Calculated;30d
 n_analysts;number;Analyst count from canonical source only;Depth/confidence, never summed across providers;Canonical provider;run
-consensus_source_count;integer;Number of distinct providers confirming consensus/target;Confidence only, not analyst count;Field provenance;run
-consensus_confidence;number;0-100 confidence from source count, analyst depth, freshness and dispersion;5% analyst-momentum component;Calculated;run
+consensus_source_count;integer;Number of distinct providers contributing/confirming analyst intelligence;Confidence only, never analyst count;Field provenance + overlay;run
+consensus_confidence;number;0-100 confidence from source count, analyst depth, freshness, dispersion and cross-source agreement;5% analyst-momentum component;Calculated;run
 consensus_as_of;date;Freshness timestamp/date from analyst/target provenance only;Confidence and reporting;Canonical/provenance;run
-weighted_target_revision_30d_pct;number;Broker-reputation-weighted target revision;10% broker-quality component;Revision history + broker weights;30d
-weighted_consensus_delta_30d;number;Broker-reputation-weighted rating change;Broker-quality confirmation;Revision history + broker weights;30d
-target_revision_acceleration;number;1m target change minus one-third of 3m change;Detects acceleration/reversal;Calculated;run
-analyst_momentum_score;number;Composite 0-100 analyst momentum score;15% shadow contribution to combined committee score;Calculated;run
+weighted_target_revision_30d_pct;number;Broker-reputation-weighted target revision when individual broker events exist;10% broker-quality component;Revision history + broker weights;30d
+weighted_consensus_delta_30d;number;Broker-reputation-weighted rating change when individual broker events exist;Broker-quality confirmation;Revision history + broker weights;30d
+target_revision_acceleration;number;1m local target change minus one-third of 3m local change;Detects acceleration/reversal;Calculated;run
+marketbeat_ticker;text;MarketBeat analyst-listing ticker selected for issuer cross-check;Identity/audit only;MarketBeat mapping;90d
+marketbeat_exchange;text;MarketBeat exchange of analyst proxy/listing;Identity/audit only;MarketBeat mapping;90d
+marketbeat_match_type;text;PRIMARY_OR_LOCAL_LISTING or US_ANALYST_PROXY;Controls issuer-level use and forbids price substitution;MarketBeat mapping;90d
+marketbeat_match_confidence;number;Name/identity match confidence;Mapping safety;Calculated;90d
+marketbeat_as_of;date;Date of MarketBeat forecast collection;Freshness/audit;MarketBeat;run
+mb_consensus_rating;text;MarketBeat aggregate issuer consensus;Independent cross-check only;MarketBeat forecast;run
+mb_consensus_score_100;number;MarketBeat aggregate issuer consensus normalized 0-100;Cross-source consensus comparison;MarketBeat forecast;run
+mb_n_analysts;integer;MarketBeat aggregate analyst count;Depth only, never added to canonical n_analysts;MarketBeat forecast;run
+mb_target_price;number;MarketBeat current target on analyst proxy/listing;Displayed only with mb_target_currency, never substitutes local target;MarketBeat forecast;run
+mb_target_currency;text;Currency of MarketBeat proxy/listing target, e.g. USD;Prevents ADR/local currency confusion;MarketBeat forecast;run
+mb_target_1m_ago;number;MarketBeat proxy target one month ago;Reference for issuer-level target revision;MarketBeat forecast;1m
+mb_target_change_1m_abs;number;MarketBeat target change in proxy currency over 1m;Displayed in value with currency, not mixed with local EUR target;Calculated from MarketBeat;run
+mb_target_change_1m_pct;number;MarketBeat issuer target revision over 1m in percent;30% cross-check when local revision exists, sole signal when local history absent;Calculated from MarketBeat;run
+mb_target_3m_ago;number;MarketBeat proxy target three months ago;Medium-term cross-check;MarketBeat forecast;3m
+mb_target_change_3m_abs;number;MarketBeat target change in proxy currency over 3m;Displayed with mb_target_currency;Calculated from MarketBeat;run
+mb_target_change_3m_pct;number;MarketBeat issuer target revision over 3m in percent;Fallback/corroboration;Calculated from MarketBeat;run
+mb_target_12m_ago;number;MarketBeat proxy target one year ago;Long-term cross-check;MarketBeat forecast;12m
+mb_target_change_12m_abs;number;MarketBeat target change in proxy currency over 12m;Displayed with mb_target_currency;Calculated from MarketBeat;run
+mb_target_change_12m_pct;number;MarketBeat issuer target revision over 12m in percent;Long-term analyst trend;Calculated from MarketBeat;run
+mb_consensus_score_1m_ago;number;MarketBeat aggregate consensus score 1m ago;Independent monthly reference;MarketBeat forecast;1m
+mb_consensus_delta_1m;number;MarketBeat consensus change over 1m;Cross-source consensus signal;Calculated from MarketBeat;run
+mb_consensus_score_3m_ago;number;MarketBeat aggregate consensus score 3m ago;Independent quarterly reference;MarketBeat forecast;3m
+mb_consensus_delta_3m;number;MarketBeat consensus change over 3m;Cross-source confirmation;Calculated from MarketBeat;run
+mb_consensus_score_12m_ago;number;MarketBeat aggregate consensus score 12m ago;Long-term reference;MarketBeat forecast;12m
+mb_consensus_delta_12m;number;MarketBeat consensus change over 12m;Long-term analyst trend;Calculated from MarketBeat;run
+analyst_momentum_score_pre_marketbeat;number;Baseline W09 analyst score before independent MarketBeat cross-check;Audit/backtest reference;Calculated;run
+target_revision_signal_pct;number;Decision target-revision signal: 70% local + 30% MarketBeat when both available, otherwise sole available signal;35% target-revision component after W09B;Calculated;run
+consensus_change_signal;number;Decision consensus-change signal: 70% local + 30% MarketBeat when both available, otherwise sole available signal;20% consensus-change component after W09B;Calculated;run
+marketbeat_confirmation_state;text;CONFIRM_POSITIVE/CONFIRM_NEGATIVE/DIVERGENCE/BOTH_STABLE/MIXED_OR_WEAK/MARKETBEAT_ONLY;Cross-source confidence and committee interpretation;Calculated;run
+marketbeat_risk_revision_pct;number;Most adverse revision among S-1 local, 1m local and 1m MarketBeat;Asymmetric downside gate, can block new BUY;Calculated;run
+analyst_momentum_score;number;Composite 0-100 analyst momentum score after available cross-checks;15% shadow contribution to combined committee score;Calculated;run
 committee_analyst_signal;text;STRONG_POSITIVE/POSITIVE/NEUTRAL/NEGATIVE/STRONG_NEGATIVE;Committee interpretation;Calculated;run
 committee_analyst_gate;text;BOOST/SUPPORT/NEUTRAL/PENALIZE/PENALIZE_STRONG/BLOCK_NEW_BUY_REVIEW;Decision gate;Calculated;run
 committee_review_required;boolean;Mandatory review after severe target cuts/conflicts;Can block a new BUY decision;Calculated;run
