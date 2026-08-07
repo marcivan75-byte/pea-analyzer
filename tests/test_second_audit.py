@@ -4,7 +4,7 @@ import json
 import pandas as pd
 
 
-def test_yfinance_refresh_uses_yf_timestamp_not_legacy_ok_forever(monkeypatch):
+def test_yfinance_recent_refresh_timestamp_skips_api(monkeypatch):
     from v182.reporting import waves
 
     today = datetime.now(timezone.utc).isoformat()
@@ -25,6 +25,27 @@ def test_yfinance_refresh_uses_yf_timestamp_not_legacy_ok_forever(monkeypatch):
     assert called == []
     assert meta["attempted"] == 0
     assert meta["skipped_fresh"] == 1
+
+
+def test_yfinance_stale_refresh_timestamp_forces_api(monkeypatch):
+    from v182.reporting import waves
+
+    frame = pd.DataFrame([{
+        "isin": "FR0000120073", "name": "AIR LIQUIDE", "yahoo_ticker": "AI.PA",
+        "comite_status": "WATCH", "yf_status": "OK", "yf_consensus_as_of": "2020-01-01",
+        "fundamentals_as_of": "2020-01-01", "per_ttm_yf": "25.0",
+    }])
+    called = []
+
+    def fake_collect(tickers, **kwargs):
+        called.extend(tickers)
+        return [], []
+
+    monkeypatch.setattr(waves, "collect_info", fake_collect)
+    cfg = {"yfinance": {"fundamental_refresh_days": 7, "info_initial_cooldown_seconds": 0}}
+    _, _, meta = waves.wave4_info_actions(frame, cfg, top_n=300)
+    assert called == ["AI.PA"]
+    assert meta["attempted"] == 1
 
 
 def test_lower_grade_yfinance_field_does_not_downgrade_official_fundamental_group():
@@ -112,10 +133,7 @@ def test_marketstack_negative_cache_counts_as_valid_path_activity(tmp_path):
     assert result.failures[0]["cached"] is True
 
 
-def test_marketstack_quality_gate_accepts_fresh_negative_cache(monkeypatch):
-    from v182.audit.quality import run_quality_gates
-
-    monkeypatch.delenv("MARKETSTACK_MAX_SYMBOLS_PER_RUN", raising=False)
+def _quality_fixture():
     actions = pd.DataFrame([{"isin": f"FR{i:010d}", "yahoo_ticker": "X.PA"} for i in range(1486)])
     etf = pd.DataFrame([{"isin": f"LU{i:010d}", "yahoo_ticker": "Y.PA"} for i in range(102)])
     cov = {"ACTION": {"coverage_pct": 80.0}, "ETF": {"coverage_pct": 70.0}}
@@ -125,6 +143,14 @@ def test_marketstack_quality_gate_accepts_fresh_negative_cache(monkeypatch):
         "fundamentals_availability_min_pct": 40.0, "consensus_availability_min_pct": 40.0,
         "openfigi_transient_failure_max_pct": 25.0,
     }, "marketstack": {"max_symbols_per_run": 3, "max_new_symbol_resolutions_per_run": 1}}
+    return actions, etf, cov, cfg
+
+
+def test_marketstack_quality_gate_accepts_fresh_negative_cache(monkeypatch):
+    from v182.audit.quality import run_quality_gates
+
+    monkeypatch.delenv("MARKETSTACK_MAX_SYMBOLS_PER_RUN", raising=False)
+    actions, etf, cov, cfg = _quality_fixture()
     diagnostics = {
         "remaining_after_openfigi": 1, "marketstack_key_present": True,
         "marketstack_symbol_resolution_attempted": 0, "marketstack_symbol_cache_hits": 0,
@@ -140,6 +166,42 @@ def test_marketstack_quality_gate_accepts_fresh_negative_cache(monkeypatch):
         "WAVE_05": {"requested": 300, "available": 200, "available_pct": 66.7},
     }
     assert run_quality_gates(actions, etf, cov, cov, cfg, metrics).passed
+
+
+def test_marketstack_quality_gate_blocks_aggregate_quota_overrun(monkeypatch):
+    from v182.audit.quality import run_quality_gates
+
+    monkeypatch.delenv("MARKETSTACK_MAX_SYMBOLS_PER_RUN", raising=False)
+    actions, etf, cov, cfg = _quality_fixture()
+    base_diag = {
+        "remaining_after_openfigi": 1, "marketstack_key_present": True,
+        "marketstack_symbol_resolution_attempted": 0, "marketstack_symbol_cache_hits": 0,
+        "marketstack_symbol_negative_cache_hits": 0, "marketstack_symbol_deferred": 0,
+        "marketstack_symbol_failures": [], "marketstack_failures": [],
+    }
+    metrics = {
+        "WAVE_00_OPENFIGI": {"api_isins_requested": 0, "transient_failures": 0, "authenticated": True},
+        "WAVE_01": {"requested": 100, "successful": 95, "diagnostics": {**base_diag, "marketstack_attempted": 2}},
+        "WAVE_02": {"requested": 100, "successful": 95, "diagnostics": {**base_diag, "marketstack_attempted": 2}},
+        "WAVE_04": {"requested": 300, "available": 200, "available_pct": 66.7},
+        "WAVE_05": {"requested": 300, "available": 200, "available_pct": 66.7},
+    }
+    result = run_quality_gates(actions, etf, cov, cov, cfg, metrics)
+    failed = {c["check"] for c in result.checks if not c["passed"]}
+    assert "marketstack_global_eod_quota_cap" in failed
+
+
+def test_marketstack_process_budget_is_shared_across_waves(monkeypatch):
+    from v182.sources import history_orchestrator as orchestrator
+
+    monkeypatch.delenv("MARKETSTACK_MAX_SYMBOLS_PER_RUN", raising=False)
+    orchestrator._MARKETSTACK_RUN_BUDGET.update({"initialized": False, "eod_remaining": 0, "resolution_remaining": 0})
+    cfg = {"marketstack": {"max_symbols_per_run": 3, "max_new_symbol_resolutions_per_run": 1}}
+    first = orchestrator._marketstack_budget(cfg, None, None)
+    assert first == (3, 1)
+    orchestrator._consume_marketstack_budget(2, 1, False)
+    second = orchestrator._marketstack_budget(cfg, None, None)
+    assert second == (1, 0)
 
 
 def test_finnhub_lookup_rejects_weak_match_and_accepts_strong_isin_match():
