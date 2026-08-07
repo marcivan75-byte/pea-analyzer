@@ -183,11 +183,13 @@ class MarketBeatParseClient:
         if not scored:
             return None
 
-        # Require a same-issuer candidate carrying the local ticker base before
-        # accepting a US analyst proxy. This prevents a name-only ADR mismatch.
+        # The local identity witness must be a non-US listing carrying the local
+        # Yahoo ticker base. This matters for issuers such as SAP where the US
+        # ADR and the European primary listing can share the same ticker base.
         local_matches = [
             (score, item) for score, item in scored
             if _ticker_base(item.get("ticker")) == local_base
+            and str(item.get("exchange") or "").upper() not in US_ANALYST_EXCHANGES
         ]
         if not local_matches:
             return None
@@ -335,6 +337,15 @@ def _cache_fresh(row: dict, ttl_days: int) -> bool:
         return False
 
 
+def _cached_mapping_is_safe(row: dict) -> bool:
+    if str(row.get("status") or "").upper() != "RESOLVED":
+        return True
+    if str(row.get("match_type") or "").upper() != "US_ANALYST_PROXY":
+        return True
+    local_exchange = str(row.get("local_marketbeat_exchange") or "").upper()
+    return bool(local_exchange) and local_exchange not in US_ANALYST_EXCHANGES
+
+
 def collect_selective_forecasts(
     securities: list[dict],
     api_key: str,
@@ -370,7 +381,8 @@ def collect_selective_forecasts(
         )
         status = str(cached.get("status") or "").upper()
         ttl = mapping_ttl_days if status == "RESOLVED" else unresolved_ttl_days
-        fresh = same_identity and _cache_fresh(cached, ttl)
+        safe_cache = _cached_mapping_is_safe(cached)
+        fresh = same_identity and safe_cache and _cache_fresh(cached, ttl)
         mapping: dict | None = None
         if fresh and status == "RESOLVED":
             mapping = cached
