@@ -81,7 +81,7 @@ jobs:
       - name: Apply selective MarketBeat cross-check
         env:
           MARKETBEAT_API_KEY: ${{ secrets.MARKETBEAT_API_KEY }}
-        run: python -m v182.decision.marketbeat_overlay
+        run: python -m v182.decision.marketbeat_overlay_runner
 
       - name: Finalize committee target fields
         run: python -m v182.decision.committee_finalize
@@ -171,9 +171,12 @@ jobs:
           assert mb.get('success') is True, mb
           assert int(mb.get('selected', 0)) > 0, mb
           assert int(mb.get('api_calls', 0)) > 0, mb
+          assert int(mb.get('api_calls', 0)) <= 5, mb
           assert int(mb.get('successful', 0)) >= 1, mb
           assert int(mb.get('observations', 0)) > 0, mb
           assert int(mb.get('quarantined', 0)) == 0, mb
+          selected_isins = set(mb.get('selected_isins') or [])
+          assert 'FR0000120578' in selected_isins, mb
           overlay = analyst_metrics.get('marketbeat_overlay') or {}
           assert int(overlay.get('committee_rows', 0)) == len(committee), overlay
           assert int(overlay.get('rows', 0)) >= 1, overlay
