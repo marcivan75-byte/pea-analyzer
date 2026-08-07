@@ -50,7 +50,6 @@ def _history_source(path: Path) -> tuple[str, int]:
 
 
 def _history_rank(frame: pd.DataFrame, source_priority: int) -> tuple[int, int, int]:
-    """Prefer the longest usable series, then the freshest, then source priority."""
     if "Close" not in frame.columns:
         return (0, 0, source_priority)
     close = pd.to_numeric(frame["Close"], errors="coerce").dropna()
@@ -64,14 +63,8 @@ def _history_rank(frame: pd.DataFrame, source_priority: int) -> tuple[int, int, 
 
 
 def wave3_derived_features(cache_dir: str, ticker_isin_map: dict[str, str], universe: str) -> list[dict]:
-    """Derive indicators from the best available history for each ISIN.
-
-    A short/partial Yahoo frame must never overwrite a fuller Marketstack or
-    OpenFIGI-repaired history simply because its parquet filename sorts later.
-    """
     observations, per_ticker_perf_1y = [], {}
     best_frames: dict[str, tuple[tuple[int, int, int], pd.DataFrame, str]] = {}
-
     for parquet_file in sorted(Path(cache_dir).glob("history_*.parquet")):
         frame = pd.read_parquet(parquet_file)
         if not hasattr(frame.columns, "levels"):
@@ -105,9 +98,8 @@ def wave3_derived_features(cache_dir: str, ticker_isin_map: dict[str, str], univ
             if value is not None:
                 observations.append(_obs(universe, isin, field, value, source, "C"))
         if indicators.get("perf_1y_pct") is not None:
-            observations.append(_obs(
-                universe, isin, "relative_strength", round(indicators["perf_1y_pct"] - median_perf, 3), source, "C"
-            ))
+            observations.append(_obs(universe, isin, "relative_strength",
+                                     round(indicators["perf_1y_pct"] - median_perf, 3), source, "C"))
     return observations
 
 
@@ -161,7 +153,9 @@ def wave4_info_actions(actions_df: pd.DataFrame, cfg: dict, top_n: int = 300) ->
         status = str(row.get("yf_status") or "").strip().upper()
         if status != "OK":
             return True
-        stamp = row.get("fundamentals_as_of")
+        stamp = row.get("yf_consensus_as_of")
+        if is_missing(stamp):
+            stamp = row.get("fundamentals_as_of")
         return not _is_recent(stamp, refresh_days)
 
     needs_refresh = priority_df[priority_df.apply(requires_refresh, axis=1)]
@@ -233,8 +227,14 @@ def wave5_consensus_finnhub(actions_df: pd.DataFrame, api_key: str, top_n: int =
     unresolved = priority_df[~priority_df["isin"].isin(covered_isins)]
     securities = unresolved[[c for c in ["isin", "name", "yahoo_ticker"] if c in unresolved.columns]].to_dict("records")
     fcfg = (cfg or {}).get("finnhub", {})
-    obs_raw, failures = fetch_consensus(securities, api_key, symbol_cache_path=symbol_cache_path,
-        delay_seconds=float(fcfg.get("delay_seconds", 1.05) or 0), max_retries=int(fcfg.get("max_retries", 2) or 0))
+    obs_raw, failures = fetch_consensus(
+        securities, api_key, symbol_cache_path=symbol_cache_path,
+        delay_seconds=float(fcfg.get("delay_seconds", 1.05) or 0),
+        max_retries=int(fcfg.get("max_retries", 2) or 0),
+        resolved_cache_ttl_days=int(fcfg.get("resolved_cache_ttl_days", 90) or 90),
+        unresolved_cache_ttl_days=int(fcfg.get("unresolved_cache_ttl_days", 30) or 30),
+        lookup_min_score=int(fcfg.get("lookup_min_score", 8) or 8),
+    )
     ticker_to_isin = {t: i for t, i in zip(unresolved["yahoo_ticker"], unresolved["isin"]) if not is_missing(t)}
     finnhub_tickers = set()
     for row in obs_raw:
