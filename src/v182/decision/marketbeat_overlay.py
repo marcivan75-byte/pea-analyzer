@@ -175,9 +175,22 @@ def _select_marketbeat_rows(actions: pd.DataFrame, max_issuers: int) -> list[dic
     if shortlist.empty:
         return []
     ranked = shortlist.copy()
-    if "score_brut" in ranked.columns:
-        ranked["_mb_score"] = pd.to_numeric(ranked["score_brut"], errors="coerce")
-        ranked = ranked.sort_values("_mb_score", ascending=False).drop(columns=["_mb_score"])
+    analysts = pd.Series(float("nan"), index=ranked.index, dtype=float)
+    if "n_analysts" in ranked.columns:
+        analysts = pd.to_numeric(ranked["n_analysts"], errors="coerce")
+    if "n_analysts_yf" in ranked.columns:
+        analysts = analysts.fillna(pd.to_numeric(ranked["n_analysts_yf"], errors="coerce"))
+    ranked["_mb_analysts"] = analysts
+    ranked["_mb_score"] = (
+        pd.to_numeric(ranked["score_brut"], errors="coerce")
+        if "score_brut" in ranked.columns
+        else 0.0
+    )
+    ranked = ranked.sort_values(
+        ["_mb_analysts", "_mb_score"],
+        ascending=[False, False],
+        na_position="last",
+    ).drop(columns=["_mb_analysts", "_mb_score"])
     required = [column for column in ["isin", "name", "yahoo_ticker"] if column in ranked.columns]
     if len(required) < 3:
         return []
@@ -251,11 +264,15 @@ def apply_marketbeat_overlay(root: Path | None = None) -> dict:
     else:
         mb_metrics["skipped"] = "MISSING_KEY"
 
+    missing_overlay = [field for field in OVERLAY_FIELDS if field not in actions.columns]
+    if missing_overlay:
+        additions = pd.DataFrame(
+            {field: pd.Series([None] * len(actions), dtype=object) for field in missing_overlay},
+            index=actions.index,
+        )
+        actions = pd.concat([actions, additions], axis=1)
     for field in OVERLAY_FIELDS:
-        if field not in actions.columns:
-            actions[field] = None
-        else:
-            actions[field] = actions[field].astype(object)
+        actions[field] = actions[field].astype(object)
 
     overlay_rows = divergence_rows = reviews = 0
     overall_weight = max(0.0, min(1.0, float(analyst_cfg.get("overall_weight", 0.15))))
@@ -289,14 +306,27 @@ def apply_marketbeat_overlay(root: Path | None = None) -> dict:
         signal, gate, review, worst = _final_gate(row, analyst_cfg, score, revision_signal, consensus_signal)
 
         previous_score = _num(row.get("analyst_momentum_score"))
-        actions.at[idx, "analyst_momentum_score_pre_marketbeat"] = previous_score
+        if _num(row.get("analyst_momentum_score_pre_marketbeat")) is None:
+            actions.at[idx, "analyst_momentum_score_pre_marketbeat"] = previous_score
         actions.at[idx, "target_revision_signal_pct"] = revision_signal
         actions.at[idx, "consensus_change_signal"] = consensus_signal
         actions.at[idx, "marketbeat_confirmation_state"] = state
         actions.at[idx, "marketbeat_risk_revision_pct"] = worst
         actions.at[idx, "consensus_confidence"] = confidence
-        source_count = _num(row.get("consensus_source_count")) or 0.0
-        actions.at[idx, "consensus_source_count"] = int(source_count) + 1
+
+        source_count = int(_num(row.get("consensus_source_count")) or 0.0)
+        has_local_source = any(
+            value is not None
+            for value in (
+                local_revision,
+                local_consensus,
+                _num(row.get("target_price")),
+                _num(row.get("consensus_score_100")),
+            )
+        )
+        expected_count = 2 if has_local_source else 1
+        actions.at[idx, "consensus_source_count"] = max(source_count, expected_count)
+
         actions.at[idx, "analyst_momentum_score"] = score
         actions.at[idx, "committee_analyst_signal"] = signal
         actions.at[idx, "committee_analyst_gate"] = gate
