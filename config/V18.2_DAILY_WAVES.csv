@@ -1,12 +1,14 @@
 Wave;Agent;Scope;Output;Reason;Implementation status
-WAVE_00_OPENFIGI;OPENFIGI_IDENTIFIER_CACHE;Actions + ETF;ISIN/FIGI/ticker/MIC cache;Safe identity and symbol repair;OPERATIONAL
-WAVE_00_ETF_TICKERS;ETF_TICKER_MAP;All ETF;Validated Yahoo ticker map;Input prerequisite;OPERATIONAL
-WAVE_01;YFINANCE_HISTORY_ACTIONS;All mapped action tickers;OHLCV 5y daily + OpenFIGI/Marketstack fallback;Highest bulk gain;OPERATIONAL
-WAVE_02;YFINANCE_HISTORY_ETF;All mapped ETF tickers;OHLCV 5y daily + OpenFIGI/Marketstack fallback;Highest bulk gain;OPERATIONAL
+WAVE_00_OPENFIGI;OPENFIGI_IDENTIFIER_CACHE;Actions + ETF;ISIN/FIGI/ticker/MIC cache;Safe identity and symbol repair;OPERATIONAL_TESTED
+WAVE_00_ETF_TICKERS;ETF_TICKER_MAP;All ETF;Validated Yahoo ticker map;Input prerequisite;OPERATIONAL_TESTED
+WAVE_01;OHLCV_ACTIONS_CHAIN;All mapped action tickers;Yahoo -> OpenFIGI/Yahoo repair -> Marketstack -> Alpha Vantage daily;Bulk market history with global API budgets;OPERATIONAL_TESTED
+WAVE_02;OHLCV_ETF_CHAIN;All mapped ETF tickers;Yahoo -> OpenFIGI/Yahoo repair -> Marketstack -> Alpha Vantage daily;Bulk market history with shared run budgets;OPERATIONAL_TESTED
 WAVE_03;DERIVED_FEATURES;Rows with OHLCV;Technical and risk indicators;No external calls;OPERATIONAL
 WAVE_04;YFINANCE_INFO_ACTIONS;Actions prioritized by Committee/Watch;Fundamentals and estimates;Rate controlled and TTL refresh;OPERATIONAL
-WAVE_05;YFINANCE_FINNHUB_CONSENSUS;Priority Actions;Normalized Yahoo consensus + Finnhub fallback;Current implemented consensus path;OPERATIONAL
-WAVE_06;YFINANCE_ETF_INFO;All mapped ETF;Dividend data when exposed;Current implemented ETF info path;OPERATIONAL_LIMITED
+WAVE_MACRO_FRED;FRED_MACRO_CONTEXT;All Actions;VIX, 10Y-2Y and as-of date;Official macro context;OPERATIONAL_TESTED
+WAVE_ENERGY_EIA;EIA_ENERGY_CONTEXT;Run-level context;WTI, Brent, spread and as-of date;Official energy context without fake per-security duplication;OPERATIONAL_TESTED
+WAVE_05;YFINANCE_FINNHUB_CONSENSUS;Priority Actions;Normalized Yahoo consensus + Finnhub fallback;Consensus path;OPERATIONAL_TESTED
+WAVE_06;YFINANCE_ETF_INFO;All mapped ETF;Dividend data when exposed;Current ETF info path;OPERATIONAL_LIMITED
 WAVE_05_06_SCRAPING_FALLBACK;PUBLIC_TABLE_SELECTORS;Configured selectors only;Public table fallback fields;No active selectors in current config;PLANNED_NOT_CONFIGURED
-WAVE_07;OFFICIAL_OVERRIDES;Quarantined conflicts with manual override;Evidence A replacement;Not an automatic AMF/Euronext ingestion;OPERATIONAL_MANUAL_ONLY
+WAVE_07;OFFICIAL_OVERRIDES;Quarantined conflicts with manual override;Evidence A replacement;Not automatic AMF/Euronext ingestion;OPERATIONAL_MANUAL_ONLY
 WAVE_08;SCENARIOS;Committee/Watch shortlist only;Bull/base/bear and invalidation;Internal;OPERATIONAL
