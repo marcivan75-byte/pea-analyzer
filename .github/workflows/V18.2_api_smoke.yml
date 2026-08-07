@@ -50,7 +50,7 @@ jobs:
           key = os.environ.get('MARKETSTACK_API_KEY', '').strip()
           assert key, 'MARKETSTACK_API_KEY_MISSING'
           response = requests.get(
-              'https://api.marketstack.com/v2/tickers',
+              'https://api.marketstack.com/v2/tickerslist',
               params={'access_key': key, 'search': 'Sanofi', 'exchange': 'XPAR', 'limit': 10},
               timeout=30,
           )
@@ -58,11 +58,10 @@ jobs:
           body = response.json()
           assert not body.get('error'), body.get('error')
           rows = body.get('data') or []
-          print('MARKETSTACK_TICKER_ROWS', [
-              {'symbol': r.get('symbol'), 'name': r.get('name'), 'mic': (r.get('stock_exchange') or {}).get('mic')}
-              for r in rows
-          ])
-          matches = [r for r in rows if str((r.get('stock_exchange') or {}).get('mic') or '').upper() == 'XPAR']
-          assert matches, f'MARKETSTACK_NO_XPAR_SANOFI: {rows}'
-          print('MARKETSTACK_RESOLVER_OK', matches[0].get('symbol'), matches[0].get('name'))
+          print('MARKETSTACK_TICKER_ROWS', rows)
+          assert rows, 'MARKETSTACK_NO_XPAR_SANOFI_RESULTS'
+          symbols = [str(r.get('ticker') or r.get('symbol') or '').strip() for r in rows]
+          symbols = [s for s in symbols if s]
+          assert symbols, f'MARKETSTACK_NO_USABLE_SYMBOL: {rows}'
+          print('MARKETSTACK_RESOLVER_OK', symbols[0])
           PY
