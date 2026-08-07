@@ -30,6 +30,15 @@ def test_full_audit_is_durable_and_generates_exact_sha_evidence():
     assert "V18.2_RELEASE_EVIDENCE.json" in text
 
 
+def test_fast_ci_preserves_exact_sha_runs():
+    text = Path(".github/workflows/marketbeat_integration_ci.yml").read_text(encoding="utf-8")
+    assert "audit/v18-2-consensus-momentum-final" in text
+    assert "cancel-in-progress: false" in text
+    assert "python -m pip check" in text
+    assert "python -m compileall -q src tests" in text
+    assert "pytest -q" in text
+
+
 def test_api_smoke_covers_all_seven_services_on_final_branch():
     text = Path(".github/workflows/V18.2_api_smoke.yml").read_text(encoding="utf-8")
     assert "audit/v18-2-consensus-momentum-final" in text
