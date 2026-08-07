@@ -45,6 +45,8 @@ jobs:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
         run: python -m v182.reporting.run
+      - name: Compute analyst momentum and committee impact
+        run: python -m v182.decision.analyst_momentum
       - name: Verify required outputs
         run: |
           test -s outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv
@@ -52,6 +54,10 @@ jobs:
           test -s outputs/V18.2_PEA_ACTIONS_ACTUALISE.xlsx
           test -s outputs/V18.2_PEA_ETF_ACTUALISE.xlsx
           test -s outputs/V18.2_RUN_REPORT.xlsx
+          test -s outputs/V18.2_COMMITTEE_ANALYST_MOMENTUM.csv
+          test -s outputs/history/V18.2_CONSENSUS_SNAPSHOTS.csv
+          test -s outputs/history/V18.2_ANALYST_REVISIONS.csv
+          test -s outputs/audit/V18.2_ANALYST_MOMENTUM_METRICS.json
           test -s outputs/audit/V18.2_SOURCE_FALLBACK_METRICS.json
           test -s outputs/context/V18.2_MACRO_CONTEXT.json
           test -s outputs/context/V18.2_ENERGY_CONTEXT.json
@@ -70,6 +76,7 @@ jobs:
           path: |
             outputs/*.xlsx
             outputs/*.csv
+            outputs/history/**
             outputs/audit/**
             outputs/context/**
             outputs/gaps/**
@@ -89,8 +96,8 @@ jobs:
           title: "V18.2 automated data refresh ${{ github.run_id }}"
           body: |
             Automated V18.2 refresh. Quality gates passed.
-            Identifier caches, API context files and fallback diagnostics are included.
-            Review coverage, gaps and Excel reports before merging.
+            Identifier caches, API context files, analyst-momentum history and fallback diagnostics are included.
+            Review coverage, gaps, committee analyst gates and Excel reports before merging.
           add-paths: |
             state/runs/**
             outputs/**

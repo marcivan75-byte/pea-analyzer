@@ -1,0 +1,52 @@
+{
+  "version": "18.2.1",
+  "purpose": "Analyst consensus, consensus changes, price-target revisions and committee decision impact",
+  "sequencing": [
+    {"order": 0, "stage": "W00_IDENTITY", "sources": ["OpenFIGI v3"], "role": "ISIN/ticker/MIC identity and safe symbol repair", "status": "OPERATIONAL"},
+    {"order": 1, "stage": "W01_PRICE", "sources": ["yfinance", "OpenFIGI+yfinance repair", "Marketstack v2", "Alpha Vantage TIME_SERIES_DAILY"], "role": "Local PEA OHLCV and fallback chain", "status": "OPERATIONAL"},
+    {"order": 4, "stage": "W04_FUNDAMENTALS", "sources": ["yfinance", "Boursorama", "Zonebourse", "Issuer"], "role": "Fundamentals; bulk/public sources fill gaps when configured", "status": "MIXED"},
+    {"order": 5.1, "stage": "W05A_CONSENSUS_BROAD", "sources": ["yfinance"], "role": "Broad low-cost consensus snapshot and local target", "status": "OPERATIONAL"},
+    {"order": 5.2, "stage": "W05B_EUROPE_BULK", "sources": ["Boursorama", "Zonebourse"], "role": "European consensus, targets and revisions in bulk", "status": "PLANNED_NOT_CONFIGURED"},
+    {"order": 5.3, "stage": "W05C_ANALYST_DYNAMICS", "sources": ["MarketBeat via Parse"], "role": "Selective issuer-level current/1m/3m/1y analyst sentiment and target-revision intelligence; never used as local PEA price", "status": "GATED_PENDING_LIVE_SCHEMA_SMOKE"},
+    {"order": 5.4, "stage": "W05D_CONSENSUS_FALLBACK", "sources": ["Finnhub"], "role": "Guarded gap filling and independent confirmation", "status": "OPERATIONAL"},
+    {"order": 5.9, "stage": "W09_ANALYST_MOMENTUM", "sources": ["Internal snapshot history", "Analyst revision history"], "role": "Compute target changes in value and %, consensus deltas, breadth, confidence and committee impact", "status": "OPERATIONAL_AFTER_PIPELINE"}
+  ],
+  "marketbeat_parse": {
+    "enabled": false,
+    "activation_gate": "Enable only after a GitHub live smoke validates the user's secret and response schema.",
+    "api_key_environment": "PARSE_API_KEY",
+    "canonical_api_id": "060a9926-db20-4c1e-8dc7-26d52b79ee8e",
+    "max_issuers_per_run": 5,
+    "selection": "COMMITTEE/WATCH first; issuer-level consensus intelligence only",
+    "forbid_local_pea_price_substitution": true
+  },
+  "committee": {
+    "analyst_momentum": {
+      "enabled": true,
+      "overall_weight": 0.15,
+      "mode": "SHADOW_WITH_DECISION_GATE",
+      "weights": {
+        "target_revision": 0.35,
+        "consensus_change": 0.20,
+        "target_upside": 0.15,
+        "revision_breadth": 0.15,
+        "broker_quality": 0.10,
+        "confidence": 0.05
+      },
+      "thresholds": {
+        "target_revision_strong_positive_pct": 5.0,
+        "target_revision_positive_pct": 2.0,
+        "target_revision_negative_pct": -2.0,
+        "target_revision_strong_negative_pct": -5.0,
+        "mandatory_review_target_cut_pct": -10.0
+      },
+      "rules": {
+        "do_not_sum_analyst_counts_across_providers": true,
+        "canonical_source_selected_by": ["identity", "freshness", "depth", "analyst_count"],
+        "other_sources_are_confirmation_or_divergence": true,
+        "negative_target_revision_can_block_new_buy": true,
+        "execution_remains_shadow_blocked": true
+      }
+    }
+  }
+}

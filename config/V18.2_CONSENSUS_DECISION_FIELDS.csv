@@ -1,0 +1,44 @@
+Field;Type;Description;Decision impact;Source/Calculation;Freshness
+target_price;number;Canonical current local/share target price;Base for upside and target-revision calculations;Yahoo/Boursorama/Zonebourse canonical merge;7d
+target_prev_run;number;Target captured at prior run;S-1 comparison;Internal history;run
+target_change_run_abs;number;Current target minus prior-run target, same currency;Primary committee display: absolute target change;Calculated;run
+target_change_run_pct;number;Target change vs prior run in percent;Primary revision signal;Calculated;run
+target_1m_ago;number;Latest target at or before 1-month cutoff;Reference for 1m revision;Internal history;28d
+target_change_1m_abs;number;Current target minus 1m target;High-priority committee criterion;Calculated;run
+target_change_1m_pct;number;1m target revision in percent;35% target-revision component, threshold gates;Calculated;run
+target_3m_ago;number;Latest target at or before 3-month cutoff;Reference for 3m trend;Internal history;84d
+target_change_3m_abs;number;Current target minus 3m target;Medium-term target trend;Calculated;run
+target_change_3m_pct;number;3m target revision in percent;Fallback/confirmation for target-revision component;Calculated;run
+target_12m_ago;number;Latest target at or before 12-month cutoff;Long-term context;Internal history;350d
+target_change_12m_pct;number;12m target revision in percent;Long-term context, no direct gate;Calculated;run
+target_upside_abs;number;Current target minus current local PEA price;Displays potential in currency;Calculated;run
+target_upside_pct;number;Current target upside vs current local PEA price;15% analyst-momentum component;Calculated;run
+target_low;number;Lowest current target;Dispersion/risk;Yahoo or canonical source;7d
+target_high;number;Highest current target;Dispersion/risk;Yahoo or canonical source;7d
+target_dispersion_pct;number;(high-low)/mean target;Confidence penalty when analysts diverge;Calculated;run
+consensus_score_100;number;Canonical consensus normalized 0-100;Common scale for change measurement;Calculated from canonical provider;run
+consensus_prev_run;text;Prior-run consensus rating;S-1 display;Internal history;run
+consensus_delta_run;number;Change in normalized consensus score vs prior run;20% consensus-change component;Calculated;run
+consensus_score_1m_ago;number;Consensus score at 1m cutoff;Reference for monthly change;Internal history;28d
+consensus_delta_1m;number;Consensus score change vs 1m;Primary consensus-dynamics signal;Calculated;run
+consensus_score_3m_ago;number;Consensus score at 3m cutoff;Reference for quarterly change;Internal history;84d
+consensus_delta_3m;number;Consensus score change vs 3m;Medium-term confirmation;Calculated;run
+upgrades_30d;integer;Broker recommendation upgrades over 30d;Breadth and momentum;Revision event history;30d
+downgrades_30d;integer;Broker recommendation downgrades over 30d;Breadth and risk;Revision event history;30d
+net_upgrades_30d;integer;Upgrades minus downgrades;Direction of broker actions;Calculated;30d
+target_raises_30d;integer;Broker target raises over 30d;Revision breadth;Revision event history;30d
+target_cuts_30d;integer;Broker target cuts over 30d;Revision breadth and risk;Revision event history;30d
+net_target_revisions_30d;integer;Target raises minus target cuts;Direction of target revisions;Calculated;30d
+revision_breadth_30d;number;Net target/broker event breadth, -100 to +100;15% analyst-momentum component;Calculated;30d
+n_analysts;number;Analyst count from canonical source only;Depth/confidence, never summed across providers;Canonical provider;run
+consensus_source_count;integer;Number of distinct providers confirming consensus/target;Confidence only, not analyst count;Provenance;run
+consensus_confidence;number;0-100 confidence from source count, analyst depth, freshness and dispersion;5% analyst-momentum component;Calculated;run
+consensus_as_of;date;Freshness timestamp/date;Confidence and reporting;Canonical/provenance;run
+weighted_target_revision_30d_pct;number;Broker-reputation-weighted target revision;10% broker-quality component;Revision history + broker weights;30d
+weighted_consensus_delta_30d;number;Broker-reputation-weighted rating change;Broker-quality confirmation;Revision history + broker weights;30d
+target_revision_acceleration;number;1m target change minus one-third of 3m change;Detects acceleration/reversal;Calculated;run
+analyst_momentum_score;number;Composite 0-100 analyst momentum score;15% of committee combined score;Calculated;run
+committee_analyst_signal;text;STRONG_POSITIVE/POSITIVE/NEUTRAL/NEGATIVE/STRONG_NEGATIVE;Committee interpretation;Calculated;run
+committee_analyst_gate;text;BOOST/SUPPORT/NEUTRAL/PENALIZE/BLOCK_NEW_BUY_REVIEW;Decision gate;Calculated;run
+committee_review_required;boolean;Mandatory review after severe target cuts/conflicts;Can block a new BUY decision;Calculated;run
+committee_score_with_analyst_momentum;number;Existing score blended with 15% analyst momentum;Committee decision score, does not overwrite score_brut;Calculated;run

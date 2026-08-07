@@ -12,3 +12,5 @@ SRC010;Finnhub;API;B;1;Actions;Analyst consensus fallback with guarded symbol re
 SRC011;FRED;OFFICIAL_API;A;7;Actions;Official VIX and 10Y-2Y macro context;2;OPERATIONAL_TESTED
 SRC012;EIA;OFFICIAL_API;A;7;Run context;Official WTI and Brent energy context;2;OPERATIONAL_TESTED
 SRC013;GDELT;PUBLIC_API;C;1;Actions;Target bulk news discovery;4;PLANNED_NOT_CONFIGURED
+SRC014;MarketBeat via Parse;MANAGED_PUBLIC_WRAPPER_API;C;1;Actions;Selective issuer-level analyst forecast history and consensus dynamics for COMMITTEE/WATCH, never substitute ADR price for local PEA price;3;GATED_PENDING_LIVE_SCHEMA_SMOKE
+SRC015;Internal consensus snapshots;INTERNAL_HISTORY;C;0;Actions;S-1/1m/3m/12m target and consensus deltas, acceleration and committee analyst momentum;1;OPERATIONAL_AFTER_PIPELINE
