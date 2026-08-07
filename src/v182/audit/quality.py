@@ -22,6 +22,20 @@ def _transport_failure(reason: str) -> bool:
     }
 
 
+def _active_api_runtime_check(checks: list[dict], name: str, metrics: dict, enabled: bool) -> None:
+    key_present = bool(metrics.get("key_present", False))
+    error = str(metrics.get("error") or "")
+    success = bool(metrics.get("success", False))
+    passed = (not enabled) or (not key_present) or (success and not error)
+    checks.append(_check(
+        f"{name}_runtime_health_if_key_present",
+        passed,
+        "OK" if success and not error else (error or "SKIPPED_NO_KEY" if not key_present else "FAILED"),
+        "OK when enabled and key present",
+        f"enabled={enabled}; key_present={key_present}",
+    ))
+
+
 def run_quality_gates(actions: pd.DataFrame, etf: pd.DataFrame, before: dict, after: dict, cfg: dict, wave_metrics: dict) -> QualityResult:
     q = cfg["quality_gates"]
     checks = []
@@ -41,7 +55,6 @@ def run_quality_gates(actions: pd.DataFrame, etf: pd.DataFrame, before: dict, af
 
     aggregate_eod = 0
     aggregate_resolution = 0
-
     for wave_id in ("WAVE_01", "WAVE_02"):
         m = wave_metrics.get(wave_id, {})
         requested = int(m.get("requested", 0) or 0)
@@ -77,21 +90,15 @@ def run_quality_gates(actions: pd.DataFrame, etf: pd.DataFrame, before: dict, af
 
         symbol_failures = diagnostics.get("marketstack_symbol_failures", []) or []
         resolver_transport = sum(_transport_failure(f.get("reason", "")) for f in symbol_failures if isinstance(f, dict) and not f.get("cached"))
-        checks.append(_check(
-            f"{wave_id.lower()}_marketstack_resolver_transport_health",
-            resolver_attempted == 0 or resolver_transport < resolver_attempted,
-            resolver_transport,
-            f"<{resolver_attempted}" if resolver_attempted else "not applicable",
-        ))
+        checks.append(_check(f"{wave_id.lower()}_marketstack_resolver_transport_health",
+                             resolver_attempted == 0 or resolver_transport < resolver_attempted,
+                             resolver_transport, f"<{resolver_attempted}" if resolver_attempted else "not applicable"))
 
         failures = diagnostics.get("marketstack_failures", []) or []
         transport_failures = sum(_transport_failure(f.get("reason", "")) for f in failures if isinstance(f, dict))
-        checks.append(_check(
-            f"{wave_id.lower()}_marketstack_eod_transport_health",
-            eod_attempted == 0 or transport_failures < eod_attempted,
-            transport_failures,
-            f"<{eod_attempted}" if eod_attempted else "not applicable",
-        ))
+        checks.append(_check(f"{wave_id.lower()}_marketstack_eod_transport_health",
+                             eod_attempted == 0 or transport_failures < eod_attempted,
+                             transport_failures, f"<{eod_attempted}" if eod_attempted else "not applicable"))
 
     market_cfg = cfg.get("marketstack", {})
     configured_eod = int(market_cfg.get("max_symbols_per_run", 3) or 3)
@@ -109,13 +116,23 @@ def run_quality_gates(actions: pd.DataFrame, etf: pd.DataFrame, before: dict, af
     authenticated = bool(openfigi.get("authenticated", False))
     transient_pct = 0.0 if api_requested == 0 else round(transient / api_requested * 100, 2)
     max_transient_pct = float(q.get("openfigi_transient_failure_max_pct", 25.0) or 25.0)
-    checks.append(_check(
-        "openfigi_transport_health",
-        api_requested == 0 or not authenticated or transient_pct <= max_transient_pct,
-        transient_pct,
-        max_transient_pct,
-        f"api_requested={api_requested}; transient_failures={transient}; authenticated={authenticated}",
-    ))
+    checks.append(_check("openfigi_transport_health",
+                         api_requested == 0 or not authenticated or transient_pct <= max_transient_pct,
+                         transient_pct, max_transient_pct,
+                         f"api_requested={api_requested}; transient_failures={transient}; authenticated={authenticated}"))
+
+    alpha_cfg = cfg.get("alpha_vantage", {})
+    alpha_metrics = wave_metrics.get("WAVE_04_ALPHA", {}) or {}
+    alpha_calls = int(alpha_metrics.get("api_calls", 0) or 0)
+    alpha_cap = max(0, int(alpha_cfg.get("max_securities_per_run", 1) or 1)) * max(
+        1, int(alpha_cfg.get("max_api_calls_per_selected_security", 2) or 2)
+    )
+    checks.append(_check("alpha_vantage_api_quota_cap", alpha_calls <= alpha_cap, alpha_calls, alpha_cap))
+
+    if q.get("fail_active_api_on_runtime_error", True):
+        _active_api_runtime_check(checks, "alpha_vantage", alpha_metrics, bool(alpha_cfg.get("enabled", False)))
+        _active_api_runtime_check(checks, "fred", wave_metrics.get("WAVE_MACRO_FRED", {}) or {}, bool(cfg.get("fred", {}).get("enabled", False)))
+        _active_api_runtime_check(checks, "eia", wave_metrics.get("WAVE_ENERGY_EIA", {}) or {}, bool(cfg.get("eia", {}).get("enabled", False)))
 
     for wave_id, key in (("WAVE_04", "fundamentals_availability_min_pct"), ("WAVE_05", "consensus_availability_min_pct")):
         threshold = float(q.get(key, 0.0) or 0.0)
