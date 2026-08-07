@@ -62,7 +62,7 @@ jobs:
       - name: Apply selective MarketBeat consensus cross-check
         env:
           MARKETBEAT_API_KEY: ${{ secrets.MARKETBEAT_API_KEY }}
-        run: python -m v182.decision.marketbeat_overlay
+        run: python -m v182.decision.marketbeat_overlay_runner
       - name: Finalize committee target fields
         run: python -m v182.decision.committee_finalize
       - name: Verify required outputs
@@ -114,6 +114,10 @@ jobs:
           assert mb.get('enabled') is True, mb
           assert mb.get('key_present') is True, mb
           assert mb.get('success') is True, mb
+          assert int(mb.get('successful', 0)) >= 1, mb
+          assert int(mb.get('observations', 0)) > 0, mb
+          assert int(mb.get('quarantined', 0)) == 0, mb
+          assert int(mb.get('api_calls', 0)) <= 5, mb
           PY
       - name: Upload Excel and audit artifacts
         if: always()
