@@ -1,26 +1,50 @@
 {
-  "version": "18.2.1-preproduction-audit2",
-  "status": "NOT_RELEASE_VALIDATED",
-  "reason": "The previous validation described an older code state, older GitHub Action versions and 18 tests. The second audit changed merge provenance, source caches, quality gates, dependencies and workflows. A new validation must be generated only after CI, API smoke tests and a full run on the exact final commit.",
+  "version": "18.2.1-preproduction-validated",
+  "status": "PREPRODUCTION_VALIDATED",
+  "validated_code_commit": "89eb454e12e40a6560a97332a552caaf96585465",
+  "validation_evidence": {
+    "full_audit_run_id": 31184702729,
+    "full_audit_conclusion": "success",
+    "artifact_id": 8997393689,
+    "artifact_sha256": "8feea9d659ff67c7e6feffea446720eae20fdc3f6484064e1200e053d28a4416",
+    "tests_passed": 69,
+    "full_audit_invariants": "FULL_AUDIT_INVARIANTS_OK"
+  },
   "current_expected_inputs": {
     "actions_rows": 1486,
     "etf_rows": 102,
     "etf_map_rows": 102
   },
+  "quality": {
+    "quality_gates_passed": true,
+    "actions_ohlcv_pct": 94.92,
+    "etf_ohlcv_pct": 99.02,
+    "openfigi_mapping_pct": 73.05,
+    "fundamentals_pct": 98.0,
+    "consensus_pct": 96.0,
+    "actions_coverage_before_pct": 92.6,
+    "actions_coverage_after_pct": 93.1,
+    "etf_coverage_before_pct": 99.3,
+    "etf_coverage_after_pct": 99.7
+  },
+  "api_context": {
+    "marketstack": "healthy; one Action fallback succeeded; shared resolver quota respected",
+    "alpha_vantage": "healthy and conservatively gated; one attempted Action rejected for low-confidence country match",
+    "finnhub": "transport/key path operational, but no recommendation payloads were returned for 109 fallback attempts; primary consensus coverage remains 96%",
+    "fred": "healthy; VIX 15.15 and 10Y-2Y 0.44 as of 2026-08-06",
+    "eia": "healthy; WTI 81.96 and Brent 88.90 as of 2026-08-03"
+  },
   "safety": {
     "direct_default_branch_push": false,
     "pull_request_required": true,
     "quality_gates_required": true,
+    "main_modified": false,
     "main_merge_allowed": false
   },
-  "pending_checks": [
-    "compileall",
-    "dependency consistency",
-    "critical Ruff correctness checks",
-    "latest pytest suite",
-    "OpenFIGI authenticated smoke test",
-    "Marketstack resolver + EOD smoke test",
-    "full pipeline run on final commit",
-    "functional coverage review"
-  ]
+  "known_non_blocking_limits": [
+    "OHLCV coverage is not 100%, but remains above the unchanged 90% release gate for both universes.",
+    "Finnhub did not add consensus records during this run; Yahoo already covered 288/300 priority securities.",
+    "Marketstack and Alpha Vantage quotas remain deliberately conservative."
+  ],
+  "pending_checks": []
 }
