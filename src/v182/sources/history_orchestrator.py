@@ -58,6 +58,8 @@ def download_history_with_fallback(
     diagnostics = {
         "yahoo_failed_initial": len(remaining),
         "openfigi_specs": 0,
+        "openfigi_repair_attempted": 0,
+        "remaining_after_openfigi": 0,
         "marketstack_attempted": 0,
         "marketstack_failures": [],
         "marketstack_key_present": bool(os.environ.get("MARKETSTACK_API_KEY")),
@@ -71,6 +73,7 @@ def download_history_with_fallback(
         candidate = str(spec.get("yahoo_candidate") or "").strip()
         if candidate and candidate != original and candidate not in candidate_to_original:
             candidate_to_original[candidate] = original
+    diagnostics["openfigi_repair_attempted"] = len(candidate_to_original)
     if candidate_to_original:
         repair = download_history(
             tickers=list(candidate_to_original),
@@ -92,6 +95,7 @@ def download_history_with_fallback(
         remaining -= repaired
         source_counts["yfinance_openfigi_repair"] = len(repaired)
 
+    diagnostics["remaining_after_openfigi"] = len(remaining)
     market_key = os.environ.get("MARKETSTACK_API_KEY")
     ms_cfg = cfg.get("marketstack", {})
     if remaining and market_key and ms_cfg.get("enabled", True):
@@ -101,18 +105,19 @@ def download_history_with_fallback(
             original = str(row.get("yahoo_ticker") or "").strip()
             spec = specs.get(original, {})
             symbol = str(spec.get("marketstack_symbol") or "").strip()
-            if not symbol:
+            mic = str(spec.get("marketstack_mic") or "").strip()
+            if not symbol or not mic:
                 continue
             requests_spec.append({
                 "canonical_ticker": original,
                 "symbol": symbol,
-                "expected_mic": str(spec.get("marketstack_mic") or "").strip(),
+                "expected_mic": mic,
             })
         ms = fetch_eod_history(
             requests_spec=requests_spec,
             api_key=market_key,
             history_days=int(ms_cfg.get("history_days", 365)),
-            max_symbols=int(os.environ.get("MARKETSTACK_MAX_SYMBOLS_PER_RUN") or ms_cfg.get("max_symbols_per_run", 4)),
+            max_symbols=int(os.environ.get("MARKETSTACK_MAX_SYMBOLS_PER_RUN") or ms_cfg.get("max_symbols_per_run", 3)),
             auto_adjust=bool(yf_cfg.get("auto_adjust", True)),
             min_rows=int(ms_cfg.get("min_rows", 60)),
             delay_seconds=float(ms_cfg.get("delay_seconds", 0.25)),
