@@ -1,121 +1,8 @@
 {
-  "version": "18.2.1-operational",
-  "created_at": "2026-08-06T15:57:16.874185+00:00",
-  "status": "VALIDATED_OPERATIONAL",
-  "checks": [
-    {
-      "check": "actions_rows_1486",
-      "passed": true,
-      "detail": 1486
-    },
-    {
-      "check": "actions_unique_isin",
-      "passed": true,
-      "detail": 1486
-    },
-    {
-      "check": "actions_tickers_complete",
-      "passed": true,
-      "detail": 1486
-    },
-    {
-      "check": "actions_canonical_mic_complete",
-      "passed": true,
-      "detail": 1486
-    },
-    {
-      "check": "etf_rows_102",
-      "passed": true,
-      "detail": 102
-    },
-    {
-      "check": "etf_unique_isin",
-      "passed": true,
-      "detail": 102
-    },
-    {
-      "check": "etf_tickers_complete",
-      "passed": true,
-      "detail": 102
-    },
-    {
-      "check": "etf_map_rows_102",
-      "passed": true,
-      "detail": 102
-    },
-    {
-      "check": "etf_map_unique_isin",
-      "passed": true,
-      "detail": 102
-    },
-    {
-      "check": "etf_map_tickers_complete",
-      "passed": true,
-      "detail": 102
-    },
-    {
-      "check": "workflow_contains_OPENFIGI_API_KEY",
-      "passed": true,
-      "detail": "OPENFIGI_API_KEY"
-    },
-    {
-      "check": "workflow_contains_actions/upload-artifact@v4",
-      "passed": true,
-      "detail": "actions/upload-artifact@v4"
-    },
-    {
-      "check": "workflow_contains_peter-evans/create-pull-request@v7",
-      "passed": true,
-      "detail": "peter-evans/create-pull-request@v7"
-    },
-    {
-      "check": "workflow_contains_pull-requests: write",
-      "passed": true,
-      "detail": "pull-requests: write"
-    },
-    {
-      "check": "workflow_contains_config/V18.2_ETF_TICKER_MAP.csv",
-      "passed": true,
-      "detail": "config/V18.2_ETF_TICKER_MAP.csv"
-    },
-    {
-      "check": "workflow_no_direct_git_push",
-      "passed": true,
-      "detail": "direct push absent"
-    },
-    {
-      "check": "workflow_quality_gate",
-      "passed": true,
-      "detail": "quality gate enforced"
-    },
-    {
-      "check": "checkpoint_per_run",
-      "passed": true,
-      "detail": "run scoped"
-    },
-    {
-      "check": "excel_exporter_present",
-      "passed": true,
-      "detail": "exports module"
-    },
-    {
-      "check": "no_embedded_secrets",
-      "passed": true,
-      "detail": []
-    },
-    {
-      "check": "pytest_passed",
-      "passed": true,
-      "detail": "..................                                                       [100%]\n18 passed in 2.27s"
-    },
-    {
-      "check": "compileall_passed",
-      "passed": true,
-      "detail": ""
-    }
-  ],
-  "tests_output": "..................                                                       [100%]\n18 passed in 2.27s",
-  "inputs": {
+  "version": "18.2.1-preproduction-audit2",
+  "status": "NOT_RELEASE_VALIDATED",
+  "reason": "The previous validation described an older code state, older GitHub Action versions and 18 tests. The second audit changed merge provenance, source caches, quality gates, dependencies and workflows. A new validation must be generated only after CI, API smoke tests and a full run on the exact final commit.",
+  "current_expected_inputs": {
     "actions_rows": 1486,
     "etf_rows": 102,
     "etf_map_rows": 102
@@ -123,7 +10,17 @@
   "safety": {
     "direct_default_branch_push": false,
     "pull_request_required": true,
-    "quality_gates_block_publish": true,
-    "secrets_embedded": false
-  }
+    "quality_gates_required": true,
+    "main_merge_allowed": false
+  },
+  "pending_checks": [
+    "compileall",
+    "dependency consistency",
+    "critical Ruff correctness checks",
+    "latest pytest suite",
+    "OpenFIGI authenticated smoke test",
+    "Marketstack resolver + EOD smoke test",
+    "full pipeline run on final commit",
+    "functional coverage review"
+  ]
 }
