@@ -1,13 +1,39 @@
-NOT RELEASE VALIDATED
+PREPRODUCTION VALIDATED — NOT MERGED
 
-The previous PASS report described an older branch state, older GitHub Action versions and an 18-test suite.
-Second-audit changes affect provenance, OpenFIGI/Marketstack/Finnhub caches, quality gates, dependencies and workflows.
+Validated code commit: 89eb454e12e40a6560a97332a552caaf96585465
+Full audit run: 31184702729 — SUCCESS
+Artifact: V18.2-full-audit-31184702729 (ID 8997393689)
+Artifact SHA256: 8feea9d659ff67c7e6feffea446720eae20fdc3f6484064e1200e053d28a4416
 
-Required before release:
-- latest dependency/static/test CI green;
-- latest OpenFIGI and Marketstack production-path smoke green;
-- full V18.2 run green on the exact final commit;
-- functional coverage gaps reviewed;
-- release validation and SHA256 manifest regenerated.
+Validation:
+- dependency consistency: PASS;
+- Python compilation: PASS;
+- critical Ruff checks: PASS;
+- pytest: 69/69 PASS;
+- full audit invariants: PASS;
+- all V18.2 quality gates: PASS.
 
+Coverage and data quality:
+- Actions OHLCV: 1401/1476 = 94.92%;
+- ETF OHLCV: 101/102 = 99.02%;
+- OpenFIGI mapping: 1160/1588 = 73.05%;
+- fundamentals: 294/300 = 98.0%;
+- consensus: 288/300 = 96.0%;
+- Actions completeness: 92.6% -> 93.1%;
+- ETF completeness: 99.3% -> 99.7%.
+
+API/fallback status:
+- Marketstack: healthy, quotas respected, one Action OHLCV fallback succeeded;
+- Alpha Vantage: healthy and conservatively gated; one low-confidence Action was rejected rather than incorrectly mapped;
+- Finnhub: no recommendation payloads returned for 109 fallback attempts, but primary Yahoo consensus coverage remains 96%;
+- FRED: healthy, as-of 2026-08-06;
+- EIA: healthy, as-of 2026-08-03.
+
+Known non-blocking gaps:
+- 75 Action OHLCV gaps and 1 ETF OHLCV gap remain, both above the unchanged 90% release threshold;
+- Finnhub did not enrich consensus in this run;
+- Marketstack and Alpha Vantage quotas remain intentionally conservative.
+
+MAIN MODIFIED: NO
 MAIN MERGE ALLOWED: NO
+PR #2 remains the only integration path.
