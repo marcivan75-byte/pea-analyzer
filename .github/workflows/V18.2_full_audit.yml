@@ -215,6 +215,11 @@ jobs:
           print('FULL_AUDIT_INVARIANTS_OK')
           PY
 
+      - name: Generate exact-SHA release evidence
+        env:
+          V182_REQUIRE_RELEASE_READY: "1"
+        run: python -m v182.audit.release_evidence
+
       - name: Produce audit summary
         if: always()
         run: |
@@ -229,6 +234,7 @@ jobs:
               'ohlcv_gaps': 'outputs/audit/V18.2_OHLCV_GAP_METRICS.json',
               'scenarios': 'outputs/audit/V18.2_SCENARIO_METRICS.json',
               'analyst_momentum': 'outputs/audit/V18.2_ANALYST_MOMENTUM_METRICS.json',
+              'release_evidence': 'outputs/release/V18.2_RELEASE_EVIDENCE.json',
               'macro': 'outputs/context/V18.2_MACRO_CONTEXT.json',
               'energy': 'outputs/context/V18.2_ENERGY_CONTEXT.json',
           }.items():
