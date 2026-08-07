@@ -48,18 +48,50 @@ def _api_error(body) -> str | None:
     return None
 
 
-def _request(api_key: str, function: str, timeout: int = 20, **params) -> dict:
+def _is_per_second_throttle(error: str | None) -> bool:
+    text = str(error or "").lower()
+    return (
+        "1 request per second" in text
+        or "spreading out your free api requests" in text
+        or "spread out your free api requests" in text
+    )
+
+
+def _request(
+    api_key: str,
+    function: str,
+    timeout: int = 20,
+    max_rate_retries: int = 2,
+    rate_retry_wait_seconds: float = 1.15,
+    **params,
+) -> dict:
+    """Call Alpha Vantage and distinguish transient per-second throttling.
+
+    Alpha Vantage can return HTTP 200 with an `Information` payload when free
+    requests arrive too close together. That response is retried after >1 s.
+    Daily quota, entitlement and other API errors remain hard failures and are
+    never hidden by retry loops.
+    """
     import requests
 
     if not api_key:
         raise RuntimeError("ALPHA_VANTAGE_API_KEY_MISSING")
-    response = requests.get(BASE_URL, params={"function": function, "apikey": api_key, **params}, timeout=timeout)
-    response.raise_for_status()
-    body = response.json()
-    error = _api_error(body)
-    if error:
+    for attempt in range(max(0, int(max_rate_retries)) + 1):
+        response = requests.get(
+            BASE_URL,
+            params={"function": function, "apikey": api_key, **params},
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        body = response.json()
+        error = _api_error(body)
+        if not error:
+            return body
+        if _is_per_second_throttle(error) and attempt < max_rate_retries:
+            time.sleep(max(1.05, float(rate_retry_wait_seconds)))
+            continue
         raise RuntimeError(f"ALPHA_VANTAGE_API_ERROR: {error}")
-    return body
+    raise RuntimeError("ALPHA_VANTAGE_API_RETRY_EXHAUSTED")
 
 
 def health_check(api_key: str) -> dict:
@@ -208,7 +240,7 @@ def fetch_overview(symbol: str, api_key: str) -> list[dict]:
 
 
 def resolve_and_fetch_overview(security: dict, api_key: str, cache_path: str | Path | None = None,
-                               delay_seconds: float = 0.2, **resolver_kwargs) -> tuple[list[dict], dict]:
+                               delay_seconds: float = 1.15, **resolver_kwargs) -> tuple[list[dict], dict]:
     resolution = resolve_symbol(security, api_key, cache_path=cache_path, **resolver_kwargs)
     meta = {"symbol": resolution.symbol, "resolution_source": resolution.source,
             "resolution_api_calls": resolution.api_calls, "reason": resolution.reason,
@@ -216,8 +248,9 @@ def resolve_and_fetch_overview(security: dict, api_key: str, cache_path: str | P
             "overview_api_calls": 0}
     if not resolution.symbol:
         return [], meta
-    if delay_seconds:
-        time.sleep(delay_seconds)
+    # A cached symbol consumes no search request, so no mandatory inter-call wait.
+    if resolution.api_calls and delay_seconds:
+        time.sleep(max(1.05, float(delay_seconds)))
     fields = fetch_overview(resolution.symbol, api_key)
     meta["overview_api_calls"] = 1
     return fields, meta
