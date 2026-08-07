@@ -1,10 +1,10 @@
 Data block;Primary source;Fallback 1;Fallback 2;Fallback 3;Fallback 4
 IDENTIFIERS;OpenFIGI v3 [OPERATIONAL];Issuer/Euronext [PLANNED];;;
-OHLCV;yfinance [OPERATIONAL];OpenFIGI symbol repair + yfinance [OPERATIONAL];Marketstack v2 [OPERATIONAL];Alpha Vantage [PLANNED];Issuer/Euronext [PLANNED]
-FUNDAMENTALS_ACTIONS;yfinance [OPERATIONAL];Alpha Vantage [PLANNED];Issuer [PLANNED];Zonebourse [PLANNED];
+OHLCV;yfinance [OPERATIONAL];OpenFIGI symbol repair + yfinance [OPERATIONAL];Marketstack v2 [OPERATIONAL];Alpha Vantage TIME_SERIES_DAILY [OPERATIONAL];Issuer/Euronext [PLANNED]
+FUNDAMENTALS_ACTIONS;yfinance [OPERATIONAL];Issuer [PLANNED];Zonebourse [PLANNED];;
 CONSENSUS_ACTIONS;yfinance [OPERATIONAL];Finnhub [OPERATIONAL];Boursorama [PLANNED];Zonebourse [PLANNED];
 ETF_COSTS_AUM;ABC Bourse [PLANNED];Issuer/KID [PLANNED];Boursorama [PLANNED];;
 ETF_MORNINGSTAR;Boursorama [PLANNED];Morningstar-authorized source [PLANNED];;;
 NEWS_EVENTS;AMF/Issuer [PLANNED];Finnhub news [PLANNED];GDELT [PLANNED];Boursorama/Zonebourse [PLANNED];
-MACRO;FRED [PLANNED];;;;
-ENERGY;EIA [PLANNED];;;;
+MACRO;FRED VIXCLS + T10Y2Y [OPERATIONAL];;;;
+ENERGY;EIA WTI + Brent [OPERATIONAL];;;;
