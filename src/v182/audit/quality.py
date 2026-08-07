@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
+import os
 import pandas as pd
 from v182.io.frames import is_missing
 
@@ -18,7 +19,7 @@ def _transport_failure(reason: str) -> bool:
     text = str(reason or "").upper()
     return text in {
         "API_ERROR", "HTTPERROR", "CONNECTIONERROR", "TIMEOUT", "READTIMEOUT",
-        "CONNECTTIMEOUT", "SSLError".upper(), "REQUESTEXCEPTION",
+        "CONNECTTIMEOUT", "SSLERROR", "REQUESTEXCEPTION",
     }
 
 
@@ -46,17 +47,18 @@ def run_quality_gates(actions: pd.DataFrame, etf: pd.DataFrame, before: dict, af
         pct = 100.0 if requested == 0 else round(successful / requested * 100, 2)
         checks.append(_check(f"{wave_id.lower()}_ohlcv_success_pct", pct >= q["ohlcv_success_min_pct"], pct, q["ohlcv_success_min_pct"]))
 
-        source_counts = m.get("source_counts", {}) or {}
-        source_total = sum(int(v or 0) for v in source_counts.values())
-        checks.append(_check(
-            f"{wave_id.lower()}_source_accounting",
-            source_total == successful,
-            source_total,
-            successful,
-            f"sources={source_counts}",
-        ))
+        source_counts = m.get("source_counts") or {}
+        if source_counts:
+            source_total = sum(int(v or 0) for v in source_counts.values())
+            checks.append(_check(
+                f"{wave_id.lower()}_source_accounting",
+                source_total == successful,
+                source_total,
+                successful,
+                f"sources={source_counts}",
+            ))
 
-        diagnostics = m.get("diagnostics", {}) or {}
+        diagnostics = m.get("diagnostics") or {}
         remaining_after_openfigi = int(diagnostics.get("remaining_after_openfigi", 0) or 0)
         key_present = bool(diagnostics.get("marketstack_key_present", False))
         attempted = int(diagnostics.get("marketstack_attempted", 0) or 0)
@@ -79,12 +81,16 @@ def run_quality_gates(actions: pd.DataFrame, etf: pd.DataFrame, before: dict, af
             f"attempted={attempted}; total_failures={len(failures)}",
         ))
 
-        max_symbols = int(cfg.get("marketstack", {}).get("max_symbols_per_run", 3) or 3)
+        configured_max = int(cfg.get("marketstack", {}).get("max_symbols_per_run", 3) or 3)
+        try:
+            effective_max = int(os.environ.get("MARKETSTACK_MAX_SYMBOLS_PER_RUN") or configured_max)
+        except ValueError:
+            effective_max = configured_max
         checks.append(_check(
             f"{wave_id.lower()}_marketstack_quota_cap",
-            attempted <= max_symbols,
+            attempted <= max(0, effective_max),
             attempted,
-            max_symbols,
+            max(0, effective_max),
         ))
 
     openfigi = wave_metrics.get("WAVE_00_OPENFIGI", {}) or {}
