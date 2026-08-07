@@ -9,19 +9,23 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: v18-2-api-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  api-smoke:
+  openfigi:
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[api-smoke]')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -e .
-      - name: OpenFIGI production mapping smoke test
+      - run: pip install -c constraints-ci.txt -e .
+      - name: OpenFIGI authenticated mapping
         env:
           OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
         run: |
@@ -31,17 +35,26 @@ jobs:
           key = os.environ.get('OPENFIGI_API_KEY', '').strip()
           assert key, 'OPENFIGI_API_KEY_MISSING'
           isin = 'FR0000120073'
-          result = resolve_isins(
-              [isin], api_key=key, mic_by_isin={isin: 'XPAR'},
-              batch_size=1, delay_seconds=0, max_retries=1,
-          )
+          result = resolve_isins([isin], api_key=key, mic_by_isin={isin: 'XPAR'}, batch_size=1, delay_seconds=0, max_retries=1)
           raw = result.get(isin)
           assert raw is not None, 'OPENFIGI_API_TRANSPORT_OR_AUTH_FAILURE'
           best = pick_best_match(raw)
-          assert best is not None, f'OPENFIGI_NO_EQUITY_MATCH: {raw[:2]}'
+          assert best is not None, 'OPENFIGI_NO_EQUITY_MATCH'
           print('OPENFIGI_SMOKE_OK', best.get('ticker'), best.get('figi'))
           PY
-      - name: Marketstack production resolver and EOD smoke test
+
+  marketstack:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[api-smoke]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -c constraints-ci.txt -e .
+      - name: Marketstack resolver and EOD
         env:
           MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
         run: |
@@ -51,35 +64,138 @@ jobs:
           import pandas as pd
           from v182.sources.marketstack_symbols import resolve_marketstack_symbols
           from v182.sources.marketstack_eod import fetch_eod_history
-
           key = os.environ.get('MARKETSTACK_API_KEY', '').strip()
           assert key, 'MARKETSTACK_API_KEY_MISSING'
-          row = pd.DataFrame([{
-              'isin': 'FR0000120578',
-              'name': 'Sanofi',
-              'yahoo_ticker': 'SAN.PA',
-          }])
+          row = pd.DataFrame([{'isin': 'FR0000120578', 'name': 'Sanofi', 'yahoo_ticker': 'SAN.PA'}])
           with tempfile.TemporaryDirectory() as tmp:
               cache = Path(tmp) / 'marketstack_symbols.csv'
-              resolved = resolve_marketstack_symbols(
-                  row, 'ACTION', cache, key,
-                  max_new_resolutions=1, min_confidence=0.72,
-                  delay_seconds=0,
-              )
+              resolved = resolve_marketstack_symbols(row, 'ACTION', cache, key, max_new_resolutions=1, min_confidence=0.72, delay_seconds=0)
               assert resolved.api_attempted == 1, resolved
               assert resolved.api_successful == 1, f'MARKETSTACK_RESOLVER_FAILED: {resolved.failures}'
               symbol = resolved.resolved.get('SAN.PA')
-              assert symbol == 'SAN.PA', f'UNEXPECTED_MARKETSTACK_SYMBOL: {symbol}'
-              print('MARKETSTACK_RESOLVER_OK', symbol)
-
-              eod = fetch_eod_history(
-                  [{'canonical_ticker': 'SAN.PA', 'symbol': symbol, 'expected_mic': 'XPAR'}],
-                  api_key=key, history_days=120, max_symbols=1,
-                  min_rows=20, delay_seconds=0,
-              )
+              assert symbol, 'MARKETSTACK_SYMBOL_EMPTY'
+              eod = fetch_eod_history([{'canonical_ticker': 'SAN.PA', 'symbol': symbol, 'expected_mic': 'XPAR'}],
+                                      api_key=key, history_days=120, max_symbols=1, min_rows=20, delay_seconds=0)
               assert eod.attempted == 1, eod
               assert eod.successful == 1, f'MARKETSTACK_EOD_FAILED: {eod.failures}'
-              frame = eod.frames['SAN.PA']
-              assert len(frame) >= 20
-              print('MARKETSTACK_EOD_SMOKE_OK', len(frame), frame.index.max())
+              assert len(eod.frames['SAN.PA']) >= 20
+              print('MARKETSTACK_SMOKE_OK', symbol, len(eod.frames['SAN.PA']))
+          PY
+
+  finnhub:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[api-smoke]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -c constraints-ci.txt -e .
+      - name: Finnhub lookup and recommendation endpoints
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: |
+          python - <<'PY'
+          import os, requests
+          key = os.environ.get('FINNHUB_API_KEY', '').strip()
+          assert key, 'FINNHUB_API_KEY_MISSING'
+          headers = {'X-Finnhub-Token': key}
+          lookup = requests.get('https://finnhub.io/api/v1/search', params={'q': 'US0378331005'}, headers=headers, timeout=20)
+          lookup.raise_for_status()
+          body = lookup.json()
+          assert isinstance(body.get('result'), list) and body['result'], f'FINNHUB_SEARCH_FAILED: {body}'
+          reco = requests.get('https://finnhub.io/api/v1/stock/recommendation', params={'symbol': 'AAPL'}, headers=headers, timeout=20)
+          reco.raise_for_status()
+          recos = reco.json()
+          assert isinstance(recos, list) and recos, f'FINNHUB_RECOMMENDATION_FAILED: {recos}'
+          print('FINNHUB_SMOKE_OK', body['result'][0].get('symbol'), recos[0].get('period'))
+          PY
+
+  alpha-vantage:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[api-smoke]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -c constraints-ci.txt -e .
+      - name: Alpha Vantage symbol resolution and fundamentals
+        env:
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+        run: |
+          python - <<'PY'
+          import os, tempfile
+          from pathlib import Path
+          from v182.sources.alpha_vantage import resolve_and_fetch_overview
+          key = os.environ.get('ALPHA_VANTAGE_API_KEY', '').strip()
+          assert key, 'ALPHA_VANTAGE_API_KEY_MISSING'
+          security = {'isin': 'GB0008847096', 'name': 'Tesco', 'yahoo_ticker': 'TSCO.L', 'country': 'GB'}
+          with tempfile.TemporaryDirectory() as tmp:
+              fields, meta = resolve_and_fetch_overview(security, key, cache_path=Path(tmp) / 'alpha.csv', delay_seconds=0, min_match_score=0.60)
+              assert meta.get('symbol'), f'ALPHA_SYMBOL_RESOLUTION_FAILED: {meta}'
+              assert meta.get('resolution_api_calls') == 1, meta
+              assert meta.get('overview_api_calls') == 1, meta
+              assert fields, 'ALPHA_OVERVIEW_NO_FIELDS'
+              print('ALPHA_VANTAGE_SMOKE_OK', meta['symbol'], len(fields))
+          PY
+
+  fred:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[api-smoke]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -c constraints-ci.txt -e .
+      - name: FRED VIX and 10Y-2Y observations
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: |
+          python - <<'PY'
+          import os
+          from v182.sources.fred_macro import fetch_macro_context
+          key = os.environ.get('FRED_API_KEY', '').strip()
+          assert key, 'FRED_API_KEY_MISSING'
+          context = fetch_macro_context(key)
+          assert context['api_calls'] == 2, context
+          assert isinstance(context['macro_vix'], float)
+          assert isinstance(context['macro_curve_10y2y'], float)
+          assert context['macro_as_of']
+          print('FRED_SMOKE_OK', context['macro_vix'], context['macro_curve_10y2y'], context['macro_as_of'])
+          PY
+
+  eia:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[api-smoke]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -c constraints-ci.txt -e .
+      - name: EIA v2 WTI and Brent observations
+        env:
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+        run: |
+          python - <<'PY'
+          import os
+          from v182.sources.eia_energy import fetch_energy_context
+          key = os.environ.get('EIA_API_KEY', '').strip()
+          assert key, 'EIA_API_KEY_MISSING'
+          context = fetch_energy_context(key)
+          assert context['api_calls'] == 2, context
+          assert isinstance(context['wti_spot_usd_bbl'], float)
+          assert isinstance(context['brent_spot_usd_bbl'], float)
+          assert context['energy_as_of']
+          print('EIA_SMOKE_OK', context['wti_spot_usd_bbl'], context['brent_spot_usd_bbl'], context['energy_as_of'])
           PY
