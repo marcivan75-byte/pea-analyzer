@@ -6,9 +6,6 @@ import time
 
 OPENFIGI_URL = "https://api.openfigi.com/v3/mapping"
 
-# Yahoo suffixes and ISO MICs are stable identifiers we control locally.
-# OpenFIGI's `exchCode` is a Bloomberg exchange code and MUST NOT be treated
-# as a Yahoo suffix (for example OpenFIGI uses NA/BB for Netherlands/Belgium).
 YAHOO_SUFFIX_TO_MIC = {
     "PA": "XPAR", "AS": "XAMS", "BR": "XBRU", "LS": "XLIS", "MI": "XMIL",
     "DE": "XETR", "SW": "XSWX", "VI": "XWBO", "IR": "XDUB", "HE": "XHEL",
@@ -16,8 +13,6 @@ YAHOO_SUFFIX_TO_MIC = {
 }
 MIC_TO_YAHOO_SUFFIX = {mic: suffix for suffix, mic in YAHOO_SUFFIX_TO_MIC.items()}
 
-# Used only when a ticker has no usable Yahoo suffix. It is a conservative
-# home-market hint, not a guarantee of listing venue.
 ISIN_PREFIX_TO_MIC = {
     "FR": "XPAR", "NL": "XAMS", "BE": "XBRU", "PT": "XLIS", "IT": "XMIL",
     "DE": "XETR", "CH": "XSWX", "AT": "XWBO", "IE": "XDUB", "FI": "XHEL",
@@ -66,10 +61,10 @@ def resolve_isins(
 ) -> dict[str, list[dict] | None]:
     """Resolve ISINs through OpenFIGI v3.
 
-    `None` means a transient/API failure and is deliberately NOT negative-cached.
-    `[]` means OpenFIGI returned a normal no-identifier warning.
-    When a MIC is known we send it in the mapping job, avoiding unsafe
-    Bloomberg-exchange-code -> Yahoo-suffix guesses.
+    ``None`` means a transient/API failure and is deliberately not cached as a
+    negative. ``[]`` means a normal no-identifier response. When a MIC is known
+    it is sent in the job so Bloomberg exchange codes are never guessed into
+    Yahoo suffixes.
     """
     import requests
 
@@ -152,8 +147,6 @@ def pick_best_match(matches: list[dict] | None) -> dict | None:
         candidates.append(match)
     if not candidates:
         return None
-    # Deterministic choice. With micCode in the request, candidates are already
-    # constrained to the expected venue.
     return sorted(candidates, key=lambda m: (str(m.get("ticker") or ""), str(m.get("figi") or "")))[0]
 
 
@@ -186,7 +179,7 @@ def _row_from_match(
     }
 
 
-def _negative_cache_fresh(row, days: int) -> bool:
+def _cache_fresh(row, days: int) -> bool:
     status = str(row.get("status") or "").upper()
     if status == "RESOLVED":
         return True
@@ -201,6 +194,16 @@ def _negative_cache_fresh(row, days: int) -> bool:
         return False
 
 
+def _cache_identity_matches(old, current_row: dict) -> bool:
+    """A cached mapping is reusable only for the same ticker and expected MIC."""
+    return (
+        str(old.get("original_yahoo_ticker") or "").strip().upper()
+        == str(current_row.get("original_yahoo_ticker") or "").strip().upper()
+        and str(old.get("openfigi_mic") or "").strip().upper()
+        == str(current_row.get("expected_mic") or "").strip().upper()
+    )
+
+
 def build_openfigi_master_map(
     actions_df,
     etf_df,
@@ -210,8 +213,11 @@ def build_openfigi_master_map(
 ) -> dict:
     """Persist a safe OpenFIGI cache for Actions + ETF.
 
-    Resolved entries are permanent. Definitive negative results are retried
-    after a TTL. Transient API failures are never written as negative matches.
+    Resolved entries are reusable while the local ticker/MIC identity context
+    remains unchanged. Definitive negatives expire after a TTL. Transient API
+    failures are never written as negative matches. A stale identity is removed
+    immediately even when its refresh request fails, so it cannot be reused as
+    an unsafe fallback.
     """
     import pandas as pd
 
@@ -246,10 +252,16 @@ def build_openfigi_master_map(
     if not existing.empty:
         current = {(r["universe"], r["isin"]): r for _, r in existing.iterrows()}
     to_refresh = []
+    invalid_identity_keys = set()
     for _, row in source.iterrows():
-        old = current.get((row["universe"], row["isin"]))
-        if old is None or not _negative_cache_fresh(old, negative_cache_days):
-            to_refresh.append(row.to_dict())
+        current_row = row.to_dict()
+        key = (current_row["universe"], current_row["isin"])
+        old = current.get(key)
+        identity_ok = old is not None and _cache_identity_matches(old, current_row)
+        if old is not None and not identity_ok:
+            invalid_identity_keys.add(key)
+        if old is None or not identity_ok or not _cache_fresh(old, negative_cache_days):
+            to_refresh.append(current_row)
 
     unique_isins = sorted({r["isin"] for r in to_refresh})
     mic_by_isin = {}
@@ -272,8 +284,11 @@ def build_openfigi_master_map(
         ))
 
     refreshed_keys = {(r["universe"], r["isin"]) for r in new_rows}
-    if not existing.empty and refreshed_keys:
-        existing = existing[[ (u, i) not in refreshed_keys for u, i in zip(existing["universe"], existing["isin"]) ]]
+    remove_keys = refreshed_keys | invalid_identity_keys
+    if not existing.empty and remove_keys:
+        existing = existing[[
+            (u, i) not in remove_keys for u, i in zip(existing["universe"], existing["isin"])
+        ]]
     updated = pd.concat([existing, pd.DataFrame(new_rows, columns=MASTER_MAP_COLUMNS)], ignore_index=True)
     if not updated.empty:
         updated = updated.drop_duplicates(["universe", "isin"], keep="last").sort_values(["universe", "isin"])
@@ -285,18 +300,14 @@ def build_openfigi_master_map(
         "records": len(updated), "resolved": resolved_count,
         "coverage_pct": round(resolved_count / len(source) * 100, 2) if len(source) else 100.0,
         "api_isins_requested": len(unique_isins), "new_records": len(new_rows),
+        "invalidated_identity_records": len(invalid_identity_keys),
         "transient_failures": transient_failures,
         "authenticated": bool(api_key or os.environ.get("OPENFIGI_API_KEY")),
     }
 
 
 def fallback_specs(master_df, failed_tickers: list[str], openfigi_map_path: str | Path, universe: str) -> dict[str, dict]:
-    """Build safe Yahoo-repair and Marketstack fallback specs.
-
-    Marketstack can use the original Yahoo base symbol + known MIC even if
-    OpenFIGI did not resolve the ISIN. OpenFIGI overrides that symbol only when
-    it has a venue-constrained resolved match.
-    """
+    """Build safe Yahoo-repair and Marketstack fallback specs."""
     import pandas as pd
 
     failed = set(failed_tickers)
@@ -318,6 +329,12 @@ def fallback_specs(master_df, failed_tickers: list[str], openfigi_map_path: str 
         isin = str(row.get("isin") or "").strip().upper()
         mapped = by_isin.get(isin, {})
         direct_mic = expected_mic(original, isin)
+        mapped_identity_ok = (
+            str(mapped.get("original_yahoo_ticker") or "").strip().upper() == original.upper()
+            and str(mapped.get("openfigi_mic") or "").strip().upper() == direct_mic.upper()
+        )
+        if not mapped_identity_ok:
+            mapped = {}
         specs[original] = {
             "isin": isin,
             "yahoo_candidate": str(mapped.get("yahoo_candidate") or ""),
