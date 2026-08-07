@@ -2,57 +2,53 @@
 
 Ce dépôt exécute le pipeline V18.2 d'enrichissement des univers Actions PEA et ETF PEA.
 
-## Exécution
+## Statut
 
-Le workflow GitHub Actions principal est `.github/workflows/V18.2_online.yml`.
+V18.2 reste en préproduction. La branche `main` ne doit pas recevoir ces changements avant validation du run complet sur le commit final.
 
-Chaîne OHLCV opérationnelle :
+Sources opérationnelles et testées dans le code actuel :
 
-1. Yahoo Finance / yfinance — source bulk primaire.
-2. OpenFIGI v3 — résolution ISIN → FIGI / ticker / place / MIC et réparation des symboles Yahoo qui ne produisent pas de données exploitables.
-3. Yahoo Finance — nouvelle tentative uniquement avec les symboles réparés par OpenFIGI.
-4. Marketstack v2 EOD — repli sur les échecs persistants, avec quota conservateur par défaut.
-5. Les données récupérées par les sources de repli sont normalisées dans le même format MultiIndex OHLCV avant le calcul des indicateurs.
+- Yahoo Finance / yfinance : OHLCV, fondamentaux et données de consensus/ETF lorsqu'elles sont exposées ;
+- OpenFIGI v3 : résolution ISIN + MIC et réparation sécurisée des symboles ;
+- Marketstack v2 : résolution de symbole par nom + MIC puis fallback EOD avec contrôle de place ;
+- Finnhub : consensus analystes en complément, avec cache et contrôle de confiance du symbole.
 
-Le pipeline ne considère plus qu'un ticker Yahoo est réussi parce que ses colonnes existent : il exige désormais un nombre minimal de cours `Close` réellement observés.
+Sources de la stratégie cible mais non encore implémentées comme connecteurs actifs : Alpha Vantage, FRED, EIA, Boursorama, Zonebourse, ABC Bourse, AMF/Euronext, Morningstar et GDELT.
 
-## Secrets GitHub Actions
+## Chaîne OHLCV opérationnelle
 
-Les clés doivent être stockées dans `Settings → Secrets and variables → Actions` et ne doivent jamais être inscrites dans le dépôt.
+1. Yahoo Finance / yfinance ;
+2. OpenFIGI v3 pour la résolution ISIN/MIC et la réparation de symbole ;
+3. nouvelle tentative Yahoo avec un symbole OpenFIGI validé ;
+4. Marketstack v2, avec résolution `nom + MIC` puis EOD sur la place attendue ;
+5. normalisation commune puis calcul des indicateurs.
 
-Variables attendues :
+Un ticker n'est considéré réussi que si un nombre minimal de cours `Close` réellement observés est disponible.
 
-- `MARKETSTACK_API_KEY`
-- `OPENFIGI_API_KEY`
-- `ALPHA_VANTAGE_API_KEY`
-- `FINNHUB_API_KEY`
-- `FRED_API_KEY`
-- `EIA_API_KEY`
+## Configuration d'accès
 
-`GITHUB_TOKEN` est fourni automatiquement par GitHub Actions.
+Les valeurs d'accès aux API restent dans les variables protégées GitHub Actions et ne doivent jamais être écrites dans le dépôt. Le workflow actuel consomme uniquement les accès OpenFIGI, Marketstack et Finnhub. Les accès Alpha Vantage, FRED et EIA resteront inutilisés jusqu'à l'implémentation de leurs connecteurs.
 
 ## OpenFIGI
 
-Le pipeline utilise exclusivement l'API OpenFIGI **v3**. Un cache persistant est construit dans `config/V18.2_OPENFIGI_MASTER_MAP.csv`. Les ISIN déjà résolus ne sont pas redemandés lors des runs suivants.
-
-Le cache conserve notamment :
-
-- ISIN ;
-- ticker OpenFIGI ;
-- code de place ;
-- MIC ;
-- FIGI / composite FIGI / share-class FIGI ;
-- candidat de ticker Yahoo.
+Le cache `config/V18.2_OPENFIGI_MASTER_MAP.csv` est réutilisé seulement si le ticker Yahoo et le MIC attendus correspondent encore à l'identité courante. Une erreur transitoire n'est jamais enregistrée comme résultat négatif persistant.
 
 ## Marketstack
 
-Marketstack est utilisé uniquement après échec de Yahoo puis tentative de réparation OpenFIGI. Le nombre de symboles Marketstack est plafonné afin d'éviter de consommer involontairement un forfait API.
+Marketstack intervient uniquement après échec Yahoo puis tentative de réparation OpenFIGI. Limites par défaut :
 
-Valeur par défaut : `4` symboles maximum par run.
+- 3 requêtes EOD maximum par run ;
+- 1 nouvelle résolution de symbole maximum par run ;
+- cache des résolutions positives et négatives avec durée de validité ;
+- rejet des correspondances ambiguës ou de mauvaise place de cotation.
 
-Cette limite peut être augmentée en définissant l'environnement `MARKETSTACK_MAX_SYMBOLS_PER_RUN` lorsque le quota réel du compte Marketstack est connu.
+`MARKETSTACK_MAX_SYMBOLS_PER_RUN` permet de modifier la limite EOD lorsque le quota réel du compte est connu.
 
-La configuration par défaut demande 365 jours d'historique EOD, compatible avec les capacités usuelles du plan gratuit. Les comptes supérieurs peuvent augmenter `marketstack.history_days` dans `config/V18.2_MASTER_CONFIG.json`.
+## Provenance
+
+Les masters enrichis peuvent être réutilisés entre les runs lorsqu'ils restent compatibles avec les univers de référence. La provenance est conservée champ par champ dans une colonne technique privée du CSV. Cette colonne n'est pas exportée dans les Excel et n'entre pas dans le calcul de couverture.
+
+Une observation de niveau de preuve inférieur ne doit pas dégrader une valeur officielle de niveau supérieur.
 
 ## Audits produits
 
@@ -63,8 +59,6 @@ Chaque run produit notamment :
 - `outputs/audit/V18.2_SOURCE_FALLBACK_METRICS.json`
 - `outputs/V18.2_RUN_REPORT.xlsx`
 
-`V18.2_SOURCE_FALLBACK_METRICS.json` permet de distinguer les récupérations Yahoo, les réparations de symboles via OpenFIGI et les récupérations Marketstack.
-
 ## Sécurité d'exécution
 
-Le pipeline reste en mode contrôlé : les fichiers produits sont publiés dans une Pull Request et ne sont pas écrits directement dans `main`. Les quality gates doivent être verts avant fusion.
+Le workflow principal est `.github/workflows/V18.2_online.yml`. Les résultats sont proposés via Pull Request et ne sont pas écrits directement dans `main`. Un workflow vert ne vaut pas validation fonctionnelle des sources encore explicitement marquées comme non implémentées.
