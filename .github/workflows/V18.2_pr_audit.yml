@@ -1,6 +1,9 @@
 name: V18.2 PR Audit
 
 on:
+  push:
+    branches:
+      - fix/v18-2-waves-resilience
   pull_request:
     branches:
       - main
@@ -9,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: v18-2-pr-audit-${{ github.event.pull_request.number }}
+  group: v18-2-pr-audit-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
