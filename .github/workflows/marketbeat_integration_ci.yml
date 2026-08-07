@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - audit/v18-2-marketbeat-consensus-integration
+      - audit/v18-2-consensus-momentum-final
   workflow_dispatch:
 
 permissions:
