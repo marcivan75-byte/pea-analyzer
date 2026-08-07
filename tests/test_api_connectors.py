@@ -32,27 +32,37 @@ def test_alpha_vantage_search_requires_country_match():
     assert best["1. symbol"] == "SAN.PAR"
 
 
-def test_alpha_vantage_overview_maps_only_numeric_fields():
-    from v182.sources.alpha_vantage import fetch_overview
+def test_alpha_vantage_daily_history_parses_global_ohlcv():
+    from v182.sources.alpha_vantage import fetch_daily_history
+
+    series = {}
+    for i in range(65):
+        day = pd.Timestamp("2026-05-01") + pd.Timedelta(days=i)
+        series[day.strftime("%Y-%m-%d")] = {
+            "1. open": "100", "2. high": "102", "3. low": "99",
+            "4. close": str(100 + i / 10), "5. volume": "123456",
+        }
+    body = {"Meta Data": {"2. Symbol": "TSCO.LON"}, "Time Series (Daily)": series}
+    with patch("requests.get", return_value=_response(body)):
+        result = fetch_daily_history("TSCO.LON", "fake", "TSCO.L", min_rows=60)
+    assert result.failures == []
+    assert result.api_calls == 1
+    assert "TSCO.L" in result.frames
+    assert len(result.frames["TSCO.L"]) == 65
+    assert result.frames["TSCO.L"]["Close"].notna().all()
+
+
+def test_alpha_vantage_daily_history_rejects_identity_mismatch():
+    from v182.sources.alpha_vantage import fetch_daily_history
 
     body = {
-        "Symbol": "TSCO.LON",
-        "MarketCapitalization": "12345",
-        "PERatio": "15.2",
-        "ForwardPE": "14.1",
-        "PriceToBookRatio": "2.3",
-        "ReturnOnEquityTTM": "0.18",
-        "OperatingMarginTTM": "0.07",
-        "ProfitMargin": "0.04",
-        "DividendYield": "0.035",
-        "Beta": "None",
+        "Meta Data": {"2. Symbol": "WRONG.LON"},
+        "Time Series (Daily)": {"2026-08-01": {"1. open": "1", "2. high": "1", "3. low": "1", "4. close": "1", "5. volume": "1"}},
     }
     with patch("requests.get", return_value=_response(body)):
-        fields = fetch_overview("TSCO.LON", "fake")
-    mapped = {item["field"]: item["value"] for item in fields}
-    assert mapped["per_ttm"] == 15.2
-    assert mapped["roe_api"] == 0.18
-    assert "beta" not in mapped
+        result = fetch_daily_history("TSCO.LON", "fake", "TSCO.L", min_rows=1)
+    assert not result.frames
+    assert result.failures[0]["reason"] == "IDENTITY_MISMATCH"
 
 
 def test_fred_latest_skips_missing_dot_value():
@@ -120,24 +130,11 @@ def test_fred_macro_wave_applies_three_fields_per_action(monkeypatch):
     assert {o["field"] for o in obs} == {"macro_vix", "macro_curve_10y2y", "macro_as_of"}
 
 
-def test_alpha_wave_respects_one_security_budget(monkeypatch, tmp_path):
-    from v182.reporting import waves
-    import v182.sources.alpha_vantage as alpha
+def test_alpha_process_budget_is_shared_across_universes():
+    from v182.sources import history_orchestrator as orchestrator
 
-    calls = []
-    def fake_fetch(security, api_key, **kwargs):
-        calls.append(security["isin"])
-        return [{"field": "per_ttm", "value": 12.0}], {
-            "resolution_api_calls": 1, "overview_api_calls": 1, "reason": "",
-        }
-    monkeypatch.setattr(alpha, "resolve_and_fetch_overview", fake_fetch)
-    frame = pd.DataFrame([
-        {"isin": "FR1", "name": "A", "yahoo_ticker": "A.PA", "country": "FR", "comite_status": "WATCH", "score_brut": "90", "per_ttm": None},
-        {"isin": "FR2", "name": "B", "yahoo_ticker": "B.PA", "country": "FR", "comite_status": "WATCH", "score_brut": "80", "per_ttm": None},
-    ])
-    cfg = {"alpha_vantage": {"max_securities_per_run": 1, "delay_seconds": 0}}
-    obs, failures, meta = waves.wave4_alpha_fallback(frame, "fake", tmp_path / "alpha.csv", cfg)
-    assert failures == []
-    assert len(calls) == 1
-    assert len(obs) == 1
-    assert meta["api_calls"] == 2
+    orchestrator._ALPHA_RUN_BUDGET.update({"initialized": False, "securities_remaining": 0})
+    cfg = {"alpha_vantage": {"max_securities_per_run": 1}}
+    assert orchestrator._alpha_budget(cfg) == 1
+    orchestrator._consume_alpha_budget(1)
+    assert orchestrator._alpha_budget(cfg) == 0
