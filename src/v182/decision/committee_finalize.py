@@ -7,14 +7,6 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def _num(value):
-    try:
-        number = float(str(value).strip().replace(",", "."))
-    except (TypeError, ValueError):
-        return None
-    return None if pd.isna(number) else number
-
-
 def finalize_committee_fields(root: Path | None = None) -> dict:
     """Finalize committee fields that must be present after all analyst overlays.
 
@@ -32,17 +24,19 @@ def finalize_committee_fields(root: Path | None = None) -> dict:
 
     actions = load_master(actions_path).astype(object)
     if "target_change_12m_abs" not in actions.columns:
-        actions["target_change_12m_abs"] = None
+        addition = pd.DataFrame(
+            {"target_change_12m_abs": pd.Series([None] * len(actions), dtype=object)},
+            index=actions.index,
+        )
+        actions = pd.concat([actions, addition], axis=1)
     else:
         actions["target_change_12m_abs"] = actions["target_change_12m_abs"].astype(object)
 
-    observed = 0
-    for idx, row in actions.iterrows():
-        current = _num(row.get("target_price"))
-        previous = _num(row.get("target_12m_ago"))
-        value = round(current - previous, 6) if current is not None and previous is not None else None
-        actions.at[idx, "target_change_12m_abs"] = value
-        observed += int(value is not None)
+    current = pd.to_numeric(actions.get("target_price"), errors="coerce")
+    previous = pd.to_numeric(actions.get("target_12m_ago"), errors="coerce")
+    delta = (current - previous).round(6)
+    actions["target_change_12m_abs"] = delta.where(delta.notna(), None)
+    observed = int(delta.notna().sum())
 
     save_master(actions, actions_path)
     export_master_excel(
