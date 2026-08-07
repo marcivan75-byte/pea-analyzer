@@ -87,13 +87,15 @@
     "enabled": true,
     "purpose": "priority fundamentals fallback",
     "max_securities_per_run": 1,
-    "max_api_calls_per_selected_security": 2,
+    "max_api_calls_per_selected_security": 4,
     "standard_daily_allowance_assumption": 25,
     "symbol_min_match_score": 0.70,
     "symbol_positive_ttl_days": 90,
     "symbol_negative_ttl_days": 30,
-    "delay_seconds": 0.2,
-    "quota_policy": "CONSERVATIVE_STANDARD_PLAN"
+    "delay_seconds": 1.15,
+    "per_second_throttle_retries": 2,
+    "quota_policy": "CONSERVATIVE_STANDARD_PLAN",
+    "quota_note": "One security is selected per run. Search and overview are separated by at least 1.05 seconds; transient one-request-per-second responses may be retried, while daily quota or entitlement errors remain hard failures."
   },
   "fred": {
     "enabled": true,
