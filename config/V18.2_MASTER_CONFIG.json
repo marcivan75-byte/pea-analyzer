@@ -20,7 +20,7 @@
       "Finnhub"
     ],
     "implemented_pending_live_api_smoke": [
-      "Alpha Vantage",
+      "Alpha Vantage OHLCV",
       "FRED",
       "EIA"
     ],
@@ -85,7 +85,10 @@
   },
   "alpha_vantage": {
     "enabled": true,
-    "purpose": "priority fundamentals fallback",
+    "purpose": "global daily OHLCV fallback after Yahoo/OpenFIGI and Marketstack",
+    "function": "TIME_SERIES_DAILY",
+    "outputsize": "compact",
+    "history_min_rows": 60,
     "max_securities_per_run": 1,
     "max_api_calls_per_selected_security": 4,
     "standard_daily_allowance_assumption": 25,
@@ -94,8 +97,9 @@
     "symbol_negative_ttl_days": 30,
     "delay_seconds": 1.15,
     "per_second_throttle_retries": 2,
+    "fundamentals_enabled": false,
     "quota_policy": "CONSERVATIVE_STANDARD_PLAN",
-    "quota_note": "One security is selected per run. Search and overview are separated by at least 1.05 seconds; transient one-request-per-second responses may be retried, while daily quota or entitlement errors remain hard failures."
+    "quota_note": "At most one failed security is selected across Actions+ETF. A new symbol normally consumes one search plus one daily-history call; cached symbols use only the history call. Calls are spaced by at least 1.05 seconds."
   },
   "fred": {
     "enabled": true,
@@ -142,8 +146,8 @@
   ],
   "fallback_policy": [
     ["IDENTIFIERS", "OpenFIGI v3 ISIN+MIC [OPERATIONAL]", "Issuer/Euronext [PLANNED]", ""],
-    ["OHLCV", "yfinance [OPERATIONAL]", "OpenFIGI symbol repair + yfinance [OPERATIONAL]", "Marketstack v2 [OPERATIONAL]", "Alpha Vantage OHLCV [NOT ENABLED]", "Issuer/Euronext [PLANNED]"],
-    ["FUNDAMENTALS_ACTIONS", "yfinance [OPERATIONAL]", "Alpha Vantage [IMPLEMENTED_PENDING_SMOKE]", "Issuer [PLANNED]", "Zonebourse [PLANNED]"],
+    ["OHLCV", "yfinance [OPERATIONAL]", "OpenFIGI symbol repair + yfinance [OPERATIONAL]", "Marketstack v2 [OPERATIONAL]", "Alpha Vantage TIME_SERIES_DAILY [IMPLEMENTED_PENDING_SMOKE]", "Issuer/Euronext [PLANNED]"],
+    ["FUNDAMENTALS_ACTIONS", "yfinance [OPERATIONAL]", "Issuer [PLANNED]", "Zonebourse [PLANNED]", "", ""],
     ["CONSENSUS_ACTIONS", "yfinance [OPERATIONAL]", "Finnhub [OPERATIONAL]", "Boursorama [PLANNED]", "Zonebourse [PLANNED]"],
     ["ETF_COSTS_AUM", "ABC Bourse [PLANNED]", "Issuer/KID [PLANNED]", "Boursorama [PLANNED]", ""],
     ["ETF_MORNINGSTAR", "Boursorama [PLANNED]", "Morningstar-authorized source [PLANNED]", "", ""],
