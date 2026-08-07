@@ -25,10 +25,14 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - name: Install package and test dependencies
-        run: pip install -e .[test]
+      - name: Install validated dependency set
+        run: pip install -c constraints-ci.txt -e .[test]
+      - name: Check dependency consistency
+        run: python -m pip check
       - name: Validate Python syntax
         run: python -m compileall -q src tests
+      - name: Run critical Ruff correctness checks
+        run: ruff check --select E9,F63,F7,F82 src tests
       - name: Validate JSON configuration
         run: |
           python - <<'PY'
