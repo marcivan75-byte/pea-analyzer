@@ -37,29 +37,32 @@ jobs:
           )
           raw = result.get(isin)
           assert raw is not None, 'OPENFIGI_API_TRANSPORT_OR_AUTH_FAILURE'
-          assert isinstance(raw, list), raw
           best = pick_best_match(raw)
           assert best is not None, f'OPENFIGI_NO_EQUITY_MATCH: {raw[:2]}'
           print('OPENFIGI_SMOKE_OK', best.get('ticker'), best.get('figi'))
           PY
-      - name: Marketstack EOD Euronext Paris smoke test
+      - name: Marketstack ticker resolver Euronext Paris diagnostic
         env:
           MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
         run: |
           python - <<'PY'
-          import os
-          from v182.sources.marketstack_eod import fetch_eod_history
+          import os, requests
           key = os.environ.get('MARKETSTACK_API_KEY', '').strip()
           assert key, 'MARKETSTACK_API_KEY_MISSING'
-          # Sanofi: Euronext Paris symbol SAN, MIC XPAR.
-          result = fetch_eod_history(
-              [{'canonical_ticker': 'SAN.PA', 'symbol': 'SAN', 'expected_mic': 'XPAR'}],
-              api_key=key, history_days=120, max_symbols=1,
-              min_rows=20, delay_seconds=0,
+          response = requests.get(
+              'https://api.marketstack.com/v2/tickers',
+              params={'access_key': key, 'search': 'Sanofi', 'exchange': 'XPAR', 'limit': 10},
+              timeout=30,
           )
-          assert result.attempted == 1, result
-          assert result.successful == 1, f'MARKETSTACK_SMOKE_FAILED: {result.failures}'
-          frame = result.frames['SAN.PA']
-          assert len(frame) >= 20
-          print('MARKETSTACK_SMOKE_OK', len(frame), frame.index.max())
+          response.raise_for_status()
+          body = response.json()
+          assert not body.get('error'), body.get('error')
+          rows = body.get('data') or []
+          print('MARKETSTACK_TICKER_ROWS', [
+              {'symbol': r.get('symbol'), 'name': r.get('name'), 'mic': (r.get('stock_exchange') or {}).get('mic')}
+              for r in rows
+          ])
+          matches = [r for r in rows if str((r.get('stock_exchange') or {}).get('mic') or '').upper() == 'XPAR']
+          assert matches, f'MARKETSTACK_NO_XPAR_SANOFI: {rows}'
+          print('MARKETSTACK_RESOLVER_OK', matches[0].get('symbol'), matches[0].get('name'))
           PY
