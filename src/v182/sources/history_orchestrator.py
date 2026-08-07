@@ -13,7 +13,10 @@ def _priority_failed_rows(df, failed: set[str], universe: str):
     if rows.empty:
         return rows
     if universe == "ACTION":
-        rows["_committee"] = rows.get("comite_status", "").astype(str).isin(["COMMITTEE", "WATCH"]).astype(int)
+        if "comite_status" in rows.columns:
+            rows["_committee"] = rows["comite_status"].astype(str).isin(["COMMITTEE", "WATCH"]).astype(int)
+        else:
+            rows["_committee"] = 0
         if "score_brut" in rows.columns:
             import pandas as pd
             rows["_score"] = pd.to_numeric(rows["score_brut"], errors="coerce").fillna(-1e9)
@@ -52,13 +55,17 @@ def download_history_with_fallback(
     successful = set(primary.successful)
     remaining = set(primary.failed)
     source_counts = {"yfinance": len(successful), "yfinance_openfigi_repair": 0, "marketstack": 0}
-    diagnostics = {"yahoo_failed_initial": len(remaining), "openfigi_specs": 0, "marketstack_attempted": 0,
-                   "marketstack_failures": [], "marketstack_key_present": bool(os.environ.get("MARKETSTACK_API_KEY"))}
+    diagnostics = {
+        "yahoo_failed_initial": len(remaining),
+        "openfigi_specs": 0,
+        "marketstack_attempted": 0,
+        "marketstack_failures": [],
+        "marketstack_key_present": bool(os.environ.get("MARKETSTACK_API_KEY")),
+    }
 
     specs = fallback_specs(valid, sorted(remaining), openfigi_map_path, universe)
     diagnostics["openfigi_specs"] = len(specs)
 
-    # Retry Yahoo only when OpenFIGI proposes a different exchange-qualified symbol.
     candidate_to_original = {}
     for original, spec in specs.items():
         candidate = str(spec.get("yahoo_candidate") or "").strip()
