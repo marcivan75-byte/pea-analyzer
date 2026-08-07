@@ -6,6 +6,7 @@
   "no_repeat_api_request_policy": true,
   "api_keys": {
     "MARKETSTACK_API_KEY": "environment",
+    "OPENFIGI_API_KEY": "environment",
     "ALPHA_VANTAGE_API_KEY": "environment",
     "FINNHUB_API_KEY": "environment",
     "FRED_API_KEY": "environment",
@@ -23,11 +24,34 @@
     "retry_count": 3,
     "cache_days": 1,
     "fundamental_refresh_days": 7,
+    "history_retry_count": 2,
+    "history_retry_backoff_seconds": 30,
+    "history_retry_batch_size": 25,
+    "history_batch_delay_seconds": 0.8,
+    "history_min_rows": 20,
     "info_delay_seconds": 0.9,
     "info_initial_cooldown_seconds": 75,
     "info_max_retries": 2,
     "info_rate_limit_backoff_seconds": 20,
     "info_max_consecutive_rate_limits": 3
+  },
+  "openfigi": {
+    "enabled": true,
+    "api_version": "v3",
+    "cache_master_map": true,
+    "use_for_symbol_repair": true,
+    "authenticated_batch_size": 100,
+    "anonymous_batch_size": 5
+  },
+  "marketstack": {
+    "enabled": true,
+    "endpoint": "/v2/eod",
+    "history_days": 365,
+    "max_symbols_per_run": 4,
+    "min_rows": 60,
+    "delay_seconds": 0.25,
+    "quota_policy": "CONSERVATIVE_FREE_PLAN_DEFAULT",
+    "quota_note": "Override with MARKETSTACK_MAX_SYMBOLS_PER_RUN only when the account allowance is known."
   },
   "derived_features": [
     "perf_1m_pct",
@@ -56,7 +80,8 @@
     "positive_reversal_flag"
   ],
   "fallback_policy": [
-    ["OHLCV", "yfinance", "Marketstack", "Alpha Vantage", "Issuer/Euronext"],
+    ["IDENTIFIERS", "OpenFIGI v3", "Issuer/Euronext", ""],
+    ["OHLCV", "yfinance", "OpenFIGI symbol repair + yfinance", "Marketstack", "Alpha Vantage", "Issuer/Euronext"],
     ["FUNDAMENTALS_ACTIONS", "yfinance", "Alpha Vantage", "Issuer", "Zonebourse"],
     ["CONSENSUS_ACTIONS", "Boursorama", "Zonebourse", "yfinance", "Finnhub"],
     ["ETF_COSTS_AUM", "ABC Bourse", "Issuer/KID", "Boursorama", ""],
