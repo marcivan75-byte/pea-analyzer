@@ -21,7 +21,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -e .
-      - name: OpenFIGI authenticated mapping smoke test
+      - name: OpenFIGI production mapping smoke test
         env:
           OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
         run: |
@@ -41,27 +41,45 @@ jobs:
           assert best is not None, f'OPENFIGI_NO_EQUITY_MATCH: {raw[:2]}'
           print('OPENFIGI_SMOKE_OK', best.get('ticker'), best.get('figi'))
           PY
-      - name: Marketstack ticker resolver Euronext Paris diagnostic
+      - name: Marketstack production resolver and EOD smoke test
         env:
           MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
         run: |
           python - <<'PY'
-          import os, requests
+          import os, tempfile
+          from pathlib import Path
+          import pandas as pd
+          from v182.sources.marketstack_symbols import resolve_marketstack_symbols
+          from v182.sources.marketstack_eod import fetch_eod_history
+
           key = os.environ.get('MARKETSTACK_API_KEY', '').strip()
           assert key, 'MARKETSTACK_API_KEY_MISSING'
-          response = requests.get(
-              'https://api.marketstack.com/v2/tickerslist',
-              params={'access_key': key, 'search': 'Sanofi', 'exchange': 'XPAR', 'limit': 10},
-              timeout=30,
-          )
-          response.raise_for_status()
-          body = response.json()
-          assert not body.get('error'), body.get('error')
-          rows = body.get('data') or []
-          print('MARKETSTACK_TICKER_ROWS', rows)
-          assert rows, 'MARKETSTACK_NO_XPAR_SANOFI_RESULTS'
-          symbols = [str(r.get('ticker') or r.get('symbol') or '').strip() for r in rows]
-          symbols = [s for s in symbols if s]
-          assert symbols, f'MARKETSTACK_NO_USABLE_SYMBOL: {rows}'
-          print('MARKETSTACK_RESOLVER_OK', symbols[0])
+          row = pd.DataFrame([{
+              'isin': 'FR0000120578',
+              'name': 'Sanofi',
+              'yahoo_ticker': 'SAN.PA',
+          }])
+          with tempfile.TemporaryDirectory() as tmp:
+              cache = Path(tmp) / 'marketstack_symbols.csv'
+              resolved = resolve_marketstack_symbols(
+                  row, 'ACTION', cache, key,
+                  max_new_resolutions=1, min_confidence=0.72,
+                  delay_seconds=0,
+              )
+              assert resolved.api_attempted == 1, resolved
+              assert resolved.api_successful == 1, f'MARKETSTACK_RESOLVER_FAILED: {resolved.failures}'
+              symbol = resolved.resolved.get('SAN.PA')
+              assert symbol == 'SAN.PA', f'UNEXPECTED_MARKETSTACK_SYMBOL: {symbol}'
+              print('MARKETSTACK_RESOLVER_OK', symbol)
+
+              eod = fetch_eod_history(
+                  [{'canonical_ticker': 'SAN.PA', 'symbol': symbol, 'expected_mic': 'XPAR'}],
+                  api_key=key, history_days=120, max_symbols=1,
+                  min_rows=20, delay_seconds=0,
+              )
+              assert eod.attempted == 1, eod
+              assert eod.successful == 1, f'MARKETSTACK_EOD_FAILED: {eod.failures}'
+              frame = eod.frames['SAN.PA']
+              assert len(frame) >= 20
+              print('MARKETSTACK_EOD_SMOKE_OK', len(frame), frame.index.max())
           PY
