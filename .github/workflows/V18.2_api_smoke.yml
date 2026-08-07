@@ -136,7 +136,7 @@ jobs:
           assert key, 'ALPHA_VANTAGE_API_KEY_MISSING'
           security = {'isin': 'GB0008847096', 'name': 'Tesco', 'yahoo_ticker': 'TSCO.L', 'country': 'GB'}
           with tempfile.TemporaryDirectory() as tmp:
-              fields, meta = resolve_and_fetch_overview(security, key, cache_path=Path(tmp) / 'alpha.csv', delay_seconds=0, min_match_score=0.60)
+              fields, meta = resolve_and_fetch_overview(security, key, cache_path=Path(tmp) / 'alpha.csv', delay_seconds=1.15, min_match_score=0.60)
               assert meta.get('symbol'), f'ALPHA_SYMBOL_RESOLUTION_FAILED: {meta}'
               assert meta.get('resolution_api_calls') == 1, meta
               assert meta.get('overview_api_calls') == 1, meta
