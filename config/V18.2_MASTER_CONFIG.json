@@ -1,5 +1,5 @@
 {
-  "version": "18.2.0",
+  "version": "18.2.1",
   "base": "18.1.0",
   "theme": "COMPLETENESS_FIRST",
   "primary_bulk_source": "yfinance",
@@ -10,7 +10,8 @@
     "ALPHA_VANTAGE_API_KEY": "environment",
     "FINNHUB_API_KEY": "environment",
     "FRED_API_KEY": "environment",
-    "EIA_API_KEY": "environment"
+    "EIA_API_KEY": "environment",
+    "MARKETBEAT_API_KEY": "environment"
   },
   "source_activation": {
     "operational_and_tested": [
@@ -20,7 +21,8 @@
       "Alpha Vantage TIME_SERIES_DAILY",
       "Finnhub",
       "FRED",
-      "EIA"
+      "EIA",
+      "MarketBeat via Parse selective forecast cross-check"
     ],
     "planned_public_or_official_fallback_not_configured": [
       "Boursorama",
@@ -150,7 +152,7 @@
     ["IDENTIFIERS", "OpenFIGI v3 ISIN+MIC [OPERATIONAL]", "Issuer/Euronext [PLANNED]", ""],
     ["OHLCV", "yfinance [OPERATIONAL]", "OpenFIGI symbol repair + yfinance [OPERATIONAL]", "Marketstack v2 [OPERATIONAL]", "Alpha Vantage TIME_SERIES_DAILY [OPERATIONAL]", "Issuer/Euronext [PLANNED]"],
     ["FUNDAMENTALS_ACTIONS", "yfinance [OPERATIONAL]", "Issuer [PLANNED]", "Zonebourse [PLANNED]", "", ""],
-    ["CONSENSUS_ACTIONS", "yfinance [OPERATIONAL]", "Finnhub [OPERATIONAL]", "Boursorama [PLANNED]", "Zonebourse [PLANNED]"],
+    ["CONSENSUS_ACTIONS", "yfinance canonical [OPERATIONAL]", "Finnhub gap fill [OPERATIONAL]", "MarketBeat issuer cross-check [OPERATIONAL_SELECTIVE]", "Boursorama/Zonebourse [PLANNED]"],
     ["ETF_COSTS_AUM", "ABC Bourse [PLANNED]", "Issuer/KID [PLANNED]", "Boursorama [PLANNED]", ""],
     ["ETF_MORNINGSTAR", "Boursorama [PLANNED]", "Morningstar-authorized source [PLANNED]", "", ""],
     ["NEWS_EVENTS", "AMF/Issuer [PLANNED]", "Finnhub news [PLANNED]", "GDELT [PLANNED]", "Boursorama/Zonebourse [PLANNED]"],
