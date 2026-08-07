@@ -1,0 +1,39 @@
+name: V18.2 PR Audit
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v18-2-pr-audit-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install package and test dependencies
+        run: pip install -e .[test]
+      - name: Validate Python syntax
+        run: python -m compileall -q src tests
+      - name: Validate JSON configuration
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for path in sorted(Path('config').glob('*.json')) + sorted(Path('schemas').glob('*.json')):
+              json.loads(path.read_text(encoding='utf-8-sig'))
+              print(f'OK {path}')
+          PY
+      - name: Run unit and regression tests
+        run: pytest -q
