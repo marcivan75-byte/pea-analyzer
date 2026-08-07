@@ -64,18 +64,25 @@ def run_quality_gates(actions: pd.DataFrame, etf: pd.DataFrame, before: dict, af
         eod_attempted = int(diagnostics.get("marketstack_attempted", 0) or 0)
         resolver_attempted = int(diagnostics.get("marketstack_symbol_resolution_attempted", 0) or 0)
         cache_hits = int(diagnostics.get("marketstack_symbol_cache_hits", 0) or 0)
+        negative_cache_hits = int(diagnostics.get("marketstack_symbol_negative_cache_hits", 0) or 0)
+        deferred = int(diagnostics.get("marketstack_symbol_deferred", 0) or 0)
         market_needed = key_present and remaining_after_openfigi > 0
-        path_activity = eod_attempted + resolver_attempted + cache_hits
+        path_activity = eod_attempted + resolver_attempted + cache_hits + negative_cache_hits + deferred
         checks.append(_check(
             f"{wave_id.lower()}_marketstack_path_invoked_if_needed",
             (not market_needed) or path_activity > 0,
             path_activity,
             ">0 when key present and Yahoo/OpenFIGI gaps remain",
-            f"remaining_after_openfigi={remaining_after_openfigi}; key_present={key_present}; resolver={resolver_attempted}; cache_hits={cache_hits}; eod={eod_attempted}",
+            f"remaining_after_openfigi={remaining_after_openfigi}; key_present={key_present}; "
+            f"resolver={resolver_attempted}; positive_cache={cache_hits}; negative_cache={negative_cache_hits}; "
+            f"deferred={deferred}; eod={eod_attempted}",
         ))
 
         symbol_failures = diagnostics.get("marketstack_symbol_failures", []) or []
-        resolver_transport = sum(_transport_failure(f.get("reason", "")) for f in symbol_failures if isinstance(f, dict))
+        resolver_transport = sum(
+            _transport_failure(f.get("reason", "")) for f in symbol_failures
+            if isinstance(f, dict) and not f.get("cached")
+        )
         checks.append(_check(
             f"{wave_id.lower()}_marketstack_resolver_transport_health",
             resolver_attempted == 0 or resolver_transport < resolver_attempted,
