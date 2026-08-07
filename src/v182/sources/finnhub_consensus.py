@@ -1,7 +1,9 @@
 from __future__ import annotations
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
 from pathlib import Path
 import csv
+import re
 import time
 
 FINNHUB_BASE = "https://finnhub.io/api/v1"
@@ -24,28 +26,51 @@ def _ticker_base(value: str | None) -> str:
     return str(value or "").upper().split(".", 1)[0].strip()
 
 
-def _pick_lookup_result(results: list[dict], yahoo_ticker: str | None) -> dict | None:
+def _norm_name(value: str | None) -> str:
+    text = str(value or "").upper()
+    text = re.sub(r"\b(SA|SE|NV|PLC|AG|SCA|SAS|GROUP|GROUPE|HOLDING|HOLDINGS)\b", " ", text)
+    text = re.sub(r"[^A-Z0-9]+", " ", text)
+    return " ".join(text.split())
+
+
+def _pick_lookup_result(
+    results: list[dict],
+    yahoo_ticker: str | None,
+    name: str | None = None,
+    queried_by_isin: bool = False,
+    min_score: int = 8,
+) -> dict | None:
+    """Return a Finnhub symbol only when identity evidence is strong enough."""
     if not results:
         return None
     wanted = str(yahoo_ticker or "").upper().strip()
     wanted_base = _ticker_base(wanted)
+    wanted_name = _norm_name(name)
 
     def score(row: dict) -> tuple[int, str]:
         symbol = str(row.get("symbol") or "").upper().strip()
         display = str(row.get("displaySymbol") or "").upper().strip()
         kind = str(row.get("type") or "").lower()
+        description = _norm_name(row.get("description"))
         s = 0
-        if symbol == wanted or display == wanted:
+        if wanted and (symbol == wanted or display == wanted):
             s += 20
-        if _ticker_base(symbol) == wanted_base or _ticker_base(display) == wanted_base:
+        if wanted_base and (_ticker_base(symbol) == wanted_base or _ticker_base(display) == wanted_base):
             s += 8
         if wanted and "." in wanted and (symbol.endswith(wanted[wanted.index("."):]) or display.endswith(wanted[wanted.index("."):])):
             s += 4
         if "stock" in kind or "common" in kind or "equity" in kind:
             s += 2
+        if wanted_name and description:
+            similarity = SequenceMatcher(None, wanted_name, description).ratio()
+            if wanted_name in description or description in wanted_name or similarity >= 0.72:
+                s += 6
+        if queried_by_isin and len(results) == 1:
+            s += 6
         return (s, symbol)
 
-    return max(results, key=score)
+    best = max(results, key=score)
+    return best if score(best)[0] >= int(min_score) else None
 
 
 def _load_symbol_cache(path: str | Path | None) -> dict[str, dict]:
@@ -71,6 +96,18 @@ def _save_symbol_cache(path: str | Path | None, cache: dict[str, dict]) -> None:
             writer.writerow({k: cache[isin].get(k, "") for k in fields})
 
 
+def _cache_fresh(row: dict, resolved_ttl_days: int, unresolved_ttl_days: int) -> bool:
+    status = str(row.get("status") or "").upper()
+    ttl = resolved_ttl_days if status == "RESOLVED" else unresolved_ttl_days
+    try:
+        stamp = datetime.fromisoformat(str(row.get("updated_at") or "").replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        return stamp >= datetime.now(timezone.utc) - timedelta(days=max(1, int(ttl)))
+    except Exception:
+        return False
+
+
 def _get_json(session, path: str, params: dict, max_retries: int = 2, backoff_seconds: float = 2.0):
     for attempt in range(max_retries + 1):
         resp = session.get(f"{FINNHUB_BASE}{path}", params=params, timeout=15)
@@ -90,14 +127,11 @@ def fetch_consensus(
     symbol_cache_path: str | Path | None = None,
     delay_seconds: float = 1.05,
     max_retries: int = 2,
+    resolved_cache_ttl_days: int = 90,
+    unresolved_cache_ttl_days: int = 30,
+    lookup_min_score: int = 8,
 ) -> tuple[list[dict], list[dict]]:
-    """Fetch Finnhub analyst consensus with ISIN-based symbol resolution.
-
-    Finnhub documents symbol lookup by ISIN and uses its own exchange-aware
-    symbology. Yahoo symbols are therefore no longer assumed to be valid
-    Finnhub symbols. Resolutions are cached so later scheduled runs do not
-    repeat the lookup unnecessarily.
-    """
+    """Fetch Finnhub analyst consensus with guarded ISIN-based symbol resolution."""
     import requests
 
     normalized: list[dict] = []
@@ -121,13 +155,30 @@ def fetch_consensus(
         yahoo_ticker = security["yahoo_ticker"]
         cache_key = isin or f"TICKER:{yahoo_ticker}"
         cached = cache.get(cache_key, {})
-        finnhub_symbol = str(cached.get("finnhub_symbol") or "").strip()
+        same_identity = (
+            cached
+            and str(cached.get("yahoo_ticker") or "").strip().upper() == yahoo_ticker.strip().upper()
+        )
+        cached_fresh = same_identity and _cache_fresh(cached, resolved_cache_ttl_days, unresolved_cache_ttl_days)
+        cached_status = str(cached.get("status") or "").upper()
+        finnhub_symbol = str(cached.get("finnhub_symbol") or "").strip() if cached_fresh and cached_status == "RESOLVED" else ""
+
+        if cached_fresh and cached_status == "UNRESOLVED":
+            failures.append({"ticker": yahoo_ticker, "isin": isin, "reason": "SYMBOL_UNRESOLVED_CACHED"})
+            continue
 
         try:
             if not finnhub_symbol:
                 query = isin or yahoo_ticker or security["name"]
                 lookup = _get_json(session, "/search", {"q": query, "token": api_key}, max_retries=max_retries)
-                best = _pick_lookup_result((lookup or {}).get("result", []), yahoo_ticker)
+                results = (lookup or {}).get("result", [])
+                best = _pick_lookup_result(
+                    results,
+                    yahoo_ticker,
+                    name=security["name"],
+                    queried_by_isin=bool(isin),
+                    min_score=lookup_min_score,
+                )
                 if best:
                     finnhub_symbol = str(best.get("symbol") or "").strip()
                     cache[cache_key] = {
@@ -145,7 +196,7 @@ def fetch_consensus(
                         "status": "UNRESOLVED",
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     }
-                    failures.append({"ticker": yahoo_ticker, "isin": isin, "reason": "SYMBOL_UNRESOLVED"})
+                    failures.append({"ticker": yahoo_ticker, "isin": isin, "reason": "SYMBOL_UNRESOLVED_OR_LOW_CONFIDENCE"})
                     if delay_seconds:
                         time.sleep(delay_seconds)
                     continue
@@ -168,7 +219,7 @@ def fetch_consensus(
                     time.sleep(delay_seconds)
                 continue
 
-            score = round(sum(counts[k] * w for k, w in _SCORE_WEIGHTS.items()) / total, 2)
+            score = round(sum(counts[k] * weight for k, weight in _SCORE_WEIGHTS.items()) / total, 2)
             rating = _label_from_score(score)
             fields = {
                 "consensus": rating,
