@@ -14,6 +14,32 @@ from v182.io.frames import is_missing
 _MARKETSTACK_RUN_BUDGET = {"initialized": False, "eod_remaining": 0, "resolution_remaining": 0}
 _ALPHA_RUN_BUDGET = {"initialized": False, "securities_remaining": 0}
 
+# Yahoo's official exchange suffixes for the home markets used by the PEA
+# universe. This table is deliberately narrower than a generic country map.
+# It is used only when the input ticker has no suffix at all; a suffix already
+# present in the master is never rewritten here.
+_ISIN_PREFIX_TO_YAHOO_SUFFIX = {
+    "FR": "PA", "NL": "AS", "BE": "BR", "PT": "LS", "IT": "MI",
+    "DE": "DE", "CH": "SW", "AT": "VI", "IE": "IR", "FI": "HE",
+    "DK": "CO", "SE": "ST", "NO": "OL", "GB": "L", "ES": "MC", "GR": "AT",
+}
+
+
+def _deterministic_yahoo_candidate(original: str, isin: str) -> str:
+    """Add a Yahoo venue suffix only when identity is unambiguous enough.
+
+    Bare European symbols are unsafe as a primary Yahoo request because the
+    same symbol may belong to an unrelated US security. For a supported ISIN
+    home market we can form a conservative candidate; OpenFIGI remains preferred
+    when it provides an explicit mapped candidate.
+    """
+    symbol = str(original or "").strip()
+    if not symbol or "." in symbol:
+        return ""
+    prefix = str(isin or "").strip().upper()[:2]
+    suffix = _ISIN_PREFIX_TO_YAHOO_SUFFIX.get(prefix, "")
+    return f"{symbol}.{suffix}" if suffix else ""
+
 
 def _priority_failed_rows(df, failed: set[str], universe: str):
     rows = df[df["yahoo_ticker"].astype(str).isin(failed)].copy()
@@ -84,27 +110,50 @@ def download_history_with_fallback(
     marketstack_eod_budget: int | None = None,
     marketstack_resolution_budget: int | None = None,
 ) -> DownloadResult:
-    """Yahoo → OpenFIGI/Yahoo repair → Marketstack → Alpha Vantage daily OHLCV."""
-    valid = df[df["yahoo_ticker"].apply(lambda v: not is_missing(v))]
+    """Yahoo → OpenFIGI/deterministic Yahoo repair → Marketstack → Alpha Vantage."""
+    valid = df[df["yahoo_ticker"].apply(lambda v: not is_missing(v))].copy()
     batch_key = "actions_batch_size" if universe == "ACTION" else "etf_batch_size"
     yf_cfg = cfg.get("yfinance", {})
+
+    # Never ask Yahoo for a bare European symbol as a primary request. A symbol
+    # such as ABC or CORE can collide with another exchange. Bare symbols are
+    # routed directly to the identity-aware repair stage below.
+    bare_tickers: set[str] = set()
+    for _, row in valid.iterrows():
+        original = str(row.get("yahoo_ticker") or "").strip()
+        if _deterministic_yahoo_candidate(original, str(row.get("isin") or "")):
+            bare_tickers.add(original)
+    primary_tickers = [
+        str(t).strip() for t in valid["yahoo_ticker"].tolist()
+        if str(t).strip() not in bare_tickers
+    ]
+
+    common_history_kwargs = {
+        "period": yf_cfg.get("history_period", "5y"),
+        "interval": yf_cfg.get("interval", "1d"),
+        "auto_adjust": bool(yf_cfg.get("auto_adjust", True)),
+        "retry_count": int(yf_cfg.get("history_retry_count", 2)),
+        "retry_backoff_seconds": float(yf_cfg.get("history_retry_backoff_seconds", 30)),
+        "retry_batch_size": int(yf_cfg.get("history_retry_batch_size", 25)),
+        "batch_delay_seconds": float(yf_cfg.get("history_batch_delay_seconds", 0.8)),
+        "min_rows": int(yf_cfg.get("history_min_rows", 20)),
+        "threads": bool(yf_cfg.get("threads", True)),
+        "serial_rescue_attempts": int(yf_cfg.get("history_serial_rescue_attempts", 2)),
+        "serial_rescue_backoff_seconds": float(yf_cfg.get("history_serial_rescue_backoff_seconds", 90)),
+        "serial_rescue_batch_size": int(yf_cfg.get("history_serial_rescue_batch_size", 5)),
+        "serial_rescue_batch_delay_seconds": float(yf_cfg.get("history_serial_rescue_batch_delay_seconds", 1.5)),
+    }
+
     primary = download_history(
-        tickers=valid["yahoo_ticker"].tolist(),
+        tickers=primary_tickers,
         cache_dir=cache_dir,
-        period=yf_cfg.get("history_period", "5y"),
-        interval=yf_cfg.get("interval", "1d"),
         batch_size=int(yf_cfg.get(batch_key, 100)),
-        auto_adjust=bool(yf_cfg.get("auto_adjust", True)),
-        retry_count=int(yf_cfg.get("history_retry_count", 2)),
-        retry_backoff_seconds=float(yf_cfg.get("history_retry_backoff_seconds", 30)),
-        retry_batch_size=int(yf_cfg.get("history_retry_batch_size", 25)),
-        batch_delay_seconds=float(yf_cfg.get("history_batch_delay_seconds", 0.8)),
-        min_rows=int(yf_cfg.get("history_min_rows", 20)),
         file_prefix="history_yahoo",
+        **common_history_kwargs,
     )
 
     successful = set(primary.successful)
-    remaining = set(primary.failed)
+    remaining = set(primary.failed) | bare_tickers
     source_counts = {
         "yfinance": len(successful),
         "yfinance_openfigi_repair": 0,
@@ -112,9 +161,13 @@ def download_history_with_fallback(
         "alpha_vantage": 0,
     }
     diagnostics = {
+        "yahoo_skipped_unsafe_bare": len(bare_tickers),
         "yahoo_failed_initial": len(remaining),
+        "yahoo_primary_diagnostics": primary.diagnostics,
         "openfigi_specs": 0,
         "openfigi_repair_attempted": 0,
+        "openfigi_repair_deterministic_candidates": 0,
+        "openfigi_repair_diagnostics": {},
         "remaining_after_openfigi": 0,
         "marketstack_symbol_resolution_attempted": 0,
         "marketstack_symbol_resolution_successful": 0,
@@ -136,32 +189,39 @@ def download_history_with_fallback(
     specs = fallback_specs(valid, sorted(remaining), openfigi_map_path, universe)
     diagnostics["openfigi_specs"] = len(specs)
 
-    candidate_to_original = {}
-    for original, spec in specs.items():
+    # Prefer OpenFIGI's explicit symbol when available. For a bare ticker with
+    # no usable OpenFIGI candidate, use the home-market Yahoo suffix derived
+    # from the ISIN. This does not consume another API quota.
+    candidate_to_original: dict[str, str] = {}
+    deterministic_count = 0
+    by_ticker = valid.drop_duplicates("yahoo_ticker").set_index("yahoo_ticker")
+    for original in sorted(remaining):
+        spec = specs.get(original, {})
         candidate = str(spec.get("yahoo_candidate") or "").strip()
+        if not candidate and original in by_ticker.index:
+            row = by_ticker.loc[original]
+            candidate = _deterministic_yahoo_candidate(original, str(row.get("isin") or ""))
+            if candidate:
+                deterministic_count += 1
         if candidate and candidate != original and candidate not in candidate_to_original:
             candidate_to_original[candidate] = original
+
     diagnostics["openfigi_repair_attempted"] = len(candidate_to_original)
+    diagnostics["openfigi_repair_deterministic_candidates"] = deterministic_count
     if candidate_to_original:
         repair = download_history(
             tickers=list(candidate_to_original),
             cache_dir=cache_dir,
-            period=yf_cfg.get("history_period", "5y"),
-            interval=yf_cfg.get("interval", "1d"),
             batch_size=min(25, len(candidate_to_original)),
-            auto_adjust=bool(yf_cfg.get("auto_adjust", True)),
-            retry_count=1,
-            retry_backoff_seconds=float(yf_cfg.get("history_retry_backoff_seconds", 30)),
-            retry_batch_size=10,
-            batch_delay_seconds=float(yf_cfg.get("history_batch_delay_seconds", 0.8)),
-            min_rows=int(yf_cfg.get("history_min_rows", 20)),
             file_prefix="history_openfigi_repair",
             canonical_map=candidate_to_original,
+            **common_history_kwargs,
         )
         repaired = set(repair.successful)
         successful |= repaired
         remaining -= repaired
         source_counts["yfinance_openfigi_repair"] = len(repaired)
+        diagnostics["openfigi_repair_diagnostics"] = repair.diagnostics
 
     diagnostics["remaining_after_openfigi"] = len(remaining)
     market_key = os.environ.get("MARKETSTACK_API_KEY")
@@ -281,8 +341,9 @@ def download_history_with_fallback(
         diagnostics["alpha_budget_exhausted"] = True
 
     diagnostics["failed_final"] = len(remaining)
+    requested_total = len({str(t).strip() for t in valid["yahoo_ticker"].tolist() if str(t).strip()})
     return DownloadResult(
-        requested=primary.requested,
+        requested=requested_total,
         successful=sorted(successful),
         failed=sorted(remaining),
         cache_file=primary.cache_file,
