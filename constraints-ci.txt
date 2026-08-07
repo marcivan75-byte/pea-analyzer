@@ -1,0 +1,14 @@
+# Dependency set observed on the validated GitHub Actions runner during the V18.2 audit.
+pydantic==2.13.4
+yfinance==1.5.2
+pandas==3.0.5
+numpy==2.5.1
+pyarrow==25.0.0
+requests==2.34.2
+beautifulsoup4==4.15.0
+lxml==6.1.1
+openpyxl==3.1.5
+pytest==9.1.1
+pytest-cov==7.1.0
+ruff==0.16.1
+mypy==2.3.0
