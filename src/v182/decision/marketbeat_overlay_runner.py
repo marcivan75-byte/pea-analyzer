@@ -38,11 +38,12 @@ def _select_marketbeat_rows(
     mapping_path: Path,
     candidate_pool: int = 100,
 ) -> list[dict]:
-    """Prioritize already validated MarketBeat mappings inside the Committee pool.
+    """Prioritize validated MarketBeat mappings inside the Committee pool.
 
-    This prevents scarce Parse credits from being spent repeatedly on the first
-    three score-tied names. Existing safe mappings are reused first; remaining
-    slots are discovery candidates ranked by Committee score and analyst depth.
+    Scarce Parse credits are spent first on identities that have already passed
+    the strict local-listing witness rule. Remaining slots are discovery names
+    ranked by Committee priority, score and analyst depth. The candidate pool
+    never promotes a cached issuer that is outside the Committee shortlist.
     """
     shortlist, _ = _committee_selection(actions, limit=300)
     if shortlist.empty or max_issuers <= 0:
@@ -66,11 +67,12 @@ def _select_marketbeat_rows(
         if "score_brut" in ranked.columns
         else -1.0
     )
-    ranked["_analysts"] = (
-        pd.to_numeric(ranked["n_analysts"], errors="coerce").fillna(-1.0)
-        if "n_analysts" in ranked.columns
-        else -1.0
-    )
+    analysts = pd.Series(float("nan"), index=ranked.index, dtype=float)
+    if "n_analysts" in ranked.columns:
+        analysts = pd.to_numeric(ranked["n_analysts"], errors="coerce")
+    if "n_analysts_yf" in ranked.columns:
+        analysts = analysts.fillna(pd.to_numeric(ranked["n_analysts_yf"], errors="coerce"))
+    ranked["_analysts"] = analysts.fillna(-1.0)
     ranked = ranked.sort_values(
         ["_review", "_score", "_analysts"],
         ascending=[False, False, False],
@@ -169,11 +171,15 @@ def apply_marketbeat_overlay(root: Path | None = None) -> dict:
     else:
         mb_metrics["skipped"] = "MISSING_KEY"
 
+    missing_overlay = [field for field in core.OVERLAY_FIELDS if field not in actions.columns]
+    if missing_overlay:
+        additions = pd.DataFrame(
+            {field: pd.Series([None] * len(actions), dtype=object) for field in missing_overlay},
+            index=actions.index,
+        )
+        actions = pd.concat([actions, additions], axis=1)
     for field in core.OVERLAY_FIELDS:
-        if field not in actions.columns:
-            actions[field] = None
-        else:
-            actions[field] = actions[field].astype(object)
+        actions[field] = actions[field].astype(object)
 
     overlay_rows = divergence_rows = reviews = 0
     overall_weight = max(
@@ -227,14 +233,27 @@ def apply_marketbeat_overlay(root: Path | None = None) -> dict:
         )
 
         previous_score = core._num(row.get("analyst_momentum_score"))
-        actions.at[idx, "analyst_momentum_score_pre_marketbeat"] = previous_score
+        if core._num(row.get("analyst_momentum_score_pre_marketbeat")) is None:
+            actions.at[idx, "analyst_momentum_score_pre_marketbeat"] = previous_score
         actions.at[idx, "target_revision_signal_pct"] = revision_signal
         actions.at[idx, "consensus_change_signal"] = consensus_signal
         actions.at[idx, "marketbeat_confirmation_state"] = state
         actions.at[idx, "marketbeat_risk_revision_pct"] = worst
         actions.at[idx, "consensus_confidence"] = confidence
-        source_count = core._num(row.get("consensus_source_count")) or 0.0
-        actions.at[idx, "consensus_source_count"] = int(source_count) + 1
+
+        source_count = int(core._num(row.get("consensus_source_count")) or 0.0)
+        has_local_source = any(
+            value is not None
+            for value in (
+                local_revision,
+                local_consensus,
+                core._num(row.get("target_price")),
+                core._num(row.get("consensus_score_100")),
+            )
+        )
+        expected_count = 2 if has_local_source else 1
+        actions.at[idx, "consensus_source_count"] = max(source_count, expected_count)
+
         actions.at[idx, "analyst_momentum_score"] = score
         actions.at[idx, "committee_analyst_signal"] = signal
         actions.at[idx, "committee_analyst_gate"] = gate
