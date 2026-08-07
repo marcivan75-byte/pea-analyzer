@@ -25,6 +25,14 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - name: Restore persistent consensus history
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: outputs/history
+          key: v182-consensus-history-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            v182-consensus-history-${{ github.ref_name }}-
+            v182-consensus-history-
       - name: Install validated dependency set
         run: pip install -c constraints-ci.txt -e .[test]
       - name: Check dependency consistency
@@ -65,8 +73,13 @@ jobs:
           test -s config/V18.2_MARKETSTACK_SYMBOL_MAP.csv
           python - <<'PY'
           import json
+          import pandas as pd
           q=json.load(open('outputs/audit/V18.2_QUALITY_GATES.json'))
           assert q['passed'], q
+          committee = pd.read_csv('outputs/V18.2_COMMITTEE_ANALYST_MOMENTUM.csv', sep=';', encoding='utf-8-sig')
+          assert len(committee) > 0, 'EMPTY_COMMITTEE_ANALYST_OUTPUT'
+          metrics=json.load(open('outputs/audit/V18.2_ANALYST_MOMENTUM_METRICS.json'))
+          assert int(metrics.get('committee_rows', 0)) == len(committee), metrics
           PY
       - name: Upload Excel and audit artifacts
         if: always()
