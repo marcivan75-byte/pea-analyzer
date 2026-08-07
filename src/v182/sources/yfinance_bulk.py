@@ -76,8 +76,19 @@ def download_history(
     min_rows: int = 20,
     file_prefix: str = "history",
     canonical_map: dict[str, str] | None = None,
+    threads: bool = True,
+    serial_rescue_attempts: int = 0,
+    serial_rescue_backoff_seconds: float = 90.0,
+    serial_rescue_batch_size: int = 5,
+    serial_rescue_batch_delay_seconds: float = 1.5,
 ) -> DownloadResult:
-    """Download OHLCV in batches with real data validation and bounded retry.
+    """Download OHLCV with validation, bounded retries and serial rescue.
+
+    The normal path keeps yfinance batching for speed. If Yahoo starts rate
+    limiting a large bulk request, the optional rescue path waits, reduces the
+    batch size and disables yfinance multithreading. This is intentionally done
+    before consuming scarce paid/API fallbacks for what may only be a transient
+    Yahoo throttle.
 
     ``canonical_map`` maps fetched symbols to the canonical symbols used by the
     rest of V18.2. This lets OpenFIGI repair a Yahoo symbol while keeping the
@@ -90,8 +101,21 @@ def download_history(
     cache.mkdir(parents=True, exist_ok=True)
     successful: set[str] = set()
     failed_fetch: set[str] = set()
+    diagnostics = {
+        "threaded_primary": bool(threads),
+        "retry_rounds_configured": max(0, int(retry_count)),
+        "serial_rescue_rounds_configured": max(0, int(serial_rescue_attempts)),
+        "serial_rescue_attempted_symbols": 0,
+        "serial_rescue_successful_symbols": 0,
+    }
 
-    def fetch_batches(symbols: list[str], effective_batch: int, attempt_label: str):
+    def fetch_batches(
+        symbols: list[str],
+        effective_batch: int,
+        attempt_label: str,
+        use_threads: bool,
+        delay_seconds: float,
+    ):
         nonlocal successful, failed_fetch
         for start in range(0, len(symbols), effective_batch):
             batch = symbols[start:start + effective_batch]
@@ -102,7 +126,7 @@ def download_history(
                     interval=interval,
                     group_by="ticker",
                     auto_adjust=auto_adjust,
-                    threads=True,
+                    threads=use_threads,
                     progress=False,
                     timeout=30,
                 )
@@ -121,9 +145,15 @@ def download_history(
                     failed_fetch.add(ticker)
             except Exception:
                 failed_fetch.update(batch)
-            time.sleep(max(0.0, float(batch_delay_seconds)))
+            time.sleep(max(0.0, float(delay_seconds)))
 
-    fetch_batches(clean, max(1, int(batch_size)), "primary")
+    fetch_batches(
+        clean,
+        max(1, int(batch_size)),
+        "primary",
+        bool(threads),
+        batch_delay_seconds,
+    )
 
     for attempt in range(1, max(0, int(retry_count)) + 1):
         retry_symbols = sorted(failed_fetch)
@@ -131,7 +161,36 @@ def download_history(
             break
         time.sleep(max(0.0, float(retry_backoff_seconds)) * attempt)
         failed_fetch = set()
-        fetch_batches(retry_symbols, max(1, min(int(retry_batch_size), int(batch_size))), f"retry{attempt}")
+        fetch_batches(
+            retry_symbols,
+            max(1, min(int(retry_batch_size), int(batch_size))),
+            f"retry{attempt}",
+            bool(threads),
+            batch_delay_seconds,
+        )
+
+    # Final recovery for transient Yahoo throttling. At this point only failed
+    # fetched symbols remain. The rescue is deliberately slower and serial, and
+    # it never changes identity or treats an empty response as success.
+    rescue_success_before = len(successful)
+    rescue_attempted: set[str] = set()
+    for attempt in range(1, max(0, int(serial_rescue_attempts)) + 1):
+        rescue_symbols = sorted(failed_fetch)
+        if not rescue_symbols:
+            break
+        rescue_attempted.update(rescue_symbols)
+        time.sleep(max(0.0, float(serial_rescue_backoff_seconds)) * attempt)
+        failed_fetch = set()
+        fetch_batches(
+            rescue_symbols,
+            max(1, min(int(serial_rescue_batch_size), int(batch_size))),
+            f"serial_rescue{attempt}",
+            False,
+            serial_rescue_batch_delay_seconds,
+        )
+
+    diagnostics["serial_rescue_attempted_symbols"] = len(rescue_attempted)
+    diagnostics["serial_rescue_successful_symbols"] = max(0, len(successful) - rescue_success_before)
 
     failed_canonical = sorted({(canonical_map or {}).get(t, t) for t in failed_fetch} - successful)
     manifest = cache / f"{file_prefix}_manifest.json"
@@ -139,8 +198,9 @@ def download_history(
         "requested": len(clean),
         "successful": sorted(successful),
         "failed": failed_canonical,
+        "diagnostics": diagnostics,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     return DownloadResult(
         len(clean), sorted(successful), failed_canonical, str(manifest),
-        source_counts={"yfinance": len(successful)}, diagnostics={},
+        source_counts={"yfinance": len(successful)}, diagnostics=diagnostics,
     )
