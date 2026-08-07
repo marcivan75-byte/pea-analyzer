@@ -1,35 +1,48 @@
 {
-  "version": "18.2.1-preproduction-audit2",
+  "version": "18.2.1",
   "baseline": "18.2.0",
-  "release_status": "PREPRODUCTION_BLOCKED_PENDING_FINAL_FULL_RUN",
+  "release_status": "RUNTIME_EXACT_SHA_EVIDENCE_REQUIRED",
   "actions_rows_expected": 1486,
   "etf_rows_expected": 102,
-  "test_status": "PENDING_LATEST_SECOND_AUDIT_CI",
   "workflow": "artifact + controlled pull request",
   "checkpoints": "per run",
+  "execution_gate": "SHADOW_BLOCKED",
   "operational_sources": [
     "yfinance",
     "OpenFIGI v3",
     "Marketstack v2",
-    "Finnhub"
-  ],
-  "planned_not_implemented_or_not_configured": [
-    "Alpha Vantage",
+    "Alpha Vantage TIME_SERIES_DAILY",
+    "Finnhub",
     "FRED",
     "EIA",
+    "MarketBeat via Parse selective analyst cross-check"
+  ],
+  "planned_not_configured": [
     "Boursorama",
     "Zonebourse",
     "ABC Bourse",
-    "AMF/Euronext automatic ingestion",
-    "Morningstar",
+    "Issuer/KID/Factsheet automatic ingestion",
+    "AMF/Euronext automatic event ingestion",
+    "Morningstar-authorized source",
     "GDELT"
   ],
-  "required_before_release": [
-    "latest static CI green",
-    "latest OpenFIGI/Marketstack smoke green",
-    "full V18.2 run on exact final commit green",
-    "review of functional coverage gaps",
-    "regenerate release validation and SHA256 manifest"
+  "release_evidence": {
+    "generator": "python -m v182.audit.release_evidence",
+    "json": "outputs/release/V18.2_RELEASE_EVIDENCE.json",
+    "human": "outputs/release/V18.2_RELEASE_EVIDENCE.txt",
+    "tracked_file_checksums": "outputs/release/V18.2_TRACKED_FILES_SHA256.txt",
+    "must_reference_exact_tested_commit": true
+  },
+  "required_exact_sha_checks": [
+    "dependency consistency + compileall + Ruff + pytest",
+    "seven independent API smoke jobs",
+    "full 1486 Actions + 102 ETF pipeline",
+    "quality gates",
+    "residual OHLCV gap audit",
+    "scenario fallback",
+    "analyst momentum + MarketBeat overlay",
+    "release evidence READY_FOR_GITHUB_INTEGRATION"
   ],
-  "secrets_included": false
+  "secrets_included": false,
+  "direct_merge_to_main": false
 }
