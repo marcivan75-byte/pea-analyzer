@@ -41,17 +41,20 @@
     "cache_master_map": true,
     "use_for_symbol_repair": true,
     "authenticated_batch_size": 100,
-    "anonymous_batch_size": 5
+    "anonymous_batch_size": 5,
+    "negative_cache_days": 30,
+    "mapping_strategy": "ISIN_PLUS_EXPECTED_MIC"
   },
   "marketstack": {
     "enabled": true,
     "endpoint": "/v2/eod",
     "history_days": 365,
-    "max_symbols_per_run": 4,
+    "max_symbols_per_run": 3,
     "min_rows": 60,
     "delay_seconds": 0.25,
+    "require_exact_exchange_mic": true,
     "quota_policy": "CONSERVATIVE_FREE_PLAN_DEFAULT",
-    "quota_note": "Override with MARKETSTACK_MAX_SYMBOLS_PER_RUN only when the account allowance is known."
+    "quota_note": "Default 3 symbols/run leaves headroom under a 100 requests/month free allowance even with weekday scheduling; override only when the account allowance is known."
   },
   "derived_features": [
     "perf_1m_pct",
@@ -80,8 +83,8 @@
     "positive_reversal_flag"
   ],
   "fallback_policy": [
-    ["IDENTIFIERS", "OpenFIGI v3", "Issuer/Euronext", ""],
-    ["OHLCV", "yfinance", "OpenFIGI symbol repair + yfinance", "Marketstack", "Alpha Vantage", "Issuer/Euronext"],
+    ["IDENTIFIERS", "OpenFIGI v3 ISIN+MIC", "Issuer/Euronext", ""],
+    ["OHLCV", "yfinance", "OpenFIGI symbol repair + yfinance", "Marketstack exact-MIC", "Alpha Vantage", "Issuer/Euronext"],
     ["FUNDAMENTALS_ACTIONS", "yfinance", "Alpha Vantage", "Issuer", "Zonebourse"],
     ["CONSENSUS_ACTIONS", "Boursorama", "Zonebourse", "yfinance", "Finnhub"],
     ["ETF_COSTS_AUM", "ABC Bourse", "Issuer/KID", "Boursorama", ""],
