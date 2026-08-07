@@ -4,13 +4,14 @@ SRC002;OpenFIGI v3;OFFICIAL_IDENTIFIER_API;A;30;Actions+ETF;ISIN to FIGI/ticker/
 SRC003;Marketstack v2;API_FALLBACK;B;1;Actions+ETF;EOD OHLCV gap filling after Yahoo/OpenFIGI repair, globally quota-capped;2;OPERATIONAL_TESTED
 SRC004;Alpha Vantage;API_FALLBACK;B;1;Actions+ETF;Global TIME_SERIES_DAILY OHLCV fallback after Yahoo/OpenFIGI/Marketstack, one security max per run;3;OPERATIONAL_TESTED
 SRC005;Boursorama Bulk;PUBLIC_TABLE;B;7;Actions+ETF;Target consensus, Morningstar, market and ETF tables;2;PLANNED_NOT_CONFIGURED
-SRC006;Zonebourse Bulk;PUBLIC_TABLE;B;7;Actions;Target consensus, estimates and revisions;2;PLANNED_NOT_CONFIGURED
+SRC006;Zonebourse Bulk;PUBLIC_TABLE;B;7;Actions;Target consensus, estimates and revisions including broker-level changes when available;2;PLANNED_NOT_CONFIGURED
 SRC007;ABC Bourse Bulk;PUBLIC_TABLE;B;30;ETF;Target TER, AUM, benchmark, distribution and theme;2;PLANNED_NOT_CONFIGURED
 SRC008;Issuer / KID / Factsheet;OFFICIAL;A;90;Actions+ETF;Target official structure and fundamentals;3;PLANNED_NOT_CONFIGURED
 SRC009;AMF / Euronext;OFFICIAL;A;1;Actions+ETF;Target regulatory events and identity validation;2;PLANNED_NOT_CONFIGURED
-SRC010;Finnhub;API;B;1;Actions;Analyst consensus fallback with guarded symbol resolution;3;OPERATIONAL_TESTED
+SRC010;Finnhub;API;B;1;Actions;Analyst consensus gap filling with guarded symbol resolution;3;OPERATIONAL_TESTED
 SRC011;FRED;OFFICIAL_API;A;7;Actions;Official VIX and 10Y-2Y macro context;2;OPERATIONAL_TESTED
 SRC012;EIA;OFFICIAL_API;A;7;Run context;Official WTI and Brent energy context;2;OPERATIONAL_TESTED
 SRC013;GDELT;PUBLIC_API;C;1;Actions;Target bulk news discovery;4;PLANNED_NOT_CONFIGURED
-SRC014;MarketBeat via Parse;MANAGED_PUBLIC_WRAPPER_API;C;1;Actions;Selective issuer-level analyst forecast and broker dynamics, never substitute ADR price for local PEA price;3;AUTH_VALIDATED_DETAILED_SCHEMA_GATED
+SRC014;MarketBeat via Parse;MANAGED_PUBLIC_WRAPPER_API;C;1;Actions;Selective issuer-level aggregate consensus and target history current/1m/3m/1y via safely linked local listing and optional US analyst proxy;3;OPERATIONAL_SELECTIVE_FORECAST
 SRC015;Internal consensus snapshots;INTERNAL_HISTORY;C;0;Actions;Same-source S-1/1m/3m/12m target and consensus deltas, acceleration and committee analyst momentum;1;OPERATIONAL_AFTER_PIPELINE
+SRC016;Internal MarketBeat cross-check;INTERNAL_OVERLAY;C;0;Actions;70/30 local-MarketBeat revision blend, divergence detection and most-adverse-revision committee risk gate;1;OPERATIONAL_AFTER_PIPELINE
