@@ -15,6 +15,16 @@ class DownloadResult:
     diagnostics: dict = field(default_factory=dict)
 
 
+def _ensure_multiindex(frame, batch: list[str]):
+    """Normalize a one-symbol yfinance frame to the project MultiIndex format."""
+    if frame is None or frame.empty or hasattr(frame.columns, "levels"):
+        return frame
+    if len(batch) != 1:
+        return frame
+    import pandas as pd
+    return pd.concat({batch[0]: frame}, axis=1)
+
+
 def _ticker_has_data(frame, ticker: str, min_rows: int = 20) -> bool:
     """A ticker is successful only if it contains usable close prices.
 
@@ -96,6 +106,7 @@ def download_history(
                     progress=False,
                     timeout=30,
                 )
+                frame = _ensure_multiindex(frame, batch)
                 good_fetch, bad_fetch = [], []
                 for ticker in batch:
                     (good_fetch if _ticker_has_data(frame, ticker, min_rows=min_rows) else bad_fetch).append(ticker)
