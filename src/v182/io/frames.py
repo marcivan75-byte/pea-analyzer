@@ -16,8 +16,9 @@ TECHNICAL_FIELDS = {
     "perf_3y_pct", "perf_5y_pct",
 }
 FUNDAMENTAL_FIELDS = {
-    "market_cap", "per_ttm_yf", "per_forward_yf", "pb", "roe_api", "roa",
-    "debt_to_equity", "free_cash_flow", "marge_ebit", "marge_nette",
+    "market_cap", "per_ttm", "per_forward", "per_ttm_yf", "per_forward_yf",
+    "pb", "roe_api", "roa", "debt_to_equity", "free_cash_flow", "marge_ebit",
+    "marge_nette",
 }
 CONSENSUS_FIELDS = {
     "consensus", "consensus_rating", "consensus_score", "n_analysts",
@@ -30,6 +31,7 @@ SCENARIO_FIELDS = {
     "scenario_bear_pct", "scenario_base_pct", "scenario_bull_pct",
     "asymmetry", "invalidation_level",
 }
+MACRO_FIELDS = {"macro_vix", "macro_curve_10y2y"}
 
 
 def load_master(path: str | Path) -> pd.DataFrame:
@@ -63,7 +65,7 @@ def _safe_cell(frame: pd.DataFrame, isin: str, column: str, default=""):
 
 def _source_evidence(source: str, default: str = "D") -> str:
     text = str(source or "").lower()
-    if any(token in text for token in ("issuer", "amf", "euronext", "official")):
+    if any(token in text for token in ("issuer", "amf", "euronext", "official", "fred", "eia")):
         return "A"
     if any(token in text for token in ("finnhub", "marketstack", "alpha vantage")):
         return "B"
@@ -118,6 +120,9 @@ def _existing_meta(frame: pd.DataFrame, isin: str, field: str, current_value) ->
         source = str(_safe_cell(frame, isin, "ta_source", ""))
         evidence = _source_evidence(source, "C") if source else "C"
         as_of = str(_safe_cell(frame, isin, "ta_as_of", "") or _safe_cell(frame, isin, "perf_as_of", "") or row_as_of)
+    elif field in MACRO_FIELDS:
+        evidence = "A"
+        as_of = str(_safe_cell(frame, isin, "macro_as_of", "") or row_as_of)
     elif field.endswith("_yf"):
         evidence = "C"
         as_of = str(_safe_cell(frame, isin, "yf_consensus_as_of", "") or _safe_cell(frame, isin, "fundamentals_as_of", "") or row_as_of)
@@ -162,6 +167,9 @@ def _update_companion_provenance(frame: pd.DataFrame, isin: str, field: str, obs
             frame.at[isin, "perf_as_of"] = as_of
         if "perf_data_status" in frame.columns and field.startswith("perf_"):
             frame.at[isin, "perf_data_status"] = "OK"
+
+    if field in MACRO_FIELDS and "macro_as_of" in frame.columns:
+        frame.at[isin, "macro_as_of"] = as_of
 
     if (field.endswith("_yf") or field == "yf_status") and "yf_consensus_as_of" in frame.columns:
         frame.at[isin, "yf_consensus_as_of"] = collected_at or as_of
