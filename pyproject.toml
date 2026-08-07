@@ -1,6 +1,6 @@
 [project]
 name = "pea-v182"
-version = "18.2.0"
+version = "18.2.1"
 requires-python = ">=3.12,<3.14"
 dependencies = [
   "pydantic>=2.8,<3",
