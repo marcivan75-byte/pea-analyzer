@@ -55,21 +55,50 @@ def normalize(frame: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def latest_public_positions(frame: pd.DataFrame, as_of: str | None = None) -> pd.DataFrame:
+def public_position_history(
+    frame: pd.DataFrame,
+    as_of: str | None = None,
+    depth_per_holder: int = 4,
+) -> pd.DataFrame:
+    """Return point-in-time public history, preserving prior observations.
+
+    Short scoring needs at least two published observations per holder to
+    measure covering/increasing exposure. Availability is governed by the
+    publication date and never by the earlier economic position date.
+    """
     f = normalize(frame) if "evidence_level" not in frame.columns else frame.copy()
-    # Availability is governed by publication date, never the earlier economic position date.
     availability = "publication_start" if "publication_start" in f.columns else "position_date"
+    f = f[f[availability].notna()].copy()
     if as_of:
-        f = f[f[availability].notna() & (f[availability] <= as_of)]
-    f = f.sort_values([availability, "position_date"])
-    return f.groupby(["isin", "holder"], as_index=False, dropna=False).tail(1).reset_index(drop=True)
+        f = f[f[availability] <= as_of[:10]].copy()
+    f = f.sort_values(["isin", "holder", availability, "position_date"])
+    depth = max(1, int(depth_per_holder))
+    return (
+        f.groupby(["isin", "holder"], as_index=False, dropna=False, group_keys=False)
+        .tail(depth)
+        .reset_index(drop=True)
+    )
 
 
-def to_events(frame: pd.DataFrame, as_of: str | None = None) -> list[dict]:
+def latest_public_positions(frame: pd.DataFrame, as_of: str | None = None) -> pd.DataFrame:
+    history = public_position_history(frame, as_of=as_of, depth_per_holder=1)
+    return history.reset_index(drop=True)
+
+
+def to_events(
+    frame: pd.DataFrame,
+    as_of: str | None = None,
+    history_depth_per_holder: int = 4,
+) -> list[dict]:
     from v183.smart_money.models import SmartMoneyEvent
-    latest = latest_public_positions(frame, as_of=as_of)
+
+    history = public_position_history(
+        frame,
+        as_of=as_of,
+        depth_per_holder=history_depth_per_holder,
+    )
     events = []
-    for _, r in latest.iterrows():
+    for _, r in history.iterrows():
         pub = r.get("publication_start") or r.get("position_date")
         e = SmartMoneyEvent(
             universe="ACTION", isin=str(r["isin"]), event_type="SHORT", event_subtype="PUBLIC_NET_SHORT",
@@ -88,7 +117,6 @@ def to_events(frame: pd.DataFrame, as_of: str | None = None) -> list[dict]:
 
 
 def _read_csv_bytes(data: bytes) -> pd.DataFrame:
-    # The official file is UTF-8; sep autodetection makes the adapter resilient to ';' or ','.
     text = data.decode("utf-8-sig")
     return pd.read_csv(io.StringIO(text), sep=None, engine="python", dtype=str)
 
