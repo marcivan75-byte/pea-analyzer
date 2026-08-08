@@ -21,8 +21,7 @@ on:
       - "src/v182/decision/actions_universe_3609_policy.py"
       - "src/v182/decision/actions_universe_3609_csv_runner.py"
       - "data/reference/ETF_PEA_UNIVERSE_266_COMMITTEE.csv.gz.b64"
-      - "data/external/ACTIONS_PEA_3609_LATEST.xlsx"
-      - "data/external/ACTIONS_PEA_3609_LATEST.csv.gz"
+      - "data/external/ACTIONS_PEA_3609_LATEST.columnar.xz.b64"
       - "tests/test_committee_decision_policy.py"
       - "tests/test_actions_universe_3609_policy.py"
 
@@ -158,21 +157,26 @@ jobs:
           python -m v182.decision.committee_decision_policy
           python -m v182.decision.etf_universe_266_policy
 
-      - name: Detect canonical 3609 daily source
+      - name: Detect and validate canonical 3609 source transport
         id: actions3609
         run: |
-          if [ -s data/external/ACTIONS_PEA_3609_LATEST.csv.gz ]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-            echo "ACTIONS_3609_SOURCE_READY"
-          else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "ACTIONS_3609_SOURCE_MISSING: independent 18:00 updater must publish data/external/ACTIONS_PEA_3609_LATEST.csv.gz"
-          fi
+          test -s data/external/ACTIONS_PEA_3609_LATEST.columnar.xz.b64 || { echo "ACTIONS_3609_SOURCE_MISSING"; exit 1; }
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          p=Path('data/external/ACTIONS_PEA_3609_LATEST.columnar.xz.b64')
+          text=''.join(p.read_text(encoding='ascii').split())
+          expected='2f8b876f06ea270ba4bfc366d22f44e0d91c0cd85547ca81bbcf4f533668e5f0'
+          actual=hashlib.sha256(text.encode('ascii')).hexdigest()
+          assert actual==expected, (actual, expected)
+          print('ACTIONS_3609_SOURCE_TRANSPORT_OK', len(text), actual)
+          PY
+          echo "ready=true" >> "$GITHUB_OUTPUT"
 
       - name: Build 3609 actions multi-horizon committee
         if: ${{ steps.actions3609.outputs.ready == 'true' }}
         env:
-          V204_ACTIONS_3609_SOURCE: data/external/ACTIONS_PEA_3609_LATEST.csv.gz
+          V204_ACTIONS_3609_SOURCE: data/external/ACTIONS_PEA_3609_LATEST.columnar.xz.b64
         run: python -m v182.decision.actions_universe_3609_csv_runner
 
       - name: Validate action, 3609 and ETF decisions and execution guard
@@ -193,19 +197,18 @@ jobs:
           assert {'daily_match_method','daily_match_confidence'}.issubset(etf.columns)
           proxy=etf['daily_match_method'].astype(str).eq('NAME_FAMILY_PROXY')
           assert not ((proxy) & (etf['decision']=='BUY_CANDIDATE')).any(), 'family proxy must not create BUY'
-          if Path('outputs/V20.4_GITOK_ACTIONS_3609_DECISIONS.csv').exists():
-            a3609=pd.read_csv('outputs/V20.4_GITOK_ACTIONS_3609_DECISIONS.csv',sep=';')
-            assert len(a3609)==3609, len(a3609)
-            required={'score_short_term','score_medium_term','score_long_term','short_thesis_score','T0','T1_1_4w','T2_1_3m','T3_3_6m','T4_6_12m','T5_12_24m','decision','execution','identity_confidence'}
-            assert required.issubset(a3609.columns), required-set(a3609.columns)
-            assert not a3609['execution'].astype(str).str.upper().isin(live).any(), 'ACTION3609'
-            conf=pd.to_numeric(a3609['identity_confidence'],errors='coerce').fillna(0)
-            assert not ((a3609['decision']=='BUY_CANDIDATE') & (conf<0.92)).any(), 'unverified 3609 BUY'
-            assert not (a3609.loc[conf<0.92,'T1_entry_low'].notna()).any(), 'unverified 3609 T1 price'
-            print('ACTION3609_COUNTS',a3609['decision'].value_counts().to_dict())
-            print('ACTION3609_IDENTITY',a3609['identity_method'].value_counts().to_dict())
-          else:
-            raise RuntimeError('3609 actions output missing although canonical source is required')
+          p=Path('outputs/V20.4_GITOK_ACTIONS_3609_DECISIONS.csv')
+          assert p.exists(), '3609 actions output missing'
+          a3609=pd.read_csv(p,sep=';')
+          assert len(a3609)==3609, len(a3609)
+          required={'score_short_term','score_medium_term','score_long_term','short_thesis_score','committee_score_3609','T0','T1_1_4w','T2_1_3m','T3_3_6m','T4_6_12m','T5_12_24m','decision','execution','identity_confidence'}
+          assert required.issubset(a3609.columns), required-set(a3609.columns)
+          assert not a3609['execution'].astype(str).str.upper().isin(live).any(), 'ACTION3609'
+          conf=pd.to_numeric(a3609['identity_confidence'],errors='coerce').fillna(0)
+          assert not ((a3609['decision']=='BUY_CANDIDATE') & (conf<0.92)).any(), 'unverified 3609 BUY'
+          assert not (a3609.loc[conf<0.92,'T1_entry_low'].notna()).any(), 'unverified 3609 T1 price'
+          print('ACTION3609_COUNTS',a3609['decision'].value_counts().to_dict())
+          print('ACTION3609_IDENTITY',a3609['identity_method'].value_counts().to_dict())
           print('ETF266_COUNTS',etf['decision'].value_counts().to_dict())
           print('ACTION_ETF3609_EXECUTION_GUARD_OK')
           PY
@@ -222,16 +225,12 @@ jobs:
           print(f"- ETF master universe: {len(etf)}")
           print(f"- ETF daily matches total: {int(etf['daily_match'].astype(str).str.lower().eq('true').sum())}")
           print(f"- ETF identity-grade matches: {int(pd.to_numeric(etf['daily_match_confidence'],errors='coerce').ge(0.95).sum())}")
-          p=Path('outputs/audit/V20.4_ACTIONS_3609_AUDIT.json')
-          if p.exists():
-            a=json.loads(p.read_text(encoding='utf-8'))
-            print(f"- Actions master universe: {a.get('rows')}")
-            print(f"- Actions source criteria: {a.get('source_columns')}")
-            print(f"- Actions valid source ISIN: {a.get('source_isin_valid')}")
-            print(f"- Actions identity methods: {a.get('identity_methods')}")
-            print(f"- Actions decisions: {a.get('decision_counts')}")
-          else:
-            print('- Actions 3609 source: ERROR - expected canonical file was not processed')
+          a=json.loads(Path('outputs/audit/V20.4_ACTIONS_3609_AUDIT.json').read_text(encoding='utf-8'))
+          print(f"- Actions master universe: {a.get('rows')}")
+          print(f"- Actions source criteria: {a.get('source_columns')}")
+          print(f"- Actions valid source ISIN: {a.get('source_isin_valid')}")
+          print(f"- Actions identity methods: {a.get('identity_methods')}")
+          print(f"- Actions decisions: {a.get('decision_counts')}")
           print('- Live-order execution: disabled')
           PY
 
@@ -245,7 +244,7 @@ jobs:
               echo "Explicit fresh V18.2 daily collection performed in this run."
             fi
             echo "ETF universe master: 266 ETFs from the user-provided 9-pillar file."
-            echo "Actions universe master: canonical 3609 daily file processed with T0-T5, short, short/medium/long-term scores."
+            echo "Actions universe master: 3609 rows / 146 source criteria, checksummed before processing."
             echo
             cat outputs/V20.4_GITOK_COMMITTEE_SUMMARY.md
           } >> "$GITHUB_STEP_SUMMARY"
