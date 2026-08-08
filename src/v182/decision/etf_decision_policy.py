@@ -22,10 +22,9 @@ def _bool(value) -> bool:
 def score_etf(row: pd.Series) -> tuple[float, str, str, str]:
     """Return (score, decision, execution, reason) for a PEA ETF.
 
-    The score is deliberately transparent and uses only observed fields already
-    present in the V18.2 ETF enriched master. Morningstar 4* receives a strong
-    bonus, 3* a smaller bonus, and high risk indicators are penalised. No live
-    brokerage/order execution is ever enabled.
+    Fresh market/technical fields remain primary. The user-provided 266-ETF
+    9-pillar dataset is consumed only as a bounded structural overlay. It never
+    overwrites fresher daily data maintained by the independent 18h process.
     """
     perf_1m = _num(row.get("perf_1m_pct")) or 0.0
     perf_3m = _num(row.get("perf_3m_pct")) or 0.0
@@ -40,27 +39,33 @@ def score_etf(row: pd.Series) -> tuple[float, str, str, str]:
     risk = _num(row.get("risk_indicator"))
     reversal = _bool(row.get("positive_reversal_flag"))
 
+    ext_level = str(row.get("external_9p_match_level") or "")
+    ext_v9 = _num(row.get("external_9p_score_v9"))
+    ext_liq = _num(row.get("external_9p_liquidity_score"))
+    ext_repl = _num(row.get("external_9p_replication_score"))
+    ext_srri = _num(row.get("external_9p_srri"))
+    ext_spread = _num(row.get("external_9p_spread_pct"))
+    ext_ter = _num(row.get("external_9p_ter_pct"))
+
     score = 50.0
 
-    # Momentum: capped so one exceptional horizon cannot dominate.
+    # Fresh momentum remains dominant.
     score += max(-8.0, min(8.0, perf_1m * 0.8))
     score += max(-10.0, min(10.0, perf_3m * 0.45))
     score += max(-7.0, min(7.0, perf_6m * 0.18))
     score += max(-7.0, min(7.0, perf_1y * 0.10))
 
-    # Trend quality / reversal.
     score += max(-4.0, min(4.0, macd_hist * 4.0))
     score += 3.0 if reversal else 0.0
     score += max(-3.0, min(3.0, relative_strength * 0.12))
 
-    # Morningstar policy requested for the committee.
+    # Morningstar policy.
     if rating is not None:
         if rating >= 4.0:
             score += 5.0
         elif rating >= 3.0:
             score += 2.5
 
-    # RSI: reward constructive momentum, penalise overbought/oversold extremes.
     if rsi is not None:
         if 50.0 <= rsi <= 68.0:
             score += 4.0
@@ -71,8 +76,6 @@ def score_etf(row: pd.Series) -> tuple[float, str, str, str]:
         elif rsi < 35.0:
             score -= 5.0
 
-    # Risk/drawdown/volatility penalties. Risk 6-7 corresponds to the high-risk
-    # end of the standard 1-7 product-risk scale when available.
     if risk is not None:
         if risk >= 6.0:
             score -= 8.0
@@ -82,6 +85,24 @@ def score_etf(row: pd.Series) -> tuple[float, str, str, str]:
         score -= min(8.0, abs(drawdown + 20.0) * 0.25 + 2.0)
     if volatility is not None and volatility > 30.0:
         score -= min(6.0, (volatility - 30.0) * 0.15 + 1.0)
+
+    # 9-pillar structural overlay. Family proxies receive only half weight.
+    if ext_level:
+        weight = 0.5 if ext_level == "family_proxy" else 1.0
+        overlay = 0.0
+        if ext_v9 is not None:
+            overlay += max(-2.0, min(2.0, (ext_v9 - 65.0) / 12.5))
+        if ext_liq is not None:
+            overlay += max(-1.5, min(1.5, (ext_liq - 65.0) / 20.0))
+        if ext_repl is not None:
+            overlay += max(-1.0, min(1.0, (ext_repl - 70.0) / 25.0))
+        if ext_srri is not None and ext_srri >= 6.0:
+            overlay -= 1.5
+        if ext_spread is not None and ext_spread > 0.60:
+            overlay -= min(1.5, (ext_spread - 0.60) * 2.0)
+        if ext_ter is not None and ext_ter > 0.50:
+            overlay -= min(1.0, (ext_ter - 0.50) * 2.0)
+        score += max(-4.0, min(4.0, overlay)) * weight
 
     score = round(max(0.0, min(100.0, score)), 2)
 
@@ -120,14 +141,17 @@ def apply_etf_policy(root: Path | None = None) -> dict:
         "risk_indicator", "last_close", "perf_1m_pct", "perf_3m_pct", "perf_6m_pct",
         "perf_1y_pct", "rsi14", "macd", "macd_signal", "macd_hist", "mm20", "mm50",
         "mm100", "mm200", "max_drawdown_1y", "volatility_60d", "relative_strength",
-        "positive_reversal_flag", "etf_committee_score", "decision", "execution",
-        "decision_reason",
+        "positive_reversal_flag", "external_9p_family", "external_9p_match_level",
+        "external_9p_score_v9", "external_9p_liquidity_score", "external_9p_replication_score",
+        "external_9p_srri", "external_9p_ter_pct", "external_9p_spread_pct",
+        "etf_committee_score", "decision", "execution", "decision_reason",
     ] if c in etf.columns]
     decisions = etf[fields].copy().sort_values("etf_committee_score", ascending=False)
     decisions.to_csv(decisions_path, sep=";", index=False, encoding="utf-8-sig")
 
     counts = decisions["decision"].value_counts(dropna=False).to_dict()
     priority = decisions[decisions["decision"].isin(["BUY_CANDIDATE", "WATCH"])].head(20)
+    matched = int((etf.get("external_9p_match_level", pd.Series([""] * len(etf))).astype(str) != "").sum())
     lines = [
         "",
         "## ETF PEA — décisions V20.4 GitOK",
@@ -135,6 +159,8 @@ def apply_etf_policy(root: Path | None = None) -> dict:
         f"- BUY_CANDIDATE: {counts.get('BUY_CANDIDATE', 0)}",
         f"- WATCH: {counts.get('WATCH', 0)}",
         f"- REVIEW: {counts.get('REVIEW', 0)}",
+        f"- Enrichissement externe 9 piliers: {matched}/{len(etf)} ETF rapprochés de façon prudente",
+        "- Gouvernance: les données quotidiennes du processus externe de 18h restent prioritaires; l'enrichissement 9 piliers est un overlay structurel uniquement.",
         "",
         "### Priorités ETF PEA",
     ]
@@ -143,13 +169,14 @@ def apply_etf_policy(root: Path | None = None) -> dict:
             f"- {row.get('name', '')} ({row.get('yahoo_ticker', '')}) — score {row.get('etf_committee_score', '')}"
             f" — 3m {row.get('perf_3m_pct', '')}% — 1a {row.get('perf_1y_pct', '')}%"
             f" — RSI {row.get('rsi14', '')} — Morningstar {row.get('morningstar_rating', '')}★"
-            f" — {row.get('decision', '')}"
+            f" — 9P {row.get('external_9p_match_level', '')} — {row.get('decision', '')}"
         )
     with summary_path.open("a", encoding="utf-8") as handle:
         handle.write("\n".join(lines) + "\n")
 
     return {
         "rows": len(decisions),
+        "external_9p_matched": matched,
         "buy_candidate": int(counts.get("BUY_CANDIDATE", 0)),
         "watch": int(counts.get("WATCH", 0)),
         "review": int(counts.get("REVIEW", 0)),
