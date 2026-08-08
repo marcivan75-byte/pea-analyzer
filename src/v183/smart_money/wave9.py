@@ -11,26 +11,46 @@ from v183.smart_money.features.tape import calculate as calc_tape, score as calc
 from v183.smart_money.features.etf_flows import score as calc_flow_score
 
 
-def score_action(isin: str, base_score: float | None, events: list[dict], ohlcv: pd.DataFrame | None,
-                 as_of: str, cfg: dict, source_availability: Mapping[str, bool],
-                 market_cap: float | None = None, adv20_eur: float | None = None) -> dict:
-    available_events = [e for e in events if e.get("isin") == isin and
-                        str(e.get("publication_date") or "")[:10] <= as_of[:10] and
-                        e.get("validation_status") in {"VALIDATED", "ISIN_MATCHED", "AUTO_MATCH"}]
+def score_action(
+    isin: str,
+    base_score: float | None,
+    events: list[dict],
+    ohlcv: pd.DataFrame | None,
+    as_of: str,
+    cfg: dict,
+    source_availability: Mapping[str, bool],
+    market_cap: float | None = None,
+    adv20_eur: float | None = None,
+    event_context: dict | None = None,
+) -> dict:
+    available_events = [
+        e for e in events
+        if e.get("isin") == isin
+        and str(e.get("publication_date") or "")[:10] <= as_of[:10]
+        and e.get("validation_status") in {"VALIDATED", "ISIN_MATCHED", "AUTO_MATCH"}
+    ]
     ins, ins_meta = insider_score(available_events, as_of, cfg, market_cap, adv20_eur)
-    holder = significant_holder_score(available_events, cfg)
+    holder = significant_holder_score(available_events, as_of, cfg)
     shorts = [
-        {"holder": e.get("actor_name"), "position_date": e.get("position_date") or e.get("transaction_date") or e.get("publication_date"),
-         "publication_date": e.get("publication_date"), "short_position_pct": e.get("short_position_pct")}
+        {
+            "holder": e.get("actor_name"),
+            "position_date": e.get("position_date") or e.get("transaction_date") or e.get("publication_date"),
+            "publication_date": e.get("publication_date"),
+            "short_position_pct": e.get("short_position_pct"),
+        }
         for e in available_events if e.get("event_type") == "SHORT"
     ]
     srs, short_meta = short_score(shorts, cfg)
     tape_features = calc_tape(ohlcv) if ohlcv is not None else {}
-    tape = calc_tape_score(tape_features, cfg)
+    tape = calc_tape_score(tape_features, cfg, event_context=event_context)
     completeness = _availability(source_availability, ["insiders", "thresholds", "shorts", "tape"])
-    conf = confidence_factor(available_events + ([{"evidence_level": "C"}] if ohlcv is not None else []), completeness, cfg)
+    conf_events = available_events + ([{"evidence_level": "C"}] if tape_features else [])
+    conf = confidence_factor(conf_events, completeness, cfg)
     raw, effective = wis(ins, holder, srs, tape, conf, cfg)
     score_shadow = None if base_score is None else max(0.0, min(100.0, float(base_score) + effective))
+    active_allowed = _active_scoring_allowed(cfg)
+    score_final = score_shadow if active_allowed else base_score
+    gates = cfg.get("decision_gates", {})
     return {
         "isin": isin,
         "insider_score": ins,
@@ -46,6 +66,8 @@ def score_action(isin: str, base_score: float | None, events: list[dict], ohlcv:
         "public_short_censored": short_meta.get("censored", False),
         "public_short_pct": short_meta.get("current_public_pct"),
         "short_delta_public": short_meta.get("delta"),
+        "short_holders": short_meta.get("holders", 0),
+        "short_comparable_holders": short_meta.get("comparable_holders", 0),
         "volume_z20": tape_features.get("volume_z20"),
         "dollar_volume_z20": tape_features.get("dollar_volume_z20"),
         "cmf20": tape_features.get("cmf20"),
@@ -53,30 +75,46 @@ def score_action(isin: str, base_score: float | None, events: list[dict], ohlcv:
         "ad_slope10": tape_features.get("ad_slope10"),
         "score_base": base_score,
         "score_shadow": score_shadow,
-        "score_final": base_score if cfg.get("shadow_mode", True) else score_shadow,
+        "score_final": score_final,
+        "smart_money_active_scoring_allowed": active_allowed,
+        "smart_money_risk_review": effective <= float(gates.get("mandatory_risk_review_wis_lte", -3.5)),
+        "smart_money_preorder_block_shadow": effective <= float(gates.get("block_new_preorder_wis_lte", -4.5)),
         "smart_money_data_status": "OK" if completeness >= 0.75 else "PARTIAL",
+        "smart_money_source_completeness": round(completeness, 4),
     }
 
 
-def score_etf(isin: str, base_score: float | None, flow_history: pd.DataFrame | None,
-              ohlcv: pd.DataFrame | None, cfg: dict, source_availability: Mapping[str, bool]) -> dict:
+def score_etf(
+    isin: str,
+    base_score: float | None,
+    flow_history: pd.DataFrame | None,
+    ohlcv: pd.DataFrame | None,
+    cfg: dict,
+    source_availability: Mapping[str, bool],
+    event_context: dict | None = None,
+) -> dict:
     if flow_history is not None and not flow_history.empty:
         flow_core, persistence, flow_meta = calc_flow_score(flow_history, cfg)
     else:
-        flow_core, persistence, flow_meta = 0.0, 0.0, {}
+        flow_core, persistence, flow_meta = 0.0, 0.0, {
+            "flow_status": "NO_HISTORY", "flow_history_snapshots": 0, "flow_observations": 0
+        }
     tape_features = calc_tape(ohlcv) if ohlcv is not None else {}
-    # ETF tape is capped separately even though the common feature scorer can reach 1.5.
-    tape_common = calc_tape_score(tape_features, cfg)
+    tape_common = calc_tape_score(tape_features, cfg, event_context=event_context)
     tape = max(-float(cfg["caps"]["etf_tape"]), min(float(cfg["caps"]["etf_tape"]), tape_common))
-    completeness = _availability(source_availability, ["flows", "tape"])
+    effective_availability = dict(source_availability)
+    effective_availability["flows"] = flow_meta.get("flow_status") == "OK"
+    effective_availability["tape"] = bool(tape_features) and bool(source_availability.get("tape", True))
+    completeness = _availability(effective_availability, ["flows", "tape"])
     evidence_events = []
-    if flow_history is not None and not flow_history.empty:
+    if flow_meta.get("flow_status") == "OK":
         evidence_events.append({"evidence_level": "A"})
-    if ohlcv is not None:
+    if tape_features:
         evidence_events.append({"evidence_level": "C"})
     conf = confidence_factor(evidence_events, completeness, cfg)
     raw, effective = ifs(flow_core, persistence, tape, conf, cfg)
     score_shadow = None if base_score is None else max(0.0, min(100.0, float(base_score) + effective))
+    active_allowed = _active_scoring_allowed(cfg)
     return {
         "isin": isin,
         "flow_core_score": flow_core,
@@ -89,24 +127,42 @@ def score_etf(isin: str, base_score: float | None, flow_history: pd.DataFrame | 
         **flow_meta,
         "score_base": base_score,
         "score_shadow": score_shadow,
-        "score_final": base_score if cfg.get("shadow_mode", True) else score_shadow,
+        "score_final": score_shadow if active_allowed else base_score,
+        "smart_money_active_scoring_allowed": active_allowed,
         "smart_money_data_status": "OK" if completeness >= 0.75 else "PARTIAL",
+        "smart_money_source_completeness": round(completeness, 4),
     }
 
 
 def as_observations(universe: str, score_row: dict, as_of: str) -> list[dict]:
     skip = {"isin", "score_base", "score_final", "score_shadow"}
-    evidence = "C"  # Aggregates are derived values; provenance sidecar preserves underlying A/B/C sources.
+    evidence = "C"
     result = []
     for field, value in score_row.items():
         if field in skip or value is None:
             continue
         result.append({
-            "universe": universe, "isin": score_row["isin"], "field": field, "value": value,
-            "source": "SMART_MONEY_V1_AGGREGATOR", "collected_at": datetime.utcnow().isoformat() + "Z",
-            "as_of": as_of[:10], "evidence_level": evidence, "validation_status": "AUTO_MATCH",
+            "universe": universe,
+            "isin": score_row["isin"],
+            "field": field,
+            "value": value,
+            "source": "SMART_MONEY_V1_AGGREGATOR",
+            "collected_at": datetime.utcnow().isoformat() + "Z",
+            "as_of": as_of[:10],
+            "evidence_level": evidence,
+            "validation_status": "AUTO_MATCH",
         })
     return result
+
+
+def _active_scoring_allowed(cfg: dict) -> bool:
+    calibration = cfg.get("calibration", {})
+    return bool(
+        cfg.get("shadow_mode") is False
+        and cfg.get("score_application") == "ACTIVE"
+        and calibration.get("active_scoring_allowed") is True
+        and not calibration.get("empirical_walk_forward_required_for_active_scoring", True)
+    )
 
 
 def _availability(flags: Mapping[str, bool], required: list[str]) -> float:
@@ -114,20 +170,20 @@ def _availability(flags: Mapping[str, bool], required: list[str]) -> float:
 
 
 def _wis_label(x: float) -> str:
-    if x >= 5: return "SMART_MONEY_EXCEPTIONNEL"
-    if x >= 3: return "FORTE_ACCUMULATION"
-    if x >= 1: return "POSITIF"
-    if x <= -5: return "ALERTE_SMART_MONEY"
-    if x <= -3: return "FORTE_DISTRIBUTION"
-    if x <= -1: return "NEGATIF"
+    if x >= 4.5: return "SMART_MONEY_EXCEPTIONNEL"
+    if x >= 2.75: return "FORTE_ACCUMULATION"
+    if x >= 0.9: return "POSITIF"
+    if x <= -4.5: return "ALERTE_SMART_MONEY"
+    if x <= -2.75: return "FORTE_DISTRIBUTION"
+    if x <= -0.9: return "NEGATIF"
     return "NEUTRE"
 
 
 def _ifs_label(x: float) -> str:
-    if x >= 4: return "ACCUMULATION_INSTITUTIONNELLE_EXCEPTIONNELLE"
-    if x >= 2: return "FORTE_ENTREE"
-    if x >= 0.75: return "ENTREE_MODEREE"
-    if x <= -4: return "REDEPLOIEMENT_INSTITUTIONNEL_MAJEUR"
-    if x <= -2: return "FORTE_SORTIE"
-    if x <= -0.75: return "SORTIE_MODEREE"
+    if x >= 3.0: return "ACCUMULATION_INSTITUTIONNELLE_EXCEPTIONNELLE"
+    if x >= 1.75: return "FORTE_ENTREE"
+    if x >= 0.6: return "ENTREE_MODEREE"
+    if x <= -3.0: return "REDEPLOIEMENT_INSTITUTIONNEL_MAJEUR"
+    if x <= -1.75: return "FORTE_SORTIE"
+    if x <= -0.6: return "SORTIE_MODEREE"
     return "NEUTRE"
