@@ -2,6 +2,12 @@ name: V20.4 GitOK End-to-End Committee
 
 on:
   workflow_dispatch:
+    inputs:
+      refresh_data:
+        description: "Force a fresh V18.2 market-data collection"
+        required: false
+        default: false
+        type: boolean
   schedule:
     - cron: "0 16 * * 5"
   push:
@@ -17,15 +23,16 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: v204-gitok-end-to-end
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   end-to-end-committee:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -50,7 +57,66 @@ jobs:
           ruff check --select E9,F63,F7,F82 src tests
           pytest -q
 
-      - name: Collect and enrich V18.2 data
+      - name: Reuse latest successful validated dataset
+        id: bootstrap
+        if: ${{ github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.refresh_data != true) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/v204-bootstrap outputs
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+            --jq '.artifacts | sort_by(.created_at) | reverse | .[] | select(.expired == false) | select((.name | startswith("V20.4-GitOK-end-to-end-")) or (.name | startswith("V20.4-GitOK-full-cycle-")) or (.name | startswith("V20.4-GitOK-reference-"))) | [.id, .workflow_run.id, .name] | @tsv' \
+            > /tmp/v204-bootstrap/candidates.tsv
+
+          while IFS=$'\t' read -r ARTIFACT_ID SOURCE_RUN ARTIFACT_NAME; do
+            [ -n "${ARTIFACT_ID:-}" ] || continue
+            CONCLUSION=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN}" --jq '.conclusion // ""' 2>/dev/null || true)
+            [ "$CONCLUSION" = "success" ] || continue
+
+            rm -rf /tmp/v204-bootstrap/extract
+            mkdir -p /tmp/v204-bootstrap/extract
+            if ! gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > /tmp/v204-bootstrap/artifact.zip; then
+              continue
+            fi
+            if ! unzip -oq /tmp/v204-bootstrap/artifact.zip -d /tmp/v204-bootstrap/extract; then
+              continue
+            fi
+
+            rm -rf outputs
+            mkdir -p outputs
+            if [ -d /tmp/v204-bootstrap/extract/outputs ]; then
+              cp -a /tmp/v204-bootstrap/extract/outputs/. outputs/
+            else
+              cp -a /tmp/v204-bootstrap/extract/. .
+            fi
+
+            if [ -s outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv ] \
+               && [ -s outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv ] \
+               && [ -s outputs/audit/V18.2_QUALITY_GATES.json ]; then
+              if python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('outputs/audit/V18.2_QUALITY_GATES.json')
+          q = json.loads(p.read_text(encoding='utf-8'))
+          raise SystemExit(0 if q.get('passed') is True else 1)
+          PY
+              then
+                echo "ready=true" >> "$GITHUB_OUTPUT"
+                echo "source_run=${SOURCE_RUN}" >> "$GITHUB_OUTPUT"
+                echo "source_artifact=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
+                echo "REUSED_VALIDATED_DATASET run=${SOURCE_RUN} artifact=${ARTIFACT_NAME}"
+                exit 0
+              fi
+            fi
+          done < /tmp/v204-bootstrap/candidates.tsv
+
+          echo "NO_REUSABLE_VALIDATED_DATASET"
+
+      - name: Collect and enrich V18.2 data when refresh is required
+        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.refresh_data == true) || steps.bootstrap.outputs.ready != 'true' }}
         env:
           V182_RUN_ID: v204-e2e-${{ github.run_id }}-${{ github.run_attempt }}
           MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
@@ -112,7 +178,17 @@ jobs:
           PY
 
       - name: Publish committee summary
-        run: cat outputs/V20.4_GITOK_COMMITTEE_SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          {
+            echo "## Dataset"
+            if [ "${{ steps.bootstrap.outputs.ready }}" = "true" ]; then
+              echo "Reused validated dataset from run ${{ steps.bootstrap.outputs.source_run }}."
+            else
+              echo "Fresh V18.2 collection performed in this run."
+            fi
+            echo
+            cat outputs/V20.4_GITOK_COMMITTEE_SUMMARY.md
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload V20.4 GitOK committee evidence
         if: always()
