@@ -48,6 +48,14 @@
       "normalized_input": "inputs/V18.3_ETF_FLOW_SNAPSHOTS.csv",
       "state_file": "state/smart_money/ETF_FLOW_HISTORY.parquet",
       "failure_policy": "BOOTSTRAP_OR_PARTIAL_DO_NOT_FABRICATE"
+    },
+    "yfinance_etf_snapshot": {
+      "enabled": true,
+      "evidence": "C",
+      "requires_both_total_assets_and_nav_price": true,
+      "max_symbols_per_run": 102,
+      "delay_seconds": 0.45,
+      "failure_policy": "DO_NOT_BLOCK"
     }
   },
   "caps": {
