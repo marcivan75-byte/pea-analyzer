@@ -6,7 +6,11 @@ on:
     branches:
       - feature/smart-money-v1
     paths:
+      - "src/v183/**"
+      - "tests/test_smart_money_v183.py"
+      - "config/V18.3_SMART_MONEY_CONFIG.json"
       - ".github/workflows/V18.3_smart_money_audit_4.yml"
+      - ".github/workflows/V18.3_smart_money_shadow.yml"
 
 permissions:
   contents: read
@@ -23,7 +27,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-          fetch-depth: 8
+          fetch-depth: 16
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -50,7 +54,9 @@ jobs:
           from pathlib import Path
 
           root = Path('.')
-          workflow_paths = sorted((root / '.github/workflows').glob('V18.3_smart_money_audit_*.yml'))
+          audit_workflow_paths = sorted((root / '.github/workflows').glob('V18.3_smart_money_audit_*.yml'))
+          rc_path = root / '.github/workflows/V18.3_smart_money_shadow.yml'
+          workflow_paths = audit_workflow_paths + ([rc_path] if rc_path.exists() else [])
           source_paths = sorted((root / 'src/v183').rglob('*.py'))
           config_path = root / 'config/V18.3_SMART_MONEY_CONFIG.json'
           proposed_path = root / 'docs/smart_money_v183/V18.3_workflow_proposed.yml'
@@ -111,12 +117,12 @@ jobs:
           all_uses = [item for uses in uses_by_workflow.values() for item in uses]
 
           checks = {
-              'four_audit_workflows_present': len(workflow_paths) == 4,
-              'audit_workflows_feature_only': all(
+              'four_audit_workflows_present': len(audit_workflow_paths) == 4,
+              'active_workflows_feature_only': all(
                   re.search(r'(?m)^      - feature/smart-money-v1\s*$', text)
                   for text in workflow_texts.values()
               ),
-              'audit_workflows_read_only': all(
+              'active_workflows_read_only': all(
                   'write' not in permissions_block(text).lower()
                   for text in workflow_texts.values()
               ),
@@ -147,12 +153,14 @@ jobs:
               'no_unsafe_dynamic_execution': not unsafe_calls,
               'finnhub_ownership_disabled': cfg['sources']['finnhub_ownership'].get('enabled') is False,
               'shadow_only': cfg.get('shadow_mode') is True and cfg.get('score_application') == 'SHADOW_ONLY',
+              'active_calibration_blocked': cfg['calibration'].get('active_scoring_allowed') is False,
           }
 
           report = {
               'audit': '4/4',
               'scope': 'ci_security',
               'added_files': added,
+              'scanned_active_workflows': [str(p) for p in workflow_paths],
               'unsafe_calls': unsafe_calls,
               'request_calls_without_timeout': request_calls_without_timeout,
               'active_actions': all_uses,
