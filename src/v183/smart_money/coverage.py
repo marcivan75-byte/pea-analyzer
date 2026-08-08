@@ -29,12 +29,16 @@ def provider_adapter(provider: object, name: object = "") -> str:
     return "GENERIC_NORMALIZED_IMPORT"
 
 
-def build_etf_registry(etf_master: pd.DataFrame, flow_history: pd.DataFrame | None = None) -> tuple[pd.DataFrame, dict]:
-    """Map every ETF to a supported normalized ingestion path.
+def build_etf_registry(
+    etf_master: pd.DataFrame,
+    flow_history: pd.DataFrame | None = None,
+    min_flow_observations: int = 20,
+) -> tuple[pd.DataFrame, dict]:
+    """Map every ETF to an ingestion route and report actual flow readiness.
 
     Registry coverage and *live flow readiness* are intentionally separate.
-    The generic normalized adapter guarantees that an ETF has an integration
-    route; it does not pretend that AUM/NAV history already exists.
+    A generic normalized adapter guarantees an integration route; it never
+    claims that historical AUM/NAV observations already exist.
     """
     rows = etf_master.copy()
     if "isin" not in rows.columns:
@@ -47,13 +51,14 @@ def build_etf_registry(etf_master: pd.DataFrame, flow_history: pd.DataFrame | No
     rows["adapter"] = [provider_adapter(p, n) for p, n in zip(rows["provider"], rows["name"])]
     rows["registry_supported"] = True
 
+    required_snapshots = max(2, int(min_flow_observations) + 1)
     ready_isins: set[str] = set()
-    observation_counts: dict[str, int] = {}
+    snapshot_counts: dict[str, int] = {}
     if flow_history is not None and not flow_history.empty and "isin" in flow_history.columns:
         counts = flow_history.groupby("isin").size()
-        observation_counts = {str(k): int(v) for k, v in counts.items()}
-        ready_isins = set(str(k) for k, v in counts.items() if int(v) >= 20)
-    rows["flow_observations"] = rows["isin"].astype(str).map(observation_counts).fillna(0).astype(int)
+        snapshot_counts = {str(k): int(v) for k, v in counts.items()}
+        ready_isins = set(str(k) for k, v in counts.items() if int(v) >= required_snapshots)
+    rows["flow_snapshots"] = rows["isin"].astype(str).map(snapshot_counts).fillna(0).astype(int)
     rows["flow_ready_20d"] = rows["isin"].astype(str).isin(ready_isins)
 
     total = len(rows)
@@ -72,10 +77,12 @@ def build_etf_registry(etf_master: pd.DataFrame, flow_history: pd.DataFrame | No
         "registry_coverage_pct": 100.0 if total == 0 else round(registered / total * 100, 2),
         "flow_ready_20d": ready,
         "flow_ready_20d_pct": 100.0 if total == 0 else round(ready / total * 100, 2),
+        "required_flow_observations": int(min_flow_observations),
+        "required_flow_snapshots": required_snapshots,
         "providers": provider_counts,
         "coverage_semantics": {
             "registry": "ETF has a supported normalized ingestion route",
-            "flow_ready_20d": "ETF has at least 20 persisted AUM+NAV observations",
+            "flow_ready_20d": f"ETF has at least {required_snapshots} persisted AUM+NAV snapshots, yielding {min_flow_observations} flow observations",
         },
     }
     return rows, metrics
