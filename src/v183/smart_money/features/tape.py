@@ -34,7 +34,7 @@ def calculate(frame: pd.DataFrame) -> dict:
     }
 
 
-def score(features: dict, cfg: dict) -> float:
+def score(features: dict, cfg: dict, event_context: dict | None = None) -> float:
     if not features:
         return 0.0
     z = float(features.get("volume_z20") or 0.0)
@@ -55,8 +55,21 @@ def score(features: dict, cfg: dict) -> float:
         dz >= float(cfg["tape"]["min_dollar_volume_z"]),
     ])
     raw = direction * (0.35 + 0.25 * confirmations)
+    multiplier = _event_multiplier(cfg, event_context or {})
+    raw *= multiplier
     cap = float(cfg["caps"]["tape"])
     return round(max(-cap, min(cap, raw)), 4)
+
+
+def _event_multiplier(cfg: dict, context: dict) -> float:
+    multipliers = [1.0]
+    if bool(context.get("earnings_event")):
+        multipliers.append(float(cfg["tape"].get("earnings_event_multiplier", 0.5)))
+    if bool(context.get("index_rebalance")):
+        multipliers.append(float(cfg["tape"].get("index_rebalance_multiplier", 0.55)))
+    if bool(context.get("corporate_action")):
+        multipliers.append(float(cfg["tape"].get("corporate_action_multiplier", 0.0)))
+    return max(0.0, min(multipliers))
 
 
 def _z(value, mean, std) -> float | None:
