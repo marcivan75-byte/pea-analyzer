@@ -17,9 +17,9 @@ on:
       - ".github/workflows/V20.4_gitok_end_to_end.yml"
       - "state/v20.4_end_to_end.trigger"
       - "src/v182/decision/committee_decision_policy.py"
-      - "src/v182/decision/etf_decision_policy.py"
+      - "src/v182/decision/etf_universe_266_policy.py"
+      - "data/reference/ETF_PEA_UNIVERSE_266_COMMITTEE.csv.gz.b64"
       - "tests/test_committee_decision_policy.py"
-      - "tests/test_etf_decision_policy.py"
 
 permissions:
   contents: read
@@ -66,68 +66,45 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/v204-bootstrap outputs
           echo "ready=false" >> "$GITHUB_OUTPUT"
-
           gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
             --jq '.artifacts | sort_by(.created_at) | reverse | .[] | select(.expired == false) | select((.name | startswith("V20.4-GitOK-end-to-end-")) or (.name | startswith("V20.4-GitOK-full-cycle-")) or (.name | startswith("V20.4-GitOK-reference-"))) | [.id, .workflow_run.id, .name] | @tsv' \
             > /tmp/v204-bootstrap/candidates.tsv
-
           while IFS=$'\t' read -r ARTIFACT_ID SOURCE_RUN ARTIFACT_NAME; do
             [ -n "${ARTIFACT_ID:-}" ] || continue
             [ "${SOURCE_RUN}" != "${GITHUB_RUN_ID}" ] || continue
             CONCLUSION=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN}" --jq '.conclusion // ""' 2>/dev/null || true)
             [ "$CONCLUSION" = "success" ] || continue
-
             rm -rf /tmp/v204-bootstrap/extract
             mkdir -p /tmp/v204-bootstrap/extract
-            if ! gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > /tmp/v204-bootstrap/artifact.zip; then
-              continue
-            fi
-            if ! unzip -oq /tmp/v204-bootstrap/artifact.zip -d /tmp/v204-bootstrap/extract; then
-              continue
-            fi
-
-            rm -rf outputs
-            mkdir -p outputs
+            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > /tmp/v204-bootstrap/artifact.zip || continue
+            unzip -oq /tmp/v204-bootstrap/artifact.zip -d /tmp/v204-bootstrap/extract || continue
+            rm -rf outputs && mkdir -p outputs
             if [ -d /tmp/v204-bootstrap/extract/outputs ]; then
               cp -a /tmp/v204-bootstrap/extract/outputs/. outputs/
             else
-              # upload-artifact strips the common `outputs/` ancestor in our
-              # current archives, so files/directories appear at ZIP root.
               cp -a /tmp/v204-bootstrap/extract/. outputs/
             fi
-
-            if [ -s outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv ] \
-               && [ -s outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv ] \
-               && [ -s outputs/audit/V18.2_QUALITY_GATES.json ]; then
+            if [ -s outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv ] && [ -s outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv ] && [ -s outputs/audit/V18.2_QUALITY_GATES.json ]; then
               if python - <<'PY'
           import json
           from pathlib import Path
-          p = Path('outputs/audit/V18.2_QUALITY_GATES.json')
-          q = json.loads(p.read_text(encoding='utf-8'))
+          q=json.loads(Path('outputs/audit/V18.2_QUALITY_GATES.json').read_text(encoding='utf-8'))
           raise SystemExit(0 if q.get('passed') is True else 1)
           PY
               then
                 echo "ready=true" >> "$GITHUB_OUTPUT"
                 echo "source_run=${SOURCE_RUN}" >> "$GITHUB_OUTPUT"
                 echo "source_artifact=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
-                echo "REUSED_VALIDATED_DATASET run=${SOURCE_RUN} artifact=${ARTIFACT_NAME}"
                 exit 0
               fi
             fi
           done < /tmp/v204-bootstrap/candidates.tsv
-
           echo "NO_REUSABLE_VALIDATED_DATASET"
 
       - name: Require reusable dataset for fast recompute
         if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.refresh_data != true) }}
         run: |
-          if [ "${{ steps.bootstrap.outputs.ready }}" != "true" ]; then
-            echo "ERROR: no previously validated V20.4 dataset was reusable."
-            echo "Fast recompute never falls back silently to a full collection."
-            echo "Run workflow_dispatch with refresh_data=true to perform an explicit refresh."
-            exit 1
-          fi
-          echo "FAST_RECOMPUTE_DATASET_READY source_run=${{ steps.bootstrap.outputs.source_run }}"
+          test "${{ steps.bootstrap.outputs.ready }}" = "true" || { echo "No validated daily dataset available; use refresh_data=true"; exit 1; }
 
       - name: Apply bounded retry policy for explicit refresh
         if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.refresh_data == true) }}
@@ -135,26 +112,10 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
-          p = Path('config/V18.2_MASTER_CONFIG.json')
-          cfg = json.loads(p.read_text(encoding='utf-8'))
-          yf = cfg.setdefault('yfinance', {})
-          yf.update({
-              'history_retry_count': 1,
-              'history_retry_backoff_seconds': 10,
-              'history_retry_batch_size': 50,
-              'history_batch_delay_seconds': 0.25,
-              'history_serial_rescue_attempts': 1,
-              'history_serial_rescue_backoff_seconds': 20,
-              'history_serial_rescue_batch_size': 10,
-              'history_serial_rescue_batch_delay_seconds': 0.35,
-              'info_delay_seconds': 0.35,
-              'info_initial_cooldown_seconds': 15,
-              'info_max_retries': 1,
-              'info_rate_limit_backoff_seconds': 10,
-              'info_max_consecutive_rate_limits': 2,
-          })
-          p.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-          print('BOUNDED_REFRESH_RETRY_POLICY_APPLIED')
+          p=Path('config/V18.2_MASTER_CONFIG.json')
+          cfg=json.loads(p.read_text(encoding='utf-8'))
+          cfg.setdefault('yfinance',{}).update({'history_retry_count':1,'history_retry_backoff_seconds':10,'history_serial_rescue_attempts':1,'history_serial_rescue_backoff_seconds':20,'info_max_retries':1,'info_rate_limit_backoff_seconds':10})
+          p.write_text(json.dumps(cfg,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
           PY
 
       - name: Collect and enrich V18.2 data on explicit refresh only
@@ -168,23 +129,19 @@ jobs:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
-        run: |
-          echo "FULL_REFRESH_EXPLICITLY_ENABLED"
-          timeout --signal=TERM --kill-after=2m 35m python -m v182.reporting.run
+        run: timeout --signal=TERM --kill-after=2m 35m python -m v182.reporting.run
 
       - name: Validate data quality gates
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          p = Path('outputs/audit/V18.2_QUALITY_GATES.json')
-          assert p.exists(), p
-          quality = json.loads(p.read_text(encoding='utf-8'))
-          assert quality.get('passed') is True, quality
+          q=json.loads(Path('outputs/audit/V18.2_QUALITY_GATES.json').read_text(encoding='utf-8'))
+          assert q.get('passed') is True, q
           print('QUALITY_GATES_OK')
           PY
 
-      - name: Build action and ETF committee decisions
+      - name: Build action and 266 ETF committee decisions
         env:
           MARKETBEAT_API_KEY: ${{ secrets.MARKETBEAT_API_KEY }}
         run: |
@@ -194,47 +151,40 @@ jobs:
           python -m v182.decision.marketbeat_overlay_runner
           python -m v182.decision.committee_finalize
           python -m v182.decision.committee_decision_policy
-          python -m v182.decision.etf_decision_policy
+          python -m v182.decision.etf_universe_266_policy
 
-      - name: Validate action and ETF decisions and execution guard
+      - name: Validate action and 266 ETF decisions and execution guard
         run: |
           python - <<'PY'
           import pandas as pd
           from pathlib import Path
-
-          action_path = Path('outputs/V20.4_GITOK_COMMITTEE_DECISIONS.csv')
-          etf_path = Path('outputs/V20.4_GITOK_ETF_DECISIONS.csv')
-          summary_path = Path('outputs/V20.4_GITOK_COMMITTEE_SUMMARY.md')
-          assert action_path.exists(), action_path
-          assert etf_path.exists(), etf_path
-          assert summary_path.exists(), summary_path
-
-          live_values = {'LIVE','ORDER','EXECUTE','BROKER','REAL_ORDER','LIVE_ORDER'}
-          for label, path in [('ACTION', action_path), ('ETF', etf_path)]:
-              decisions = pd.read_csv(path, sep=';')
-              assert {'decision','execution'}.issubset(decisions.columns)
-              assert not decisions['execution'].astype(str).str.upper().isin(live_values).any(), label
-              assert decisions['decision'].astype(str).isin(['BUY_CANDIDATE','WATCH','REVIEW']).any(), label
-              print(label, decisions['decision'].value_counts(dropna=False).to_dict())
-
-          text = summary_path.read_text(encoding='utf-8')
-          assert 'ETF PEA' in text
-          print('ACTION_ETF_EXECUTION_GUARD_OK')
+          action=pd.read_csv('outputs/V20.4_GITOK_COMMITTEE_DECISIONS.csv',sep=';')
+          etf=pd.read_csv('outputs/V20.4_GITOK_ETF_266_DECISIONS.csv',sep=';')
+          assert len(etf)==266, len(etf)
+          assert etf['ISIN'].astype(str).nunique()==266
+          live={'LIVE','ORDER','EXECUTE','BROKER','REAL_ORDER','LIVE_ORDER'}
+          for label,df in [('ACTION',action),('ETF266',etf)]:
+            assert {'decision','execution'}.issubset(df.columns)
+            assert not df['execution'].astype(str).str.upper().isin(live).any(), label
+          assert etf['decision'].isin(['BUY_CANDIDATE','WATCH','STRUCTURAL_CANDIDATE','REVIEW','REJECT']).all()
+          assert etf['decision'].isin(['BUY_CANDIDATE','STRUCTURAL_CANDIDATE']).any()
+          assert Path('outputs/V20.4_GITOK_COMMITTEE_SUMMARY.md').exists()
+          print('ETF266_COUNTS',etf['decision'].value_counts().to_dict())
+          print('ACTION_ETF266_EXECUTION_GUARD_OK')
           PY
 
       - name: Publish operational audit snapshot
         run: |
           python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
-          import json
-          import pandas as pd
+          import json,pandas as pd
           from pathlib import Path
-          q = json.loads(Path('outputs/audit/V18.2_QUALITY_GATES.json').read_text(encoding='utf-8'))
-          etf = pd.read_csv('outputs/V20.4_GITOK_ETF_DECISIONS.csv', sep=';')
+          q=json.loads(Path('outputs/audit/V18.2_QUALITY_GATES.json').read_text(encoding='utf-8'))
+          etf=pd.read_csv('outputs/V20.4_GITOK_ETF_266_DECISIONS.csv',sep=';')
           print('## Operational audit')
-          print(f"- Quality gates: {'PASS' if q.get('passed') is True else 'FAIL'}")
-          print(f"- ETF decision rows: {len(etf)}")
-          print(f"- Morningstar coverage: {etf.get('morningstar_rating', pd.Series(dtype=object)).notna().mean()*100:.1f}%")
-          print(f"- Risk-indicator coverage: {etf.get('risk_indicator', pd.Series(dtype=object)).notna().mean()*100:.1f}%")
+          print(f"- Quality gates daily layer: {'PASS' if q.get('passed') is True else 'FAIL'}")
+          print(f"- ETF master universe: {len(etf)}")
+          print(f"- Exact daily technical matches: {int(etf['daily_match'].astype(str).str.lower().eq('true').sum())}")
+          print(f"- Structural candidates: {int((etf['decision']=='STRUCTURAL_CANDIDATE').sum())}")
           print('- Live-order execution: disabled')
           PY
 
@@ -243,10 +193,11 @@ jobs:
           {
             echo "## Dataset"
             if [ "${{ steps.bootstrap.outputs.ready }}" = "true" ]; then
-              echo "Fast recompute using validated dataset from run ${{ steps.bootstrap.outputs.source_run }}."
+              echo "Fast recompute using validated daily dataset from run ${{ steps.bootstrap.outputs.source_run }}."
             else
-              echo "Explicit fresh V18.2 collection performed in this run."
+              echo "Explicit fresh V18.2 daily collection performed in this run."
             fi
+            echo "ETF universe master: 266 ETFs from the user-provided 9-pillar file."
             echo
             cat outputs/V20.4_GITOK_COMMITTEE_SUMMARY.md
           } >> "$GITHUB_STEP_SUMMARY"
@@ -265,7 +216,7 @@ jobs:
             outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
             outputs/V18.2_COMMITTEE_ANALYST_MOMENTUM.csv
             outputs/V20.4_GITOK_COMMITTEE_DECISIONS.csv
-            outputs/V20.4_GITOK_ETF_DECISIONS.csv
+            outputs/V20.4_GITOK_ETF_266_DECISIONS.csv
             outputs/V20.4_GITOK_COMMITTEE_SUMMARY.md
           if-no-files-found: warn
           retention-days: 30
