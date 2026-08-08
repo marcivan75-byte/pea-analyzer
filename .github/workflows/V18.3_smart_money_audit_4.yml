@@ -1,0 +1,147 @@
+name: V18.3 Smart Money Audit 4 - CI Security
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/smart-money-v1
+    paths:
+      - ".github/workflows/V18.3_smart_money_audit_4.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v18-3-smart-money-audit-4-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 8
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install validated dependency set
+        run: pip install -c constraints-ci.txt -e .[test]
+
+      - name: CI static regression checks
+        run: |
+          python -m pip check
+          python -m compileall -q src/v183 tests/test_smart_money_v183.py
+          ruff check --select E9,F63,F7,F82 src/v183 tests/test_smart_money_v183.py
+          pytest -q tests/test_smart_money_v183.py
+
+      - name: Validate CI and security contract
+        run: |
+          mkdir -p outputs/audit
+          python - <<'PY'
+          import ast
+          import json
+          import re
+          import subprocess
+          from pathlib import Path
+
+          root = Path('.')
+          workflow_paths = sorted((root / '.github/workflows').glob('V18.3_smart_money_audit_*.yml'))
+          source_paths = sorted((root / 'src/v183').rglob('*.py'))
+          config_path = root / 'config/V18.3_SMART_MONEY_CONFIG.json'
+          proposed_path = root / 'docs/V18.3_workflow_proposed.yml'
+
+          cfg = json.loads(config_path.read_text())
+          added = subprocess.check_output(
+              ['git', 'diff', '--name-only', 'a4175f8b263aee35c76c4b362dfee567ba8bd792', 'HEAD'],
+              text=True,
+          ).splitlines()
+
+          dangerous_extensions = ('.pem', '.key', '.p12', '.pfx')
+          secret_file_added = any(
+              p.endswith(dangerous_extensions) or Path(p).name.startswith('.env')
+              for p in added
+          )
+
+          workflow_text = '\n'.join(p.read_text() for p in workflow_paths)
+          proposed_text = proposed_path.read_text() if proposed_path.exists() else ''
+
+          hardcoded_secret_patterns = [
+              re.compile(r'(?i)(api[_-]?key|token|secret|password)\s*[=:]\s*["\'][A-Za-z0-9_\-]{16,}["\']'),
+              re.compile(r'\bsk-[A-Za-z0-9_\-]{16,}\b'),
+              re.compile(r'\bpmx_[A-Za-z0-9]{16,}\b'),
+          ]
+          scan_text = '\n'.join(p.read_text() for p in source_paths) + '\n' + config_path.read_text() + '\n' + workflow_text
+          hardcoded_secret = any(rx.search(scan_text) for rx in hardcoded_secret_patterns)
+
+          unsafe_calls = []
+          request_calls_without_timeout = []
+          for path in source_paths:
+              tree = ast.parse(path.read_text(), filename=str(path))
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.Call):
+                      name = None
+                      if isinstance(node.func, ast.Name):
+                          name = node.func.id
+                      elif isinstance(node.func, ast.Attribute):
+                          base = node.func.value.id if isinstance(node.func.value, ast.Name) else None
+                          name = f'{base}.{node.func.attr}' if base else node.func.attr
+                      if name in {'eval', 'exec', 'os.system'}:
+                          unsafe_calls.append(f'{path}:{getattr(node, "lineno", 0)}:{name}')
+                      if name in {'requests.get', 'requests.post', 'requests.put', 'requests.patch', 'requests.delete'}:
+                          if not any(k.arg == 'timeout' for k in node.keywords):
+                              request_calls_without_timeout.append(f'{path}:{getattr(node, "lineno", 0)}:{name}')
+                      if name in {'subprocess.run', 'subprocess.Popen', 'subprocess.call', 'subprocess.check_output'}:
+                          for kw in node.keywords:
+                              if kw.arg == 'shell' and isinstance(kw.value, ast.Constant) and kw.value.value is True:
+                                  unsafe_calls.append(f'{path}:{getattr(node, "lineno", 0)}:{name}:shell=True')
+
+          checks = {
+              'four_audit_workflows_present': len(workflow_paths) == 4,
+              'audit_workflows_feature_only': all('feature/smart-money-v1' in p.read_text() for p in workflow_paths),
+              'audit_workflows_read_only': all('contents: write' not in p.read_text() and 'pull-requests: write' not in p.read_text() for p in workflow_paths),
+              'no_active_create_pull_request': 'create-pull-request' not in workflow_text,
+              'no_active_schedule': 'schedule:' not in workflow_text,
+              'node24_checkout_v6': all('actions/checkout@v6' in p.read_text() for p in workflow_paths),
+              'node24_setup_python_v6': all('actions/setup-python@v6' in p.read_text() for p in workflow_paths),
+              'node24_upload_artifact_v6': all('actions/upload-artifact@v6' in p.read_text() for p in workflow_paths),
+              'proposed_workflow_not_active': proposed_path.exists() and not (root / '.github/workflows/V18.3_workflow_proposed.yml').exists(),
+              'proposed_pr_action_v8': 'peter-evans/create-pull-request@v8' in proposed_text,
+              'no_secret_file_added': not secret_file_added,
+              'no_hardcoded_secret_detected': not hardcoded_secret,
+              'network_requests_have_timeout': not request_calls_without_timeout,
+              'no_unsafe_dynamic_execution': not unsafe_calls,
+              'finnhub_ownership_disabled': cfg['sources']['finnhub_ownership'].get('enabled') is False,
+              'shadow_only': cfg.get('shadow_mode') is True and cfg.get('score_application') == 'SHADOW_ONLY',
+          }
+
+          report = {
+              'audit': '4/4',
+              'scope': 'ci_security',
+              'added_files': added,
+              'unsafe_calls': unsafe_calls,
+              'request_calls_without_timeout': request_calls_without_timeout,
+              'checks': [{'name': k, 'passed': bool(v)} for k, v in checks.items()],
+          }
+          report['passed'] = all(c['passed'] for c in report['checks'])
+          Path('outputs/audit/V18.3_SMART_MONEY_AUDIT_4.json').write_text(
+              json.dumps(report, indent=2), encoding='utf-8'
+          )
+          assert report['passed'], report
+          print('SMART_MONEY_AUDIT_4_OK')
+          PY
+
+      - name: Upload audit 4 evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: V18.3-smart-money-audit-4-${{ github.run_id }}
+          path: |
+            outputs/audit/V18.3_SMART_MONEY_AUDIT_4.json
+            config/V18.3_SMART_MONEY_CONFIG.json
+            docs/V18.3_workflow_proposed.yml
+          retention-days: 30
