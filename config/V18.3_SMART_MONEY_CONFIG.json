@@ -1,122 +1,166 @@
 {
-  "version": "18.3.0-preintegration",
+  "version": "18.3.0-rc1",
   "module": "SMART_MONEY_V1",
   "enabled": true,
   "shadow_mode": true,
   "score_application": "SHADOW_ONLY",
+  "calibration": {
+    "status": "STRUCTURAL_CALIBRATED_RC1",
+    "method": "CONSERVATIVE_RISK_BUDGET_MONOTONICITY",
+    "active_scoring_allowed": false,
+    "empirical_walk_forward_required_for_active_scoring": true,
+    "target_max_action_score_delta": 5.0,
+    "target_max_etf_score_delta": 3.5,
+    "minimum_shadow_observations_for_empirical_fit": 20,
+    "minimum_distinct_run_dates_for_empirical_fit": 20
+  },
   "sources": {
     "amf_short_open_data": {
       "enabled": true,
       "evidence": "A",
       "stable_resource_url": "https://www.data.gouv.fr/api/1/datasets/r/c2539d1c-8531-4937-9cba-3bd8e9786cc5",
-      "freshness_days": 2
+      "freshness_days": 2,
+      "history_depth_per_holder": 4
     },
     "amf_bdif_official_import": {
       "enabled": true,
       "mode": "FAIL_CLOSED_NORMALIZED_OFFICIAL_IMPORT",
-      "evidence": "A"
+      "evidence": "A",
+      "normalized_input": "inputs/V18.3_AMF_OFFICIAL_EVENTS.csv"
     },
     "finnhub_insiders": {
       "enabled": true,
       "evidence": "B",
       "requires_secret": "FINNHUB_API_KEY",
       "limit_per_call": 100,
-      "fallback_only_when_amf_official_missing": true
+      "fallback_only_when_amf_official_missing": true,
+      "max_symbols_per_run": 120,
+      "delay_seconds": 1.05
     },
     "finnhub_ownership": {
       "enabled": false,
       "premium_optional": true,
       "failure_policy": "DO_NOT_BLOCK"
+    },
+    "etf_flow_normalized_import": {
+      "enabled": true,
+      "evidence": "A_OR_B_AS_DECLARED",
+      "normalized_input": "inputs/V18.3_ETF_FLOW_SNAPSHOTS.csv",
+      "state_file": "state/smart_money/ETF_FLOW_HISTORY.parquet",
+      "failure_policy": "BOOTSTRAP_OR_PARTIAL_DO_NOT_FABRICATE"
     }
   },
   "caps": {
-    "insider": 3.0,
-    "significant_holder": 2.0,
-    "short": 1.5,
-    "tape": 1.5,
-    "wis": 7.0,
-    "flow_core": 3.0,
-    "flow_persistence": 1.0,
-    "etf_tape": 1.0,
-    "ifs": 5.0
+    "insider": 2.5,
+    "significant_holder": 1.5,
+    "short": 1.25,
+    "tape": 1.0,
+    "wis": 5.0,
+    "flow_core": 2.25,
+    "flow_persistence": 0.65,
+    "etf_tape": 0.6,
+    "ifs": 3.5
   },
   "insiders": {
-    "sell_asymmetry": 0.72,
+    "sell_asymmetry": 0.58,
     "cluster_window_days": 20,
     "cluster_min_distinct_buyers": 2,
-    "cluster_bonus_per_extra_buyer": 0.35,
-    "cluster_bonus_max": 0.9,
-    "size_floor": 0.45,
-    "size_cap": 1.4,
+    "cluster_bonus_per_extra_buyer": 0.3,
+    "cluster_bonus_max": 0.6,
+    "size_floor": 0.4,
+    "size_cap": 1.25,
     "role_factor": {
       "CEO": 1.0,
       "DG": 1.0,
       "PRESIDENT_EXECUTIF": 1.0,
-      "CFO": 0.95,
-      "COO": 0.85,
-      "EXECUTIVE_DIRECTOR": 0.8,
-      "DIRECTOR": 0.65,
-      "OTHER_PDMR": 0.55,
-      "CLOSELY_ASSOCIATED": 0.4
+      "CFO": 0.9,
+      "COO": 0.8,
+      "EXECUTIVE_DIRECTOR": 0.75,
+      "DIRECTOR": 0.6,
+      "OTHER_PDMR": 0.5,
+      "CLOSELY_ASSOCIATED": 0.35
     },
     "recency_bands": [
       {"max_days": 5, "factor": 1.0},
       {"max_days": 15, "factor": 0.9},
-      {"max_days": 30, "factor": 0.75},
-      {"max_days": 60, "factor": 0.55},
-      {"max_days": 90, "factor": 0.35},
-      {"max_days": 180, "factor": 0.15},
+      {"max_days": 30, "factor": 0.72},
+      {"max_days": 60, "factor": 0.5},
+      {"max_days": 90, "factor": 0.3},
+      {"max_days": 180, "factor": 0.12},
       {"max_days": 10000, "factor": 0.0}
     ]
   },
   "thresholds": {
     "bands": [
-      {"threshold_pct": 5, "weight": 0.5},
-      {"threshold_pct": 10, "weight": 0.8},
-      {"threshold_pct": 15, "weight": 1.0},
-      {"threshold_pct": 25, "weight": 1.2},
-      {"threshold_pct": 30, "weight": 1.5}
+      {"threshold_pct": 5, "weight": 0.4},
+      {"threshold_pct": 10, "weight": 0.65},
+      {"threshold_pct": 15, "weight": 0.85},
+      {"threshold_pct": 25, "weight": 1.05},
+      {"threshold_pct": 30, "weight": 1.25}
+    ],
+    "recency_bands": [
+      {"max_days": 30, "factor": 1.0},
+      {"max_days": 90, "factor": 0.8},
+      {"max_days": 180, "factor": 0.55},
+      {"max_days": 365, "factor": 0.3},
+      {"max_days": 10000, "factor": 0.0}
     ],
     "control_event_threshold_pct": 30
   },
   "shorts": {
     "public_threshold_pct": 0.5,
     "notification_threshold_pct": 0.1,
-    "delta_sensitivity": 1.25,
+    "delta_sensitivity": 1.0,
     "censored_confidence_multiplier": 0.65
   },
   "tape": {
-    "min_volume_z": 1.5,
+    "min_volume_z": 1.75,
     "min_dollar_volume_z": 1.5,
-    "min_abs_clv": 0.45,
+    "min_abs_clv": 0.4,
     "earnings_event_multiplier": 0.5,
     "index_rebalance_multiplier": 0.55,
     "corporate_action_multiplier": 0.0
   },
   "etf_flows": {
-    "flow20_sensitivity": 16.0,
-    "z20_sensitivity": 0.35,
+    "flow20_sensitivity": 12.0,
+    "z20_sensitivity": 0.3,
     "require_nav_adjustment": true,
-    "aum_change_alone_forbidden": true
+    "aum_change_alone_forbidden": true,
+    "min_history_observations": 20,
+    "max_snapshot_age_days": 10,
+    "winsorize_daily_flow_pct": 0.12
   },
   "confidence": {
     "floor": 0.0,
-    "low_threshold": 0.6,
-    "low_confidence_effective_cap": 3.0
+    "low_threshold": 0.65,
+    "low_confidence_effective_cap": 1.75
   },
   "decision_gates": {
     "base_score_min_for_shortlist_promotion": 60,
     "require_technical_confirmation_for_buy": true,
-    "mandatory_risk_review_wis_lte": -4.0,
-    "block_new_preorder_wis_lte": -5.0,
+    "mandatory_risk_review_wis_lte": -3.5,
+    "block_new_preorder_wis_lte": -4.5,
     "pea_eligibility_hard_gate": true,
-    "identity_quarantine_hard_gate": true
+    "identity_quarantine_hard_gate": true,
+    "active_scoring_requires_empirical_calibration": true
+  },
+  "runtime": {
+    "priority_action_limit": 300,
+    "finnhub_fallback_limit": 120,
+    "persist_event_history_days": 730,
+    "persist_score_history_days": 730,
+    "fail_if_v182_quality_fails": true
   },
   "smart_money_quality_gates": {
     "event_isin_valid_min_pct": 99.0,
     "duplicate_event_max": 0,
     "source_a_event_min_pct": 35.0,
     "max_short_data_age_days": 2,
-    "no_lookahead_required": true
+    "no_lookahead_required": true,
+    "shadow_score_final_match_min_pct": 100.0,
+    "etf_provider_registry_min_pct": 100.0,
+    "calibration_status_required": "STRUCTURAL_CALIBRATED_RC1",
+    "max_abs_action_shadow_delta": 5.0,
+    "max_abs_etf_shadow_delta": 3.5
   }
 }
