@@ -1,5 +1,4 @@
 name: V18.3 RC1 Shadow Run - Smart Money Disabled
-# manual decision refresh: 2026-08-08T15:48+02:00
 
 on:
   workflow_dispatch:
@@ -8,6 +7,7 @@ on:
       - feature/smart-money-v1
     paths:
       - ".github/workflows/V18.3_smart_money_shadow.yml"
+      - "state/v20.4_committee.trigger"
 
 permissions:
   contents: read
