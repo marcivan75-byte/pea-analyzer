@@ -1,4 +1,4 @@
-name: V18.3 RC1 Shadow Run - Smart Money Disabled
+name: V20.4 GitOK Committee Reference - No Smart Money
 
 on:
   workflow_dispatch:
@@ -12,12 +12,8 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: v18-3-rc1-baseline-shadow-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
-  rc1-shadow-run:
+  committee-reference:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -34,7 +30,7 @@ jobs:
       - name: Install validated dependency set
         run: pip install -c constraints-ci.txt -e .[test]
 
-      - name: RC1 baseline preflight
+      - name: Reference baseline preflight
         run: |
           python -m pip check
           python -m compileall -q src tests
@@ -44,7 +40,7 @@ jobs:
 
       - name: Execute validated V18.2 pipeline
         env:
-          V182_RUN_ID: v183-rc1-nosmart-${{ github.run_id }}-${{ github.run_attempt }}
+          V182_RUN_ID: v204-gitok-reference-${{ github.run_id }}-${{ github.run_attempt }}
           MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
           OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
@@ -53,7 +49,7 @@ jobs:
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
         run: python -m v182.reporting.run
 
-      - name: Complete V18.2 decision layers
+      - name: Complete committee decision layers
         env:
           MARKETBEAT_API_KEY: ${{ secrets.MARKETBEAT_API_KEY }}
         run: |
@@ -63,25 +59,24 @@ jobs:
           python -m v182.decision.marketbeat_overlay_runner
           python -m v182.decision.committee_finalize
 
-      - name: Validate baseline outputs and invariants
+      - name: Validate V20.4 GitOK reference outputs
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-
           audit = Path('outputs/audit')
           quality_path = audit / 'V18.2_QUALITY_GATES.json'
           assert quality_path.exists(), quality_path
           quality = json.loads(quality_path.read_text())
           assert quality.get('passed') is True, quality
-          print('V18_3_RC1_NO_SMART_MONEY_BASELINE_OK', quality.get('status', 'passed'))
+          print('V20_4_GITOK_REFERENCE_OK', quality.get('status', 'passed'))
           PY
 
-      - name: Upload RC1 baseline shadow evidence
+      - name: Upload V20.4 GitOK committee evidence
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: V18.3-rc1-no-smart-money-${{ github.run_id }}
+          name: V20.4-GitOK-reference-${{ github.run_id }}
           path: |
             outputs/audit/V18.2_QUALITY_GATES.json
             outputs/gaps/**
