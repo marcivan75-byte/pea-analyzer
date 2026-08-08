@@ -75,7 +75,7 @@ jobs:
               return match.group(1) if match else ''
 
           def action_uses(text: str) -> list[str]:
-              return re.findall(r'(?m)^\s*-\s+uses:\s*([^\s#]+)', text)
+              return re.findall(r'(?m)^\s+(?:-\s+)?uses:\s*([^\s#]+)', text)
 
           hardcoded_secret_patterns = [
               re.compile(r'(?i)(api[_-]?key|token|secret|password)\s*[=:]\s*["\'][A-Za-z0-9_\-]{16,}["\']'),
