@@ -35,20 +35,27 @@ def enrich_history(frame: pd.DataFrame, winsorize_daily_flow_pct: float | None =
     return f
 
 
-def score(history: pd.DataFrame, cfg: dict) -> tuple[float, float, dict]:
+def score(history: pd.DataFrame, cfg: dict, as_of: str | None = None) -> tuple[float, float, dict]:
     if history.empty:
         return 0.0, 0.0, {"flow_status": "NO_HISTORY", "flow_history_snapshots": 0, "flow_observations": 0}
     flow_cfg = cfg["etf_flows"]
     min_observations = int(flow_cfg.get("min_history_observations", 20))
     f = enrich_history(history, winsorize_daily_flow_pct=flow_cfg.get("winsorize_daily_flow_pct"))
     flow_rows = f["flow_pct"].dropna()
+    latest_date = None if f.empty else pd.Timestamp(f.iloc[-1]["date"])
     meta_base = {
         "flow_history_snapshots": int(len(f)),
         "flow_observations": int(len(flow_rows)),
-        "flow_latest_date": None if f.empty else pd.Timestamp(f.iloc[-1]["date"]).strftime("%Y-%m-%d"),
+        "flow_latest_date": None if latest_date is None else latest_date.strftime("%Y-%m-%d"),
     }
     if len(flow_rows) < min_observations:
         return 0.0, 0.0, {**meta_base, "flow_status": "INSUFFICIENT_HISTORY"}
+
+    reference = pd.Timestamp(as_of[:10]) if as_of else pd.Timestamp.utcnow().tz_localize(None).normalize()
+    age_days = max(0, int((reference - latest_date.normalize()).days)) if latest_date is not None else 99999
+    meta_base["flow_age_days"] = age_days
+    if age_days > int(flow_cfg.get("max_snapshot_age_days", 10)):
+        return 0.0, 0.0, {**meta_base, "flow_status": "STALE_HISTORY"}
 
     row = f.iloc[-1]
     pct20 = row.get("flow_pct_20d")
