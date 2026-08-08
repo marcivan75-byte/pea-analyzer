@@ -32,7 +32,7 @@ concurrency:
 jobs:
   end-to-end-committee:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -59,7 +59,7 @@ jobs:
 
       - name: Reuse latest successful validated dataset
         id: bootstrap
-        if: ${{ github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.refresh_data != true) }}
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.refresh_data != true) }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -73,6 +73,7 @@ jobs:
 
           while IFS=$'\t' read -r ARTIFACT_ID SOURCE_RUN ARTIFACT_NAME; do
             [ -n "${ARTIFACT_ID:-}" ] || continue
+            [ "${SOURCE_RUN}" != "${GITHUB_RUN_ID}" ] || continue
             CONCLUSION=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN}" --jq '.conclusion // ""' 2>/dev/null || true)
             [ "$CONCLUSION" = "success" ] || continue
 
@@ -115,9 +116,21 @@ jobs:
 
           echo "NO_REUSABLE_VALIDATED_DATASET"
 
-      - name: Collect and enrich V18.2 data when refresh is required
-        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.refresh_data == true) || steps.bootstrap.outputs.ready != 'true' }}
+      - name: Require reusable dataset for fast recompute
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.refresh_data != true) }}
+        run: |
+          if [ "${{ steps.bootstrap.outputs.ready }}" != "true" ]; then
+            echo "ERROR: no previously validated V20.4 dataset was reusable."
+            echo "Fast recompute never falls back silently to a full collection."
+            echo "Run workflow_dispatch with refresh_data=true to perform an explicit refresh."
+            exit 1
+          fi
+          echo "FAST_RECOMPUTE_DATASET_READY source_run=${{ steps.bootstrap.outputs.source_run }}"
+
+      - name: Collect and enrich V18.2 data on explicit refresh only
+        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.refresh_data == true) }}
         env:
+          PYTHONUNBUFFERED: "1"
           V182_RUN_ID: v204-e2e-${{ github.run_id }}-${{ github.run_attempt }}
           MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
           OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
@@ -125,7 +138,9 @@ jobs:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
-        run: python -m v182.reporting.run
+        run: |
+          echo "FULL_REFRESH_EXPLICITLY_ENABLED"
+          timeout --signal=TERM --kill-after=2m 35m python -m v182.reporting.run
 
       - name: Validate data quality gates
         run: |
@@ -182,9 +197,9 @@ jobs:
           {
             echo "## Dataset"
             if [ "${{ steps.bootstrap.outputs.ready }}" = "true" ]; then
-              echo "Reused validated dataset from run ${{ steps.bootstrap.outputs.source_run }}."
+              echo "Fast recompute using validated dataset from run ${{ steps.bootstrap.outputs.source_run }}."
             else
-              echo "Fresh V18.2 collection performed in this run."
+              echo "Explicit fresh V18.2 collection performed in this run."
             fi
             echo
             cat outputs/V20.4_GITOK_COMMITTEE_SUMMARY.md
