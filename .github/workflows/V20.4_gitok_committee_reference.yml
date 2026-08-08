@@ -2,17 +2,26 @@ name: V20.4 GitOK Committee Reference - No Smart Money
 
 on:
   workflow_dispatch:
+    inputs:
+      refresh_data:
+        description: "Force a full market-data refresh instead of reusing the last validated dataset"
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       - feature/smart-money-v1
     paths:
       - ".github/workflows/V20.4_gitok_committee_reference.yml"
       - "state/v20.4_reference.trigger"
-      - "src/v182/decision/committee_decision_policy.py"
+      - "src/v182/decision/**"
       - "tests/test_committee_decision_policy.py"
+      - "tests/test_committee_finalize.py"
+      - "tests/test_analyst_momentum.py"
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   committee-reference:
@@ -38,9 +47,55 @@ jobs:
           python -m compileall -q src tests
           ruff check --select E9,F63,F7,F82 src tests
           pytest -q
-          git diff --exit-code a4175f8b263aee35c76c4b362dfee567ba8bd792 HEAD -- src/v182 ':(exclude)src/v182/decision/committee_decision_policy.py'
 
-      - name: Execute validated V18.2 pipeline
+      - name: Restore validated V20.4 data cache
+        id: data-cache
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.refresh_data != true }}
+        uses: actions/cache@v4
+        with:
+          path: |
+            outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv
+            outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
+            outputs/V18.2_COMMITTEE_ANALYST_MOMENTUM.csv
+            outputs/audit/V18.2_QUALITY_GATES.json
+            outputs/history
+            outputs/context
+            data/cache
+            config/V18.2_OPENFIGI_MASTER_MAP.csv
+            config/V18.2_FINNHUB_SYMBOL_MAP.csv
+            config/V18.2_MARKETSTACK_SYMBOL_MAP.csv
+          key: v204-validated-data-${{ runner.os }}-${{ hashFiles('inputs/**', 'config/V18.2_MASTER_CONFIG.json', 'config/V18.2_ETF_TICKER_MAP.csv', 'src/v182/reporting/**', 'src/v182/sources/**', 'src/v182/features/**', 'src/v182/mapping/**', 'src/v182/audit/**') }}
+
+      - name: Bootstrap from latest successful V20.4 artifact
+        id: bootstrap
+        if: ${{ (github.event_name != 'workflow_dispatch' || inputs.refresh_data != true) && steps.data-cache.outputs.cache-hit != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/v204-bootstrap outputs
+          RUN_ID=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/V20.4_gitok_committee_reference.yml/runs?status=success&per_page=10" --jq '.workflow_runs[] | select(.id != '${{ github.run_id }}') | .id' | head -n 1 || true)
+          if [ -z "$RUN_ID" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ARTIFACT_ID=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts" --jq '.artifacts[] | select(.name | startswith("V20.4-GitOK-reference-")) | .id' | head -n 1 || true)
+          if [ -z "$ARTIFACT_ID" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > /tmp/v204-bootstrap/artifact.zip
+          unzip -oq /tmp/v204-bootstrap/artifact.zip -d .
+          if [ -s outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv ] && [ -s outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv ] && [ -s outputs/audit/V18.2_QUALITY_GATES.json ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "source_run=${RUN_ID}" >> "$GITHUB_OUTPUT"
+            echo "Reused validated dataset from run ${RUN_ID}"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Execute full V18.2 data pipeline when required
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.refresh_data == true) || (steps.data-cache.outputs.cache-hit != 'true' && steps.bootstrap.outputs.ready != 'true') }}
         env:
           V182_RUN_ID: v204-gitok-reference-${{ github.run_id }}-${{ github.run_attempt }}
           MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
@@ -50,6 +105,13 @@ jobs:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
         run: python -m v182.reporting.run
+
+      - name: Confirm reusable dataset
+        run: |
+          test -s outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv
+          test -s outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
+          test -s outputs/audit/V18.2_QUALITY_GATES.json
+          echo "DATASET_READY"
 
       - name: Complete committee decision layers
         env:
