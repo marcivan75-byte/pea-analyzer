@@ -166,10 +166,15 @@ jobs:
           for label,df in [('ACTION',action),('ETF266',etf)]:
             assert {'decision','execution'}.issubset(df.columns)
             assert not df['execution'].astype(str).str.upper().isin(live).any(), label
-          assert etf['decision'].isin(['BUY_CANDIDATE','WATCH','STRUCTURAL_CANDIDATE','REVIEW','REJECT']).all()
-          assert etf['decision'].isin(['BUY_CANDIDATE','STRUCTURAL_CANDIDATE']).any()
+          allowed={'BUY_CANDIDATE','WATCH','STRUCTURAL_CANDIDATE','DATA_REQUIRED','REVIEW','REJECT'}
+          assert etf['decision'].isin(allowed).all(), set(etf['decision'])-allowed
+          assert {'daily_match_method','daily_match_confidence'}.issubset(etf.columns)
+          proxy=etf['daily_match_method'].astype(str).eq('NAME_FAMILY_PROXY')
+          assert not ((proxy) & (etf['decision']=='BUY_CANDIDATE')).any(), 'family proxy must not create BUY'
+          assert etf['decision'].isin(['BUY_CANDIDATE','STRUCTURAL_CANDIDATE','DATA_REQUIRED']).any()
           assert Path('outputs/V20.4_GITOK_COMMITTEE_SUMMARY.md').exists()
           print('ETF266_COUNTS',etf['decision'].value_counts().to_dict())
+          print('ETF266_MATCH_METHODS',etf['daily_match_method'].value_counts().to_dict())
           print('ACTION_ETF266_EXECUTION_GUARD_OK')
           PY
 
@@ -183,8 +188,12 @@ jobs:
           print('## Operational audit')
           print(f"- Quality gates daily layer: {'PASS' if q.get('passed') is True else 'FAIL'}")
           print(f"- ETF master universe: {len(etf)}")
-          print(f"- Exact daily technical matches: {int(etf['daily_match'].astype(str).str.lower().eq('true').sum())}")
+          print(f"- Daily matches total: {int(etf['daily_match'].astype(str).str.lower().eq('true').sum())}")
+          print(f"- Identity-grade matches: {int(pd.to_numeric(etf['daily_match_confidence'],errors='coerce').ge(0.95).sum())}")
+          print(f"- Family proxies: {int((etf['daily_match_method']=='NAME_FAMILY_PROXY').sum())}")
           print(f"- Structural candidates: {int((etf['decision']=='STRUCTURAL_CANDIDATE').sum())}")
+          print(f"- Data required: {int((etf['decision']=='DATA_REQUIRED').sum())}")
+          print(f"- True rejects: {int((etf['decision']=='REJECT').sum())}")
           print('- Live-order execution: disabled')
           PY
 
