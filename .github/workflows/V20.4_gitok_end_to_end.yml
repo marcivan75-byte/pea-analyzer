@@ -18,8 +18,11 @@ on:
       - "state/v20.4_end_to_end.trigger"
       - "src/v182/decision/committee_decision_policy.py"
       - "src/v182/decision/etf_universe_266_policy.py"
+      - "src/v182/decision/actions_universe_3609_policy.py"
       - "data/reference/ETF_PEA_UNIVERSE_266_COMMITTEE.csv.gz.b64"
+      - "data/external/ACTIONS_PEA_3609_LATEST.xlsx"
       - "tests/test_committee_decision_policy.py"
+      - "tests/test_actions_universe_3609_policy.py"
 
 permissions:
   contents: read
@@ -141,7 +144,7 @@ jobs:
           print('QUALITY_GATES_OK')
           PY
 
-      - name: Build action and 266 ETF committee decisions
+      - name: Build legacy action and 266 ETF committee decisions
         env:
           MARKETBEAT_API_KEY: ${{ secrets.MARKETBEAT_API_KEY }}
         run: |
@@ -153,7 +156,24 @@ jobs:
           python -m v182.decision.committee_decision_policy
           python -m v182.decision.etf_universe_266_policy
 
-      - name: Validate action and 266 ETF decisions and execution guard
+      - name: Detect canonical 3609 daily source
+        id: actions3609
+        run: |
+          if [ -s data/external/ACTIONS_PEA_3609_LATEST.xlsx ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "ACTIONS_3609_SOURCE_READY"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "ACTIONS_3609_SOURCE_MISSING: independent 18:00 updater must publish data/external/ACTIONS_PEA_3609_LATEST.xlsx"
+          fi
+
+      - name: Build 3609 actions multi-horizon committee
+        if: ${{ steps.actions3609.outputs.ready == 'true' }}
+        env:
+          V204_ACTIONS_3609_SOURCE: data/external/ACTIONS_PEA_3609_LATEST.xlsx
+        run: python -m v182.decision.actions_universe_3609_policy
+
+      - name: Validate action, 3609 and ETF decisions and execution guard
         run: |
           python - <<'PY'
           import pandas as pd
@@ -171,11 +191,19 @@ jobs:
           assert {'daily_match_method','daily_match_confidence'}.issubset(etf.columns)
           proxy=etf['daily_match_method'].astype(str).eq('NAME_FAMILY_PROXY')
           assert not ((proxy) & (etf['decision']=='BUY_CANDIDATE')).any(), 'family proxy must not create BUY'
-          assert etf['decision'].isin(['BUY_CANDIDATE','STRUCTURAL_CANDIDATE','DATA_REQUIRED']).any()
-          assert Path('outputs/V20.4_GITOK_COMMITTEE_SUMMARY.md').exists()
+          if Path('outputs/V20.4_GITOK_ACTIONS_3609_DECISIONS.csv').exists():
+            a3609=pd.read_csv('outputs/V20.4_GITOK_ACTIONS_3609_DECISIONS.csv',sep=';')
+            assert len(a3609)>=3500, len(a3609)
+            required={'score_short_term','score_medium_term','score_long_term','short_thesis_score','T0','T1_1_4w','T2_1_3m','T3_3_6m','T4_6_12m','T5_12_24m','decision','execution','identity_confidence'}
+            assert required.issubset(a3609.columns), required-set(a3609.columns)
+            assert not a3609['execution'].astype(str).str.upper().isin(live).any(), 'ACTION3609'
+            conf=pd.to_numeric(a3609['identity_confidence'],errors='coerce').fillna(0)
+            assert not ((a3609['decision']=='BUY_CANDIDATE') & (conf<0.92)).any(), 'unverified 3609 BUY'
+            assert not (a3609.loc[conf<0.92,'T1_entry_low'].notna()).any(), 'unverified 3609 T1 price'
+            print('ACTION3609_COUNTS',a3609['decision'].value_counts().to_dict())
+            print('ACTION3609_IDENTITY',a3609['identity_method'].value_counts().to_dict())
           print('ETF266_COUNTS',etf['decision'].value_counts().to_dict())
-          print('ETF266_MATCH_METHODS',etf['daily_match_method'].value_counts().to_dict())
-          print('ACTION_ETF266_EXECUTION_GUARD_OK')
+          print('ACTION_ETF3609_EXECUTION_GUARD_OK')
           PY
 
       - name: Publish operational audit snapshot
@@ -188,12 +216,18 @@ jobs:
           print('## Operational audit')
           print(f"- Quality gates daily layer: {'PASS' if q.get('passed') is True else 'FAIL'}")
           print(f"- ETF master universe: {len(etf)}")
-          print(f"- Daily matches total: {int(etf['daily_match'].astype(str).str.lower().eq('true').sum())}")
-          print(f"- Identity-grade matches: {int(pd.to_numeric(etf['daily_match_confidence'],errors='coerce').ge(0.95).sum())}")
-          print(f"- Family proxies: {int((etf['daily_match_method']=='NAME_FAMILY_PROXY').sum())}")
-          print(f"- Structural candidates: {int((etf['decision']=='STRUCTURAL_CANDIDATE').sum())}")
-          print(f"- Data required: {int((etf['decision']=='DATA_REQUIRED').sum())}")
-          print(f"- True rejects: {int((etf['decision']=='REJECT').sum())}")
+          print(f"- ETF daily matches total: {int(etf['daily_match'].astype(str).str.lower().eq('true').sum())}")
+          print(f"- ETF identity-grade matches: {int(pd.to_numeric(etf['daily_match_confidence'],errors='coerce').ge(0.95).sum())}")
+          p=Path('outputs/audit/V20.4_ACTIONS_3609_AUDIT.json')
+          if p.exists():
+            a=json.loads(p.read_text(encoding='utf-8'))
+            print(f"- Actions master universe: {a.get('rows')}")
+            print(f"- Actions source criteria: {a.get('source_columns')}")
+            print(f"- Actions valid source ISIN: {a.get('source_isin_valid')}")
+            print(f"- Actions identity methods: {a.get('identity_methods')}")
+            print(f"- Actions decisions: {a.get('decision_counts')}")
+          else:
+            print('- Actions 3609 source: NOT PRESENT in this run; awaiting canonical 18:00 file')
           print('- Live-order execution: disabled')
           PY
 
@@ -207,6 +241,11 @@ jobs:
               echo "Explicit fresh V18.2 daily collection performed in this run."
             fi
             echo "ETF universe master: 266 ETFs from the user-provided 9-pillar file."
+            if [ "${{ steps.actions3609.outputs.ready }}" = "true" ]; then
+              echo "Actions universe master: canonical 3609 daily file processed with T0-T5 and short analysis."
+            else
+              echo "Actions 3609: canonical daily file not present in repository for this run."
+            fi
             echo
             cat outputs/V20.4_GITOK_COMMITTEE_SUMMARY.md
           } >> "$GITHUB_STEP_SUMMARY"
@@ -225,6 +264,7 @@ jobs:
             outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
             outputs/V18.2_COMMITTEE_ANALYST_MOMENTUM.csv
             outputs/V20.4_GITOK_COMMITTEE_DECISIONS.csv
+            outputs/V20.4_GITOK_ACTIONS_3609_DECISIONS.csv
             outputs/V20.4_GITOK_ETF_266_DECISIONS.csv
             outputs/V20.4_GITOK_COMMITTEE_SUMMARY.md
           if-no-files-found: warn
