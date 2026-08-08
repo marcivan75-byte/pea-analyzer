@@ -19,8 +19,10 @@ on:
       - "src/v182/decision/committee_decision_policy.py"
       - "src/v182/decision/etf_universe_266_policy.py"
       - "src/v182/decision/actions_universe_3609_policy.py"
+      - "src/v182/decision/actions_universe_3609_csv_runner.py"
       - "data/reference/ETF_PEA_UNIVERSE_266_COMMITTEE.csv.gz.b64"
       - "data/external/ACTIONS_PEA_3609_LATEST.xlsx"
+      - "data/external/ACTIONS_PEA_3609_LATEST.csv.gz"
       - "tests/test_committee_decision_policy.py"
       - "tests/test_actions_universe_3609_policy.py"
 
@@ -159,19 +161,19 @@ jobs:
       - name: Detect canonical 3609 daily source
         id: actions3609
         run: |
-          if [ -s data/external/ACTIONS_PEA_3609_LATEST.xlsx ]; then
+          if [ -s data/external/ACTIONS_PEA_3609_LATEST.csv.gz ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
             echo "ACTIONS_3609_SOURCE_READY"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "ACTIONS_3609_SOURCE_MISSING: independent 18:00 updater must publish data/external/ACTIONS_PEA_3609_LATEST.xlsx"
+            echo "ACTIONS_3609_SOURCE_MISSING: independent 18:00 updater must publish data/external/ACTIONS_PEA_3609_LATEST.csv.gz"
           fi
 
       - name: Build 3609 actions multi-horizon committee
         if: ${{ steps.actions3609.outputs.ready == 'true' }}
         env:
-          V204_ACTIONS_3609_SOURCE: data/external/ACTIONS_PEA_3609_LATEST.xlsx
-        run: python -m v182.decision.actions_universe_3609_policy
+          V204_ACTIONS_3609_SOURCE: data/external/ACTIONS_PEA_3609_LATEST.csv.gz
+        run: python -m v182.decision.actions_universe_3609_csv_runner
 
       - name: Validate action, 3609 and ETF decisions and execution guard
         run: |
@@ -193,7 +195,7 @@ jobs:
           assert not ((proxy) & (etf['decision']=='BUY_CANDIDATE')).any(), 'family proxy must not create BUY'
           if Path('outputs/V20.4_GITOK_ACTIONS_3609_DECISIONS.csv').exists():
             a3609=pd.read_csv('outputs/V20.4_GITOK_ACTIONS_3609_DECISIONS.csv',sep=';')
-            assert len(a3609)>=3500, len(a3609)
+            assert len(a3609)==3609, len(a3609)
             required={'score_short_term','score_medium_term','score_long_term','short_thesis_score','T0','T1_1_4w','T2_1_3m','T3_3_6m','T4_6_12m','T5_12_24m','decision','execution','identity_confidence'}
             assert required.issubset(a3609.columns), required-set(a3609.columns)
             assert not a3609['execution'].astype(str).str.upper().isin(live).any(), 'ACTION3609'
@@ -202,6 +204,8 @@ jobs:
             assert not (a3609.loc[conf<0.92,'T1_entry_low'].notna()).any(), 'unverified 3609 T1 price'
             print('ACTION3609_COUNTS',a3609['decision'].value_counts().to_dict())
             print('ACTION3609_IDENTITY',a3609['identity_method'].value_counts().to_dict())
+          else:
+            raise RuntimeError('3609 actions output missing although canonical source is required')
           print('ETF266_COUNTS',etf['decision'].value_counts().to_dict())
           print('ACTION_ETF3609_EXECUTION_GUARD_OK')
           PY
@@ -227,7 +231,7 @@ jobs:
             print(f"- Actions identity methods: {a.get('identity_methods')}")
             print(f"- Actions decisions: {a.get('decision_counts')}")
           else:
-            print('- Actions 3609 source: NOT PRESENT in this run; awaiting canonical 18:00 file')
+            print('- Actions 3609 source: ERROR - expected canonical file was not processed')
           print('- Live-order execution: disabled')
           PY
 
@@ -241,11 +245,7 @@ jobs:
               echo "Explicit fresh V18.2 daily collection performed in this run."
             fi
             echo "ETF universe master: 266 ETFs from the user-provided 9-pillar file."
-            if [ "${{ steps.actions3609.outputs.ready }}" = "true" ]; then
-              echo "Actions universe master: canonical 3609 daily file processed with T0-T5 and short analysis."
-            else
-              echo "Actions 3609: canonical daily file not present in repository for this run."
-            fi
+            echo "Actions universe master: canonical 3609 daily file processed with T0-T5, short, short/medium/long-term scores."
             echo
             cat outputs/V20.4_GITOK_COMMITTEE_SUMMARY.md
           } >> "$GITHUB_STEP_SUMMARY"
