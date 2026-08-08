@@ -1,0 +1,114 @@
+name: V20.4 GitOK End-to-End Committee
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 16 * * 5"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v204-gitok-end-to-end
+  cancel-in-progress: false
+
+jobs:
+  end-to-end-committee:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install validated dependency set
+        run: pip install -c constraints-ci.txt -e .[test]
+
+      - name: Preflight and tests
+        run: |
+          python -m pip check
+          python -m compileall -q src tests
+          ruff check --select E9,F63,F7,F82 src tests
+          pytest -q
+
+      - name: Collect and enrich V18.2 data
+        env:
+          V182_RUN_ID: v204-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
+          OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+        run: python -m v182.reporting.run
+
+      - name: Validate data quality gates
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('outputs/audit/V18.2_QUALITY_GATES.json')
+          assert p.exists(), p
+          quality = json.loads(p.read_text(encoding='utf-8'))
+          assert quality.get('passed') is True, quality
+          print('QUALITY_GATES_OK')
+          PY
+
+      - name: Build scenarios and analyst momentum
+        env:
+          MARKETBEAT_API_KEY: ${{ secrets.MARKETBEAT_API_KEY }}
+        run: |
+          python -m v182.audit.ohlcv_gaps
+          python -m v182.decision.scenario_fallback
+          python -m v182.decision.analyst_momentum
+          python -m v182.decision.marketbeat_overlay_runner
+          python -m v182.decision.committee_finalize
+          python -m v182.decision.committee_decision_policy
+
+      - name: Validate committee decisions and execution guard
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          from pathlib import Path
+          decisions_path = Path('outputs/V20.4_GITOK_COMMITTEE_DECISIONS.csv')
+          summary_path = Path('outputs/V20.4_GITOK_COMMITTEE_SUMMARY.md')
+          assert decisions_path.exists(), decisions_path
+          assert summary_path.exists(), summary_path
+          decisions = pd.read_csv(decisions_path, sep=';')
+          assert {'decision','execution'}.issubset(decisions.columns)
+          live_values = {'LIVE','ORDER','EXECUTE','BROKER','REAL_ORDER','LIVE_ORDER'}
+          assert not decisions['execution'].astype(str).str.upper().isin(live_values).any()
+          assert decisions['decision'].astype(str).isin(['BUY_CANDIDATE','WATCH','REVIEW']).any()
+          print(decisions['decision'].value_counts(dropna=False).to_dict())
+          print('EXECUTION_GUARD_OK')
+          PY
+
+      - name: Publish committee summary
+        run: cat outputs/V20.4_GITOK_COMMITTEE_SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload V20.4 GitOK committee evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: V20.4-GitOK-end-to-end-${{ github.run_id }}
+          path: |
+            outputs/audit/**
+            outputs/gaps/**
+            outputs/context/**
+            outputs/history/**
+            outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv
+            outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
+            outputs/V18.2_COMMITTEE_ANALYST_MOMENTUM.csv
+            outputs/V20.4_GITOK_COMMITTEE_DECISIONS.csv
+            outputs/V20.4_GITOK_COMMITTEE_SUMMARY.md
+          if-no-files-found: warn
+          retention-days: 30
