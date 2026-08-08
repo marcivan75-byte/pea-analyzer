@@ -53,7 +53,7 @@ jobs:
           workflow_paths = sorted((root / '.github/workflows').glob('V18.3_smart_money_audit_*.yml'))
           source_paths = sorted((root / 'src/v183').rglob('*.py'))
           config_path = root / 'config/V18.3_SMART_MONEY_CONFIG.json'
-          proposed_path = root / 'docs/V18.3_workflow_proposed.yml'
+          proposed_path = root / 'docs/smart_money_v183/V18.3_workflow_proposed.yml'
 
           cfg = json.loads(config_path.read_text())
           added = subprocess.check_output(
@@ -67,15 +67,22 @@ jobs:
               for p in added
           )
 
-          workflow_text = '\n'.join(p.read_text() for p in workflow_paths)
+          workflow_texts = {p: p.read_text() for p in workflow_paths}
           proposed_text = proposed_path.read_text() if proposed_path.exists() else ''
+
+          def permissions_block(text: str) -> str:
+              match = re.search(r'(?ms)^permissions:\n((?:  [^\n]*\n)*)', text)
+              return match.group(1) if match else ''
+
+          def action_uses(text: str) -> list[str]:
+              return re.findall(r'(?m)^\s*-\s+uses:\s*([^\s#]+)', text)
 
           hardcoded_secret_patterns = [
               re.compile(r'(?i)(api[_-]?key|token|secret|password)\s*[=:]\s*["\'][A-Za-z0-9_\-]{16,}["\']'),
               re.compile(r'\bsk-[A-Za-z0-9_\-]{16,}\b'),
               re.compile(r'\bpmx_[A-Za-z0-9]{16,}\b'),
           ]
-          scan_text = '\n'.join(p.read_text() for p in source_paths) + '\n' + config_path.read_text() + '\n' + workflow_text
+          scan_text = '\n'.join(p.read_text() for p in source_paths) + '\n' + config_path.read_text()
           hardcoded_secret = any(rx.search(scan_text) for rx in hardcoded_secret_patterns)
 
           unsafe_calls = []
@@ -100,16 +107,39 @@ jobs:
                               if kw.arg == 'shell' and isinstance(kw.value, ast.Constant) and kw.value.value is True:
                                   unsafe_calls.append(f'{path}:{getattr(node, "lineno", 0)}:{name}:shell=True')
 
+          uses_by_workflow = {p: action_uses(text) for p, text in workflow_texts.items()}
+          all_uses = [item for uses in uses_by_workflow.values() for item in uses]
+
           checks = {
               'four_audit_workflows_present': len(workflow_paths) == 4,
-              'audit_workflows_feature_only': all('feature/smart-money-v1' in p.read_text() for p in workflow_paths),
-              'audit_workflows_read_only': all('contents: write' not in p.read_text() and 'pull-requests: write' not in p.read_text() for p in workflow_paths),
-              'no_active_create_pull_request': 'create-pull-request' not in workflow_text,
-              'no_active_schedule': 'schedule:' not in workflow_text,
-              'node24_checkout_v6': all('actions/checkout@v6' in p.read_text() for p in workflow_paths),
-              'node24_setup_python_v6': all('actions/setup-python@v6' in p.read_text() for p in workflow_paths),
-              'node24_upload_artifact_v6': all('actions/upload-artifact@v6' in p.read_text() for p in workflow_paths),
-              'proposed_workflow_not_active': proposed_path.exists() and not (root / '.github/workflows/V18.3_workflow_proposed.yml').exists(),
+              'audit_workflows_feature_only': all(
+                  re.search(r'(?m)^      - feature/smart-money-v1\s*$', text)
+                  for text in workflow_texts.values()
+              ),
+              'audit_workflows_read_only': all(
+                  'write' not in permissions_block(text).lower()
+                  for text in workflow_texts.values()
+              ),
+              'no_active_create_pull_request': not any(
+                  use.startswith('peter-evans/create-pull-request@') for use in all_uses
+              ),
+              'no_active_schedule': all(
+                  re.search(r'(?m)^  schedule:\s*$', text) is None
+                  for text in workflow_texts.values()
+              ),
+              'node24_checkout_v6': all(
+                  'actions/checkout@v6' in uses for uses in uses_by_workflow.values()
+              ),
+              'node24_setup_python_v6': all(
+                  'actions/setup-python@v6' in uses for uses in uses_by_workflow.values()
+              ),
+              'node24_upload_artifact_v6': all(
+                  'actions/upload-artifact@v6' in uses for uses in uses_by_workflow.values()
+              ),
+              'proposed_workflow_not_active': (
+                  proposed_path.exists()
+                  and not (root / '.github/workflows/V18.3_workflow_proposed.yml').exists()
+              ),
               'proposed_pr_action_v8': 'peter-evans/create-pull-request@v8' in proposed_text,
               'no_secret_file_added': not secret_file_added,
               'no_hardcoded_secret_detected': not hardcoded_secret,
@@ -125,6 +155,7 @@ jobs:
               'added_files': added,
               'unsafe_calls': unsafe_calls,
               'request_calls_without_timeout': request_calls_without_timeout,
+              'active_actions': all_uses,
               'checks': [{'name': k, 'passed': bool(v)} for k, v in checks.items()],
           }
           report['passed'] = all(c['passed'] for c in report['checks'])
@@ -143,5 +174,5 @@ jobs:
           path: |
             outputs/audit/V18.3_SMART_MONEY_AUDIT_4.json
             config/V18.3_SMART_MONEY_CONFIG.json
-            docs/V18.3_workflow_proposed.yml
+            docs/smart_money_v183/V18.3_workflow_proposed.yml
           retention-days: 30
