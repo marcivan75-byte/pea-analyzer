@@ -10,6 +10,10 @@ on:
     paths:
       - ".github/workflows/V20.4_gitok_end_to_end.yml"
       - "state/v20.4_end_to_end.trigger"
+      - "src/v182/decision/committee_decision_policy.py"
+      - "src/v182/decision/etf_decision_policy.py"
+      - "tests/test_committee_decision_policy.py"
+      - "tests/test_etf_decision_policy.py"
 
 permissions:
   contents: read
@@ -69,7 +73,7 @@ jobs:
           print('QUALITY_GATES_OK')
           PY
 
-      - name: Build scenarios and analyst momentum
+      - name: Build action and ETF committee decisions
         env:
           MARKETBEAT_API_KEY: ${{ secrets.MARKETBEAT_API_KEY }}
         run: |
@@ -79,23 +83,32 @@ jobs:
           python -m v182.decision.marketbeat_overlay_runner
           python -m v182.decision.committee_finalize
           python -m v182.decision.committee_decision_policy
+          python -m v182.decision.etf_decision_policy
 
-      - name: Validate committee decisions and execution guard
+      - name: Validate action and ETF decisions and execution guard
         run: |
           python - <<'PY'
           import pandas as pd
           from pathlib import Path
-          decisions_path = Path('outputs/V20.4_GITOK_COMMITTEE_DECISIONS.csv')
+
+          action_path = Path('outputs/V20.4_GITOK_COMMITTEE_DECISIONS.csv')
+          etf_path = Path('outputs/V20.4_GITOK_ETF_DECISIONS.csv')
           summary_path = Path('outputs/V20.4_GITOK_COMMITTEE_SUMMARY.md')
-          assert decisions_path.exists(), decisions_path
+          assert action_path.exists(), action_path
+          assert etf_path.exists(), etf_path
           assert summary_path.exists(), summary_path
-          decisions = pd.read_csv(decisions_path, sep=';')
-          assert {'decision','execution'}.issubset(decisions.columns)
+
           live_values = {'LIVE','ORDER','EXECUTE','BROKER','REAL_ORDER','LIVE_ORDER'}
-          assert not decisions['execution'].astype(str).str.upper().isin(live_values).any()
-          assert decisions['decision'].astype(str).isin(['BUY_CANDIDATE','WATCH','REVIEW']).any()
-          print(decisions['decision'].value_counts(dropna=False).to_dict())
-          print('EXECUTION_GUARD_OK')
+          for label, path in [('ACTION', action_path), ('ETF', etf_path)]:
+              decisions = pd.read_csv(path, sep=';')
+              assert {'decision','execution'}.issubset(decisions.columns)
+              assert not decisions['execution'].astype(str).str.upper().isin(live_values).any(), label
+              assert decisions['decision'].astype(str).isin(['BUY_CANDIDATE','WATCH','REVIEW']).any(), label
+              print(label, decisions['decision'].value_counts(dropna=False).to_dict())
+
+          text = summary_path.read_text(encoding='utf-8')
+          assert 'ETF PEA' in text
+          print('ACTION_ETF_EXECUTION_GUARD_OK')
           PY
 
       - name: Publish committee summary
@@ -115,6 +128,7 @@ jobs:
             outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
             outputs/V18.2_COMMITTEE_ANALYST_MOMENTUM.csv
             outputs/V20.4_GITOK_COMMITTEE_DECISIONS.csv
+            outputs/V20.4_GITOK_ETF_DECISIONS.csv
             outputs/V20.4_GITOK_COMMITTEE_SUMMARY.md
           if-no-files-found: warn
           retention-days: 30
