@@ -1,5 +1,5 @@
 from __future__ import annotations
-from datetime import date, datetime
+from datetime import datetime
 from math import log10
 from typing import Iterable
 
@@ -34,8 +34,7 @@ def insider_event_score(event: dict, as_of: str, cfg: dict,
     value = float(event.get("value_eur") or 0.0)
     size = _size_factor(value, market_cap, adv20_eur, cfg)
     evidence = EVIDENCE_WEIGHT.get(event.get("evidence_level", "D"), 0.0)
-    # Buys are deliberately more informative than discretionary sales.
-    asym = 1.0 if direction > 0 else float(cfg["insiders"].get("sell_asymmetry", 0.72))
+    asym = 1.0 if direction > 0 else float(cfg["insiders"].get("sell_asymmetry", 0.58))
     return direction * role_factor * recency * size * evidence * asym
 
 
@@ -45,44 +44,66 @@ def insider_score(events: Iterable[dict], as_of: str, cfg: dict,
     raw = sum(insider_event_score(e, as_of, cfg, market_cap, adv20_eur) for e in valid)
     window = int(cfg["insiders"]["cluster_window_days"])
     cutoff = datetime.fromisoformat(as_of[:10]).date().toordinal() - window
-    recent_buys = [e for e in valid if int(e.get("direction", 0) or 0) > 0 and
-                   datetime.fromisoformat((e.get("publication_date") or e.get("transaction_date"))[:10]).date().toordinal() >= cutoff]
+    recent_buys = [
+        e for e in valid
+        if int(e.get("direction", 0) or 0) > 0
+        and datetime.fromisoformat((e.get("publication_date") or e.get("transaction_date"))[:10]).date().toordinal() >= cutoff
+    ]
     buyers = {str(e.get("actor_name") or "").strip().upper() for e in recent_buys if e.get("actor_name")}
     cluster = len(buyers) >= int(cfg["insiders"]["cluster_min_distinct_buyers"])
     if cluster:
-        raw += min(float(cfg["insiders"]["cluster_bonus_max"]),
-                   float(cfg["insiders"]["cluster_bonus_per_extra_buyer"]) * (len(buyers) - 1))
+        raw += min(
+            float(cfg["insiders"]["cluster_bonus_max"]),
+            float(cfg["insiders"]["cluster_bonus_per_extra_buyer"]) * (len(buyers) - 1),
+        )
     cap = float(cfg["caps"]["insider"])
     return round(clamp(raw, -cap, cap), 4), {"cluster_flag": cluster, "distinct_buyers": len(buyers)}
 
 
-def significant_holder_score(events: Iterable[dict], cfg: dict) -> float:
+def significant_holder_score(events: Iterable[dict], as_of: str, cfg: dict) -> float:
+    """Score threshold crossings with publication-date decay.
+
+    A threshold crossing is an event, not proof that the stake is unchanged for
+    years. Old crossings therefore decay to zero instead of accumulating
+    indefinitely in WIS.
+    """
     score = 0.0
     for e in events:
         if e.get("event_type") != "THRESHOLD" or e.get("evidence_level") == "D":
             continue
         direction = int(e.get("direction", 0) or 0)
+        if direction == 0:
+            continue
         threshold = float(e.get("threshold_pct") or 0.0)
         weight = 0.0
         for band in cfg["thresholds"]["bands"]:
             if threshold >= float(band["threshold_pct"]):
                 weight = float(band["weight"])
-        score += direction * weight * EVIDENCE_WEIGHT.get(e.get("evidence_level", "D"), 0.0)
+        pub_date = e.get("publication_date") or e.get("transaction_date")
+        recency = recency_factor(pub_date, as_of, cfg["thresholds"]["recency_bands"]) if pub_date else 0.0
+        score += direction * weight * recency * EVIDENCE_WEIGHT.get(e.get("evidence_level", "D"), 0.0)
     cap = float(cfg["caps"]["significant_holder"])
     return round(clamp(score, -cap, cap), 4)
 
 
 def short_score(records: Iterable[dict], cfg: dict) -> tuple[float, dict]:
-    """Use only public observations. A last observation below 0.5% is censored, not zero."""
-    rows = sorted(records, key=lambda r: r.get("position_date") or r.get("publication_date") or "")
+    """Use public observations; a sub-0.5 observation is censored, never zero."""
+    rows = sorted(
+        records,
+        key=lambda r: (
+            r.get("publication_date") or r.get("position_date") or "",
+            r.get("position_date") or "",
+        ),
+    )
     if not rows:
-        return 0.0, {"censored": False, "current_public_pct": None, "delta": None}
+        return 0.0, {"censored": False, "current_public_pct": None, "delta": None, "holders": 0}
     by_holder: dict[str, list[dict]] = {}
     for r in rows:
         by_holder.setdefault(str(r.get("holder") or r.get("actor_name") or "UNKNOWN"), []).append(r)
     current = 0.0
     previous = 0.0
     censored = False
+    comparable_holders = 0
     for holder_rows in by_holder.values():
         last = holder_rows[-1]
         last_pct = float(last.get("short_position_pct") or 0.0)
@@ -91,10 +112,10 @@ def short_score(records: Iterable[dict], cfg: dict) -> tuple[float, dict]:
             censored = True
         if len(holder_rows) >= 2:
             previous += float(holder_rows[-2].get("short_position_pct") or 0.0)
+            comparable_holders += 1
         else:
             previous += last_pct
     delta = current - previous
-    # Increasing short exposure is negative; covering is positive.
     sensitivity = float(cfg["shorts"]["delta_sensitivity"])
     raw = -delta * sensitivity
     if censored:
@@ -105,6 +126,8 @@ def short_score(records: Iterable[dict], cfg: dict) -> tuple[float, dict]:
         "current_public_pct": round(current, 4),
         "previous_public_pct": round(previous, 4),
         "delta": round(delta, 4),
+        "holders": len(by_holder),
+        "comparable_holders": comparable_holders,
     }
 
 
@@ -143,15 +166,14 @@ def ifs(flow_core: float, persistence: float, tape: float,
 def _size_factor(value_eur: float, market_cap: float | None, adv20_eur: float | None, cfg: dict) -> float:
     if value_eur <= 0:
         return float(cfg["insiders"]["size_floor"])
-    # Base factor grows slowly with absolute value, then receives relative-size confirmation.
-    base = clamp(0.45 + 0.20 * max(0.0, log10(max(value_eur, 1.0)) - 4.0), 0.45, 1.20)
+    base = clamp(0.40 + 0.18 * max(0.0, log10(max(value_eur, 1.0)) - 4.0), 0.40, 1.10)
     rel = 0.0
     if market_cap and market_cap > 0:
         rel = max(rel, value_eur / market_cap)
     if adv20_eur and adv20_eur > 0:
         rel = max(rel, value_eur / adv20_eur)
     if rel >= 0.05:
-        base += 0.20
+        base += 0.15
     elif rel >= 0.01:
-        base += 0.10
+        base += 0.08
     return clamp(base, float(cfg["insiders"]["size_floor"]), float(cfg["insiders"]["size_cap"]))
