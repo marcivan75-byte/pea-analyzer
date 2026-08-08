@@ -8,6 +8,8 @@ on:
     paths:
       - ".github/workflows/V20.4_gitok_committee_reference.yml"
       - "state/v20.4_reference.trigger"
+      - "src/v182/decision/committee_decision_policy.py"
+      - "tests/test_committee_decision_policy.py"
 
 permissions:
   contents: read
@@ -36,7 +38,7 @@ jobs:
           python -m compileall -q src tests
           ruff check --select E9,F63,F7,F82 src tests
           pytest -q
-          git diff --exit-code a4175f8b263aee35c76c4b362dfee567ba8bd792 HEAD -- src/v182
+          git diff --exit-code a4175f8b263aee35c76c4b362dfee567ba8bd792 HEAD -- src/v182 ':(exclude)src/v182/decision/committee_decision_policy.py'
 
       - name: Execute validated V18.2 pipeline
         env:
@@ -58,19 +60,34 @@ jobs:
           python -m v182.decision.analyst_momentum
           python -m v182.decision.marketbeat_overlay_runner
           python -m v182.decision.committee_finalize
+          python -m v182.decision.committee_decision_policy
 
       - name: Validate V20.4 GitOK reference outputs
         run: |
           python - <<'PY'
           import json
+          import pandas as pd
           from pathlib import Path
           audit = Path('outputs/audit')
           quality_path = audit / 'V18.2_QUALITY_GATES.json'
+          decisions_path = Path('outputs/V20.4_GITOK_COMMITTEE_DECISIONS.csv')
+          summary_path = Path('outputs/V20.4_GITOK_COMMITTEE_SUMMARY.md')
           assert quality_path.exists(), quality_path
           quality = json.loads(quality_path.read_text())
           assert quality.get('passed') is True, quality
+          assert decisions_path.exists(), decisions_path
+          assert summary_path.exists(), summary_path
+          decisions = pd.read_csv(decisions_path, sep=';')
+          assert 'decision' in decisions.columns
+          assert 'execution' in decisions.columns
+          assert not decisions['execution'].astype(str).isin(['LIVE','ORDER','EXECUTE']).any()
+          assert decisions['decision'].astype(str).isin(['BUY_CANDIDATE','WATCH','REVIEW']).any(), 'No actionable committee recommendation generated'
           print('V20_4_GITOK_REFERENCE_OK', quality.get('status', 'passed'))
+          print(decisions['decision'].value_counts(dropna=False).to_dict())
           PY
+
+      - name: Publish committee summary to GitHub job summary
+        run: cat outputs/V20.4_GITOK_COMMITTEE_SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload V20.4 GitOK committee evidence
         if: always()
@@ -82,5 +99,6 @@ jobs:
             outputs/gaps/**
             outputs/*.csv
             outputs/*.parquet
+            outputs/V20.4_GITOK_COMMITTEE_SUMMARY.md
           if-no-files-found: warn
           retention-days: 30
