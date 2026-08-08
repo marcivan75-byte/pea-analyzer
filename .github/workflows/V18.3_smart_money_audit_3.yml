@@ -1,0 +1,147 @@
+name: V18.3 Smart Money Audit 3 - Backtest No Lookahead
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/smart-money-v1
+    paths:
+      - ".github/workflows/V18.3_smart_money_audit_3.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v18-3-smart-money-audit-3-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backtest-no-lookahead:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install validated dependency set
+        run: pip install -c constraints-ci.txt -e .[test]
+
+      - name: Run targeted no-lookahead regressions
+        run: |
+          python -m pip check
+          pytest -q tests/test_smart_money_v183.py -k "lookahead or future_publication"
+
+      - name: Chronological shadow replay and leakage checks
+        run: |
+          mkdir -p outputs/audit
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+
+          from v183.smart_money.wave9 import score_action
+          from v183.smart_money.sources.amf_short_open_data import latest_public_positions
+
+          cfg = json.loads(Path("config/V18.3_SMART_MONEY_CONFIG.json").read_text())
+          baseline = 80.0
+
+          def ev(doc, direction, tx, pub, subtype):
+              return {
+                  "universe": "ACTION",
+                  "isin": "FR0000120271",
+                  "event_type": "INSIDER",
+                  "event_subtype": subtype,
+                  "source": "AMF",
+                  "evidence_level": "A",
+                  "validation_status": "VALIDATED",
+                  "publication_date": pub,
+                  "transaction_date": tx,
+                  "actor_name": doc,
+                  "actor_role": "CEO",
+                  "direction": direction,
+                  "quantity": 1000,
+                  "price": 100,
+                  "value_eur": 100000,
+                  "source_document_id": doc,
+              }
+
+          buy = ev("BUY1", 1, "2026-08-01", "2026-08-03", "MARKET_BUY")
+          delayed_sell = ev("SELL1", -1, "2026-08-02", "2026-08-06", "MARKET_SELL")
+          coverage = {"insiders": True, "thresholds": True, "shorts": True, "tape": False}
+
+          before_publication = score_action(
+              "FR0000120271", baseline, [buy, delayed_sell], None, "2026-08-02", cfg, coverage
+          )
+          after_buy_publication = score_action(
+              "FR0000120271", baseline, [buy, delayed_sell], None, "2026-08-04", cfg, coverage
+          )
+          after_all_publication = score_action(
+              "FR0000120271", baseline, [buy, delayed_sell], None, "2026-08-07", cfg, coverage
+          )
+          buy_only_asof_0804 = score_action(
+              "FR0000120271", baseline, [buy], None, "2026-08-04", cfg, coverage
+          )
+
+          short_df = pd.DataFrame([
+              {
+                  "Nom du détenteur": "Fund A",
+                  "Nom de l'émetteur": "X",
+                  "ISIN": "FR0000120271",
+                  "Position courte nette": "0,70",
+                  "Date de début de position": "01/08/2026",
+                  "Date de début de publication de la position": "05/08/2026",
+                  "Date de fin de publication de la position": "",
+              }
+          ])
+
+          checks = {
+              "future_transaction_does_not_leak": float(before_publication["insider_score"]) == 0.0,
+              "publication_unlocks_signal": float(after_buy_publication["insider_score"]) != 0.0,
+              "future_published_event_cannot_rewrite_prior_asof": (
+                  float(after_buy_publication["insider_score"]) == float(buy_only_asof_0804["insider_score"])
+              ),
+              "later_publication_changes_only_later_replay": (
+                  float(after_all_publication["insider_score"]) != float(after_buy_publication["insider_score"])
+              ),
+              "short_hidden_before_publication": latest_public_positions(short_df, as_of="2026-08-04").empty,
+              "short_visible_on_publication_date": len(latest_public_positions(short_df, as_of="2026-08-05")) == 1,
+              "score_final_immutable_before": float(before_publication["score_final"]) == baseline,
+              "score_final_immutable_after": float(after_all_publication["score_final"]) == baseline,
+              "shadow_score_separate": after_all_publication.get("score_shadow") is not None,
+          }
+
+          replay = {
+              "2026-08-02": {"insider_score": before_publication["insider_score"], "score_shadow": before_publication["score_shadow"]},
+              "2026-08-04": {"insider_score": after_buy_publication["insider_score"], "score_shadow": after_buy_publication["score_shadow"]},
+              "2026-08-07": {"insider_score": after_all_publication["insider_score"], "score_shadow": after_all_publication["score_shadow"]},
+          }
+          report = {
+              "audit": "3/4",
+              "scope": "backtest_no_lookahead",
+              "method": "deterministic_point_in_time_shadow_replay",
+              "parameter_calibration": "NOT_PERFORMED_DEFAULT_COEFFICIENTS_RETAINED",
+              "replay": replay,
+              "checks": [{"name": k, "passed": bool(v)} for k, v in checks.items()],
+          }
+          report["passed"] = all(c["passed"] for c in report["checks"])
+          Path("outputs/audit/V18.3_SMART_MONEY_AUDIT_3.json").write_text(
+              json.dumps(report, indent=2), encoding="utf-8"
+          )
+          assert report["passed"], report
+          print("SMART_MONEY_AUDIT_3_OK")
+          PY
+
+      - name: Upload audit 3 evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: V18.3-smart-money-audit-3-${{ github.run_id }}
+          path: |
+            outputs/audit/V18.3_SMART_MONEY_AUDIT_3.json
+            config/V18.3_SMART_MONEY_CONFIG.json
+          retention-days: 30
