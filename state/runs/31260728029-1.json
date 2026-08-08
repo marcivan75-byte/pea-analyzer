@@ -1,0 +1,52 @@
+{
+  "run_id": "31260728029-1",
+  "created_at": "2026-08-08T13:56:55.860690+00:00",
+  "waves": {
+    "WAVE_00_ETF_TICKERS": {
+      "status": "DONE",
+      "finished_at": "2026-08-08T13:56:56.371761+00:00",
+      "requested": 102,
+      "resolved": 102,
+      "gaps": 0,
+      "source": "VALIDATED_STATIC_MAP"
+    },
+    "WAVE_01": {
+      "status": "DONE",
+      "finished_at": "2026-08-08T13:59:30.555705+00:00",
+      "requested": 1476,
+      "successful": 1476,
+      "failed": 0
+    },
+    "WAVE_02": {
+      "status": "DONE",
+      "finished_at": "2026-08-08T13:59:37.538859+00:00",
+      "requested": 102,
+      "successful": 102,
+      "failed": 0
+    },
+    "WAVE_03": {
+      "status": "DONE",
+      "finished_at": "2026-08-08T13:59:48.288024+00:00",
+      "actions_fields": 25337,
+      "etf_fields": 1467
+    },
+    "WAVE_04": {
+      "status": "DONE",
+      "finished_at": "2026-08-08T14:01:51.609378+00:00",
+      "observed": 0,
+      "failed": 300
+    },
+    "WAVE_05": {
+      "status": "DONE",
+      "finished_at": "2026-08-08T14:07:55.104028+00:00",
+      "observed": 0,
+      "failed": 300
+    },
+    "WAVE_06": {
+      "status": "DONE",
+      "finished_at": "2026-08-08T14:08:51.373881+00:00",
+      "observed": 142,
+      "failed": 0
+    }
+  }
+}

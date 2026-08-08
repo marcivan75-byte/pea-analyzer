@@ -1,0 +1,75 @@
+{
+  "passed": true,
+  "checks": [
+    {
+      "check": "actions_row_count",
+      "passed": true,
+      "value": 1486,
+      "threshold": 1486,
+      "detail": ""
+    },
+    {
+      "check": "etf_row_count",
+      "passed": true,
+      "value": 102,
+      "threshold": 102,
+      "detail": ""
+    },
+    {
+      "check": "actions_unique_isin",
+      "passed": true,
+      "value": 1486,
+      "threshold": 1486,
+      "detail": ""
+    },
+    {
+      "check": "etf_unique_isin",
+      "passed": true,
+      "value": 102,
+      "threshold": 102,
+      "detail": ""
+    },
+    {
+      "check": "actions_ticker_coverage_pct",
+      "passed": true,
+      "value": 100.0,
+      "threshold": 100.0,
+      "detail": ""
+    },
+    {
+      "check": "etf_ticker_coverage_pct",
+      "passed": true,
+      "value": 100.0,
+      "threshold": 100.0,
+      "detail": ""
+    },
+    {
+      "check": "action_coverage_no_regression",
+      "passed": true,
+      "value": 0.3,
+      "threshold": ">=-0.0",
+      "detail": ""
+    },
+    {
+      "check": "etf_coverage_no_regression",
+      "passed": true,
+      "value": 0.4,
+      "threshold": ">=-0.0",
+      "detail": ""
+    },
+    {
+      "check": "wave_01_ohlcv_success_pct",
+      "passed": true,
+      "value": 100.0,
+      "threshold": 90.0,
+      "detail": ""
+    },
+    {
+      "check": "wave_02_ohlcv_success_pct",
+      "passed": true,
+      "value": 100.0,
+      "threshold": 90.0,
+      "detail": ""
+    }
+  ]
+}

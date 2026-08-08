@@ -1,0 +1,26 @@
+{
+  "before": {
+    "ACTION": {
+      "observed": 283602,
+      "possible": 306116,
+      "coverage_pct": 92.6
+    },
+    "ETF": {
+      "observed": 7498,
+      "possible": 7548,
+      "coverage_pct": 99.3
+    }
+  },
+  "after": {
+    "ACTION": {
+      "observed": 295490,
+      "possible": 318004,
+      "coverage_pct": 92.9
+    },
+    "ETF": {
+      "observed": 9863,
+      "possible": 9894,
+      "coverage_pct": 99.7
+    }
+  }
+}
