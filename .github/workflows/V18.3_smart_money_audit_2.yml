@@ -1,0 +1,102 @@
+name: V18.3 Smart Money Audit 2 - Integration Non Regression
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/smart-money-v1
+    paths:
+      - ".github/workflows/V18.3_smart_money_audit_2.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v18-3-smart-money-audit-2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration-non-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install validated dependency set
+        run: pip install -c constraints-ci.txt -e .[test]
+
+      - name: Full V18.2 plus V18.3 regression suite
+        run: |
+          python -m pip check
+          python -m compileall -q src tests
+          ruff check --select E9,F63,F7,F82 src tests
+          pytest -q
+
+      - name: Verify V18.2 namespace is unchanged from corrected baseline
+        run: |
+          git diff --exit-code a4175f8b263aee35c76c4b362dfee567ba8bd792 HEAD -- src/v182
+
+      - name: Verify namespace coexistence and shadow non-regression
+        run: |
+          mkdir -p outputs/audit
+          python - <<'PY'
+          import importlib
+          import json
+          from pathlib import Path
+
+          v182 = importlib.import_module("v182")
+          v183 = importlib.import_module("v183")
+          importlib.import_module("v182.decision.analyst_momentum")
+          wave9 = importlib.import_module("v183.smart_money.wave9")
+
+          cfg = json.loads(Path("config/V18.3_SMART_MONEY_CONFIG.json").read_text())
+          baseline_score = 81.25
+          row = wave9.score_action(
+              "FR0000120271",
+              baseline_score,
+              [],
+              None,
+              "2026-08-07",
+              cfg,
+              {"insiders": False, "thresholds": False, "shorts": False, "tape": False},
+          )
+
+          checks = {
+              "v182_importable": v182 is not None,
+              "v183_importable": v183 is not None,
+              "separate_namespaces": v182.__name__ != v183.__name__,
+              "shadow_mode": cfg.get("shadow_mode") is True,
+              "score_application_shadow_only": cfg.get("score_application") == "SHADOW_ONLY",
+              "score_final_unchanged": float(row["score_final"]) == baseline_score,
+              "score_shadow_present": row.get("score_shadow") is not None,
+          }
+          report = {
+              "audit": "2/4",
+              "scope": "integration_non_regression",
+              "baseline_sha": "a4175f8b263aee35c76c4b362dfee567ba8bd792",
+              "checks": [{"name": k, "passed": bool(v)} for k, v in checks.items()],
+          }
+          report["passed"] = all(c["passed"] for c in report["checks"])
+          Path("outputs/audit/V18.3_SMART_MONEY_AUDIT_2.json").write_text(
+              json.dumps(report, indent=2), encoding="utf-8"
+          )
+          assert report["passed"], report
+          print("SMART_MONEY_AUDIT_2_OK")
+          PY
+
+      - name: Upload audit 2 evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: V18.3-smart-money-audit-2-${{ github.run_id }}
+          path: |
+            outputs/audit/V18.3_SMART_MONEY_AUDIT_2.json
+            config/V18.3_SMART_MONEY_CONFIG.json
+          retention-days: 30
