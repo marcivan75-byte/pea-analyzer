@@ -48,18 +48,14 @@ def score_etf(row: pd.Series) -> tuple[float, str, str, str]:
     ext_ter = _num(row.get("external_9p_ter_pct"))
 
     score = 50.0
-
-    # Fresh momentum remains dominant.
     score += max(-8.0, min(8.0, perf_1m * 0.8))
     score += max(-10.0, min(10.0, perf_3m * 0.45))
     score += max(-7.0, min(7.0, perf_6m * 0.18))
     score += max(-7.0, min(7.0, perf_1y * 0.10))
-
     score += max(-4.0, min(4.0, macd_hist * 4.0))
     score += 3.0 if reversal else 0.0
     score += max(-3.0, min(3.0, relative_strength * 0.12))
 
-    # Morningstar policy.
     if rating is not None:
         if rating >= 4.0:
             score += 5.0
@@ -86,7 +82,6 @@ def score_etf(row: pd.Series) -> tuple[float, str, str, str]:
     if volatility is not None and volatility > 30.0:
         score -= min(6.0, (volatility - 30.0) * 0.15 + 1.0)
 
-    # 9-pillar structural overlay. Family proxies receive only half weight.
     if ext_level:
         weight = 0.5 if ext_level == "family_proxy" else 1.0
         overlay = 0.0
@@ -105,7 +100,6 @@ def score_etf(row: pd.Series) -> tuple[float, str, str, str]:
         score += max(-4.0, min(4.0, overlay)) * weight
 
     score = round(max(0.0, min(100.0, score)), 2)
-
     overbought = rsi is not None and rsi > 72.0
     high_risk = risk is not None and risk >= 6.0
     deep_drawdown = drawdown is not None and drawdown < -30.0
@@ -122,6 +116,7 @@ def score_etf(row: pd.Series) -> tuple[float, str, str, str]:
 
 def apply_etf_policy(root: Path | None = None) -> dict:
     from v182.io.frames import load_master, save_master
+    from v182.decision.etf_external_enrichment import apply_external_etf_enrichment
 
     root = root or ROOT
     outputs = root / "outputs"
@@ -129,6 +124,7 @@ def apply_etf_policy(root: Path | None = None) -> dict:
     decisions_path = outputs / "V20.4_GITOK_ETF_DECISIONS.csv"
     summary_path = outputs / "V20.4_GITOK_COMMITTEE_SUMMARY.md"
 
+    enrichment_metrics = apply_external_etf_enrichment(root)
     etf = load_master(etf_path).astype(object)
     classified = etf.apply(score_etf, axis=1, result_type="expand")
     classified.columns = ["etf_committee_score", "decision", "execution", "decision_reason"]
@@ -151,7 +147,7 @@ def apply_etf_policy(root: Path | None = None) -> dict:
 
     counts = decisions["decision"].value_counts(dropna=False).to_dict()
     priority = decisions[decisions["decision"].isin(["BUY_CANDIDATE", "WATCH"])].head(20)
-    matched = int((etf.get("external_9p_match_level", pd.Series([""] * len(etf))).astype(str) != "").sum())
+    matched = int(enrichment_metrics.get("matched", 0))
     lines = [
         "",
         "## ETF PEA — décisions V20.4 GitOK",
