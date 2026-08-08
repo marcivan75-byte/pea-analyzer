@@ -91,7 +91,9 @@ jobs:
             if [ -d /tmp/v204-bootstrap/extract/outputs ]; then
               cp -a /tmp/v204-bootstrap/extract/outputs/. outputs/
             else
-              cp -a /tmp/v204-bootstrap/extract/. .
+              # upload-artifact strips the common `outputs/` ancestor in our
+              # current archives, so files/directories appear at ZIP root.
+              cp -a /tmp/v204-bootstrap/extract/. outputs/
             fi
 
             if [ -s outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv ] \
@@ -126,6 +128,34 @@ jobs:
             exit 1
           fi
           echo "FAST_RECOMPUTE_DATASET_READY source_run=${{ steps.bootstrap.outputs.source_run }}"
+
+      - name: Apply bounded retry policy for explicit refresh
+        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.refresh_data == true) }}
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('config/V18.2_MASTER_CONFIG.json')
+          cfg = json.loads(p.read_text(encoding='utf-8'))
+          yf = cfg.setdefault('yfinance', {})
+          yf.update({
+              'history_retry_count': 1,
+              'history_retry_backoff_seconds': 10,
+              'history_retry_batch_size': 50,
+              'history_batch_delay_seconds': 0.25,
+              'history_serial_rescue_attempts': 1,
+              'history_serial_rescue_backoff_seconds': 20,
+              'history_serial_rescue_batch_size': 10,
+              'history_serial_rescue_batch_delay_seconds': 0.35,
+              'info_delay_seconds': 0.35,
+              'info_initial_cooldown_seconds': 15,
+              'info_max_retries': 1,
+              'info_rate_limit_backoff_seconds': 10,
+              'info_max_consecutive_rate_limits': 2,
+          })
+          p.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          print('BOUNDED_REFRESH_RETRY_POLICY_APPLIED')
+          PY
 
       - name: Collect and enrich V18.2 data on explicit refresh only
         if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.refresh_data == true) }}
@@ -190,6 +220,22 @@ jobs:
           text = summary_path.read_text(encoding='utf-8')
           assert 'ETF PEA' in text
           print('ACTION_ETF_EXECUTION_GUARD_OK')
+          PY
+
+      - name: Publish operational audit snapshot
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          import pandas as pd
+          from pathlib import Path
+          q = json.loads(Path('outputs/audit/V18.2_QUALITY_GATES.json').read_text(encoding='utf-8'))
+          etf = pd.read_csv('outputs/V20.4_GITOK_ETF_DECISIONS.csv', sep=';')
+          print('## Operational audit')
+          print(f"- Quality gates: {'PASS' if q.get('passed') is True else 'FAIL'}")
+          print(f"- ETF decision rows: {len(etf)}")
+          print(f"- Morningstar coverage: {etf.get('morningstar_rating', pd.Series(dtype=object)).notna().mean()*100:.1f}%")
+          print(f"- Risk-indicator coverage: {etf.get('risk_indicator', pd.Series(dtype=object)).notna().mean()*100:.1f}%")
+          print('- Live-order execution: disabled')
           PY
 
       - name: Publish committee summary
