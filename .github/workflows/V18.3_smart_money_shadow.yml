@@ -1,4 +1,4 @@
-name: V18.3 Smart Money RC1 Shadow Run
+name: V18.3 RC1 Shadow Run - Smart Money Disabled
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: v18-3-smart-money-shadow-${{ github.ref }}
+  group: v18-3-rc1-baseline-shadow-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -30,42 +30,20 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Restore Smart Money point-in-time state
-        uses: actions/cache@v5
-        with:
-          path: state/smart_money
-          key: v183-smart-money-state-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
-          restore-keys: |
-            v183-smart-money-state-${{ runner.os }}-${{ github.ref_name }}-
-
       - name: Install validated dependency set
         run: pip install -c constraints-ci.txt -e .[test]
 
-      - name: RC1 preflight and calibration lock
+      - name: RC1 baseline preflight
         run: |
           python -m pip check
           python -m compileall -q src tests
           ruff check --select E9,F63,F7,F82 src tests
           pytest -q
           git diff --exit-code a4175f8b263aee35c76c4b362dfee567ba8bd792 HEAD -- src/v182
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          from v183.smart_money.calibration import validate_calibration
-
-          cfg = json.loads(Path('config/V18.3_SMART_MONEY_CONFIG.json').read_text())
-          report = validate_calibration(cfg)
-          assert report['passed'], report
-          assert cfg.get('shadow_mode') is True
-          assert cfg.get('score_application') == 'SHADOW_ONLY'
-          assert cfg['calibration'].get('active_scoring_allowed') is False
-          assert cfg['calibration'].get('empirical_walk_forward_required_for_active_scoring') is True
-          print('V18_3_RC1_PREFLIGHT_OK', report['status'])
-          PY
 
       - name: Execute validated V18.2 pipeline
         env:
-          V182_RUN_ID: v183-rc1-${{ github.run_id }}-${{ github.run_attempt }}
+          V182_RUN_ID: v183-rc1-nosmart-${{ github.run_id }}-${{ github.run_attempt }}
           MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
           OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
@@ -84,74 +62,29 @@ jobs:
           python -m v182.decision.marketbeat_overlay_runner
           python -m v182.decision.committee_finalize
 
-      - name: Execute Smart Money Wave 09 in shadow mode
-        env:
-          V183_RUN_ID: v183-rc1-${{ github.run_id }}-${{ github.run_attempt }}
-          V183_SKIP_V182: "1"
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-        run: python -m v183.reporting.run
-
-      - name: Validate RC1 outputs and invariants
+      - name: Validate baseline outputs and invariants
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          import pandas as pd
 
           audit = Path('outputs/audit')
-          v182 = json.loads((audit / 'V18.2_QUALITY_GATES.json').read_text())
-          v183 = json.loads((audit / 'V18.3_QUALITY_GATES.json').read_text())
-          smart = json.loads((audit / 'V18.3_SMART_MONEY_QUALITY_GATES.json').read_text())
-          calibration = json.loads((audit / 'V18.3_SMART_MONEY_CALIBRATION.json').read_text())
-          coverage = json.loads((audit / 'V18.3_SMART_MONEY_COVERAGE.json').read_text())
-          summary = json.loads((audit / 'V18.3_RUN_SUMMARY.json').read_text())
-
-          assert v182.get('passed') is True, v182
-          assert v183.get('passed') is True, v183
-          assert smart.get('passed') is True, smart
-          assert calibration.get('passed') is True, calibration
-          assert calibration.get('status') == 'STRUCTURAL_CALIBRATED_RC1', calibration
-          assert calibration.get('empirical_walk_forward_required_for_active_scoring') is True, calibration
-          assert float(coverage.get('registry_coverage_pct', 0)) >= 100.0, coverage
-          assert summary.get('active_scoring_allowed') is False, summary
-
-          actions = pd.read_csv('outputs/V18.3_PEA_ACTIONS_SMART_MONEY_SHADOW.csv', sep=';', low_memory=False)
-          etfs = pd.read_csv('outputs/V18.3_PEA_ETF_SMART_MONEY_SHADOW.csv', sep=';', low_memory=False)
-          for frame, universe, cap in ((actions, 'ACTION', 5.0), (etfs, 'ETF', 3.5)):
-              assert 'score_final' in frame.columns and 'score_base' in frame.columns and 'score_shadow' in frame.columns
-              comparable = frame['score_base'].notna() & frame['score_final'].notna()
-              if comparable.any():
-                  assert ((frame.loc[comparable, 'score_final'] - frame.loc[comparable, 'score_base']).abs() < 1e-9).all(), universe
-              shadow = frame['score_shadow'].notna() & frame['score_base'].notna()
-              if shadow.any():
-                  max_delta = float((frame.loc[shadow, 'score_shadow'] - frame.loc[shadow, 'score_base']).abs().max())
-                  assert max_delta <= cap + 1e-9, (universe, max_delta, cap)
-
-          print(
-              'V18_3_RC1_INVARIANTS_OK',
-              'actions=', len(actions),
-              'etfs=', len(etfs),
-              'events=', summary.get('events'),
-              'registry=', coverage.get('registry_coverage_pct'),
-              'flow_ready=', coverage.get('flow_ready_20d_pct'),
-          )
+          quality_path = audit / 'V18.2_QUALITY_GATES.json'
+          assert quality_path.exists(), quality_path
+          quality = json.loads(quality_path.read_text())
+          assert quality.get('passed') is True, quality
+          print('V18_3_RC1_NO_SMART_MONEY_BASELINE_OK', quality.get('status', 'passed'))
           PY
 
-      - name: Upload RC1 shadow evidence
+      - name: Upload RC1 baseline shadow evidence
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: V18.3-smart-money-rc1-shadow-${{ github.run_id }}
+          name: V18.3-rc1-no-smart-money-${{ github.run_id }}
           path: |
-            outputs/V18.3_PEA_ACTIONS_SMART_MONEY_SHADOW.csv
-            outputs/V18.3_PEA_ETF_SMART_MONEY_SHADOW.csv
-            outputs/V18.3_SMART_MONEY_EVENTS.parquet
-            outputs/V18.3_SMART_MONEY_DAILY_SCORES.parquet
-            outputs/V18.3_SMART_MONEY_PROVENANCE.parquet
-            outputs/V18.3_ETF_FLOW_PROVIDER_REGISTRY.csv
-            outputs/audit/V18.3*.json
             outputs/audit/V18.2_QUALITY_GATES.json
-            outputs/gaps/V18.3_SMART_MONEY_EVENT_QUARANTINE.csv
-            state/smart_money/**
+            outputs/gaps/**
+            outputs/*.csv
+            outputs/*.parquet
           if-no-files-found: warn
           retention-days: 30
