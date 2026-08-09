@@ -8,10 +8,11 @@ SRC006;Zonebourse Bulk;PUBLIC_TABLE;B;7;Actions;Target consensus, estimates and 
 SRC007;ABC Bourse Bulk;PUBLIC_TABLE;B;30;ETF;Target TER, AUM, benchmark, distribution and theme;2;PLANNED_NOT_CONFIGURED
 SRC008;Issuer / KID / Factsheet;OFFICIAL;A;90;Actions+ETF;Target official structure and fundamentals;3;PLANNED_NOT_CONFIGURED
 SRC009;AMF / Euronext;OFFICIAL;A;1;Actions+ETF;Target regulatory events and identity validation;2;PLANNED_NOT_CONFIGURED
-SRC010;Finnhub;API;B;1;Actions;Analyst consensus gap filling with guarded symbol resolution;3;OPERATIONAL_TESTED
+SRC010;Finnhub;API;B;1;Actions;Consensus, target, analyst revisions, calendar and basic-financial gap filling with guarded ISIN resolution;2;OPERATIONAL_V21_BACKFILL
 SRC011;FRED;OFFICIAL_API;A;7;Actions;Official VIX and 10Y-2Y macro context;2;OPERATIONAL_TESTED
 SRC012;EIA;OFFICIAL_API;A;7;Run context;Official WTI and Brent energy context;2;OPERATIONAL_TESTED
 SRC013;GDELT;PUBLIC_API;C;1;Actions;Target bulk news discovery;4;PLANNED_NOT_CONFIGURED
 SRC014;MarketBeat via Parse;MANAGED_PUBLIC_WRAPPER_API;C;1;Actions;Selective issuer-level aggregate consensus and target history current/1m/3m/1y via safely linked local listing and optional US analyst proxy;3;OPERATIONAL_SELECTIVE_FORECAST
 SRC015;Internal consensus snapshots;INTERNAL_HISTORY;C;0;Actions;Same-source S-1/1m/3m/12m target and consensus deltas, acceleration and committee analyst momentum;1;OPERATIONAL_AFTER_PIPELINE
 SRC016;Internal MarketBeat cross-check;INTERNAL_OVERLAY;C;0;Actions;70/30 local-MarketBeat revision blend, divergence detection and most-adverse-revision committee risk gate;1;OPERATIONAL_AFTER_PIPELINE
+SRC017;EODHD Fundamentals + Earnings Trends;OPTIONAL_GLOBAL_API;B;1;Actions;Global fundamentals, valuation, financial statements, EPS/revenue estimates and estimate revisions with ISIN resolution;1;ADAPTER_READY_SECRET_OPTIONAL
