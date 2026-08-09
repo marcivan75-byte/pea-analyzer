@@ -15,7 +15,6 @@ from bs4 import BeautifulSoup
 from .core import CaptureStore, clean_text, number, utcnow
 
 BASE = "https://filings.xbrl.org/"
-API = "https://filings.xbrl.org/api/filings"
 
 CONCEPTS = {
     "revenue_esef": [
@@ -46,11 +45,7 @@ def _period_end(period: object) -> str:
     if "/" in s:
         s = s.split("/")[-1]
     m = re.search(r"(20\d{2}-\d{2}-\d{2})", s)
-    if not m:
-        return ""
-    # xBRL-JSON duration periods use an exclusive end date. For annual concepts this is commonly
-    # one day after the reporting date; retain the API report date separately for selection.
-    return m.group(1)
+    return m.group(1) if m else ""
 
 
 def _concept_local(concept: object) -> str:
@@ -74,8 +69,7 @@ def _extract(payload: dict, report_period: str) -> list[tuple[str, float, str]]:
     for fact in _fact_candidates(payload):
         dims = fact.get("dimensions") or {}
         concept = dims.get("concept") or fact.get("concept")
-        local = _concept_local(concept)
-        field = aliases.get(local.lower())
+        field = aliases.get(_concept_local(concept).lower())
         if not field:
             continue
         val = number(fact.get("value"))
@@ -83,18 +77,15 @@ def _extract(payload: dict, report_period: str) -> list[tuple[str, float, str]]:
             continue
         raw_period = _period_end(dims.get("period") or fact.get("period")) or report_period
         fact_ts = pd.Timestamp(raw_period) if raw_period else pd.NaT
-        # xBRL duration facts often end at T+1 because the interval end is exclusive.
         normalized_period = report_period
-        if pd.notna(fact_ts) and pd.notna(report_ts):
-            if abs((fact_ts - report_ts).days) > 2:
-                normalized_period = fact_ts.date().isoformat()
-        elif raw_period:
+        if pd.notna(fact_ts) and pd.notna(report_ts) and abs((fact_ts - report_ts).days) > 2:
+            normalized_period = fact_ts.date().isoformat()
+        elif raw_period and not report_period:
             normalized_period = raw_period
         extra_dims = sum(1 for k in dims if k not in {"concept", "entity", "period", "unit", "language"})
         unit = clean_text(dims.get("unit") or fact.get("unit")).lower()
         unit_penalty = 0 if ("eur" in unit or not unit) else 1
-        score = extra_dims * 10 + unit_penalty
-        candidates.setdefault((field, normalized_period), []).append((score, val))
+        candidates.setdefault((field, normalized_period), []).append((extra_dims * 10 + unit_penalty, val))
     out = []
     for (field, period), vals in candidates.items():
         vals.sort(key=lambda x: x[0])
@@ -102,54 +93,46 @@ def _extract(payload: dict, report_period: str) -> list[tuple[str, float, str]]:
     return out
 
 
-def _json_from_filing_page(session: requests.Session, filing_index: str) -> str:
-    if not filing_index:
-        return ""
-    url = urljoin(BASE, f"filing/{filing_index}")
-    r = session.get(url, timeout=25, headers={"User-Agent": os.getenv("V182_USER_AGENT", "PEA-FreeCapture/1.0")})
+def _json_from_filing_page(session: requests.Session, filing_url: str) -> str:
+    r = session.get(filing_url, timeout=25, headers={"User-Agent": os.getenv("V182_USER_AGENT", "PEA-FreeCapture/1.0")})
     if not r.ok:
         return ""
     soup = BeautifulSoup(r.text, "html.parser")
+    candidates = []
     for a in soup.find_all("a", href=True):
         text = a.get_text(" ", strip=True).lower()
-        href = urljoin(url, a["href"])
+        href = urljoin(filing_url, a["href"])
         if text == "json" or href.lower().endswith((".json", ".json.gz")):
-            return href
-    return ""
+            candidates.append(href)
+    return candidates[0] if candidates else ""
 
 
 def _latest_json_url(lei: str, session: requests.Session) -> tuple[str, str, str] | None:
-    """Resolve latest filing through public JSON:API, filtered directly by LEI."""
-    params = {
-        "filter[entity.identifier]": lei,
-        "sort": "-added_time",
-        "page[size]": 10,
-        "include": "entity",
-    }
-    r = session.get(API, params=params, timeout=30, headers={"User-Agent": os.getenv("V182_USER_AGENT", "PEA-FreeCapture/1.0")})
+    """Resolve latest filing via the public LEI entity page, avoiding fragile API relation filters."""
+    entity_url = urljoin(BASE, f"entity/{lei}")
+    r = session.get(entity_url, timeout=30, headers={"User-Agent": os.getenv("V182_USER_AGENT", "PEA-FreeCapture/1.0")})
+    if r.status_code == 404:
+        return None
     r.raise_for_status()
-    data = r.json().get("data") or []
-    if not data:
-        return None
+    soup = BeautifulSoup(r.text, "html.parser")
     today = date.today().isoformat()
-    candidates = []
-    for item in data:
-        attrs = item.get("attributes") or {}
-        report_period = clean_text(attrs.get("last_end_date") or attrs.get("reporting_date"))[:10]
-        if report_period and report_period > today:
+    candidates: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+    for a in soup.find_all("a", href=True):
+        href = urljoin(entity_url, a["href"])
+        m = re.search(r"/filing/([A-Z0-9]{20})-(20\d{2}-\d{2}-\d{2})-(ESEF|UKSEF)-([A-Z]{2})-(\d+)", href, re.I)
+        if not m or m.group(1).upper() != lei.upper():
             continue
-        index = clean_text(attrs.get("filing_index"))
-        json_url = clean_text(attrs.get("json_url"))
-        if json_url and not json_url.startswith("http"):
-            json_url = urljoin(BASE, json_url)
-        if not json_url:
-            json_url = _json_from_filing_page(session, index)
+        period = m.group(2)
+        if period > today or href in seen:
+            continue
+        seen.add(href)
+        candidates.append((period, href, href.rstrip("/").split("/")[-1]))
+    for period, filing_url, filing_index in sorted(candidates, reverse=True):
+        json_url = _json_from_filing_page(session, filing_url)
         if json_url:
-            candidates.append((report_period or "0000-00-00", json_url, index))
-    if not candidates:
-        return None
-    candidates.sort(reverse=True)
-    return candidates[0][1], candidates[0][0], candidates[0][2]
+            return json_url, period, filing_index
+    return None
 
 
 def _load_json_response(r: requests.Response, url: str) -> dict:
@@ -202,8 +185,7 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 80) 
             url, report_period, filing_index = found
             r = session.get(url, timeout=60, headers={"User-Agent": os.getenv("V182_USER_AGENT", "PEA-FreeCapture/1.0")})
             r.raise_for_status()
-            payload = _load_json_response(r, url)
-            extracted = _extract(payload, report_period)
+            extracted = _extract(_load_json_response(r, url), report_period)
             if not extracted:
                 extracted_zero += 1
                 if len(samples) < 5:
@@ -221,8 +203,8 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 80) 
         except Exception as exc:
             errors += 1
             if len(samples) < 5:
-                samples.append({"isin": isin, "lei": lei, "error": f"{type(exc).__name__}:{str(exc)[:120]}"})
-        time.sleep(0.10)
+                samples.append({"isin": isin, "lei": lei, "error": f"{type(exc).__name__}:{str(exc)[:160]}"})
+        time.sleep(0.08)
 
     added = store.upsert_facts(rows)
     status = "OK" if filings else "NO_NEW_DATA"
