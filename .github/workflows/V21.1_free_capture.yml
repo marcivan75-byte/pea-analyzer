@@ -4,19 +4,28 @@ on:
   workflow_dispatch:
     inputs:
       twelve_symbols:
-        description: 'Maximum Twelve Data symbols for this wave'
+        description: 'Maximum Twelve Data fallback symbols for this wave'
         required: false
-        default: '40'
+        default: '5'
       alpha_symbols:
-        description: 'Maximum Alpha Vantage symbols for this wave'
+        description: 'Maximum Alpha Vantage fallback symbols for this wave'
         required: false
-        default: '10'
+        default: '3'
+      gleif_symbols:
+        description: 'Maximum GLEIF API fallback ISINs after bulk mapping'
+        required: false
+        default: '300'
+      esef_symbols:
+        description: 'Maximum regulated issuers to query in filings.xbrl.org'
+        required: false
+        default: '50'
   push:
     branches: [feature/smart-money-v1]
     paths:
       - '.github/workflows/V21.1_free_capture.yml'
       - 'src/v182/free_capture/**'
       - 'data/reference/V21.1_FREE_CAPTURE_CONFIG.json'
+      - 'config/V21.1_FREE_SOURCE_REGISTRY.csv'
 
 permissions:
   contents: read
@@ -123,10 +132,13 @@ jobs:
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
           MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
-          V211_TWELVE_MAX_SYMBOLS: ${{ inputs.twelve_symbols || '40' }}
-          V211_ALPHA_MAX_SYMBOLS: ${{ inputs.alpha_symbols || '10' }}
+          V211_TWELVE_MAX_SYMBOLS: ${{ inputs.twelve_symbols || '5' }}
+          V211_ALPHA_MAX_SYMBOLS: ${{ inputs.alpha_symbols || '3' }}
+          V211_GLEIF_MAX_SYMBOLS: ${{ inputs.gleif_symbols || '300' }}
+          V211_ESEF_MAX_SYMBOLS: ${{ inputs.esef_symbols || '50' }}
+          V211_GLEIF_WORKERS: '3'
           V211_ALPHA_MAX_CALLS: '23'
-          V211_MARKETSTACK_MAX_SYMBOLS: '3'
+          V211_MARKETSTACK_MAX_SYMBOLS: '1'
           V211_OPENFIGI_MAX_REQUESTS: '30'
           V182_USER_AGENT: 'PEA-V21.1-FreeCapture/1.0'
         run: python -m v182.free_capture.orchestrator
@@ -142,8 +154,9 @@ jobs:
           assert a['passed'] is True and a['free_only'] is True
           assert a['paid_sources_called'] is False and a['yfinance_called_by_v211'] is False
           assert len(d)==1429 and d['isin'].astype(str).nunique()==1429
+          assert a['cache_identity_isin'] >= 1429
           assert Path('outputs/free_capture/V21.1_SOURCE_HEALTH.csv').exists()
-          print('V21_1_FREE_CAPTURE_GATES_OK',a['cache_identity_isin'],a['cache_market_isin'],a['cache_fact_rows'],a['metrics_pct_base_plus_free'])
+          print('V21_1_FREE_CAPTURE_GATES_OK',a['cache_identity_isin'],a['cache_lei_isin'],a['cache_market_isin'],a['cache_fact_rows'],a['metrics_pct_base_plus_free'])
           PY
 
       - name: Publish capture summary
@@ -154,7 +167,7 @@ jobs:
           a=json.loads(Path('outputs/free_capture/V21.1_FREE_CAPTURE_AUDIT.json').read_text())
           print('# V21.1 FREE_ONLY capture')
           print(f"- Base run: {a['rows']} Actions / {a['unique_isin']} ISIN")
-          print(f"- Identity cache: {a['cache_identity_isin']}")
+          print(f"- Identity cache: {a['cache_identity_isin']} / LEI: {a['cache_lei_isin']}")
           print(f"- Market cache: {a['cache_market_isin']} instruments / {a['cache_market_rows']} rows")
           print(f"- Fact cache: {a['cache_fact_rows']} rows")
           print(f"- Coverage base + free: {a['metrics_pct_base_plus_free']}")
@@ -171,4 +184,5 @@ jobs:
           if-no-files-found: error
           path: |
             data/reference/V21.1_FREE_CAPTURE_CONFIG.json
+            config/V21.1_FREE_SOURCE_REGISTRY.csv
             outputs/free_capture/
