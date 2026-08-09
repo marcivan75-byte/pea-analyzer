@@ -171,9 +171,18 @@ def build(root:Path|None=None)->dict:
         sdec.append(dec); sreason.append(reason)
     df['decision_short']=sdec; df['decision_reason_short']=sreason; df['rank_short']=sscore.rank(method='min',ascending=False).astype('Int64')
 
+    # Committee ranking is recomputed AFTER all decision gates. Raw score ranks are retained,
+    # while committee_rank_* ranks only actionable BUY/WATCH or SHORT/WATCH_SHORT rows.
     for hz in ['ct','mt','lt']:
-        lim=int(cfg['selection_limits'][hz.upper()]); df[f'selection_{hz}']=(pd.to_numeric(df[f'rank_{hz}'],errors='coerce')<=lim)&df[f'decision_{hz}'].isin(['BUY_CANDIDATE','WATCH'])
-    df['selection_short']=(pd.to_numeric(df['rank_short'],errors='coerce')<=int(cfg['selection_limits']['SHORT']))&df['decision_short'].isin(['SHORT_CANDIDATE','WATCH_SHORT'])
+        actionable=df[f'decision_{hz}'].isin(['BUY_CANDIDATE','WATCH'])
+        committee_score=_num(df,f'score_{hz}').where(actionable)
+        df[f'committee_rank_{hz}']=committee_score.rank(method='min',ascending=False).astype('Int64')
+        lim=int(cfg['selection_limits'][hz.upper()])
+        df[f'selection_{hz}']=pd.to_numeric(df[f'committee_rank_{hz}'],errors='coerce').le(lim) & actionable
+    actionable_short=df['decision_short'].isin(['SHORT_CANDIDATE','WATCH_SHORT'])
+    committee_short=_num(df,'score_short').where(actionable_short)
+    df['committee_rank_short']=committee_short.rank(method='min',ascending=False).astype('Int64')
+    df['selection_short']=pd.to_numeric(df['committee_rank_short'],errors='coerce').le(int(cfg['selection_limits']['SHORT'])) & actionable_short
 
     last=_num(df,'last_close'); atr=_num(df,'atr14'); target=_num(df,'target_mean_v21'); inval=_num(df,'invalidation_level')
     reliable=identity.ge(float(cfg['coverage']['identity_min'])) & last.gt(0)

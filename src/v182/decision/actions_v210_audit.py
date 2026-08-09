@@ -38,7 +38,12 @@ def run(root: Path|None=None)->dict:
     forbidden=[x for x in all_weighted if x.startswith(('score_','decision_','rank_','selection_','action_topdown_','funnel_','smart_money_','action_smart_money_'))]
     if forbidden: errors.append('double_count_or_output_inputs:'+','.join(sorted(forbidden)))
 
-    field_coverage={f:round(float(pd.to_numeric(df[f],errors='coerce').notna().mean()) if f!='distribution_policy' and df[f].dtype!=bool else float(df[f].notna().mean()),4) for f in sorted(all_weighted) if f in df.columns}
+    def observed(field):
+        if field=='distribution_policy': return df[field].astype(str).str.upper().isin({'DIST','ACC','ACC_OR_DIST'})
+        if field in {'positive_reversal_flag','stoch_bull_cross_flag','stoch_bear_cross_flag','breakout_20d_flag'}:
+            return df[field].notna() & ~df[field].astype(str).str.lower().isin({'nan','none','<na>',''})
+        return pd.to_numeric(df[field],errors='coerce').notna()
+    field_coverage={f:round(float(observed(f).mean()),4) for f in sorted(all_weighted) if f in df.columns}
     sparse={f:c for f,c in field_coverage.items() if c<0.10}
     if sparse: warnings.append('Sparse weighted fields are allowed only through observed-weight renormalization: '+','.join(sparse))
 
