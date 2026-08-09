@@ -12,6 +12,8 @@ on:
       - 'src/v182/sources/etf102_sentiment_overlay.py'
       - 'src/v182/sources/funnel_context.py'
       - 'src/v182/sources/funnel_context_fast.py'
+      - 'src/v182/sources/funnel_context_final.py'
+      - 'src/v182/sources/eurostat_hicp_current.py'
       - 'src/v182/sources/news_resilient.py'
       - 'data/reference/V20.4.3_ETF102_CONFIG.json'
       - 'data/reference/V20.5_FUNNEL_CONFIG.json'
@@ -83,7 +85,6 @@ jobs:
                 echo "ETF102_REFERENCE_ARTIFACT=$NAME" >> "$GITHUB_ENV"
                 FOUND=1; break 2
               else
-                echo "Rejected non-canonical ETF artifact $NAME from run $RUN"
                 rm -f outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
               fi
             done < /tmp/etf102/artifacts.tsv
@@ -99,7 +100,7 @@ jobs:
       - name: Build top-down funnel context
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-        run: python -m v182.sources.funnel_context_fast
+        run: python -m v182.sources.funnel_context_final
 
       - name: Build hardened availability-aware ETF102 committee
         run: python -m v182.decision.etf102_committee_v2043_hardened
@@ -110,8 +111,7 @@ jobs:
           import json
           from pathlib import Path
           import pandas as pd
-          p=Path('outputs/V20.4.3_ETF102_COMMITTEE.csv')
-          d=pd.read_csv(p,sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          d=pd.read_csv('outputs/V20.4.3_ETF102_COMMITTEE.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
           a=json.loads(Path('outputs/audit/V20.4.3_ETF102_COMMITTEE_AUDIT.json').read_text(encoding='utf-8'))
           e=json.loads(Path('outputs/audit/V20.4.3_ETF102_DIRECT_ENRICHMENT.json').read_text(encoding='utf-8'))
           s=json.loads(Path('outputs/audit/V20.4.3_ETF102_SENTIMENT.json').read_text(encoding='utf-8'))
@@ -122,7 +122,13 @@ jobs:
           assert a['missing_data_policy']=='RENORMALIZE_OBSERVED_WEIGHTS_NO_NEUTRAL_50'
           assert a['sparse_component_policy']=='DISABLE_COMPONENT_FOR_ENTIRE_UNIVERSE_BELOW_ACTIVATION_THRESHOLD'
           assert f['passed'] is True and f['rows']==102 and f.get('parallel_news_collection') is True
-          assert 'GDELT_PRIMARY+GOOGLE_NEWS_RSS_FALLBACK' == f['source_contracts']['news']
+          assert f['version']=='V20.5_FUNNEL_RC3'
+          assert f['source_contracts']['news']=='GDELT_PRIMARY+GOOGLE_NEWS_RSS_FALLBACK'
+          hicp=f['global_macro']['eurostat_hicp']
+          for country,item in hicp.items():
+              assert item.get('status')=='OK', (country,item)
+              assert int(item.get('age_days',999)) <= int(item.get('max_age_days',55)), (country,item)
+              assert item.get('dimension')=='coicop18' and item.get('category')=='TOTAL', (country,item)
           assert e['ter_pct_stats']['max'] is None or e['ter_pct_stats']['max'] <= 5.0
           assert pd.to_numeric(d['ter_pct'],errors='coerce').dropna().le(5.0).all()
           assert pd.to_numeric(d['fear_greed_index'],errors='coerce').notna().all()
@@ -132,8 +138,8 @@ jobs:
           required={'score_ct','score_mt','score_lt','score_short','rank_ct','rank_mt','rank_lt','rank_short','decision_ct','decision_mt','decision_lt','decision_short','weight_coverage_ct','weight_coverage_mt','weight_coverage_lt','weight_coverage_short','funnel_macro_multiplier','funnel_risk_gate'}
           assert required.issubset(d.columns), required-set(d.columns)
           for hz in ['ct','mt','lt']:
-            cov=pd.to_numeric(d[f'weight_coverage_{hz}'],errors='coerce')
-            assert cov.notna().all() and cov.between(0,1).all()
+              cov=pd.to_numeric(d[f'weight_coverage_{hz}'],errors='coerce')
+              assert cov.notna().all() and cov.between(0,1).all()
           cfg=json.loads(Path('data/reference/V20.4.3_ETF102_CONFIG.json').read_text(encoding='utf-8'))
           assert cfg['legacy_266_allowed'] is False
           assert 'v9' not in str(cfg['horizon_weights']).lower()
@@ -141,7 +147,7 @@ jobs:
           tr=a['component_status']['tracking']
           if tr['universe_coverage'] < cfg['coverage']['component_activation_min_universe_coverage']:
               assert tr['active'] is False
-          print('V20_4_3_ETF102_HARD_GATES_OK',a['decisions'],a['mean_weight_coverage'],f['risk_gates'],a['component_status'],e['ter_pct_stats'])
+          print('V20_4_3_ETF102_HARD_GATES_OK',a['decisions'],a['mean_weight_coverage'],f['risk_gates'],hicp)
           PY
 
       - name: Publish committee summary
@@ -151,7 +157,7 @@ jobs:
           echo "ETF102 reference run: ${ETF102_REFERENCE_RUN}" >> "$GITHUB_STEP_SUMMARY"
           echo "ETF102 reference artifact: ${ETF102_REFERENCE_ARTIFACT}" >> "$GITHUB_STEP_SUMMARY"
           echo "Legacy 266 universe: NOT LOADED / NOT SCORED" >> "$GITHUB_STEP_SUMMARY"
-          echo "Funnel: GLOBAL_MACRO -> COUNTRY -> NEWS -> SENTIMENT -> ETF_STRUCTURE -> TECHNICAL -> SMART_MONEY_GATE" >> "$GITHUB_STEP_SUMMARY"
+          echo "Funnel: GLOBAL_MACRO -> COUNTRY_INFLATION/RATES -> GLOBAL/COUNTRY/SECTOR/ETF_NEWS -> SENTIMENT -> ETF_STRUCTURE -> TECHNICAL -> SMART_MONEY_GATE" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload ETF102 decision pack
         uses: actions/upload-artifact@v6
