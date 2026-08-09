@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/V20.4_actions_final_reference.yml'
       - 'src/v182/decision/actions_final_reference_1829.py'
+      - 'src/v182/decision/actions_final_reference_publish.py'
   workflow_dispatch:
 
 permissions:
@@ -63,7 +64,7 @@ jobs:
           cp "$SRC" outputs/V20.4_ACTIONS_506_CANDIDATES_TO_INTEGRATE.csv
 
       - name: Enrich 400 candidates and build final reference
-        run: python -m v182.decision.actions_final_reference_1829
+        run: python -m v182.decision.actions_final_reference_publish
 
       - name: Final quality gates
         run: |
