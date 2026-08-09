@@ -38,7 +38,7 @@ def _history_metrics(h: pd.DataFrame) -> dict:
     low=pd.to_numeric(h.get('Low'),errors='coerce') if 'Low' in h else close
     vol=pd.to_numeric(h.get('Volume'),errors='coerce') if 'Volume' in h else pd.Series(index=h.index,dtype=float)
     if len(close)<25: return {}
-    c=float(close.iloc[-1]); tail=close.tail(252)
+    c=float(close.iloc[-1])
     h52=float(pd.to_numeric(high,errors='coerce').tail(252).max()) if len(high) else None
     l52=float(pd.to_numeric(low,errors='coerce').tail(252).min()) if len(low) else None
     ret=close.pct_change().dropna().tail(252)
@@ -79,11 +79,10 @@ def apply(root: Path|None=None) -> dict:
     history_success=0; info_success=0; info_failures=[]
     try:
         import yfinance as yf
-        # Batches reduce memory and make partial completion useful if Yahoo throttles one request.
         for start in range(0,len(tickers),75):
             batch=tickers[start:start+75]
             try:
-                hist=yf.download(batch,period='5y',interval='1d',group_by='ticker',auto_adjust=Falslactions=False,threads=True,progress=False,timeout=25)
+                hist=yf.download(batch,period='5y',interval='1d',group_by='ticker',auto_adjust=False,actions=False,threads=True,progress=False,timeout=25)
             except Exception:
                 continue
             for ticker in batch:
@@ -91,12 +90,11 @@ def apply(root: Path|None=None) -> dict:
                     h=hist[ticker] if isinstance(hist.columns,pd.MultiIndex) and ticker in hist.columns.get_level_values(0) else hist
                     m=_history_metrics(h)
                     if not m: continue
-                    idx=df.indexkdf['yahoo_ticker'].astype(str).eq(ticker)]
+                    idx=df.index[df['yahoo_ticker'].astype(str).eq(ticker)]
                     for field,val in m.items(): df.loc[idx,field]=val
                     history_success+=1
                 except Exception: continue
 
-        # Rich metadata only for the prioritized 300. Bounded circuit breaker preserves the workflow on 42>s.
         consecutive_rate=0
         mappings={
             'marketCap':'market_cap_v21','enterpriseValue':'enterprise_value_v21','forwardPE':'per_forward_v21','trailingPE':'per_ttm_v21',
@@ -109,7 +107,7 @@ def apply(root: Path|None=None) -> dict:
             'returnOnEquity':'roe_v21_pct','returnOnAssets':'roa_v21_pct','operatingMargins':'operating_margin_v21_pct',
             'profitMargins':'net_margin_v21_pct','grossMargins':'gross_margin_v21_pct','revenueGrowth':'revenue_growth_v21_pct',
             'earningsGrowth':'earnings_growth_v21_pct','dividendYield':'dividend_yield_v21_pct','payoutRatio':'payout_ratio_v21_pct',
-            'heldPercentInstitutions':'institutional_ownership_pct','heldPercentInsiders':'insider_ownership_pct','shortPercentOfFloat':'insider_ownership_pct','shortPercentOfFloat':'short_percent_float_pct'
+            'heldPercentInstitutions':'institutional_ownership_pct','heldPercentInsiders':'insider_ownership_pct','shortPercentOfFloat':'short_percent_float_pct'
         }
         for ticker in tickers:
             try:
@@ -122,7 +120,6 @@ def apply(root: Path|None=None) -> dict:
                 for src,dst in pct_maps.items():
                     val=_pct(info.get(src))
                     if val is not None: df.loc[idx,dst]=val
-                # Known Yahoo timestamps; choose earliest announced date in the range when available.
                 ts=info.get('earningsTimestamp') or info.get('earningsTimestampStart')
                 if ts:
                     dt=datetime.fromtimestamp(float(ts),tz=timezone.utc)
@@ -135,7 +132,6 @@ def apply(root: Path|None=None) -> dict:
                 if rec is not None:
                     score=(5.0-float(rec))/4.0*100.0
                     df.loc[idx,'consensus_score_100_v21']=max(0,min(100,score))
-                # Direct financial ratios derived only when both operands are observed.
                 mc=_f(info.get('marketCap')); fcf=_f(info.get('freeCashflow')); debt=_f(info.get('totalDebt')); ebitda=_f(info.get('ebitda'))
                 if mc and fcf is not None and mc!=0: df.loc[idx,'fcf_yield_v21']=fcf/mc*100.0
                 if debt is not None and ebitda and ebitda!=0: df.loc[idx,'debt_to_ebitda_v21']=debt/ebitda
@@ -152,7 +148,6 @@ def apply(root: Path|None=None) -> dict:
     except Exception as exc:
         info_failures.append({'ticker':'__SETUP__','error':f'{type(exc).__name__}: {str(exc)[:180]}'})
 
-    # Safe coalescing after current collection.
     for target, sources in {
         'market_cap':['market_cap_v21','market_cap'], 'per_forward_v21':['per_forward_v21','per_forward','per_forward_yf'],
         'per_ttm_v21':['per_ttm_v21','per_ttm','per_ttm_yf'], 'pb_v21':['pb_v21','pb'], 'beta_v21':['beta_v21','beta']
@@ -166,7 +161,6 @@ def apply(root: Path|None=None) -> dict:
     df.loc[last.le(0)|last.isna()|target.isna(),'target_upside_pct_v21']=np.nan
     df['potential_gt_15_flag']=df['target_upside_pct_v21'].ge(15).where(df['target_upside_pct_v21'].notna())
 
-    # Earnings catalyst uses observed analyst evidence only; no evidence => N/A, never 50.
     am=_num(df,'analyst_momentum_score'); cs=_num(df,'consensus_score_100_v21'); eps=_num(df,'eps_revision_3m')
     parts=[]
     if am.notna().any(): parts.append((am,.45))
