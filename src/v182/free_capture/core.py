@@ -12,6 +12,12 @@ ROOT = Path(__file__).resolve().parents[3]
 CONFIG_PATH = ROOT / "data/reference/V21.1_FREE_CAPTURE_CONFIG.json"
 DEFAULT_ROOT = ROOT / "outputs/free_capture"
 
+EXPLICIT_MISSING = {
+    "", "nan", "none", "<na>", "na", "n/a", "not_available", "not available",
+    "data_not_available", "unavailable", "unknown", "null", "not_applicable",
+    "not applicable", "no_data", "no data", "missing"
+}
+
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -21,11 +27,15 @@ def load_config() -> dict:
     return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 
 
-def clean_text(value: object) -> str:
+def is_observed(value: object) -> bool:
     if value is None:
-        return ""
-    s = str(value).strip()
-    return "" if s.lower() in {"", "nan", "none", "<na>"} else s
+        return False
+    s = str(value).strip().lower()
+    return s not in EXPLICIT_MISSING
+
+
+def clean_text(value: object) -> str:
+    return str(value).strip() if is_observed(value) else ""
 
 
 def number(value: object) -> float | None:
@@ -58,7 +68,8 @@ def write_csv(df: pd.DataFrame, path: Path, sort_by: list[str] | None = None) ->
 
 IDENTITY_COLS = [
     "isin", "name", "source", "ticker", "exchange", "mic", "figi", "composite_figi",
-    "share_class_figi", "security_type", "resolution_status", "as_of", "observed_at_utc"
+    "share_class_figi", "security_type", "lei", "lei_source", "resolution_status", "as_of",
+    "observed_at_utc"
 ]
 MARKET_COLS = [
     "isin", "date", "open", "high", "low", "close", "volume", "currency", "source",
@@ -168,15 +179,14 @@ def load_universe(path: Path) -> pd.DataFrame:
 
 
 def priority_frame(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
-    """Rank rows for scarce free APIs: missing fields first, then committee relevance."""
+    """Rank rows for scarce free APIs: genuine missing fields first, then committee relevance."""
     out = df.copy()
     key = cfg["key_fields"]
     fields = key["fundamentals"] + key["valuation"] + key["prospective"]
     missing = pd.Series(0, index=out.index, dtype=float)
     for f in fields:
         if f in out:
-            s = out[f].astype(str).str.strip().str.lower()
-            missing += s.isin({"", "nan", "none", "<na>"}).astype(float)
+            missing += (~out[f].map(is_observed)).astype(float)
         else:
             missing += 1.0
     score_mt = pd.to_numeric(out.get("score_mt", 0), errors="coerce").fillna(0)
