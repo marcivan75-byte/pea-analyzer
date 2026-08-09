@@ -11,8 +11,11 @@ on:
       - 'src/v182/decision/actions_v210_pre_backfill_schema.py'
       - 'src/v182/decision/actions_v210_yahoo_backfill.py'
       - 'src/v182/decision/actions_v210_eodhd_backfill.py'
+      - 'src/v182/decision/actions_v210_eodhd_backfill_v2.py'
       - 'src/v182/decision/actions_v210_finnhub_backfill.py'
+      - 'src/v182/decision/actions_v210_finnhub_backfill_v2.py'
       - 'src/v182/decision/actions_v210_coverage_certification.py'
+      - 'src/v182/decision/actions_v210_apply_data_quality_gate.py'
       - 'src/v182/decision/actions_v210_audit.py'
       - 'src/v182/decision/actions_v210_committee.py'
       - 'src/v182/decision/actions_v210_reference.py'
@@ -140,14 +143,14 @@ jobs:
           EODHD_MAX_SYMBOLS_PER_RUN: '1429'
           EODHD_WORKERS: '8'
           EODHD_REQUESTS_PER_SECOND: '12'
-        run: python -m v182.decision.actions_v210_eodhd_backfill
+        run: python -m v182.decision.actions_v210_eodhd_backfill_v2
       - name: Finnhub analyst consensus and revisions backfill
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           FINNHUB_MAX_SYMBOLS_PER_RUN: '550'
           FINNHUB_METRIC_MAX_SYMBOLS_PER_RUN: '150'
           FINNHUB_DELAY_SECONDS: '1.05'
-        run: python -m v182.decision.actions_v210_finnhub_backfill
+        run: python -m v182.decision.actions_v210_finnhub_backfill_v2
       - name: Build Actions-specific Top Down funnel
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -158,6 +161,8 @@ jobs:
         run: python -m v182.decision.actions_v210_coverage_certification
       - name: Build V21 Actions PEA multi-horizon committee
         run: python -m v182.decision.actions_v210_committee
+      - name: Apply strict MT LT data-quality decision gate
+        run: python -m v182.decision.actions_v210_apply_data_quality_gate
       - name: V21 Actions integrated hard quality gates
         run: |
           python - <<'PY'
@@ -173,8 +178,11 @@ jobs:
               cov=pd.to_numeric(d[f'weight_coverage_{hz}'],errors='coerce'); assert cov.notna().all() and cov.between(0,1).all()
           for hz in ['ct','mt','lt']:
               dec=d[f'decision_{hz}'].astype(str); assert not ((~d['pea_validation_gate'].astype(str).eq('PASS')) & dec.isin(['BUY_CANDIDATE','WATCH'])).any()
+          ready=d.get('coverage_decision_ready_v21',pd.Series(False,index=d.index)).astype(str).str.lower().isin({'true','1','yes','oui'})
+          for hz in ['mt','lt']:
+              assert not ((~ready) & d[f'decision_{hz}'].astype(str).isin(['BUY_CANDIDATE','WATCH'])).any()
           assert not d['execution'].astype(str).str.upper().isin({'LIVE','ORDER','EXECUTE','BROKER','REAL_ORDER','LIVE_ORDER'}).any()
-          print('V21_ACTIONS_INTEGRATED_GATES_OK',com['decisions'],com['mean_weight_coverage'],td['risk_gates'],cert['process_validation_status'])
+          print('V21_ACTIONS_INTEGRATED_GATES_OK',com.get('decisions_after_data_quality_gate',com.get('decisions')),com.get('mean_weight_coverage'),td['risk_gates'],cert['process_validation_status'])
           PY
       - name: Build exhaustive V21 Actions PEA reference
         run: python -m v182.decision.actions_v210_reference
@@ -196,7 +204,7 @@ jobs:
           python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
           from pathlib import Path
-          p=json.loads(Path('outputs/audit/V21.0_ACTIONS_PRECOMMIT_AUDIT.json').read_text()); r=json.loads(Path('outputs/audit/V21.0_ACTIONS_PEA_REFERENCE_AUDIT.json').read_text()); c=json.loads(Path('outputs/audit/V21.0_ACTIONS_COVERAGE_CERTIFICATION.json').read_text()); y=json.loads(Path('outputs/audit/V21.0_ACTIONS_YAHOO_BACKFILL.json').read_text()); f=json.loads(Path('outputs/audit/V21.0_ACTIONS_FINNHUB_BACKFILL.json').read_text()); e=json.loads(Path('outputs/audit/V21.0_ACTIONS_EODHD_BACKFILL.json').read_text())
+          p=json.loads(Path('outputs/audit/V21.0_ACTIONS_PRECOMMIT_AUDIT.json').read_text()); r=json.loads(Path('outputs/audit/V21.0_ACTIONS_PEA_REFERENCE_AUDIT.json').read_text()); c=json.loads(Path('outputs/audit/V21.0_ACTIONS_COVERAGE_CERTIFICATION.json').read_text()); y=json.loads(Path('outputs/audit/V21.0_ACTIONS_YAHOO_BACKFILL.json').read_text()); f=json.loads(Path('outputs/audit/V21.0_ACTIONS_FINNHUB_BACKFILL.json').read_text()); e=json.loads(Path('outputs/audit/V21.0_ACTIONS_EODHD_BACKFILL.json').read_text()); com=json.loads(Path('outputs/audit/V21.0_ACTIONS_COMMITTEE_AUDIT.json').read_text())
           print('\n## V21.0 Actions PEA data validation')
           print(f"- Process validation: **{c['process_validation_status']}**")
           print(f"- Certification metrics: {c['metrics_pct']}")
@@ -205,6 +213,7 @@ jobs:
           print(f"- Yahoo slow backfill: attempted={y.get('attempted')} / applied={y.get('applied')} / filled={y.get('filled_cells')}")
           print(f"- EODHD: {e.get('status')} / resolved={e.get('resolved')} / filled={e.get('filled_cells')}")
           print(f"- Finnhub: {f.get('status')} / resolved={f.get('resolved')} / analyst process coverage={f.get('analyst_process_coverage_pct')}%")
+          print(f"- MT/LT data-quality gate: {com.get('data_quality_gate',{})}")
           print(f"- Reference: {r['rows']} actions / {r['reference_columns']} fields / mean field coverage {r['mean_field_coverage_pct']}%")
           print('- Neutral 50 imputation: forbidden')
           print('- Smart Money positive score: disabled')
