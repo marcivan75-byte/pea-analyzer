@@ -26,8 +26,8 @@ def _dates_from(path: Path, field: str) -> set[str]:
 def build() -> dict:
     cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
     cal = cfg.get("calibration", {})
-    required = int(cal.get("minimum_distinct_shadow_run_dates", 20))
-    required_obs = int(cal.get("minimum_shadow_observations", 20))
+    required = int(cal.get("minimum_distinct_run_dates_for_empirical_fit", 20))
+    required_obs = int(cal.get("minimum_shadow_observations_for_empirical_fit", 20))
 
     score_path = STATE / "SMART_MONEY_DAILY_SCORES.parquet"
     flow_path = STATE / "ETF_FLOW_HISTORY.parquet"
