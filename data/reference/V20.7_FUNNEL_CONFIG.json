@@ -1,0 +1,29 @@
+{
+  "version": "V20.7_FUNNEL",
+  "mode": "TOP_DOWN_THEN_BOTTOM_UP",
+  "execution": "RESEARCH_ONLY",
+  "universe_contract": "ETF_PEA_ONLY_FINAL_VALIDATED",
+  "context_weights": {
+    "global_macro": 0.18,
+    "country_macro": 0.20,
+    "global_news": 0.14,
+    "country_news": 0.16,
+    "sector_news": 0.07,
+    "instrument_news": 0.05,
+    "market_sentiment": 0.20
+  },
+  "minimum_context_coverage_for_positive_multiplier": 0.55,
+  "context_multiplier": {"min": 0.94, "max": 1.04},
+  "risk_gates": {"block_buy_below": 25, "review_only_below": 35},
+  "fred_series": {"us_cpi": "CPIAUCSL", "fed_funds": "FEDFUNDS", "us_2y": "DGS2", "us_10y": "DGS10", "us_unemployment": "UNRATE"},
+  "eurostat": {"hicp_dataset": "prc_hicp_minr", "unit": "RCH_A", "coicop_dimension": "coicop18", "coicop": "TOTAL", "max_age_days": 55},
+  "ecb": {"deposit_rate_flow": "FM", "deposit_rate_key": "D.U2.EUR.4F.KR.DFR.LEV"},
+  "news": {
+    "timespan": "2d", "max_records": 50, "top_instruments_for_specific_news": 30,
+    "risk_terms": ["recession", "downgrade", "warning", "default", "sanction", "war", "conflict", "crisis", "fraud", "investigation", "layoff", "bankruptcy", "profit warning", "inflation surge"],
+    "positive_terms": ["upgrade", "beats expectations", "growth", "recovery", "easing", "rate cut", "record profit", "buyback", "acquisition", "expansion", "raises guidance", "strong demand"]
+  },
+  "country_aliases": {
+    "UNITED STATES": "US", "USA": "US", "U.S.": "US", "FRANCE": "FR", "GERMANY": "DE", "ITALY": "IT", "SPAIN": "ES", "NETHERLANDS": "NL", "BELGIUM": "BE", "AUSTRIA": "AT", "FINLAND": "FI", "PORTUGAL": "PT", "IRELAND": "IE", "GREECE": "GR", "EUROPE": "EU", "EUROZONE": "EU", "EURO AREA": "EU", "WORLD": "GLOBAL", "GLOBAL": "GLOBAL", "JAPAN": "JP", "INDIA": "IN", "CHINA": "CN", "EMERGING": "EM"
+  }
+}
