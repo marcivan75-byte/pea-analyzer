@@ -40,40 +40,42 @@ jobs:
           set -euo pipefail
           mkdir -p outputs /tmp/v2042
 
-          # Actions: reuse latest successful total 1829 snapshot; no recollection/API calls.
-          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" --jq '.artifacts|sort_by(.created_at)|reverse|.[]|select(.expired==false)|select(.name|startswith("V20.4-Total-1829-266-"))|[.id,.workflow_run.id]|@tsv' > /tmp/v2042/actions.tsv
+          # V20.4: reuse the latest successful validated 1829 Actions + 266 ETF decision pack.
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" --jq '.artifacts|sort_by(.created_at)|reverse|.[]|select(.expired==false)|select(.name|startswith("V20.4-Total-1829-266-"))|[.id,.workflow_run.id]|@tsv' > /tmp/v2042/v204.tsv
           FOUND=0
           while IFS=$'\t' read -r ART RUN; do
             [ -n "$ART" ] || continue
             C=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}" --jq '.conclusion // ""' 2>/dev/null || true)
             [ "$C" = success ] || continue
-            rm -rf /tmp/v2042/a; mkdir -p /tmp/v2042/a
-            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/v2042/a.zip
-            unzip -oq /tmp/v2042/a.zip -d /tmp/v2042/a
-            A=$(find /tmp/v2042/a -name V20.4_GITOK_ACTIONS_1829_DECISIONS.csv -print -quit)
-            [ -n "$A" ] || continue
+            rm -rf /tmp/v2042/v204; mkdir -p /tmp/v2042/v204
+            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/v2042/v204.zip
+            unzip -oq /tmp/v2042/v204.zip -d /tmp/v2042/v204
+            A=$(find /tmp/v2042/v204 -name V20.4_GITOK_ACTIONS_1829_DECISIONS.csv -print -quit)
+            E266=$(find /tmp/v2042/v204 -name V20.4_GITOK_ETF_266_DECISIONS.csv -print -quit)
+            [ -n "$A" ] && [ -n "$E266" ] || continue
             cp "$A" outputs/V20.4_GITOK_ACTIONS_1829_DECISIONS.csv
-            echo "ACTIONS_SOURCE_RUN=$RUN" >> "$GITHUB_ENV"
+            cp "$E266" outputs/V20.4_GITOK_ETF_266_DECISIONS.csv
+            echo "V204_SOURCE_RUN=$RUN" >> "$GITHUB_ENV"
             FOUND=1; break
-          done < /tmp/v2042/actions.tsv
+          done < /tmp/v2042/v204.tsv
           test "$FOUND" = 1
 
-          # ETF: prefer the compact 102-ETF validated master from the latest full audit.
-          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" --jq '.artifacts|sort_by(.created_at)|reverse|.[]|select(.expired==false)|select(.name|startswith("V18.2-full-audit-"))|[.id,.workflow_run.id]|@tsv' > /tmp/v2042/etf.tsv
+          # V20.4.2 ETF specialized committee: also reuse the compact 102-ETF validated master.
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" --jq '.artifacts|sort_by(.created_at)|reverse|.[]|select(.expired==false)|select(.name|startswith("V18.2-full-audit-"))|[.id,.workflow_run.id]|@tsv' > /tmp/v2042/etf102.tsv
           FOUND=0
           while IFS=$'\t' read -r ART RUN; do
             [ -n "$ART" ] || continue
             C=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}" --jq '.conclusion // ""' 2>/dev/null || true)
             [ "$C" = success ] || continue
-            rm -rf /tmp/v2042/e; mkdir -p /tmp/v2042/e
-            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/v2042/e.zip
-            unzip -oq /tmp/v2042/e.zip -d /tmp/v2042/e
-            E=$(find /tmp/v2042/e -name V18.2_PEA_ETF_MASTER_ENRICHED.csv -print -quit)
-            [ -n "$E" ] || continue
-            cp "$E" outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
-            echo "ETF_SOURCE_RUN=$RUN" >> "$GITHUB_ENV"
+            rm -rf /tmp/v2042/e102; mkdir -p /tmp/v2042/e102
+            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/v2042/e102.zip
+            unzip -oq /tmp/v2042/e102.zip -d /tmp/v2042/e102
+            E102=$(find /tmp/v2042/e102 -name V18.2_PEA_ETF_MASTER_ENRICHED.csv -print -quit)
+            [ -n "$E102" ] || continue
+            cp "$E102" outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
+            echo "ETF102_SOURCE_RUN=$RUN" >> "$GITHUB_ENV"
             FOUND=1; break
-          done < /tmp/v2042/etf.tsv
+          done < /tmp/v2042/etf102.tsv
           test "$FOUND" = 1
 
       - name: Fast recompute only
@@ -106,8 +108,8 @@ jobs:
         run: |
           cat outputs/V20.4.2_COMMITTEE_SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Actions source run: ${ACTIONS_SOURCE_RUN}" >> "$GITHUB_STEP_SUMMARY"
-          echo "ETF source run: ${ETF_SOURCE_RUN}" >> "$GITHUB_STEP_SUMMARY"
+          echo "V20.4 Actions+ETF266 source run: ${V204_SOURCE_RUN}" >> "$GITHUB_STEP_SUMMARY"
+          echo "ETF102 source run: ${ETF102_SOURCE_RUN}" >> "$GITHUB_STEP_SUMMARY"
           echo "Mode: FAST_RECOMPUTE_NO_API_REFRESH" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload compact decision pack
