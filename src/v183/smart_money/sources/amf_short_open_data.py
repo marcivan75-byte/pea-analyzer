@@ -128,34 +128,59 @@ def latest_public_positions(frame: pd.DataFrame, as_of: str | None = None) -> pd
     return public_position_history(frame, as_of=as_of, depth_per_holder=1).reset_index(drop=True)
 
 
+def _safe_text(value) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
+def _first_text(*values) -> str:
+    for value in values:
+        s = _safe_text(value)
+        if s:
+            return s
+    return ""
+
+
+def _safe_bool(value) -> bool:
+    if value is None or pd.isna(value):
+        return False
+    return bool(value)
+
+
 def to_events(frame: pd.DataFrame, as_of: str | None = None, history_depth_per_holder: int = 4) -> list[dict]:
     from v183.smart_money.models import SmartMoneyEvent
     history = public_position_history(frame, as_of=as_of, depth_per_holder=history_depth_per_holder)
     events = []
     for _, r in history.iterrows():
-        pub = r.get("publication_start") or r.get("position_date")
+        position_date = _safe_text(r.get("position_date"))
+        pub = _first_text(r.get("publication_start"), position_date)
+        holder = _safe_text(r.get("holder"))
+        isin = _safe_text(r.get("isin")).upper()
+        issuer = _safe_text(r.get("issuer"))
+        holder_lei = _safe_text(r.get("holder_lei"))
+        censored = _safe_bool(r.get("public_censored_below_05"))
+        if not pub or not position_date or not isin:
+            continue
         e = SmartMoneyEvent(
-            universe="ACTION", isin=str(r["isin"]), event_type="SHORT", event_subtype="PUBLIC_NET_SHORT",
+            universe="ACTION", isin=isin, event_type="SHORT", event_subtype="PUBLIC_NET_SHORT",
             source="AMF_OPEN_DATA_SHORTS", evidence_level="A", validation_status="VALIDATED",
-            publication_date=str(pub)[:10], transaction_date=str(r.get("position_date") or pub)[:10],
-            actor_name=str(r.get("holder") or ""), direction=0, short_position_pct=float(r["short_position_pct"]),
-            source_document_id=f"AMF_SHORT:{r.get('holder','')}:{r.get('isin','')}:{r.get('position_date','')}",
-            metadata={"holder_lei": r.get("holder_lei"), "issuer": r.get("issuer"), "public_censored_below_05": bool(r.get("public_censored_below_05", False))},
+            publication_date=pub[:10], transaction_date=position_date[:10],
+            actor_name=holder, direction=0, short_position_pct=float(r["short_position_pct"]),
+            source_document_id=f"AMF_SHORT:{holder}:{isin}:{position_date}",
+            metadata={"holder_lei": holder_lei, "issuer": issuer, "public_censored_below_05": censored},
         ).to_dict()
-        e["position_date"] = str(r.get("position_date") or "")[:10]
-        e["public_censored_below_05"] = bool(r.get("public_censored_below_05", False))
+        e["position_date"] = position_date[:10]
+        e["public_censored_below_05"] = censored
         events.append(e)
     return events
 
 
 def _read_csv_bytes(data: bytes) -> pd.DataFrame:
     text = data.decode("utf-8-sig")
-    # AMF's official export is semicolon-delimited and may contain quoted line
-    # breaks in header labels. Automatic delimiter sniffing is unsafe here.
     frame = pd.read_csv(io.StringIO(text), sep=";", dtype=str, engine="c")
     if len(frame.columns) >= 5:
         return frame
-    # Defensive compatibility for historical mirrors using comma delimiter.
     alt = pd.read_csv(io.StringIO(text), sep=",", dtype=str, engine="c")
     return alt if len(alt.columns) > len(frame.columns) else frame
 
