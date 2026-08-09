@@ -64,7 +64,10 @@ jobs:
       - name: Execute V18.3 full shadow chain
         env:
           V183_RUN_ID: sm-validation-${{ github.run_id }}-${{ github.run_attempt }}
-          MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
+          # Marketstack symbol resolution is an optional V18.2 enrichment and is
+          # deliberately excluded from the isolated Smart Money validation. Its
+          # single-request resolver quota can fail transiently and must not mask
+          # Smart Money end-to-end validation. Production workflows are unchanged.
           OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
@@ -134,13 +137,14 @@ jobs:
           from pathlib import Path
           import json
           print('## V18.3 Smart Money isolated validation')
-          for name in ['V18.2_QUALITY_GATES.json','V18.3_SMART_MONEY_CALIBRATION.json','V18.3_SMART_MONEY_QUALITY_GATES.json','V18.3_QUALITY_GATES.json','V18.3_RUN_SUMMARY.json']:
+          for name in ['V18.2_QUALITY_GATES.json','V18.3_SMART_MONEY_CALIBRATION.json','V18.3_SMART_MONEY_COVERAGE.json','V18.3_SMART_MONEY_QUALITY_GATES.json','V18.3_QUALITY_GATES.json','V18.3_RUN_SUMMARY.json']:
             p=Path('outputs/audit')/name
             if p.exists():
               d=json.loads(p.read_text(encoding='utf-8'))
               print(f'- {name}: passed={d.get("passed",d.get("smart_money_quality_passed","n/a"))}')
           print('- Score application: SHADOW_ONLY')
           print('- Live/order execution: forbidden')
+          print('- Marketstack resolver: excluded only from isolated validation; production unchanged')
           print('- Production total workflow: unchanged')
           PY
 
