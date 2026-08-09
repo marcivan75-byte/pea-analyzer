@@ -1,0 +1,99 @@
+name: V20.4.2 Daily Efficient Ingestion
+
+on:
+  schedule:
+    - cron: '7 18 * * 1-5'
+      timezone: 'Europe/Paris'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2042-daily-ingestion
+  cancel-in-progress: true
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Restore compact persistent histories
+        uses: actions/cache@v4
+        with:
+          path: outputs/history
+          key: v2042-daily-history-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            v2042-daily-history-${{ github.ref_name }}-
+            v182-consensus-history-${{ github.ref_name }}-
+
+      - name: Install runtime dependencies only
+        run: pip install -c constraints-ci.txt -e .
+
+      - name: Daily market/API ingestion
+        env:
+          V182_RUN_ID: daily-${{ github.run_id }}-${{ github.run_attempt }}
+          MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
+          OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+        run: python -m v182.reporting.run
+
+      - name: Committee enrichments only
+        env:
+          MARKETBEAT_API_KEY: ${{ secrets.MARKETBEAT_API_KEY }}
+        run: |
+          python -m v182.audit.ohlcv_gaps
+          python -m v182.decision.scenario_fallback
+          python -m v182.decision.analyst_momentum
+          python -m v182.decision.marketbeat_overlay_runner
+          python -m v182.decision.committee_finalize
+
+      - name: Lightweight production gates
+        run: |
+          test -s outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv
+          test -s outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
+          test -s outputs/audit/V18.2_QUALITY_GATES.json
+          python - <<'PY'
+          import json
+          import pandas as pd
+          q=json.load(open('outputs/audit/V18.2_QUALITY_GATES.json',encoding='utf-8'))
+          assert q.get('passed') is True, q
+          a=pd.read_csv('outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv',sep=';',encoding='utf-8-sig',dtype=object)
+          e=pd.read_csv('outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv',sep=';',encoding='utf-8-sig',dtype=object)
+          assert len(a) >= 1400, len(a)
+          assert len(e) == 102, len(e)
+          assert a['isin'].astype(str).str.strip().nunique() == len(a)
+          assert e['isin'].astype(str).str.strip().nunique() == 102
+          print('DAILY_INGESTION_GATES_OK',len(a),len(e))
+          PY
+
+      - name: Publish compact reusable snapshot
+        uses: actions/upload-artifact@v6
+        with:
+          name: V20.4.2-Daily-Snapshot-${{ github.run_id }}
+          path: |
+            outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv
+            outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
+            outputs/V18.2_COMMITTEE_ANALYST_MOMENTUM.csv
+            outputs/audit/V18.2_QUALITY_GATES.json
+            outputs/audit/V18.2_ANALYST_MOMENTUM_METRICS.json
+            outputs/audit/V18.2_OHLCV_GAP_METRICS.json
+            outputs/context/V18.2_MACRO_CONTEXT.json
+            outputs/context/V18.2_ENERGY_CONTEXT.json
+            outputs/history/V18.2_CONSENSUS_SNAPSHOTS.csv
+            outputs/history/V18.2_ANALYST_REVISIONS.csv
+          if-no-files-found: error
+          retention-days: 7
