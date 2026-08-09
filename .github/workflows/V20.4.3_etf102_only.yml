@@ -1,4 +1,4 @@
-name: V20.4.3 ETF102 Only Committee
+name: V20.5 ETF102 Funnel + Smart Money Committee
 
 on:
   workflow_dispatch:
@@ -23,13 +23,13 @@ permissions:
   actions: read
 
 concurrency:
-  group: v2043-etf102-only
+  group: v205-etf102-funnel-smart-money
   cancel-in-progress: true
 
 jobs:
   etf102:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v6
         with:
@@ -73,11 +73,9 @@ jobs:
               cp "$SRC" outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
               if python - <<'PY'
           import pandas as pd
-          p='outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv'
-          d=pd.read_csv(p,sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          d=pd.read_csv('outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
           ok=(len(d)==102 and d['isin'].astype(str).nunique()==102 and d['ticker_identity_status'].astype(str).eq('FINAL_VALIDATED').all())
-          if not ok:
-              raise SystemExit(1)
+          if not ok: raise SystemExit(1)
           print('ETF102_REFERENCE_OK')
           PY
               then
@@ -102,21 +100,73 @@ jobs:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python -m v182.sources.funnel_context_final
 
-      - name: Build hardened availability-aware ETF102 committee
+      - name: Restore latest validated Smart Money ETF102 shadow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/smintegration outputs/audit
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/V18.3_smart_money_validation_loop.yml/runs?status=success&branch=feature%2Fsmart-money-v1&per_page=50" --jq '.workflow_runs[].id' > /tmp/smintegration/runs.txt
+          FOUND=0
+          while read -r RUN; do
+            [ -n "$RUN" ] || continue
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}/artifacts?per_page=100" --jq '.artifacts[]|select(.expired==false)|[.id,.name]|@tsv' > /tmp/smintegration/artifacts.tsv || continue
+            while IFS=$'\t' read -r ART NAME; do
+              [ -n "$ART" ] || continue
+              case "$NAME" in V18.3-Smart-Money-Validation-*) ;; *) continue ;; esac
+              rm -rf /tmp/smintegration/unpack; mkdir -p /tmp/smintegration/unpack
+              if ! gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/smintegration/sm.zip; then continue; fi
+              if ! unzip -oq /tmp/smintegration/sm.zip -d /tmp/smintegration/unpack; then continue; fi
+              SHADOW=$(find /tmp/smintegration/unpack -name V18.3_PEA_ETF_SMART_MONEY_SHADOW.csv -print -quit)
+              STATUS=$(find /tmp/smintegration/unpack -name V18.3_SMART_MONEY_ITERATION_STATUS.json -print -quit)
+              QUALITY=$(find /tmp/smintegration/unpack -name V18.3_SMART_MONEY_QUALITY_GATES.json -print -quit)
+              [ -n "$SHADOW" ] && [ -n "$STATUS" ] && [ -n "$QUALITY" ] || continue
+              cp "$SHADOW" outputs/V18.3_PEA_ETF_SMART_MONEY_SHADOW.csv
+              cp "$STATUS" outputs/audit/V18.3_SMART_MONEY_ITERATION_STATUS.json
+              cp "$QUALITY" outputs/audit/V18.3_SMART_MONEY_QUALITY_GATES.json
+              if python - <<'PY'
+          import json
+          import pandas as pd
+          from pathlib import Path
+          d=pd.read_csv('outputs/V18.3_PEA_ETF_SMART_MONEY_SHADOW.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          it=json.loads(Path('outputs/audit/V18.3_SMART_MONEY_ITERATION_STATUS.json').read_text(encoding='utf-8'))
+          q=json.loads(Path('outputs/audit/V18.3_SMART_MONEY_QUALITY_GATES.json').read_text(encoding='utf-8'))
+          assert len(d)==102 and d['isin'].astype(str).nunique()==102
+          assert q.get('passed') is True, q
+          assert it.get('positive_score_activation_ready') is False, it
+          assert 'ifs_effective' in d and 'smart_money_confidence' in d
+          print('SMART_MONEY_ETF102_SHADOW_OK', {'rows':len(d),'dates':it.get('distinct_shadow_run_dates')})
+          PY
+              then
+                echo "SMART_MONEY_SOURCE_RUN=$RUN" >> "$GITHUB_ENV"
+                echo "SMART_MONEY_SOURCE_ARTIFACT=$NAME" >> "$GITHUB_ENV"
+                FOUND=1; break 2
+              else
+                rm -f outputs/V18.3_PEA_ETF_SMART_MONEY_SHADOW.csv outputs/audit/V18.3_SMART_MONEY_ITERATION_STATUS.json outputs/audit/V18.3_SMART_MONEY_QUALITY_GATES.json
+              fi
+            done < /tmp/smintegration/artifacts.tsv
+          done < /tmp/smintegration/runs.txt
+          test "$FOUND" = 1
+
+      - name: Build hardened ETF102 committee with Smart Money risk gate
         run: python -m v182.decision.etf102_committee_v2043_hardened
 
-      - name: ETF102 hard quality gates
+      - name: ETF102 integrated hard quality gates
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
           import pandas as pd
           d=pd.read_csv('outputs/V20.4.3_ETF102_COMMITTEE.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          sm=pd.read_csv('outputs/V18.3_PEA_ETF_SMART_MONEY_SHADOW.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
           a=json.loads(Path('outputs/audit/V20.4.3_ETF102_COMMITTEE_AUDIT.json').read_text(encoding='utf-8'))
           e=json.loads(Path('outputs/audit/V20.4.3_ETF102_DIRECT_ENRICHMENT.json').read_text(encoding='utf-8'))
           s=json.loads(Path('outputs/audit/V20.4.3_ETF102_SENTIMENT.json').read_text(encoding='utf-8'))
           f=json.loads(Path('outputs/audit/V20.5_FUNNEL_CONTEXT.json').read_text(encoding='utf-8'))
+          it=json.loads(Path('outputs/audit/V18.3_SMART_MONEY_ITERATION_STATUS.json').read_text(encoding='utf-8'))
+          smq=json.loads(Path('outputs/audit/V18.3_SMART_MONEY_QUALITY_GATES.json').read_text(encoding='utf-8'))
           assert len(d)==102 and d['isin'].nunique()==102
+          assert len(sm)==102 and sm['isin'].astype(str).nunique()==102
           assert d['legacy_266_used'].astype(str).str.lower().eq('false').all()
           assert a['legacy_266_used'] is False and e['legacy_266_used'] is False and s['legacy_266_used'] is False
           assert a['missing_data_policy']=='RENORMALIZE_OBSERVED_WEIGHTS_NO_NEUTRAL_50'
@@ -135,19 +185,28 @@ jobs:
           assert pd.to_numeric(d['aaii_bull_bear_spread'],errors='coerce').notna().all()
           assert pd.to_numeric(d['funnel_context_coverage'],errors='coerce').between(0,1).all()
           assert d['execution'].astype(str).eq('RESEARCH_ONLY').all()
-          required={'score_ct','score_mt','score_lt','score_short','rank_ct','rank_mt','rank_lt','rank_short','decision_ct','decision_mt','decision_lt','decision_short','weight_coverage_ct','weight_coverage_mt','weight_coverage_lt','weight_coverage_short','funnel_macro_multiplier','funnel_risk_gate'}
+          assert smq.get('passed') is True
+          assert it.get('positive_score_activation_ready') is False
+          assert int(it.get('distinct_shadow_run_dates',0)) < int(it.get('minimum_distinct_shadow_run_dates',20))
+          assert a.get('smart_money_rows_present') == 102, a
+          assert a.get('smart_money_positive_score_boost_allowed') is False, a
+          assert pd.to_numeric(d['ifs_effective'],errors='coerce').notna().all()
+          assert pd.to_numeric(d['smart_money_confidence'],errors='coerce').notna().all()
+          required={'score_ct','score_mt','score_lt','score_short','rank_ct','rank_mt','rank_lt','rank_short','decision_ct','decision_mt','decision_lt','decision_short','weight_coverage_ct','weight_coverage_mt','weight_coverage_lt','weight_coverage_short','funnel_macro_multiplier','funnel_risk_gate','ifs_effective','smart_money_confidence','smart_money_gate_ct','smart_money_gate_mt','smart_money_gate_lt'}
           assert required.issubset(d.columns), required-set(d.columns)
           for hz in ['ct','mt','lt']:
               cov=pd.to_numeric(d[f'weight_coverage_{hz}'],errors='coerce')
               assert cov.notna().all() and cov.between(0,1).all()
           cfg=json.loads(Path('data/reference/V20.4.3_ETF102_CONFIG.json').read_text(encoding='utf-8'))
           assert cfg['legacy_266_allowed'] is False
+          assert cfg['smart_money']['positive_score_boost_allowed'] is False
           assert 'v9' not in str(cfg['horizon_weights']).lower()
           assert 'esg' not in str(cfg['horizon_weights']).lower()
           tr=a['component_status']['tracking']
           if tr['universe_coverage'] < cfg['coverage']['component_activation_min_universe_coverage']:
               assert tr['active'] is False
-          print('V20_4_3_ETF102_HARD_GATES_OK',a['decisions'],a['mean_weight_coverage'],f['risk_gates'],hicp)
+          gates={hz:d[f'smart_money_gate_{hz}'].value_counts().to_dict() for hz in ['ct','mt','lt']}
+          print('V20_5_ETF102_SMART_MONEY_INTEGRATED_OK',a['decisions'],a['mean_weight_coverage'],f['risk_gates'],gates,{'sm_dates':it['distinct_shadow_run_dates']})
           PY
 
       - name: Publish committee summary
@@ -156,22 +215,28 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "ETF102 reference run: ${ETF102_REFERENCE_RUN}" >> "$GITHUB_STEP_SUMMARY"
           echo "ETF102 reference artifact: ${ETF102_REFERENCE_ARTIFACT}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Smart Money source run: ${SMART_MONEY_SOURCE_RUN}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Smart Money source artifact: ${SMART_MONEY_SOURCE_ARTIFACT}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Smart Money integration: NEGATIVE HIGH-CONFIDENCE RISK GATE ONLY; POSITIVE SCORE BOOST OFF" >> "$GITHUB_STEP_SUMMARY"
           echo "Legacy 266 universe: NOT LOADED / NOT SCORED" >> "$GITHUB_STEP_SUMMARY"
-          echo "Funnel: GLOBAL_MACRO -> COUNTRY_INFLATION/RATES -> GLOBAL/COUNTRY/SECTOR/ETF_NEWS -> SENTIMENT -> ETF_STRUCTURE -> TECHNICAL -> SMART_MONEY_GATE" >> "$GITHUB_STEP_SUMMARY"
+          echo "Funnel: GLOBAL_MACRO -> COUNTRY_INFLATION/RATES -> GLOBAL/COUNTRY/SECTOR/ETF_NEWS -> SENTIMENT -> ETF_STRUCTURE -> TECHNICAL -> SMART_MONEY -> RISK_GATE" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload ETF102 decision pack
+      - name: Upload integrated ETF102 decision pack
         uses: actions/upload-artifact@v6
         with:
-          name: V20.4.3-ETF102-Only-${{ github.run_id }}
+          name: V20.5-ETF102-Funnel-SmartMoney-${{ github.run_id }}
           path: |
             outputs/V20.4.3_ETF102_DIRECT_ENRICHED.csv
             outputs/V20.4.3_ETF102_COMMITTEE.csv
             outputs/V20.4.3_ETF102_COMMITTEE_SUMMARY.md
             outputs/V20.5_ETF102_FUNNEL_CONTEXT.csv
+            outputs/V18.3_PEA_ETF_SMART_MONEY_SHADOW.csv
             outputs/audit/V20.4.3_ETF102_DIRECT_ENRICHMENT.json
             outputs/audit/V20.4.3_ETF102_SENTIMENT.json
             outputs/audit/V20.4.3_ETF102_COMMITTEE_AUDIT.json
             outputs/audit/V20.5_FUNNEL_CONTEXT.json
+            outputs/audit/V18.3_SMART_MONEY_ITERATION_STATUS.json
+            outputs/audit/V18.3_SMART_MONEY_QUALITY_GATES.json
             data/reference/V20.4.3_ETF102_CONFIG.json
             data/reference/V20.5_FUNNEL_CONFIG.json
           if-no-files-found: error
