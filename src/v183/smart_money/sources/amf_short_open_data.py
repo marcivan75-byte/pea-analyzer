@@ -9,36 +9,14 @@ import requests
 STABLE_RESOURCE_URL = "https://www.data.gouv.fr/api/1/datasets/r/c2539d1c-8531-4937-9cba-3bd8e9786cc5"
 
 ALIASES = {
-    "holder": {
-        "nom_du_detenteur", "detenteur", "holder", "holder_name",
-        "detenteur_de_la_position_courte_nette",
-    },
-    "holder_lei": {
-        "lei_du_detenteur", "lei_detenteur", "holder_lei",
-        "legal_entity_identifier_detenteur",
-    },
-    "issuer": {
-        "nom_de_lemetteur", "nom_de_l_emetteur", "emetteur", "issuer", "issuer_name",
-        "nom_de_l_emetteur_de_la_position_courte_nette",
-    },
+    "holder": {"nom_du_detenteur", "detenteur", "holder", "holder_name", "detenteur_de_la_position_courte_nette"},
+    "holder_lei": {"lei_du_detenteur", "lei_detenteur", "holder_lei", "legal_entity_identifier_detenteur"},
+    "issuer": {"nom_de_lemetteur", "nom_de_l_emetteur", "emetteur", "issuer", "issuer_name", "emetteur_issuer", "nom_de_l_emetteur_de_la_position_courte_nette"},
     "isin": {"isin", "code_isin", "isin_de_l_emetteur"},
-    "short_position_pct": {
-        "position_courte_nette", "position_nette_courte", "net_short_position", "position",
-        "ratio_de_la_position_courte_nette", "taux_de_la_position_courte_nette",
-        "pourcentage_de_la_position_courte_nette",
-    },
-    "position_date": {
-        "date_de_debut_de_position", "date_position", "position_date",
-        "date_de_la_position_courte_nette", "date_de_position_courte_nette",
-    },
-    "publication_start": {
-        "date_de_debut_de_publication_de_la_position", "date_debut_publication", "publication_start",
-        "date_de_debut_de_publication",
-    },
-    "publication_end": {
-        "date_de_fin_de_publication_de_la_position", "date_fin_publication", "publication_end",
-        "date_de_fin_de_publication",
-    },
+    "short_position_pct": {"position_courte_nette", "position_nette_courte", "net_short_position", "position", "ratio", "ratio_de_la_position_courte_nette", "taux_de_la_position_courte_nette", "pourcentage_de_la_position_courte_nette"},
+    "position_date": {"date_de_debut_de_position", "date_de_debut_de_position_courte_nette", "date_position", "date_pos", "position_date", "date_de_la_position_courte_nette", "date_de_position_courte_nette"},
+    "publication_start": {"date_de_debut_de_publication_de_la_position", "date_debut_publication", "publication_start", "date_de_debut_de_publication"},
+    "publication_end": {"date_de_fin_de_publication_de_la_position", "date_fin_publication", "publication_end", "date_de_fin_de_publication"},
 }
 
 
@@ -64,7 +42,7 @@ def _semantic_target(normalized: str) -> str | None:
         return "isin"
     if is_lei and has_holder:
         return "holder_lei"
-    if has_holder and has_short and not is_lei and not has_date:
+    if has_holder and not is_lei and not has_date:
         return "holder"
     if has_issuer and not is_lei and not has_date:
         return "issuer"
@@ -73,10 +51,10 @@ def _semantic_target(normalized: str) -> str | None:
             return "publication_end"
         if "debut" in n or "start" in n:
             return "publication_start"
-    if has_short and has_date and not has_publication:
+    if has_date and not has_publication and (has_short or "position" in n or "date_pos" in n):
         return "position_date"
-    if has_short and not has_date and not has_holder and not has_issuer and not is_lei:
-        if any(token in n for token in ("ratio", "taux", "pourcentage", "pct", "percent")):
+    if not has_date and not has_holder and not has_issuer and not is_lei:
+        if "ratio" in n or (has_short and any(token in n for token in ("taux", "pourcentage", "pct", "percent"))):
             return "short_position_pct"
         if n in {"position_courte_nette", "position_nette_courte", "net_short_position", "position"}:
             return "short_position_pct"
@@ -105,12 +83,6 @@ def _column_mapping(frame: pd.DataFrame) -> dict[str, str]:
 
 
 def _date_series(values: pd.Series) -> pd.Series:
-    """Parse AMF dates without corrupting ISO dates.
-
-    AMF exports may contain French DD/MM/YYYY values while cached/test inputs
-    can already be ISO YYYY-MM-DD. ISO is parsed explicitly first; only the
-    remaining values use day-first parsing.
-    """
     s = values.astype("string").str.strip()
     iso_mask = s.str.match(r"^\d{4}-\d{2}-\d{2}(?:[T ].*)?$", na=False)
     out = pd.Series(pd.NaT, index=s.index, dtype="datetime64[ns]")
@@ -129,10 +101,7 @@ def normalize(frame: pd.DataFrame) -> pd.DataFrame:
     missing = required - set(out.columns)
     if missing:
         diagnostics = {str(c): _norm(c) for c in frame.columns}
-        raise ValueError(
-            "AMF short CSV schema not recognized; "
-            f"missing={sorted(missing)}; columns={list(frame.columns)}; normalized={diagnostics}"
-        )
+        raise ValueError(f"AMF short CSV schema not recognized; missing={sorted(missing)}; normalized={diagnostics}")
     out["isin"] = out["isin"].astype(str).str.strip().str.upper()
     out["short_position_pct"] = out["short_position_pct"].map(_pct)
     for c in ("position_date", "publication_start", "publication_end"):
@@ -152,8 +121,7 @@ def public_position_history(frame: pd.DataFrame, as_of: str | None = None, depth
     if as_of:
         f = f[f[availability] <= as_of[:10]].copy()
     f = f.sort_values(["isin", "holder", availability, "position_date"])
-    depth = max(1, int(depth_per_holder))
-    return f.groupby(["isin", "holder"], as_index=False, dropna=False, group_keys=False).tail(depth).reset_index(drop=True)
+    return f.groupby(["isin", "holder"], as_index=False, dropna=False, group_keys=False).tail(max(1, int(depth_per_holder))).reset_index(drop=True)
 
 
 def latest_public_positions(frame: pd.DataFrame, as_of: str | None = None) -> pd.DataFrame:
@@ -170,11 +138,9 @@ def to_events(frame: pd.DataFrame, as_of: str | None = None, history_depth_per_h
             universe="ACTION", isin=str(r["isin"]), event_type="SHORT", event_subtype="PUBLIC_NET_SHORT",
             source="AMF_OPEN_DATA_SHORTS", evidence_level="A", validation_status="VALIDATED",
             publication_date=str(pub)[:10], transaction_date=str(r.get("position_date") or pub)[:10],
-            actor_name=str(r.get("holder") or ""), direction=0,
-            short_position_pct=float(r["short_position_pct"]),
+            actor_name=str(r.get("holder") or ""), direction=0, short_position_pct=float(r["short_position_pct"]),
             source_document_id=f"AMF_SHORT:{r.get('holder','')}:{r.get('isin','')}:{r.get('position_date','')}",
-            metadata={"holder_lei": r.get("holder_lei"), "issuer": r.get("issuer"),
-                      "public_censored_below_05": bool(r.get("public_censored_below_05", False))},
+            metadata={"holder_lei": r.get("holder_lei"), "issuer": r.get("issuer"), "public_censored_below_05": bool(r.get("public_censored_below_05", False))},
         ).to_dict()
         e["position_date"] = str(r.get("position_date") or "")[:10]
         e["public_censored_below_05"] = bool(r.get("public_censored_below_05", False))
@@ -184,7 +150,14 @@ def to_events(frame: pd.DataFrame, as_of: str | None = None, history_depth_per_h
 
 def _read_csv_bytes(data: bytes) -> pd.DataFrame:
     text = data.decode("utf-8-sig")
-    return pd.read_csv(io.StringIO(text), sep=None, engine="python", dtype=str)
+    # AMF's official export is semicolon-delimited and may contain quoted line
+    # breaks in header labels. Automatic delimiter sniffing is unsafe here.
+    frame = pd.read_csv(io.StringIO(text), sep=";", dtype=str, engine="c")
+    if len(frame.columns) >= 5:
+        return frame
+    # Defensive compatibility for historical mirrors using comma delimiter.
+    alt = pd.read_csv(io.StringIO(text), sep=",", dtype=str, engine="c")
+    return alt if len(alt.columns) > len(frame.columns) else frame
 
 
 def _norm(value: str) -> str:
