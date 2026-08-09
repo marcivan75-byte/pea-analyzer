@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from pathlib import Path
 import json
-import math
 
 import numpy as np
 import pandas as pd
@@ -17,14 +15,14 @@ from v182.sources.funnel_context import (
     _country_code,
     _ecb_deposit,
     _eurostat_hicp,
-    _news_score,
     _sentiment_score,
     _us_macro,
     _weighted_context,
 )
+from v182.sources.news_resilient import news_score as _news_score
 
 
-def _parallel_news(jobs: dict[str, str], cfg: dict, workers: int = 10) -> dict[str, dict]:
+def _parallel_news(jobs: dict[str, str], cfg: dict, workers: int = 8) -> dict[str, dict]:
     if not jobs:
         return {}
     out: dict[str, dict] = {}
@@ -34,9 +32,34 @@ def _parallel_news(jobs: dict[str, str], cfg: dict, workers: int = 10) -> dict[s
             key = future_map[future]
             try:
                 out[key] = future.result()
-            except Exception as exc:  # fail-safe: coverage decreases, pipeline continues
-                out[key] = {"status": "ERROR", "score": None, "articles": 0, "query": jobs[key], "error": f"{type(exc).__name__}: {str(exc)[:180]}"}
+            except Exception as exc:
+                out[key] = {
+                    "status": "ERROR", "score": None, "articles": 0,
+                    "query": jobs[key], "error": f"{type(exc).__name__}: {str(exc)[:180]}"
+                }
     return out
+
+
+def _sector_search_term(category: str) -> str:
+    c = str(category or "").lower()
+    mapping = [
+        (("finance", "bank"), "European banks financial sector"),
+        (("tech", "technolog"), "technology sector stocks"),
+        (("health", "sante", "santé"), "healthcare sector stocks"),
+        (("telecom",), "telecommunications sector stocks"),
+        (("consumer st", "cns stp", "staple"), "consumer staples sector stocks"),
+        (("consumer disc", "cns disc", "discretion"), "consumer discretionary sector stocks"),
+        (("industr",), "industrials sector stocks"),
+        (("immob", "real estate", "epra"), "European real estate sector stocks"),
+        (("energy", "energie", "énergie"), "energy sector stocks"),
+        (("utilit",), "utilities sector stocks"),
+        (("insurance", "assurance"), "insurance sector stocks"),
+    ]
+    for tokens, label in mapping:
+        if any(t in c for t in tokens):
+            return label
+    cleaned = str(category or "").replace("Gdes Cap.", "large cap").replace("Gdes Cap", "large cap")
+    return f"{cleaned} ETF equity market"
 
 
 def apply() -> dict:
@@ -47,7 +70,7 @@ def apply() -> dict:
     if len(df) != 102 or df["isin"].astype(str).nunique() != 102:
         raise RuntimeError("Funnel requires exactly 102 validated ETFs")
 
-    # Stage 1-4: macro, inflation and rates.
+    # 1-4. Macro, inflation and rates.
     us = _us_macro(cfg)
     ecb = _ecb_deposit(cfg)
     country_codes = sorted({_country_code(v, cfg) for v in df.get("geo_exposure", pd.Series(["GLOBAL"] * len(df)))})
@@ -61,20 +84,31 @@ def apply() -> dict:
     eu_rate = ecb.get("direction_score") if ecb.get("status") == "OK" else None
     eu_score = None if eu_inf is None and eu_rate is None else float(np.mean([x for x in [eu_inf, eu_rate] if x is not None]))
     us_score = us.get("score") if us.get("status") == "OK" else None
-    global_macro = float(np.mean([x for x in [us_score, eu_score] if x is not None])) if any(x is not None for x in [us_score, eu_score]) else None
+    macro_values = [x for x in [us_score, eu_score] if x is not None]
+    global_macro = float(np.mean(macro_values)) if macro_values else None
 
-    # Stage 5-8: news, collected concurrently. Instrument news is deliberately
-    # limited to the preliminary top 30 to preserve the funnel architecture.
+    # 5-8. News. GDELT is primary; a Google News RSS fallback is used after
+    # rate-limit/network failures. Missing news stays missing and lowers
+    # context coverage instead of becoming a neutral 50.
     global_news = _news_score('(economy OR inflation OR interest rates OR recession OR growth OR central bank)', cfg)
-    labels = {"US":"United States","FR":"France","DE":"Germany","IT":"Italy","ES":"Spain","NL":"Netherlands","BE":"Belgium","AT":"Austria","FI":"Finland","PT":"Portugal","IE":"Ireland","GR":"Greece","EU":"Europe","JP":"Japan","IN":"India","CN":"China","EM":"emerging markets"}
-    country_jobs = {code: f'"{labels.get(code, code)}" (economy OR inflation OR rates OR market)' for code in country_codes if code != "GLOBAL"}
+    labels = {
+        "US":"United States", "FR":"France", "DE":"Germany", "IT":"Italy", "ES":"Spain",
+        "NL":"Netherlands", "BE":"Belgium", "AT":"Austria", "FI":"Finland", "PT":"Portugal",
+        "IE":"Ireland", "GR":"Greece", "EU":"Europe", "JP":"Japan", "IN":"India",
+        "CN":"China", "EM":"emerging markets"
+    }
+    country_jobs = {
+        code: f'"{labels.get(code, code)}" (economy OR inflation OR rates OR stocks OR market)'
+        for code in country_codes if code != "GLOBAL"
+    }
     country_news = _parallel_news(country_jobs, cfg)
 
     categories = df.get("category", pd.Series([""] * len(df))).fillna("").astype(str)
     top_categories = [str(x) for x in categories.value_counts().head(12).index.tolist() if str(x).strip()]
-    sector_jobs = {cat: f'"{cat}" (stocks OR sector OR demand OR earnings)' for cat in top_categories}
+    sector_jobs = {cat: f'"{_sector_search_term(cat)}" (outlook OR earnings OR demand OR stocks)' for cat in top_categories}
     sector_news = _parallel_news(sector_jobs, cfg)
 
+    # Instrument news only after a preliminary technical cut: genuine funnel.
     p3 = pd.to_numeric(df.get("perf_3m_pct"), errors="coerce")
     p6 = pd.to_numeric(df.get("perf_6m_pct"), errors="coerce")
     rs = pd.to_numeric(df.get("relative_strength"), errors="coerce")
@@ -86,11 +120,11 @@ def apply() -> dict:
         isin = str(row.get("isin") or "")
         name = str(row.get("name") or "").strip()
         if isin and name:
-            instrument_jobs[isin] = f'"{name}"'
+            instrument_jobs[isin] = f'"{name}" ETF'
     instrument_news = _parallel_news(instrument_jobs, cfg)
 
-    # Stage 9 onward: sentiment and contextual gate, then passed downstream to
-    # ETF structure, technical analysis and Smart Money.
+    # 9 onward. Sentiment then contextual gate; ETF structure, technical and
+    # Smart Money are downstream in the committee scorer.
     context_rows = []
     weights = cfg["context_weights"]
     for _, row in df.iterrows():
@@ -103,8 +137,6 @@ def apply() -> dict:
         elif code == "EU":
             country_macro = eu_score
         else:
-            # Unsupported/stale country macro is not invented; only the global
-            # backdrop is inherited and the context coverage reflects the gap.
             country_macro = None
         cnews = country_news.get(code, {}).get("score") if code != "GLOBAL" else global_news.get("score")
         cat = str(row.get("category") or "")
@@ -158,7 +190,10 @@ def apply() -> dict:
         "instrument_news_queried": len(instrument_news),
         "mean_context_coverage": round(float(pd.to_numeric(ctx["funnel_context_coverage"], errors="coerce").mean()), 4),
         "risk_gates": ctx["funnel_risk_gate"].value_counts().to_dict(),
-        "source_contracts": {"macro_us": "FRED", "inflation_eu": "EUROSTAT", "rates_euro_area": "ECB", "news": "GDELT", "sentiment": "CNN_FEAR_GREED+AAII"},
+        "source_contracts": {
+            "macro_us": "FRED", "inflation_eu": "EUROSTAT", "rates_euro_area": "ECB",
+            "news": "GDELT_PRIMARY+GOOGLE_NEWS_RSS_FALLBACK", "sentiment": "CNN_FEAR_GREED+AAII"
+        },
         "fed_future_semantics": "MARKET_IMPLIED_FROM_US_2Y_MINUS_FED_FUNDS_NOT_FOMC_PROMISE",
         "parallel_news_collection": True,
         "collected_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -170,7 +205,12 @@ def apply() -> dict:
 
 def main() -> None:
     result = apply()
-    print("V20.5_FUNNEL_CONTEXT_FAST_OK", json.dumps({"global_macro": result["global_macro"]["score"], "coverage": result["mean_context_coverage"], "gates": result["risk_gates"]}, ensure_ascii=False))
+    print("V20.5_FUNNEL_CONTEXT_FAST_OK", json.dumps({
+        "global_macro": result["global_macro"]["score"],
+        "coverage": result["mean_context_coverage"],
+        "gates": result["risk_gates"],
+        "news_mode": result["source_contracts"]["news"],
+    }, ensure_ascii=False))
 
 
 if __name__ == "__main__":
