@@ -83,14 +83,14 @@ class BacktestOptimizer:
             if not over.any():
                 break
             fixed = np.minimum(w, caps)
-            room = caps - fixed
+            room = np.maximum(caps - fixed, 0.0)
             deficit = 1.0 - float(fixed.sum())
             if deficit <= 1e-12:
-                w = self._normalise_weights(fixed)
+                w = fixed
                 break
             eligible = room > 1e-12
             if not eligible.any():
-                w = self._normalise_weights(fixed)
+                w = fixed
                 break
             seed = w.copy()
             seed[~eligible] = 0.0
@@ -100,11 +100,13 @@ class BacktestOptimizer:
             w = fixed + np.minimum(addition, room)
             remaining = 1.0 - float(w.sum())
             if remaining > 1e-12:
-                room = caps - w
-                room_sum = float(room.clip(min=0).sum())
+                room = np.maximum(caps - w, 0.0)
+                room_sum = float(room.sum())
                 if room_sum > 0:
-                    w += remaining * room.clip(min=0) / room_sum
-        return self._normalise_weights(w)
+                    w += remaining * room / room_sum
+        if abs(float(w.sum()) - 1.0) > 1e-8:
+            w = self._normalise_weights(w)
+        return w
 
     def _baseline(self, specs: list[_FeatureSpec]) -> np.ndarray:
         w = np.array([max(0.0, s.baseline) for s in specs], dtype=float)
@@ -138,7 +140,18 @@ class BacktestOptimizer:
             df[f"__f_{spec.name}"] = coerce_score(df[spec.column])
         feature_cols = [f"__f_{s.name}" for s in specs]
         df = df.dropna(subset=["__forward_return"])
-        df[feature_cols] = df[feature_cols].fillna(50.0)
+        policy = self.config.missing_feature_policy.upper()
+        if policy == "NEUTRAL_50":
+            df[feature_cols] = df[feature_cols].fillna(50.0)
+            df["__baseline_feature_coverage"] = 1.0
+        elif policy == "RENORMALIZE_OBSERVED":
+            base = self._baseline(specs)
+            matrix = df[feature_cols].to_numpy(float)
+            coverage = (~np.isnan(matrix)).astype(float) @ base
+            df["__baseline_feature_coverage"] = coverage
+            df = df[df["__baseline_feature_coverage"] >= self.config.min_feature_weight_coverage]
+        else:
+            raise ValueError(f"Unsupported missing_feature_policy: {self.config.missing_feature_policy}")
         counts = df.groupby("__snapshot_date")["__instrument_id"].size()
         valid_dates = counts[counts >= self.config.min_instruments_per_snapshot].index
         df = df[df["__snapshot_date"].isin(valid_dates)].copy()
@@ -147,11 +160,24 @@ class BacktestOptimizer:
     def _simulate(self, df: pd.DataFrame, specs: list[_FeatureSpec], weights: np.ndarray) -> tuple[dict[str, float], pd.DataFrame]:
         fcols = [f"__f_{s.name}" for s in specs]
         work = df[["__snapshot_date", "__instrument_id", "__forward_return", *fcols]].copy()
-        work["__model_score"] = work[fcols].to_numpy(float) @ weights
+        matrix = work[fcols].to_numpy(float)
+        if self.config.missing_feature_policy.upper() == "RENORMALIZE_OBSERVED":
+            observed = ~np.isnan(matrix)
+            denominator = observed.astype(float) @ weights
+            numerator = np.nansum(matrix * weights, axis=1)
+            score = np.divide(numerator, denominator, out=np.full(len(work), np.nan), where=denominator > 0)
+            score[denominator < self.config.min_feature_weight_coverage] = np.nan
+            work["__model_score"] = score
+        else:
+            work["__model_score"] = matrix @ weights
         periods: list[dict[str, object]] = []
         previous: set[str] = set()
         for date, g in work.groupby("__snapshot_date", sort=True):
-            chosen = g.nlargest(min(self.config.top_k, len(g)), "__model_score")
+            eligible = g.dropna(subset=["__model_score"])
+            required = min(self.config.top_k, len(g))
+            if len(eligible) < max(3, required):
+                continue
+            chosen = eligible.nlargest(required, "__model_score")
             ids = set(chosen["__instrument_id"].astype(str))
             gross = float(chosen["__forward_return"].mean())
             if previous:
@@ -210,6 +236,8 @@ class BacktestOptimizer:
             "snapshot_count": len(dates),
             "row_count": int(len(df)),
             "feature_columns": {s.name: s.column for s in specs},
+            "missing_feature_policy": self.config.missing_feature_policy,
+            "min_feature_weight_coverage": self.config.min_feature_weight_coverage,
             "lookahead_guard": "forward returns derived only from later archived snapshots",
             "production_weights_modified": False,
         }
