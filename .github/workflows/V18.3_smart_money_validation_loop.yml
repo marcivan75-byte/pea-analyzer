@@ -12,6 +12,7 @@ on:
       - 'config/V18.3_SMART_MONEY_CONFIG.json'
       - 'schemas/V18.3_smart_money_event.schema.json'
       - 'tests/test_smart_money_v183.py'
+      - 'tests/test_amf_short_schema_v204.py'
       - 'state/v18.3_smart_money_validation.trigger'
 
 permissions:
@@ -46,7 +47,7 @@ jobs:
           python -m pip check
           python -m compileall -q src tests
           ruff check --select E9,F63,F7,F82 src tests
-          pytest -q tests/test_smart_money_v183.py tests/test_audit_quality.py tests/test_audit4_gates.py tests/test_audit_cycle2_hardening.py tests/test_release_governance_cycle3.py
+          pytest -q tests/test_smart_money_v183.py tests/test_amf_short_schema_v204.py tests/test_audit_quality.py tests/test_audit4_gates.py tests/test_audit_cycle2_hardening.py tests/test_release_governance_cycle3.py
 
       - name: Assert shadow-only calibration contract
         run: |
@@ -65,7 +66,7 @@ jobs:
           print('SMART_MONEY_SHADOW_CONFIG_OK')
           PY
 
-      - name: Restore latest validated V18.2 masters
+      - name: Restore latest canonical validated V18.2 masters
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -78,8 +79,8 @@ jobs:
             C=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}" --jq '.conclusion // ""' 2>/dev/null || true)
             [ "$C" = success ] || continue
             rm -rf /tmp/v182base/unpack; mkdir -p /tmp/v182base/unpack
-            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/v182base/base.zip
-            unzip -oq /tmp/v182base/base.zip -d /tmp/v182base/unpack
+            if ! gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/v182base/base.zip; then continue; fi
+            if ! unzip -oq /tmp/v182base/base.zip -d /tmp/v182base/unpack; then continue; fi
             A=$(find /tmp/v182base/unpack -name V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv -print -quit)
             E=$(find /tmp/v182base/unpack -name V18.2_PEA_ETF_MASTER_ENRICHED.csv -print -quit)
             Q=$(find /tmp/v182base/unpack -name V18.2_QUALITY_GATES.json -print -quit)
@@ -87,22 +88,27 @@ jobs:
             cp "$A" outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv
             cp "$E" outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
             cp "$Q" outputs/audit/V18.2_QUALITY_GATES.json
-            python - <<'PY'
+            if python - <<'PY'
           import json
           import pandas as pd
           from pathlib import Path
           a=pd.read_csv('outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
           e=pd.read_csv('outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
           q=json.loads(Path('outputs/audit/V18.2_QUALITY_GATES.json').read_text(encoding='utf-8'))
-          assert q.get('passed') is True, q
-          assert len(e)==102 and e['isin'].astype(str).nunique()==102
-          assert e['ticker_identity_status'].astype(str).eq('FINAL_VALIDATED').all()
-          assert len(a)>0 and a['isin'].astype(str).nunique()>0
+          ok=(q.get('passed') is True and len(e)==102 and e['isin'].astype(str).nunique()==102 and e['ticker_identity_status'].astype(str).eq('FINAL_VALIDATED').all() and len(a)>0 and a['isin'].astype(str).nunique()>0)
+          if not ok:
+              raise SystemExit(1)
           print('VALIDATED_BASE_RESTORED', {'actions':len(a),'etfs':len(e)})
           PY
-            echo "V182_BASE_RUN=$RUN" >> "$GITHUB_ENV"
-            echo "V182_BASE_ARTIFACT=$NAME" >> "$GITHUB_ENV"
-            FOUND=1; break
+            then
+              echo "V182_BASE_RUN=$RUN" >> "$GITHUB_ENV"
+              echo "V182_BASE_ARTIFACT=$NAME" >> "$GITHUB_ENV"
+              FOUND=1; break
+            else
+              echo "Rejected non-canonical V18.2 base artifact $NAME from run $RUN"
+              rm -f outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv outputs/audit/V18.2_QUALITY_GATES.json
+              continue
+            fi
           done < /tmp/v182base/list.tsv
           test "$FOUND" = 1
 
@@ -120,8 +126,8 @@ jobs:
             C=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}" --jq '.conclusion // ""' 2>/dev/null || true)
             [ "$C" = success ] || continue
             rm -rf /tmp/smstate/unpack; mkdir -p /tmp/smstate/unpack
-            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/smstate/state.zip
-            unzip -oq /tmp/smstate/state.zip -d /tmp/smstate/unpack
+            if ! gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/smstate/state.zip; then continue; fi
+            if ! unzip -oq /tmp/smstate/state.zip -d /tmp/smstate/unpack; then continue; fi
             D=$(find /tmp/smstate/unpack -type d -path '*/state/smart_money' -print -quit)
             if [ -z "$D" ]; then
               D=$(find /tmp/smstate/unpack -type d -name smart_money -print -quit)
