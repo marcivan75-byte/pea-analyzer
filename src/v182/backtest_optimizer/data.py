@@ -83,13 +83,15 @@ def load_snapshot_files(input_path: str | Path) -> pd.DataFrame:
 
 
 def attach_forward_returns(df: pd.DataFrame, horizon_days: int, tolerance_days: int) -> pd.DataFrame:
-    """Derive forward returns only from later archived snapshots of the same instrument."""
+    """Derive forward returns only from later archived snapshots of the same instrument, preserving input row order."""
     if df.empty:
         return df.copy()
+    work = df.copy().reset_index(drop=True)
+    work["__row_order"] = np.arange(len(work), dtype=int)
     out_parts: list[pd.DataFrame] = []
     lower = max(1, horizon_days - tolerance_days)
     upper = horizon_days + tolerance_days
-    for _, g in df.groupby("__instrument_id", sort=False):
+    for _, g in work.groupby("__instrument_id", sort=False):
         g = g.sort_values("__snapshot_date").copy()
         dates = g["__snapshot_date"].to_numpy(dtype="datetime64[D]")
         prices = g["__price"].to_numpy(dtype=float)
@@ -107,4 +109,5 @@ def attach_forward_returns(df: pd.DataFrame, horizon_days: int, tolerance_days: 
         g["__forward_return"] = fwd
         g["__realized_horizon_days"] = realized_days
         out_parts.append(g)
-    return pd.concat(out_parts, ignore_index=True, sort=False)
+    out = pd.concat(out_parts, ignore_index=True, sort=False)
+    return out.sort_values("__row_order").drop(columns="__row_order").reset_index(drop=True)
