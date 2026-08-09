@@ -15,34 +15,74 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Disable every obsolete workflow record
+      - name: Disable obsolete workflow records through GitHub API
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          gh api "repos/${REPO}/actions/workflows?per_page=100" > /tmp/workflows.json
-          jq -r '.workflows[] | [.id,.path,.state] | @tsv' /tmp/workflows.json | while IFS=$'\t' read -r ID PATH STATE; do
-            case "$PATH" in
-              '.github/workflows/V20.7_etf102_only.yml'|'.github/workflows/V21.0_actions1429_only.yml')
-                echo "KEEP $ID $PATH $STATE"
-                ;;
-              '.github/workflows/_ops_disable_obsolete_workflows.yml')
-                echo "SELF $ID $PATH $STATE"
-                ;;
-              *)
-                if [ "$STATE" = "active" ]; then
-                  echo "DISABLE $ID $PATH"
-                  gh api --silent --method PUT "repos/${REPO}/actions/workflows/${ID}/disable"
-                else
-                  echo "ALREADY_DISABLED $ID $PATH $STATE"
-                fi
-                ;;
-            esac
-          done
-          SELF_ID=$(jq -r '.workflows[] | select(.path==".github/workflows/_ops_disable_obsolete_workflows.yml") | .id' /tmp/workflows.json | head -1)
-          if [ -n "$SELF_ID" ]; then
-            echo "DISABLE_SELF $SELF_ID"
-            gh api --silent --method PUT "repos/${REPO}/actions/workflows/${SELF_ID}/disable"
-          fi
-          echo "WORKFLOW_CLEANUP_COMPLETE"
+          python - <<'PY'
+          import json, os, urllib.request, urllib.error
+
+          repo = os.environ['REPO']
+          token = os.environ['GH_TOKEN']
+          headers = {
+              'Authorization': f'Bearer {token}',
+              'Accept': 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28',
+              'User-Agent': 'pea-analyzer-workflow-cleaner',
+          }
+          keep = {
+              '.github/workflows/V20.7_etf102_only.yml',
+              '.github/workflows/V21.0_actions1429_only.yml',
+          }
+          self_path = '.github/workflows/_ops_disable_obsolete_workflows.yml'
+
+          def request(url, method='GET'):
+              req = urllib.request.Request(url, method=method, headers=headers)
+              try:
+                  with urllib.request.urlopen(req) as response:
+                      body = response.read()
+                      return response.status, json.loads(body) if body else None
+              except urllib.error.HTTPError as e:
+                  body = e.read().decode('utf-8', 'replace')
+                  print(f'HTTP_ERROR method={method} url={url} status={e.code} body={body}')
+                  return e.code, None
+
+          status, payload = request(f'https://api.github.com/repos/{repo}/actions/workflows?per_page=100')
+          if status != 200 or not payload:
+              raise SystemExit(f'cannot list workflows: {status}')
+
+          self_id = None
+          failures = []
+          for workflow in payload.get('workflows', []):
+              wid = workflow['id']
+              path = workflow.get('path', '')
+              state = workflow.get('state', '')
+              if path in keep:
+                  print(f'KEEP id={wid} path={path} state={state}')
+                  continue
+              if path == self_path:
+                  self_id = wid
+                  print(f'SELF id={wid} state={state}')
+                  continue
+              if state == 'active':
+                  code, _ = request(f'https://api.github.com/repos/{repo}/actions/workflows/{wid}/disable', 'PUT')
+                  print(f'DISABLE id={wid} path={path} result={code}')
+                  if code != 204:
+                      failures.append((wid, path, code))
+              else:
+                  print(f'ALREADY_DISABLED id={wid} path={path} state={state}')
+
+          if failures:
+              raise SystemExit(f'disable failures: {failures}')
+
+          # Disable this one-shot cleanup workflow last.
+          if self_id is not None:
+              code, _ = request(f'https://api.github.com/repos/{repo}/actions/workflows/{self_id}/disable', 'PUT')
+              print(f'DISABLE_SELF id={self_id} result={code}')
+              if code != 204:
+                  raise SystemExit(f'failed to disable self: {code}')
+
+          print('WORKFLOW_CLEANUP_COMPLETE')
+          PY
