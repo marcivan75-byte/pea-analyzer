@@ -29,12 +29,20 @@ def _positive(value) -> float | None:
 
 
 def _expense_pct(info: dict) -> float | None:
+    """Normalize Yahoo expense ratios to percentage points.
+
+    Current European ETF metadata commonly exposes 0.25 for 0.25%, while
+    some feeds may expose 0.0025 for the same value. Values <=2bp in decimal
+    form are converted; already-percent values are kept. Implausible ETF TER
+    above 5% is rejected rather than silently scored.
+    """
     for key in ("annualReportExpenseRatio", "netExpenseRatio", "expenseRatio"):
-        value = _positive(info.get(key))
-        if value is None:
+        raw = _positive(info.get(key))
+        if raw is None:
             continue
-        # Yahoo normally exposes ratios as fractions (0.0025 = 0.25%).
-        return value * 100.0 if value <= 1.0 else value
+        pct = raw * 100.0 if raw <= 0.02 else raw
+        if 0.0 < pct <= 5.0:
+            return round(pct, 6)
     return None
 
 
@@ -188,7 +196,6 @@ def enrich(df: pd.DataFrame, delay_seconds: float = 0.20) -> tuple[pd.DataFrame,
         direct["direct_aum_eur_m"] = pd.to_numeric(direct["direct_total_assets_raw"], errors="coerce") * pd.to_numeric(direct["direct_fx_to_eur"], errors="coerce") / 1_000_000.0
     out = out.merge(direct, on="isin", how="left")
 
-    # Direct observations fill only genuinely missing legacy fields.
     fill_pairs = {
         "ter_pct": "direct_ter_pct",
         "morningstar_rating": "direct_morningstar_rating",
@@ -202,6 +209,10 @@ def enrich(df: pd.DataFrame, delay_seconds: float = 0.20) -> tuple[pd.DataFrame,
         old = pd.to_numeric(out[target], errors="coerce")
         new = pd.to_numeric(out[source], errors="coerce")
         out[target] = old.where(old.notna(), new)
+
+    ter = pd.to_numeric(out.get("ter_pct"), errors="coerce")
+    if bool((ter.dropna() > 5.0).any()):
+        raise RuntimeError("ETF102 TER unit gate failed: value above 5%")
 
     fields = [
         "ter_pct", "fund_total_assets_eur_m", "morningstar_rating", "spread_pct",
@@ -221,6 +232,12 @@ def enrich(df: pd.DataFrame, delay_seconds: float = 0.20) -> tuple[pd.DataFrame,
         "failures": failures[:102],
         "fx_to_eur": fx,
         "coverage_count_of_102": coverage,
+        "ter_pct_stats": {
+            "count": int(ter.notna().sum()),
+            "min": round(float(ter.min()), 4) if ter.notna().any() else None,
+            "median": round(float(ter.median()), 4) if ter.notna().any() else None,
+            "max": round(float(ter.max()), 4) if ter.notna().any() else None,
+        },
         "missing_data_policy": "NO_NEUTRAL_50",
     }
     return out, audit
@@ -235,7 +252,7 @@ def main() -> None:
     AUDIT.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(OUT, sep=";", index=False, encoding="utf-8-sig")
     AUDIT.write_text(json.dumps(audit, indent=2, ensure_ascii=False), encoding="utf-8")
-    print("V20.4.3_ETF102_DIRECT_ENRICHMENT_OK", json.dumps({"rows": len(out), "coverage": audit["coverage_count_of_102"]}, ensure_ascii=False))
+    print("V20.4.3_ETF102_DIRECT_ENRICHMENT_OK", json.dumps({"rows": len(out), "coverage": audit["coverage_count_of_102"], "ter": audit["ter_pct_stats"]}, ensure_ascii=False))
 
 
 if __name__ == "__main__":
