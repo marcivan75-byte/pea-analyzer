@@ -1,0 +1,167 @@
+name: V18.3 Smart Money Isolated Validation Loop
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/smart-money-v1]
+    paths:
+      - '.github/workflows/V18.3_smart_money_validation_loop.yml'
+      - 'src/v183/**'
+      - 'config/V18.3_SMART_MONEY_CONFIG.json'
+      - 'schemas/V18.3_smart_money_event.schema.json'
+      - 'tests/test_smart_money_v183.py'
+      - 'state/v18.3_smart_money_validation.trigger'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v183-smart-money-isolated-validation
+  cancel-in-progress: true
+
+jobs:
+  smart-money-shadow-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install validated dependency set
+        run: pip install -c constraints-ci.txt -e .[test]
+
+      - name: Static and unit preflight
+        run: |
+          set -euo pipefail
+          python -m pip check
+          python -m compileall -q src tests
+          ruff check --select E9,F63,F7,F82 src tests
+          pytest -q tests/test_smart_money_v183.py tests/test_audit_quality.py tests/test_audit4_gates.py tests/test_audit_cycle2_hardening.py tests/test_release_governance_cycle3.py
+
+      - name: Assert shadow-only configuration
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          c=json.loads(Path('config/V18.3_SMART_MONEY_CONFIG.json').read_text(encoding='utf-8'))
+          assert c.get('enabled') is True
+          assert c.get('shadow_mode') is True
+          assert c.get('score_application') == 'SHADOW_ONLY'
+          cal=c.get('calibration',{})
+          assert cal.get('active_scoring_allowed') is False
+          assert cal.get('empirical_walk_forward_required_for_active_scoring') is True
+          print('SMART_MONEY_SHADOW_CONFIG_OK')
+          PY
+
+      - name: Execute V18.3 full shadow chain
+        env:
+          V183_RUN_ID: sm-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
+          OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+          MARKETBEAT_API_KEY: ${{ secrets.MARKETBEAT_API_KEY }}
+        run: python -m v183.reporting.run
+
+      - name: Smart Money end-to-end quality gates
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+          audit=Path('outputs/audit')
+          q18=json.loads((audit/'V18.2_QUALITY_GATES.json').read_text(encoding='utf-8'))
+          qsm=json.loads((audit/'V18.3_SMART_MONEY_QUALITY_GATES.json').read_text(encoding='utf-8'))
+          q=json.loads((audit/'V18.3_QUALITY_GATES.json').read_text(encoding='utf-8'))
+          summary=json.loads((audit/'V18.3_RUN_SUMMARY.json').read_text(encoding='utf-8'))
+          cal=json.loads((audit/'V18.3_SMART_MONEY_CALIBRATION.json').read_text(encoding='utf-8'))
+          assert q18.get('passed') is True, q18
+          assert qsm.get('passed') is True, qsm
+          assert q.get('passed') is True, q
+          assert q.get('shadow_only') is True, q
+          assert cal.get('passed') is True, cal
+          assert summary.get('active_scoring_allowed') is False, summary
+          assert summary.get('empirical_walk_forward_required') is True, summary
+          a=Path('outputs/V18.3_PEA_ACTIONS_SMART_MONEY_SHADOW.csv')
+          e=Path('outputs/V18.3_PEA_ETF_SMART_MONEY_SHADOW.csv')
+          s=Path('outputs/V18.3_SMART_MONEY_DAILY_SCORES.parquet')
+          p=Path('outputs/V18.3_SMART_MONEY_PROVENANCE.parquet')
+          assert a.exists() and e.exists() and s.exists() and p.exists()
+          adf=pd.read_csv(a,sep=';',dtype=object,encoding='utf-8-sig')
+          edf=pd.read_csv(e,sep=';',dtype=object,encoding='utf-8-sig')
+          scores=pd.read_parquet(s)
+          assert len(adf)>0 and len(edf)>0 and len(scores)>0
+          assert set(scores['universe'].astype(str).unique()).issubset({'ACTION','ETF'})
+          print('SMART_MONEY_E2E_OK', {'actions':len(adf),'etfs':len(edf),'scores':len(scores),'events':summary.get('events')})
+          PY
+
+      - name: No live order or production score mutation gate
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json,re
+          forbidden=re.compile(r'(?i)(submit[_ -]?order|place[_ -]?order|live[_ -]?order|broker[_ -]?execute|real[_ -]?order)')
+          hits=[]
+          for root in [Path('src/v183'),Path('.github/workflows/V18.3_smart_money_validation_loop.yml')]:
+            files=[root] if root.is_file() else list(root.rglob('*'))
+            for p in files:
+              if not p.is_file(): continue
+              try:t=p.read_text(encoding='utf-8')
+              except Exception:continue
+              if forbidden.search(t):hits.append(str(p))
+          # Generic words in comments/docs are not enough; explicit execution calls are forbidden.
+          assert not hits, hits
+          cfg=json.loads(Path('config/V18.3_SMART_MONEY_CONFIG.json').read_text())
+          assert cfg['score_application']=='SHADOW_ONLY'
+          assert cfg['calibration']['active_scoring_allowed'] is False
+          print('NO_LIVE_EXECUTION_GATE_OK')
+          PY
+
+      - name: Publish validation summary
+        if: always()
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          from pathlib import Path
+          import json
+          print('## V18.3 Smart Money isolated validation')
+          for name in ['V18.2_QUALITY_GATES.json','V18.3_SMART_MONEY_CALIBRATION.json','V18.3_SMART_MONEY_QUALITY_GATES.json','V18.3_QUALITY_GATES.json','V18.3_RUN_SUMMARY.json']:
+            p=Path('outputs/audit')/name
+            if p.exists():
+              d=json.loads(p.read_text(encoding='utf-8'))
+              print(f'- {name}: passed={d.get("passed",d.get("smart_money_quality_passed","n/a"))}')
+          print('- Score application: SHADOW_ONLY')
+          print('- Live/order execution: forbidden')
+          print('- Production total workflow: unchanged')
+          PY
+
+      - name: Upload Smart Money validation evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: V18.3-Smart-Money-Validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            outputs/audit/V18.2_QUALITY_GATES.json
+            outputs/audit/V18.3_SMART_MONEY_CALIBRATION.json
+            outputs/audit/V18.3_SMART_MONEY_COVERAGE.json
+            outputs/audit/V18.3_SMART_MONEY_QUALITY_GATES.json
+            outputs/audit/V18.3_QUALITY_GATES.json
+            outputs/audit/V18.3_RUN_SUMMARY.json
+            outputs/V18.3_PEA_ACTIONS_SMART_MONEY_SHADOW.csv
+            outputs/V18.3_PEA_ETF_SMART_MONEY_SHADOW.csv
+            outputs/V18.3_SMART_MONEY_DAILY_SCORES.parquet
+            outputs/V18.3_SMART_MONEY_EVENTS.parquet
+            outputs/V18.3_SMART_MONEY_PROVENANCE.parquet
+            outputs/V18.3_ETF_FLOW_PROVIDER_REGISTRY.csv
+            outputs/gaps/V18.3_*
+          if-no-files-found: warn
+          retention-days: 30
