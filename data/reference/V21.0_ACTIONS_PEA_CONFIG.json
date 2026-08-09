@@ -1,0 +1,121 @@
+{
+  "version": "V21.0_ACTIONS_PEA_1429",
+  "execution_mode": "RESEARCH_ONLY",
+  "canonical_universe_size": 1429,
+  "source_universe_size": 1486,
+  "excluded_isin_count": 57,
+  "missing_data_policy": "RENORMALIZE_OBSERVED_WEIGHTS_NO_NEUTRAL_50",
+  "enrichment_priority_limit": 300,
+  "instrument_news_limit": 150,
+  "horizon_weights": {
+    "CT": {
+      "perf_1m_pct": 0.08, "perf_3m_pct": 0.05, "perf_6m_pct": 0.02, "relative_strength": 0.07,
+      "positive_reversal_flag": 0.12, "macd_hist": 0.06, "rsi14": 0.03, "rvol20": 0.05,
+      "stoch_bull_cross_flag": 0.03, "volume": 0.06, "market_cap": 0.03,
+      "target_upside_pct_v21": 0.07, "consensus_score_100_v21": 0.05, "consensus_delta_4w": 0.05,
+      "net_upgrades_30d_v21": 0.03, "earnings_catalyst_score": 0.05, "news_catalyst_score": 0.04,
+      "valuation_discount_score": 0.05, "max_drawdown_1y": 0.04, "volatility_20d": 0.02
+    },
+    "MT": {
+      "perf_3m_pct": 0.04, "perf_6m_pct": 0.07, "perf_1y_pct": 0.08, "perf_3y_pct": 0.04, "relative_strength": 0.04,
+      "target_upside_pct_v21": 0.08, "consensus_score_100_v21": 0.06, "consensus_delta_4w": 0.05,
+      "broker_weighted_revision_30d": 0.04, "net_upgrades_30d_v21": 0.02,
+      "per_forward_v21": 0.06, "pb_v21": 0.02, "fcf_yield_v21": 0.06,
+      "roe_v21_pct": 0.06, "operating_margin_v21_pct": 0.04, "revenue_growth_v21_pct": 0.04,
+      "earnings_growth_v21_pct": 0.04, "debt_to_ebitda_v21": 0.03,
+      "max_drawdown_1y": 0.06, "volatility_60d": 0.03, "beta_v21": 0.02,
+      "market_cap": 0.01, "volume": 0.01
+    },
+    "LT": {
+      "max_drawdown_1y": 0.10, "volatility_60d": 0.04, "beta_v21": 0.03, "debt_to_ebitda_v21": 0.06, "debt_to_equity_v21": 0.02,
+      "roe_v21_pct": 0.07, "roa_v21_pct": 0.03, "operating_margin_v21_pct": 0.05, "net_margin_v21_pct": 0.03,
+      "fcf_yield_v21": 0.08, "revenue_growth_v21_pct": 0.04, "earnings_growth_v21_pct": 0.04,
+      "dividend_yield_v21_pct": 0.08, "payout_ratio_v21_pct": 0.03, "dividend_cagr_3y": 0.04, "distribution_policy": 0.03,
+      "per_forward_v21": 0.05, "pb_v21": 0.02, "perf_3y_pct": 0.06, "perf_5y_pct": 0.06,
+      "market_cap": 0.02, "volume": 0.02
+    }
+  },
+  "short_weights": {
+    "perf_1m_pct": 0.10, "perf_3m_pct": 0.08, "perf_6m_pct": 0.04, "relative_strength": 0.08,
+    "macd_hist": 0.06, "rsi14": 0.03, "rvol20": 0.03,
+    "per_forward_v21": 0.04, "pb_v21": 0.02, "fcf_yield_v21": 0.04,
+    "roe_v21_pct": 0.04, "operating_margin_v21_pct": 0.03, "debt_to_ebitda_v21": 0.04, "earnings_growth_v21_pct": 0.03,
+    "target_upside_pct_v21": 0.05, "consensus_score_100_v21": 0.04, "consensus_delta_4w": 0.04, "net_upgrades_30d_v21": 0.03,
+    "volatility_20d": 0.04, "volatility_60d": 0.03, "max_drawdown_1y": 0.03, "beta_v21": 0.02,
+    "sentiment_regime_score": 0.06
+  },
+  "lower_is_better": [
+    "per_forward_v21", "pb_v21", "debt_to_ebitda_v21", "debt_to_equity_v21",
+    "volatility_20d", "volatility_60d", "beta_v21"
+  ],
+  "sector_neutral_metrics": [
+    "per_forward_v21", "pb_v21", "fcf_yield_v21", "roe_v21_pct", "roa_v21_pct",
+    "operating_margin_v21_pct", "net_margin_v21_pct", "revenue_growth_v21_pct", "earnings_growth_v21_pct",
+    "debt_to_ebitda_v21", "debt_to_equity_v21"
+  ],
+  "coverage": {
+    "min_weight_coverage_buy": {"CT": 0.70, "MT": 0.70, "LT": 0.70},
+    "min_weight_coverage_watch": {"CT": 0.55, "MT": 0.55, "LT": 0.55},
+    "min_weight_coverage_short": 0.65,
+    "coverage_penalty_floor": 0.88,
+    "identity_min": 0.92,
+    "pea_buy_requires_high_confidence": true
+  },
+  "thresholds": {
+    "CT": {"BUY_CANDIDATE": 78, "WATCH": 70, "REVIEW": 60},
+    "MT": {"BUY_CANDIDATE": 76, "WATCH": 68, "REVIEW": 58},
+    "LT": {"BUY_CANDIDATE": 75, "WATCH": 68, "REVIEW": 58},
+    "SHORT": {"SHORT_CANDIDATE": 78, "WATCH_SHORT": 65}
+  },
+  "gates": {
+    "bottom_liquidity_percentile_review": 0.05,
+    "earnings_imminent_days": 2,
+    "ct_max_drawdown_malus_below_pct": -35,
+    "ct_max_drawdown_malus_points": -4,
+    "mt_max_drawdown_malus_below_pct": -35,
+    "mt_max_drawdown_malus_points": -5,
+    "lt_max_drawdown_malus_below_pct": -30,
+    "lt_max_drawdown_malus_points": -6,
+    "short_late_drawdown_below_pct": -45,
+    "short_late_malus_points": -8
+  },
+  "topdown": {
+    "ct_multiplier": {"min": 0.94, "max": 1.04},
+    "mt_multiplier": {"min": 0.97, "max": 1.02},
+    "risk_gates": {"block_buy_below": 25, "review_only_below": 35},
+    "minimum_context_coverage_for_positive_multiplier": 0.55
+  },
+  "smart_money": {
+    "integration_mode": "SHADOW_PLUS_NEGATIVE_RISK_GATE",
+    "positive_score_boost_allowed": false,
+    "min_confidence_for_gate": 0.75,
+    "full_score_activation_requires_empirical_walk_forward": true
+  },
+  "score_calibration": {"raw_weight": 0.55, "percentile_weight": 0.45, "short_raw_weight": 0.45},
+  "selection_limits": {"CT": 20, "MT": 30, "LT": 30, "SHORT": 20},
+  "new_reference_fields": [
+    "high_52w", "low_52w", "distance_to_52w_high_pct", "distance_to_52w_low_pct", "stoch_k", "stoch_d",
+    "stoch_bull_cross_flag", "stoch_bear_cross_flag", "volume_avg_20d", "volume_acceleration_20d", "breakout_20d_flag",
+    "volatility_1y_pct", "market_cap_v21", "enterprise_value_v21", "per_forward_v21", "per_ttm_v21", "pb_v21",
+    "roe_v21_pct", "roa_v21_pct", "operating_margin_v21_pct", "net_margin_v21_pct", "gross_margin_v21_pct",
+    "revenue_growth_v21_pct", "earnings_growth_v21_pct", "free_cash_flow_v21", "operating_cash_flow_v21", "fcf_yield_v21",
+    "total_debt_v21", "total_cash_v21", "ebitda_v21", "debt_to_ebitda_v21", "debt_to_equity_v21", "current_ratio_v21",
+    "interest_coverage_v21", "dividend_yield_v21_pct", "payout_ratio_v21_pct", "target_mean_v21", "target_low_v21", "target_high_v21",
+    "n_analysts_v21", "consensus_score_100_v21", "target_upside_pct_v21", "potential_gt_15_flag", "consensus_delta_4w",
+    "net_upgrades_30d_v21", "broker_weighted_revision_30d", "next_earnings_date", "days_to_earnings", "earnings_window_7d_flag",
+    "earnings_window_30d_flag", "earnings_risk_gate", "earnings_catalyst_score", "guidance_revision_score", "profit_warning_flag",
+    "buyback_signal", "mna_rumor_score", "news_catalyst_score", "valuation_discount_score", "sector_v21",
+    "institutional_ownership_pct", "insider_ownership_pct", "short_percent_float_pct", "short_ratio", "insider_net_buy_90d",
+    "insider_buyers_90d", "insider_sellers_90d", "action_smart_money_score", "action_smart_money_confidence", "action_smart_money_gate",
+    "liquidity_percentile", "pea_validation_gate", "identity_gate", "v210_enrichment_priority_score", "v210_enrichment_priority",
+    "action_topdown_score", "action_topdown_coverage", "action_topdown_multiplier_ct", "action_topdown_multiplier_mt", "action_topdown_gate",
+    "weight_coverage_ct", "weight_coverage_mt", "weight_coverage_lt", "weight_coverage_short",
+    "score_ct_raw", "score_mt_raw", "score_lt_raw", "score_short_raw", "score_ct", "score_mt", "score_lt", "score_short",
+    "decision_ct", "decision_mt", "decision_lt", "decision_short", "decision_reason_ct", "decision_reason_mt", "decision_reason_lt", "decision_reason_short",
+    "rank_ct", "rank_mt", "rank_lt", "rank_short", "selection_ct", "selection_mt", "selection_lt", "selection_short",
+    "T0", "T1_1_4w", "T2_1_3m", "T3_3_6m", "T4_6_12m", "T5_12_24m", "T1_entry_low", "T1_entry_high", "T1_target", "T1_invalidation",
+    "backtest_12m_status", "backtest_18m_status", "backtest_36m_status", "reference_version", "reference_generated_at_utc",
+    "reference_missing_data_policy", "reference_populated_fields", "reference_total_fields", "reference_completeness_pct",
+    "reference_high_value_missing_fields", "reference_status", "reference_update_note"
+  ]
+}

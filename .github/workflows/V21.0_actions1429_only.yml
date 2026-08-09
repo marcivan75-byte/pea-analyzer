@@ -1,0 +1,198 @@
+name: V21.0 PEA Actions 1429 - Collection to Committee
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/smart-money-v1]
+    paths:
+      - '.github/workflows/V21.0_actions1429_only.yml'
+      - 'src/v182/decision/actions_v210_prepare.py'
+      - 'src/v182/decision/actions_v210_enrichment.py'
+      - 'src/v182/decision/actions_v210_audit.py'
+      - 'src/v182/decision/actions_v210_committee.py'
+      - 'src/v182/decision/actions_v210_reference.py'
+      - 'src/v182/sources/actions_funnel_v210.py'
+      - 'data/reference/V21.0_ACTIONS_PEA_CONFIG.json'
+      - 'data/reference/V21.0_ACTIONS_FUNNEL_CONFIG.json'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v210-actions-pea1429
+  cancel-in-progress: true
+
+jobs:
+  actions1429:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -c constraints-ci.txt -e .[test]
+      - name: Static preflight V21 Actions
+        run: |
+          set -euo pipefail
+          python -m pip check
+          python -m compileall -q src tests
+          ruff check --select E9,F63,F7,F82 src tests
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          c=json.loads(Path('data/reference/V21.0_ACTIONS_PEA_CONFIG.json').read_text())
+          f=json.loads(Path('data/reference/V21.0_ACTIONS_FUNNEL_CONFIG.json').read_text())
+          assert c['canonical_universe_size']==1429 and c['source_universe_size']==1486 and c['excluded_isin_count']==57
+          assert c['missing_data_policy']=='RENORMALIZE_OBSERVED_WEIGHTS_NO_NEUTRAL_50'
+          for hz in ['CT','MT','LT']: assert abs(sum(c['horizon_weights'][hz].values())-1.0)<1e-9
+          assert abs(sum(c['short_weights'].values())-1.0)<1e-9
+          assert abs(sum(f['context_weights'].values())-1.0)<1e-9
+          assert c['smart_money']['positive_score_boost_allowed'] is False
+          print('V21_ACTIONS_CONFIG_OK')
+          PY
+      - name: Restore latest validated Actions PEA 1486 master
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p outputs history /tmp/v210base
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/V20.4_gitok_end_to_end.yml/runs?status=success&branch=feature%2Fsmart-money-v1&per_page=50" --jq '.workflow_runs[].id' > /tmp/v210base/runs.txt
+          FOUND=0
+          while read -r RUN; do
+            [ -n "$RUN" ] || continue
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}/artifacts?per_page=100" --jq '.artifacts[]|select(.expired==false)|[.id,.name]|@tsv' > /tmp/v210base/artifacts.tsv || continue
+            while IFS=$'\t' read -r ART NAME; do
+              case "$NAME" in V20.4-GitOK-end-to-end-*|V20.4-GitOK-full-cycle-*|V20.4-GitOK-reference-*) ;; *) continue ;; esac
+              rm -rf /tmp/v210base/unpack && mkdir -p /tmp/v210base/unpack
+              gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/v210base/base.zip || continue
+              unzip -oq /tmp/v210base/base.zip -d /tmp/v210base/unpack || continue
+              SRC=$(find /tmp/v210base/unpack -name V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv -print -quit)
+              [ -n "$SRC" ] || continue
+              cp "$SRC" outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv
+              for H in V18.2_CONSENSUS_SNAPSHOTS.csv V18.2_ANALYST_REVISIONS.csv; do HP=$(find /tmp/v210base/unpack -name "$H" -print -quit || true); [ -z "$HP" ] || cp "$HP" "history/$H"; done
+              if python - <<'PY'
+          import pandas as pd
+          d=pd.read_csv('outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          assert len(d)==1486 and d['isin'].astype(str).nunique()==1486
+          assert len(d.columns)>=250 and d['asset_class'].astype(str).str.upper().eq('ACTION').all()
+          print('V21_ACTIONS_BASE_OK',len(d),len(d.columns))
+          PY
+              then echo "V21_BASE_RUN=$RUN" >> "$GITHUB_ENV"; echo "V21_BASE_ARTIFACT=$NAME" >> "$GITHUB_ENV"; FOUND=1; break 2; fi
+            done < /tmp/v210base/artifacts.tsv
+          done < /tmp/v210base/runs.txt
+          test "$FOUND" = 1
+      - name: Restore latest validated Actions Smart Money shadow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p outputs/audit /tmp/v210sm
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/V18.3_smart_money_validation_loop.yml/runs?status=success&branch=feature%2Fsmart-money-v1&per_page=50" --jq '.workflow_runs[].id' > /tmp/v210sm/runs.txt
+          FOUND=0
+          while read -r RUN; do
+            [ -n "$RUN" ] || continue
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}/artifacts?per_page=100" --jq '.artifacts[]|select(.expired==false)|[.id,.name]|@tsv' > /tmp/v210sm/artifacts.tsv || continue
+            while IFS=$'\t' read -r ART NAME; do
+              case "$NAME" in V18.3-Smart-Money-Validation-*) ;; *) continue ;; esac
+              rm -rf /tmp/v210sm/unpack && mkdir -p /tmp/v210sm/unpack
+              gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/v210sm/sm.zip || continue
+              unzip -oq /tmp/v210sm/sm.zip -d /tmp/v210sm/unpack || continue
+              SH=$(find /tmp/v210sm/unpack -name V18.3_PEA_ACTIONS_SMART_MONEY_SHADOW.csv -print -quit); ST=$(find /tmp/v210sm/unpack -name V18.3_SMART_MONEY_ITERATION_STATUS.json -print -quit); Q=$(find /tmp/v210sm/unpack -name V18.3_SMART_MONEY_QUALITY_GATES.json -print -quit)
+              [ -n "$SH" ] && [ -n "$ST" ] && [ -n "$Q" ] || continue
+              cp "$SH" outputs/V18.3_PEA_ACTIONS_SMART_MONEY_SHADOW.csv; cp "$ST" outputs/audit/V18.3_SMART_MONEY_ITERATION_STATUS.json; cp "$Q" outputs/audit/V18.3_SMART_MONEY_QUALITY_GATES.json
+              if python - <<'PY'
+          import json,pandas as pd
+          from pathlib import Path
+          d=pd.read_csv('outputs/V18.3_PEA_ACTIONS_SMART_MONEY_SHADOW.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          q=json.loads(Path('outputs/audit/V18.3_SMART_MONEY_QUALITY_GATES.json').read_text()); it=json.loads(Path('outputs/audit/V18.3_SMART_MONEY_ITERATION_STATUS.json').read_text())
+          assert len(d)==1486 and d['isin'].astype(str).nunique()==1486 and q.get('passed') is True and it.get('positive_score_activation_ready') is False
+          print('V21_ACTIONS_SMART_MONEY_OK',len(d),it.get('distinct_shadow_run_dates'))
+          PY
+              then echo "V21_SM_RUN=$RUN" >> "$GITHUB_ENV"; echo "V21_SM_ARTIFACT=$NAME" >> "$GITHUB_ENV"; FOUND=1; break 2; fi
+            done < /tmp/v210sm/artifacts.tsv
+          done < /tmp/v210sm/runs.txt
+          test "$FOUND" = 1
+      - name: Prepare canonical Actions PEA 1429 reference
+        run: python -m v182.decision.actions_v210_prepare
+      - name: Enrich prioritized Actions PEA candidates
+        run: python -m v182.decision.actions_v210_enrichment
+      - name: Build Actions-specific Top Down funnel
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: python -m v182.sources.actions_funnel_v210
+      - name: Audit data and V21 weights before committee
+        run: python -m v182.decision.actions_v210_audit
+      - name: Build V21 Actions PEA multi-horizon committee
+        run: python -m v182.decision.actions_v210_committee
+      - name: V21 Actions integrated hard quality gates
+        run: |
+          python - <<'PY'
+          import json,pandas as pd
+          from pathlib import Path
+          d=pd.read_csv('outputs/V21.0_ACTIONS_PEA_1429_COMMITTEE.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          cfg=json.loads(Path('data/reference/V21.0_ACTIONS_PEA_CONFIG.json').read_text()); pre=json.loads(Path('outputs/audit/V21.0_ACTIONS_PRECOMMIT_AUDIT.json').read_text()); com=json.loads(Path('outputs/audit/V21.0_ACTIONS_COMMITTEE_AUDIT.json').read_text()); td=json.loads(Path('outputs/audit/V21.0_ACTIONS_TOPDOWN_AUDIT.json').read_text()); it=json.loads(Path('outputs/audit/V18.3_SMART_MONEY_ITERATION_STATUS.json').read_text())
+          assert len(d)==1429 and d['isin'].astype(str).nunique()==1429 and d['asset_class'].astype(str).str.upper().eq('ACTION').all()
+          assert d['canonical_universe'].astype(str).eq('PEA_ACTIONS_1429').all() and d['execution'].astype(str).eq('RESEARCH_ONLY').all()
+          assert pre.get('passed') is True and com.get('passed') is True and td.get('passed') is True
+          assert cfg['missing_data_policy']=='RENORMALIZE_OBSERVED_WEIGHTS_NO_NEUTRAL_50' and cfg['smart_money']['positive_score_boost_allowed'] is False and it.get('positive_score_activation_ready') is False
+          for hz in ['ct','mt','lt','short']:
+              cov=pd.to_numeric(d[f'weight_coverage_{hz}'],errors='coerce'); assert cov.notna().all() and cov.between(0,1).all()
+          for hz in ['ct','mt','lt']:
+              dec=d[f'decision_{hz}'].astype(str); assert not ((~d['pea_validation_gate'].astype(str).eq('PASS')) & dec.isin(['BUY_CANDIDATE','WATCH'])).any()
+          assert not d['execution'].astype(str).str.upper().isin({'LIVE','ORDER','EXECUTE','BROKER','REAL_ORDER','LIVE_ORDER'}).any()
+          print('V21_ACTIONS_INTEGRATED_GATES_OK',com['decisions'],com['mean_weight_coverage'],td['risk_gates'])
+          PY
+      - name: Build exhaustive V21 Actions PEA reference
+        run: python -m v182.decision.actions_v210_reference
+      - name: V21 Actions reference hard gates
+        run: |
+          python - <<'PY'
+          import json,pandas as pd
+          from pathlib import Path
+          m=pd.read_csv('outputs/V21.0_ACTIONS_PEA_REFERENCE_MASTER.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False); c=pd.read_csv('outputs/V21.0_ACTIONS_PEA_REFERENCE_COMPLETE.csv',sep=';',dtype=object,encoding='utf-8-sig',keep_default_na=False,low_memory=False); cov=pd.read_csv('outputs/V21.0_ACTIONS_PEA_REFERENCE_COVERAGE.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False); dic=pd.read_csv('outputs/V21.0_ACTIONS_PEA_CRITERIA_DICTIONARY.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False); w=pd.read_csv('outputs/V21.0_ACTIONS_PEA_WEIGHTS.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False); a=json.loads(Path('outputs/audit/V21.0_ACTIONS_PEA_REFERENCE_AUDIT.json').read_text())
+          assert a.get('passed') is True and len(m)==1429 and m['isin'].astype(str).nunique()==1429 and len(dic)==len(m.columns)==len(w)
+          assert a['mandatory_fields_full']==a['mandatory_fields'] and a['complete_view_blank_cells']==0 and int(c.astype(str).apply(lambda s:s.str.strip().eq('')).sum().sum())==0
+          assert m['reference_version'].astype(str).eq('V21.0_ACTIONS_PEA_REFERENCE_MASTER').all() and m['reference_missing_data_policy'].astype(str).eq('VALUE_OR_EXPLICIT_NA_NO_NEUTRAL_50').all() and m['execution'].astype(str).eq('RESEARCH_ONLY').all()
+          assert (pd.to_numeric(cov.loc[cov['mandatory'].astype(str).str.lower().eq('true'),'coverage_pct'],errors='coerce')==100).all()
+          print('V21_ACTIONS_REFERENCE_GATES_OK',{'rows':len(m),'columns':len(m.columns),'coverage':a['mean_field_coverage_pct'],'full_fields':a['full_coverage_fields']})
+          PY
+      - name: Publish V21 Actions committee and reference summary
+        run: |
+          cat outputs/V21.0_ACTIONS_COMMITTEE_SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          p=json.loads(Path('outputs/audit/V21.0_ACTIONS_PRECOMMIT_AUDIT.json').read_text()); r=json.loads(Path('outputs/audit/V21.0_ACTIONS_PEA_REFERENCE_AUDIT.json').read_text())
+          print('\n## V21.0 Actions PEA reference'); print(f"- Canonical universe: {r['rows']} actions / {r['unique_isin']} ISIN"); print(f"- Reference columns: {r['reference_columns']}"); print(f"- Criteria dictionary: {r['criteria_dictionary_rows']} rows"); print(f"- Mean field coverage: {r['mean_field_coverage_pct']}%"); print(f"- Mandatory fields: {r['mandatory_fields_full']}/{r['mandatory_fields']}"); print(f"- Precommittee coverage: {p['mean_weighted_input_coverage']}"); print('- Neutral 50 imputation: forbidden'); print('- Smart Money positive score: disabled'); print('- Execution: RESEARCH_ONLY')
+          PY
+      - name: Upload V21 Actions PEA complete reference pack
+        uses: actions/upload-artifact@v6
+        with:
+          name: V21.0-Actions-PEA-1429-Reference-${{ github.run_id }}
+          path: |
+            data/reference/V21.0_ACTIONS_PEA_CONFIG.json
+            data/reference/V21.0_ACTIONS_FUNNEL_CONFIG.json
+            outputs/V21.0_ACTIONS_PEA_1429_PREPARED.csv
+            outputs/V21.0_ACTIONS_PEA_1429_COMMITTEE.csv
+            outputs/V21.0_ACTIONS_COMMITTEE_SUMMARY.md
+            outputs/V21.0_ACTIONS_TOPDOWN_CONTEXT.csv
+            outputs/V21.0_ACTIONS_PEA_REFERENCE_MASTER.csv
+            outputs/V21.0_ACTIONS_PEA_REFERENCE_COMPLETE.csv
+            outputs/V21.0_ACTIONS_PEA_REFERENCE_COVERAGE.csv
+            outputs/V21.0_ACTIONS_PEA_REFERENCE_GAPS.csv
+            outputs/V21.0_ACTIONS_PEA_CRITERIA_DICTIONARY.csv
+            outputs/V21.0_ACTIONS_PEA_WEIGHTS.csv
+            outputs/audit/V21.0_ACTIONS_*.json
+            outputs/audit/V18.3_SMART_MONEY_ITERATION_STATUS.json
+            outputs/audit/V18.3_SMART_MONEY_QUALITY_GATES.json
+          if-no-files-found: error
+          retention-days: 30
