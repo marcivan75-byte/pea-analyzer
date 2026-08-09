@@ -1,7 +1,9 @@
-name: V18.3 Smart Money Isolated Validation Loop
+name: V18.3 Smart Money Persistent Validation Loop
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '15 6 * * 1-5'
   push:
     branches: [feature/smart-money-v1]
     paths:
@@ -17,18 +19,18 @@ permissions:
   actions: read
 
 concurrency:
-  group: v183-smart-money-isolated-validation
+  group: v183-smart-money-persistent-validation
   cancel-in-progress: true
 
 jobs:
   smart-money-shadow-validation:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-          fetch-depth: 0
+          fetch-depth: 1
 
       - uses: actions/setup-python@v6
         with:
@@ -46,7 +48,7 @@ jobs:
           ruff check --select E9,F63,F7,F82 src tests
           pytest -q tests/test_smart_money_v183.py tests/test_audit_quality.py tests/test_audit4_gates.py tests/test_audit_cycle2_hardening.py tests/test_release_governance_cycle3.py
 
-      - name: Assert shadow-only configuration
+      - name: Assert shadow-only calibration contract
         run: |
           python - <<'PY'
           import json
@@ -58,16 +60,85 @@ jobs:
           cal=c.get('calibration',{})
           assert cal.get('active_scoring_allowed') is False
           assert cal.get('empirical_walk_forward_required_for_active_scoring') is True
+          assert int(cal.get('minimum_shadow_observations_for_empirical_fit',0)) >= 20
+          assert int(cal.get('minimum_distinct_run_dates_for_empirical_fit',0)) >= 20
           print('SMART_MONEY_SHADOW_CONFIG_OK')
           PY
 
-      - name: Execute V18.3 full shadow chain
+      - name: Restore latest validated V18.2 masters
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p outputs/audit /tmp/v182base
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" --jq '.artifacts|sort_by(.created_at)|reverse|.[]|select(.expired==false)|select(.name|startswith("V18.2-full-audit-"))|[.id,.workflow_run.id,.name]|@tsv' > /tmp/v182base/list.tsv
+          FOUND=0
+          while IFS=$'\t' read -r ART RUN NAME; do
+            [ -n "$ART" ] || continue
+            C=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}" --jq '.conclusion // ""' 2>/dev/null || true)
+            [ "$C" = success ] || continue
+            rm -rf /tmp/v182base/unpack; mkdir -p /tmp/v182base/unpack
+            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/v182base/base.zip
+            unzip -oq /tmp/v182base/base.zip -d /tmp/v182base/unpack
+            A=$(find /tmp/v182base/unpack -name V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv -print -quit)
+            E=$(find /tmp/v182base/unpack -name V18.2_PEA_ETF_MASTER_ENRICHED.csv -print -quit)
+            Q=$(find /tmp/v182base/unpack -name V18.2_QUALITY_GATES.json -print -quit)
+            [ -n "$A" ] && [ -n "$E" ] && [ -n "$Q" ] || continue
+            cp "$A" outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv
+            cp "$E" outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
+            cp "$Q" outputs/audit/V18.2_QUALITY_GATES.json
+            python - <<'PY'
+          import json
+          import pandas as pd
+          from pathlib import Path
+          a=pd.read_csv('outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          e=pd.read_csv('outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          q=json.loads(Path('outputs/audit/V18.2_QUALITY_GATES.json').read_text(encoding='utf-8'))
+          assert q.get('passed') is True, q
+          assert len(e)==102 and e['isin'].astype(str).nunique()==102
+          assert e['ticker_identity_status'].astype(str).eq('FINAL_VALIDATED').all()
+          assert len(a)>0 and a['isin'].astype(str).nunique()>0
+          print('VALIDATED_BASE_RESTORED', {'actions':len(a),'etfs':len(e)})
+          PY
+            echo "V182_BASE_RUN=$RUN" >> "$GITHUB_ENV"
+            echo "V182_BASE_ARTIFACT=$NAME" >> "$GITHUB_ENV"
+            FOUND=1; break
+          done < /tmp/v182base/list.tsv
+          test "$FOUND" = 1
+
+      - name: Restore previous persistent Smart Money state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p state/smart_money /tmp/smstate
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" --jq '.artifacts|sort_by(.created_at)|reverse|.[]|select(.expired==false)|select(.name|startswith("V18.3-Smart-Money-Validation-"))|[.id,.workflow_run.id,.name]|@tsv' > /tmp/smstate/list.tsv
+          RESTORED=0
+          while IFS=$'\t' read -r ART RUN NAME; do
+            [ -n "$ART" ] || continue
+            [ "$RUN" != "${GITHUB_RUN_ID}" ] || continue
+            C=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}" --jq '.conclusion // ""' 2>/dev/null || true)
+            [ "$C" = success ] || continue
+            rm -rf /tmp/smstate/unpack; mkdir -p /tmp/smstate/unpack
+            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/smstate/state.zip
+            unzip -oq /tmp/smstate/state.zip -d /tmp/smstate/unpack
+            D=$(find /tmp/smstate/unpack -type d -path '*/state/smart_money' -print -quit)
+            if [ -z "$D" ]; then
+              D=$(find /tmp/smstate/unpack -type d -name smart_money -print -quit)
+            fi
+            [ -n "$D" ] || continue
+            cp -a "$D"/. state/smart_money/
+            echo "SM_STATE_SOURCE_RUN=$RUN" >> "$GITHUB_ENV"
+            echo "SM_STATE_SOURCE_ARTIFACT=$NAME" >> "$GITHUB_ENV"
+            RESTORED=1; break
+          done < /tmp/smstate/list.tsv
+          echo "SM_STATE_RESTORED=$RESTORED" >> "$GITHUB_ENV"
+          find state/smart_money -maxdepth 1 -type f -printf '%f\n' | sort || true
+
+      - name: Execute isolated Smart Money shadow chain
         env:
           V183_RUN_ID: sm-validation-${{ github.run_id }}-${{ github.run_attempt }}
-          # Marketstack symbol resolution is an optional V18.2 enrichment and is
-          # deliberately excluded from the isolated Smart Money validation. Its
-          # single-request resolver quota can fail transiently and must not mask
-          # Smart Money end-to-end validation. Production workflows are unchanged.
+          V183_SKIP_V182: '1'
           OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
@@ -75,6 +146,9 @@ jobs:
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
           MARKETBEAT_API_KEY: ${{ secrets.MARKETBEAT_API_KEY }}
         run: python -m v183.reporting.run
+
+      - name: Build persistent iteration status
+        run: python -m v183.smart_money.iteration_status
 
       - name: Smart Money end-to-end quality gates
         run: |
@@ -88,27 +162,32 @@ jobs:
           q=json.loads((audit/'V18.3_QUALITY_GATES.json').read_text(encoding='utf-8'))
           summary=json.loads((audit/'V18.3_RUN_SUMMARY.json').read_text(encoding='utf-8'))
           cal=json.loads((audit/'V18.3_SMART_MONEY_CALIBRATION.json').read_text(encoding='utf-8'))
+          it=json.loads((audit/'V18.3_SMART_MONEY_ITERATION_STATUS.json').read_text(encoding='utf-8'))
           assert q18.get('passed') is True, q18
           assert qsm.get('passed') is True, qsm
-          assert q.get('passed') is True, q
-          assert q.get('shadow_only') is True, q
+          assert q.get('passed') is True and q.get('shadow_only') is True, q
           assert cal.get('passed') is True, cal
           assert summary.get('active_scoring_allowed') is False, summary
           assert summary.get('empirical_walk_forward_required') is True, summary
+          assert it.get('positive_score_activation_ready') is False, it
           a=Path('outputs/V18.3_PEA_ACTIONS_SMART_MONEY_SHADOW.csv')
           e=Path('outputs/V18.3_PEA_ETF_SMART_MONEY_SHADOW.csv')
           s=Path('outputs/V18.3_SMART_MONEY_DAILY_SCORES.parquet')
           p=Path('outputs/V18.3_SMART_MONEY_PROVENANCE.parquet')
           assert a.exists() and e.exists() and s.exists() and p.exists()
-          adf=pd.read_csv(a,sep=';',dtype=object,encoding='utf-8-sig')
-          edf=pd.read_csv(e,sep=';',dtype=object,encoding='utf-8-sig')
+          adf=pd.read_csv(a,sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          edf=pd.read_csv(e,sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
           scores=pd.read_parquet(s)
-          assert len(adf)>0 and len(edf)>0 and len(scores)>0
+          assert len(adf)>0
+          assert len(edf)==102 and edf['isin'].astype(str).nunique()==102
           assert set(scores['universe'].astype(str).unique()).issubset({'ACTION','ETF'})
-          print('SMART_MONEY_E2E_OK', {'actions':len(adf),'etfs':len(edf),'scores':len(scores),'events':summary.get('events')})
+          current_etf=scores[scores['universe'].astype(str).eq('ETF')]
+          assert len(current_etf)==102 and current_etf['isin'].astype(str).nunique()==102
+          assert it['etf_unique_isin_in_state']==102
+          print('SMART_MONEY_E2E_OK', {'actions':len(adf),'etfs':len(edf),'events':summary.get('events'),'dates':it['distinct_shadow_run_dates']})
           PY
 
-      - name: No live order or production score mutation gate
+      - name: No live order or positive production score mutation gate
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -122,12 +201,11 @@ jobs:
               try:t=p.read_text(encoding='utf-8')
               except Exception:continue
               if forbidden.search(t):hits.append(str(p))
-          # Generic words in comments/docs are not enough; explicit execution calls are forbidden.
           assert not hits, hits
           cfg=json.loads(Path('config/V18.3_SMART_MONEY_CONFIG.json').read_text())
           assert cfg['score_application']=='SHADOW_ONLY'
           assert cfg['calibration']['active_scoring_allowed'] is False
-          print('NO_LIVE_EXECUTION_GATE_OK')
+          print('NO_LIVE_EXECUTION_OR_POSITIVE_SCORE_MUTATION_GATE_OK')
           PY
 
       - name: Publish validation summary
@@ -136,19 +214,20 @@ jobs:
           python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           from pathlib import Path
           import json
-          print('## V18.3 Smart Money isolated validation')
-          for name in ['V18.2_QUALITY_GATES.json','V18.3_SMART_MONEY_CALIBRATION.json','V18.3_SMART_MONEY_COVERAGE.json','V18.3_SMART_MONEY_QUALITY_GATES.json','V18.3_QUALITY_GATES.json','V18.3_RUN_SUMMARY.json']:
+          print('## V18.3 Smart Money persistent validation')
+          for name in ['V18.2_QUALITY_GATES.json','V18.3_SMART_MONEY_CALIBRATION.json','V18.3_SMART_MONEY_COVERAGE.json','V18.3_SMART_MONEY_QUALITY_GATES.json','V18.3_QUALITY_GATES.json','V18.3_RUN_SUMMARY.json','V18.3_SMART_MONEY_ITERATION_STATUS.json']:
             p=Path('outputs/audit')/name
             if p.exists():
               d=json.loads(p.read_text(encoding='utf-8'))
               print(f'- {name}: passed={d.get("passed",d.get("smart_money_quality_passed","n/a"))}')
+          print(f'- V18.2 base run: {__import__("os").environ.get("V182_BASE_RUN","n/a")}')
+          print(f'- Previous Smart Money state restored: {__import__("os").environ.get("SM_STATE_RESTORED","0")}')
           print('- Score application: SHADOW_ONLY')
-          print('- Live/order execution: forbidden')
-          print('- Marketstack resolver: excluded only from isolated validation; production unchanged')
-          print('- Production total workflow: unchanged')
+          print('- Conservative integration: negative high-confidence decision gate only')
+          print('- Positive score contribution: disabled pending empirical walk-forward')
           PY
 
-      - name: Upload Smart Money validation evidence
+      - name: Upload Smart Money validation evidence and persistent state
         if: always()
         uses: actions/upload-artifact@v6
         with:
@@ -160,6 +239,7 @@ jobs:
             outputs/audit/V18.3_SMART_MONEY_QUALITY_GATES.json
             outputs/audit/V18.3_QUALITY_GATES.json
             outputs/audit/V18.3_RUN_SUMMARY.json
+            outputs/audit/V18.3_SMART_MONEY_ITERATION_STATUS.json
             outputs/V18.3_PEA_ACTIONS_SMART_MONEY_SHADOW.csv
             outputs/V18.3_PEA_ETF_SMART_MONEY_SHADOW.csv
             outputs/V18.3_SMART_MONEY_DAILY_SCORES.parquet
@@ -167,5 +247,6 @@ jobs:
             outputs/V18.3_SMART_MONEY_PROVENANCE.parquet
             outputs/V18.3_ETF_FLOW_PROVIDER_REGISTRY.csv
             outputs/gaps/V18.3_*
+            state/smart_money/**
           if-no-files-found: warn
-          retention-days: 30
+          retention-days: 45
