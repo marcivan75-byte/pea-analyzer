@@ -84,12 +84,12 @@ def _column_mapping(frame: pd.DataFrame) -> dict[str, str]:
 
 def _date_series(values: pd.Series) -> pd.Series:
     s = values.astype("string").str.strip()
-    iso_mask = s.str.match(r"^\d{4}-\d{2}-\d{2}(?:[T ].*)?$", na=False)
+    iso_mask = s.str.match(r"^\d{4}-\d{2}-\d{2}(?:[T ].*)?$", na=False).fillna(False).astype(bool)
     out = pd.Series(pd.NaT, index=s.index, dtype="datetime64[ns]")
-    if iso_mask.any():
+    if bool(iso_mask.any()):
         out.loc[iso_mask] = pd.to_datetime(s.loc[iso_mask], errors="coerce").values
-    other = ~iso_mask & s.notna() & s.ne("")
-    if other.any():
+    other = (~iso_mask) & s.notna().astype(bool) & s.fillna("").ne("").astype(bool)
+    if bool(other.any()):
         out.loc[other] = pd.to_datetime(s.loc[other], errors="coerce", dayfirst=True).values
     return out.dt.strftime("%Y-%m-%d")
 
