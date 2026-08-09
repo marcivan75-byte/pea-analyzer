@@ -13,6 +13,7 @@ from .gleif_bulk import capture as capture_gleif_bulk
 from .gleif_lei import capture as capture_gleif
 from .esef_xbrl import capture as capture_esef
 from .official_delayed import capture as capture_official
+from .manual_imports import capture as capture_manual
 from .twelvedata_free import capture as capture_twelve
 from .alpha_free import capture as capture_alpha
 from .marketstack_free import capture as capture_marketstack
@@ -21,9 +22,8 @@ from .derive_fundamentals import capture as derive_fundamentals
 
 ROOT = Path(__file__).resolve().parents[3]
 INPUT = Path(os.getenv("V211_INPUT", str(ROOT / "outputs/V21.0_ACTIONS_PEA_REFERENCE_MASTER.csv")))
+IMPORT_ROOT = Path(os.getenv("V211_MANUAL_IMPORT_ROOT", str(ROOT / "data/import/free_capture")))
 
-# Markets where ESEF/EEA annual reporting is structurally most likely. Access/Growth MTFs are
-# deliberately not in this first-priority lane; they move to issuer/regulator document capture.
 REGULATED_MICS = {"XPAR", "XAMS", "XBRU", "XLIS", "MTAA", "XOSL", "XMAD", "XSTO", "XHEL", "XCSE"}
 REGULATED_COUNTRIES = {"FRANCE", "NETHERLANDS", "BELGIUM", "PORTUGAL", "ITALY", "NORWAY", "SPAIN", "SWEDEN", "FINLAND", "DENMARK"}
 
@@ -33,7 +33,6 @@ def _observed_series(s: pd.Series) -> pd.Series:
 
 
 def _regulated_priority(base: pd.DataFrame, missing_priority: pd.DataFrame) -> pd.DataFrame:
-    """Put regulated/main-market issuers first for GLEIF/ESEF, then preserve missing-data priority."""
     x = base.copy()
     mic = x.get("euronext_mic", pd.Series("", index=x.index)).astype(str).str.upper()
     country = x.get("country", pd.Series("", index=x.index)).astype(str).str.upper()
@@ -43,7 +42,6 @@ def _regulated_priority(base: pd.DataFrame, missing_priority: pd.DataFrame) -> p
     x["_mt"] = pd.to_numeric(x.get("score_mt"), errors="coerce").fillna(0)
     x["_lt"] = pd.to_numeric(x.get("score_lt"), errors="coerce").fillna(0)
     x = x.sort_values(["_regulated", "_mc", "_volume", "_mt", "_lt"], ascending=[False, False, False, False, False], kind="stable")
-    # Add any rows not present (defensive), ordered by the general missing-data priority.
     seen = set(x["isin"].astype(str))
     tail = missing_priority.loc[~missing_priority["isin"].astype(str).isin(seen)]
     return pd.concat([x, tail], ignore_index=True)
@@ -145,8 +143,12 @@ def main() -> None:
     )
     results["esef"] = capture_esef(regulated, store, int(os.getenv("V211_ESEF_MAX_SYMBOLS", "50")))
     results["derived_fundamentals"] = derive_fundamentals(base, store)
-    results["official_delayed"] = capture_official(store)
 
+    # Official and user-exported free market history are the preferred history lanes.
+    results["official_delayed"] = capture_official(store)
+    results["manual_imports"] = capture_manual(base, store, IMPORT_ROOT)
+
+    # Scarce commercial free tiers remain small targeted fallbacks.
     twelve_max = int(os.getenv("V211_TWELVE_MAX_SYMBOLS", "5"))
     alpha_max = int(os.getenv("V211_ALPHA_MAX_SYMBOLS", "3"))
     marketstack_max = int(os.getenv("V211_MARKETSTACK_MAX_SYMBOLS", "1"))
@@ -159,6 +161,8 @@ def main() -> None:
         prioritized, store, max_symbols=alpha_max,
         max_calls=int(os.getenv("V211_ALPHA_MAX_CALLS", "23")),
     ) if alpha_max > 0 else {"status": "DISABLED_THIS_WAVE"}
+
+    # Compute technicals only after every free history lane has had a chance to add rows.
     results["derived_market"] = derive_market(store)
 
     overlay, metrics = _materialize(base, store, cfg)
@@ -187,6 +191,7 @@ def main() -> None:
         "metrics_pct_base_plus_free": metrics,
         "source_status": source_status,
         "results": results,
+        "manual_import_root": str(IMPORT_ROOT),
         "yfinance_called_by_v211": False,
         "paid_sources_called": False,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
