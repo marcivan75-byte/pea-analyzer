@@ -1,0 +1,177 @@
+{
+  "version": "BACKTEST_10_ELEMENT_V1",
+  "execution": "RESEARCH_ONLY",
+  "sequential": true,
+  "production_weights_modified": false,
+  "default_candidate_count": 1000,
+  "default_min_snapshots": 12,
+  "default_min_test_snapshots": 4,
+  "default_train_fraction": 0.67,
+  "elements": [
+    {
+      "id": "ETF_SHORT",
+      "asset_class": "ETF",
+      "mode": "ETF_DIRECT",
+      "source_horizon": "SHORT",
+      "horizon_days": 14,
+      "horizon_tolerance_days": 5,
+      "target_direction": -1,
+      "top_k": 10,
+      "min_instruments_per_snapshot": 60,
+      "transaction_cost_bps": 10.0
+    },
+    {
+      "id": "ETF_CT",
+      "asset_class": "ETF",
+      "mode": "ETF_DIRECT",
+      "source_horizon": "CT",
+      "horizon_days": 28,
+      "horizon_tolerance_days": 9,
+      "target_direction": 1,
+      "top_k": 10,
+      "min_instruments_per_snapshot": 60,
+      "transaction_cost_bps": 10.0
+    },
+    {
+      "id": "ETF_MT",
+      "asset_class": "ETF",
+      "mode": "ETF_DIRECT",
+      "source_horizon": "MT",
+      "horizon_days": 91,
+      "horizon_tolerance_days": 18,
+      "target_direction": 1,
+      "top_k": 10,
+      "min_instruments_per_snapshot": 60,
+      "transaction_cost_bps": 8.0
+    },
+    {
+      "id": "ETF_LT",
+      "asset_class": "ETF",
+      "mode": "ETF_DIRECT",
+      "source_horizon": "LT",
+      "horizon_days": 365,
+      "horizon_tolerance_days": 45,
+      "target_direction": 1,
+      "top_k": 10,
+      "min_instruments_per_snapshot": 60,
+      "transaction_cost_bps": 5.0
+    },
+    {
+      "id": "ETF_TOPDOWN",
+      "asset_class": "ETF",
+      "mode": "ETF_TOPDOWN",
+      "horizon_days": 91,
+      "horizon_tolerance_days": 18,
+      "target_direction": 1,
+      "top_k": 10,
+      "min_instruments_per_snapshot": 60,
+      "transaction_cost_bps": 8.0,
+      "features": {
+        "global_macro": {"column": "funnel_global_macro_score", "baseline": 0.18},
+        "country_macro": {"column": "funnel_country_macro_score", "baseline": 0.20},
+        "global_news": {"column": "funnel_global_news_score", "baseline": 0.14},
+        "country_news": {"column": "funnel_country_news_score", "baseline": 0.16},
+        "sector_news": {"column": "funnel_sector_news_score", "baseline": 0.07},
+        "instrument_news": {"column": "funnel_instrument_news_score", "baseline": 0.05},
+        "market_sentiment": {"column": "funnel_market_sentiment_score", "baseline": 0.20}
+      }
+    },
+    {
+      "id": "ACTION_T1_1_4W",
+      "asset_class": "ACTION",
+      "mode": "ACTION_SCORE",
+      "horizon_days": 28,
+      "horizon_tolerance_days": 9,
+      "target_direction": 1,
+      "top_k": 25,
+      "min_instruments_per_snapshot": 300,
+      "transaction_cost_bps": 15.0,
+      "features": {
+        "momentum": {"column": "score_momentum_100", "baseline": 0.38},
+        "catalyst": {"column": "score_catalyst_100", "baseline": 0.18},
+        "risk": {"column": "score_risk_100", "baseline": 0.15},
+        "expectancy": {"column": "score_expectancy_100", "baseline": 0.12},
+        "structure": {"column": "score_structure_100", "baseline": 0.10},
+        "sector": {"column": "score_sector_100", "baseline": 0.07}
+      }
+    },
+    {
+      "id": "ACTION_T2_1_3M",
+      "asset_class": "ACTION",
+      "mode": "ACTION_SCORE",
+      "horizon_days": 91,
+      "horizon_tolerance_days": 18,
+      "target_direction": 1,
+      "top_k": 25,
+      "min_instruments_per_snapshot": 300,
+      "transaction_cost_bps": 12.0,
+      "features": {
+        "momentum": {"column": "score_momentum_100", "baseline": 0.25},
+        "catalyst": {"column": "score_catalyst_100", "baseline": 0.20},
+        "quality": {"column": "score_quality_100", "baseline": 0.20},
+        "value": {"column": "score_value_100", "baseline": 0.15},
+        "risk": {"column": "score_risk_100", "baseline": 0.10},
+        "expectancy": {"column": "score_expectancy_100", "baseline": 0.10}
+      }
+    },
+    {
+      "id": "ACTION_T3_3_6M",
+      "asset_class": "ACTION",
+      "mode": "ACTION_SCORE",
+      "horizon_days": 182,
+      "horizon_tolerance_days": 28,
+      "target_direction": 1,
+      "top_k": 25,
+      "min_instruments_per_snapshot": 300,
+      "transaction_cost_bps": 10.0,
+      "features": {
+        "momentum": {"column": "score_momentum_100", "baseline": 0.25},
+        "catalyst": {"column": "score_catalyst_100", "baseline": 0.20},
+        "quality": {"column": "score_quality_100", "baseline": 0.20},
+        "value": {"column": "score_value_100", "baseline": 0.15},
+        "risk": {"column": "score_risk_100", "baseline": 0.10},
+        "expectancy": {"column": "score_expectancy_100", "baseline": 0.10}
+      }
+    },
+    {
+      "id": "ACTION_T4_6_12M",
+      "asset_class": "ACTION",
+      "mode": "ACTION_SCORE",
+      "horizon_days": 365,
+      "horizon_tolerance_days": 45,
+      "target_direction": 1,
+      "top_k": 25,
+      "min_instruments_per_snapshot": 300,
+      "transaction_cost_bps": 8.0,
+      "features": {
+        "quality": {"column": "score_quality_100", "baseline": 0.30},
+        "value": {"column": "score_value_100", "baseline": 0.20},
+        "structure": {"column": "score_structure_100", "baseline": 0.15},
+        "risk": {"column": "score_risk_100", "baseline": 0.12},
+        "fiscal": {"column": "score_fiscal_100", "baseline": 0.10},
+        "expectancy": {"column": "score_expectancy_100", "baseline": 0.08},
+        "sector": {"column": "score_sector_100", "baseline": 0.05}
+      }
+    },
+    {
+      "id": "ACTION_T5_12_24M",
+      "asset_class": "ACTION",
+      "mode": "ACTION_SCORE",
+      "horizon_days": 730,
+      "horizon_tolerance_days": 60,
+      "target_direction": 1,
+      "top_k": 25,
+      "min_instruments_per_snapshot": 300,
+      "transaction_cost_bps": 5.0,
+      "features": {
+        "quality": {"column": "score_quality_100", "baseline": 0.30},
+        "value": {"column": "score_value_100", "baseline": 0.20},
+        "structure": {"column": "score_structure_100", "baseline": 0.15},
+        "risk": {"column": "score_risk_100", "baseline": 0.12},
+        "fiscal": {"column": "score_fiscal_100", "baseline": 0.10},
+        "expectancy": {"column": "score_expectancy_100", "baseline": 0.08},
+        "sector": {"column": "score_sector_100", "baseline": 0.05}
+      }
+    }
+  ]
+}
