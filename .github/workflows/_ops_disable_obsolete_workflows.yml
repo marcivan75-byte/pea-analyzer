@@ -1,0 +1,48 @@
+name: OPS - Disable obsolete workflows
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/_ops_disable_obsolete_workflows.yml'
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  disable-obsolete:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Disable every obsolete workflow record
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${REPO}/actions/workflows?per_page=100" > /tmp/workflows.json
+          jq -r '.workflows[] | [.id,.path,.state] | @tsv' /tmp/workflows.json | while IFS=$'\t' read -r ID PATH STATE; do
+            case "$PATH" in
+              '.github/workflows/V20.7_etf102_only.yml'|'.github/workflows/V21.0_actions1429_only.yml')
+                echo "KEEP $ID $PATH $STATE"
+                ;;
+              '.github/workflows/_ops_disable_obsolete_workflows.yml')
+                echo "SELF $ID $PATH $STATE"
+                ;;
+              *)
+                if [ "$STATE" = "active" ]; then
+                  echo "DISABLE $ID $PATH"
+                  gh api --silent --method PUT "repos/${REPO}/actions/workflows/${ID}/disable"
+                else
+                  echo "ALREADY_DISABLED $ID $PATH $STATE"
+                fi
+                ;;
+            esac
+          done
+          SELF_ID=$(jq -r '.workflows[] | select(.path==".github/workflows/_ops_disable_obsolete_workflows.yml") | .id' /tmp/workflows.json | head -1)
+          if [ -n "$SELF_ID" ]; then
+            echo "DISABLE_SELF $SELF_ID"
+            gh api --silent --method PUT "repos/${REPO}/actions/workflows/${SELF_ID}/disable"
+          fi
+          echo "WORKFLOW_CLEANUP_COMPLETE"
