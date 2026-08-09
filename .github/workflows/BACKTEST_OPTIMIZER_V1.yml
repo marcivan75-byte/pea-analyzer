@@ -69,14 +69,10 @@ jobs:
             mkdir -p "$DEST"
             gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > "$DEST/artifact.zip" || continue
             unzip -oq "$DEST/artifact.zip" -d "$DEST/extract" || continue
-            find "$DEST/extract" -type f \( \
-                -name 'V20.4_GITOK_ACTIONS_3609_DECISIONS.csv' -o \
-                -name 'V20.4_GITOK_COMMITTEE_DECISIONS.csv' -o \
-                -name '*ACTIONS*DECISIONS*.csv' \
-              \) -exec cp '{}' "$DEST/" ';'
+            find "$DEST/extract" -type f -name '*ACTIONS*DECISIONS*.csv' -exec cp '{}' "$DEST/" ';'
             rm -rf "$DEST/extract" "$DEST/artifact.zip"
           done < /tmp/backtest-artifacts.tsv
-          echo "Archived decision snapshots: $(find /tmp/backtest-history -type f -name '*.csv' | wc -l)"
+          echo "Archived rich action snapshots: $(find /tmp/backtest-history -type f -name '*.csv' | wc -l)"
 
       - name: Apply requested horizon without mutating repository
         env:
