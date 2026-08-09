@@ -1,0 +1,41 @@
+{
+  "version": "V20.4.2",
+  "execution_mode": "RESEARCH_ONLY",
+  "smart_money_enabled": false,
+  "actions": {
+    "horizon_family_weights": {
+      "CT": {"quality": 0.04, "value": 0.07, "t1": 0.50, "analyst": 0.04, "risk": 0.19, "structure": 0.16},
+      "MT": {"quality": 0.22, "value": 0.22, "momentum": 0.17, "analyst": 0.14, "risk": 0.21, "structure": 0.04},
+      "LT": {"quality": 0.36, "value": 0.27, "momentum": 0.07, "analyst": 0.05, "risk": 0.18, "structure": 0.07}
+    },
+    "short_weights": {"bearish_t1": 0.38, "overvaluation": 0.18, "quality_weakness": 0.12, "analyst_negative": 0.12, "fundamental_fragility": 0.10, "execution_risk_penalty": 0.10},
+    "thresholds": {
+      "CT": {"BUY_CANDIDATE": 78, "WATCH": 70, "REVIEW": 60},
+      "MT": {"BUY_CANDIDATE": 76, "WATCH": 68, "REVIEW": 58},
+      "LT": {"BUY_CANDIDATE": 75, "WATCH": 68, "REVIEW": 58},
+      "SHORT": {"SHORT_CANDIDATE": 78, "WATCH_SHORT": 65}
+    },
+    "t1_weights": {"bollinger": 0.24, "stochastic": 0.16, "macd": 0.18, "volume": 0.16, "reversal_breakout": 0.12, "relative_strength": 0.08, "short_acceleration": 0.06},
+    "macro": {"min_multiplier": 0.82, "max_multiplier": 1.06, "applies_mainly_to": "CT"},
+    "selection_limits": {"CT": 20, "MT": 30, "LT": 30, "SHORT": 20},
+    "score_calibration": {"raw_weight": 0.55, "percentile_weight": 0.45, "short_raw_weight": 0.45}
+  },
+  "etf": {
+    "horizon_weights": {
+      "CT": {"momentum": 0.42, "risk_efficiency": 0.20, "liquidity": 0.18, "tracking": 0.08, "ter": 0.04, "v9": 0.05, "diversification": 0.02, "morningstar": 0.01},
+      "MT": {"v9": 0.24, "momentum": 0.20, "risk_efficiency": 0.18, "liquidity": 0.14, "tracking": 0.10, "ter": 0.07, "diversification": 0.04, "morningstar": 0.02, "esg": 0.01},
+      "LT": {"v9": 0.28, "risk_efficiency": 0.20, "tracking": 0.15, "ter": 0.12, "diversification": 0.10, "liquidity": 0.08, "momentum": 0.04, "morningstar": 0.02, "esg": 0.01}
+    },
+    "short_weights": {"bearish_momentum": 0.45, "risk_fragility": 0.20, "structural_weakness": 0.12, "liquidity_weakness": 0.08, "tracking_cost_weakness": 0.10, "regime": 0.05},
+    "thresholds": {
+      "CT": {"BUY_CANDIDATE": 78, "WATCH": 70, "REVIEW": 60},
+      "MT": {"BUY_CANDIDATE": 76, "WATCH": 68, "REVIEW": 58},
+      "LT": {"BUY_CANDIDATE": 75, "WATCH": 68, "REVIEW": 58},
+      "SHORT": {"SHORT_CANDIDATE": 78, "WATCH_SHORT": 65}
+    },
+    "identity_min_buy": 0.95,
+    "hard_gates": {"min_aum_eur_m": 15, "max_spread_pct": 1.50},
+    "selection_limits": {"CT": 10, "MT": 12, "LT": 12, "SHORT": 8},
+    "score_calibration": {"raw_weight": 0.55, "percentile_weight": 0.45, "short_raw_weight": 0.45}
+  }
+}
