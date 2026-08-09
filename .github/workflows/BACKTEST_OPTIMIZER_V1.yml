@@ -47,7 +47,7 @@ jobs:
       - name: Validate optimizer module
         run: |
           python -m compileall -q src tests
-          ruff check --select E9,F63,F7,F82 src/v182/decision/backtest_optimizer_v1.py tests/test_backtest_optimizer_v1.py
+          ruff check --select E9,F63,F7,F82 src/v182/backtest_optimizer tests/test_backtest_optimizer_v1.py
           pytest -q tests/test_backtest_optimizer_v1.py
 
       - name: Collect point-in-time committee artifacts
@@ -94,7 +94,7 @@ jobs:
 
       - name: Run optimizer
         run: |
-          python -m v182.decision.backtest_optimizer_v1 \
+          python -m v182.backtest_optimizer.run \
             --input /tmp/backtest-history \
             --config /tmp/backtest-config.json \
             --output-dir outputs/backtest_optimizer
