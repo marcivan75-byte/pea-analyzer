@@ -8,7 +8,11 @@ on:
       - '.github/workflows/V21.0_actions1429_only.yml'
       - 'src/v182/decision/actions_v210_prepare.py'
       - 'src/v182/decision/actions_v210_enrichment.py'
+      - 'src/v182/decision/actions_v210_pre_backfill_schema.py'
       - 'src/v182/decision/actions_v210_yahoo_backfill.py'
+      - 'src/v182/decision/actions_v210_eodhd_backfill.py'
+      - 'src/v182/decision/actions_v210_finnhub_backfill.py'
+      - 'src/v182/decision/actions_v210_coverage_certification.py'
       - 'src/v182/decision/actions_v210_audit.py'
       - 'src/v182/decision/actions_v210_committee.py'
       - 'src/v182/decision/actions_v210_reference.py'
@@ -27,7 +31,7 @@ concurrency:
 jobs:
   actions1429:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -124,16 +128,34 @@ jobs:
           test "$FOUND" = 1
       - name: Prepare canonical Actions PEA 1429 reference
         run: python -m v182.decision.actions_v210_prepare
-      - name: Enrich prioritized Actions PEA candidates
+      - name: Enrich all Actions PEA candidates with Yahoo
         run: python -m v182.decision.actions_v210_enrichment
+      - name: Prepare safe schema for multi-source backfills
+        run: python -m v182.decision.actions_v210_pre_backfill_schema
       - name: Slow Yahoo fundamentals and forward-data backfill
         run: python -m v182.decision.actions_v210_yahoo_backfill
+      - name: EODHD global fundamentals valuation and estimates backfill
+        env:
+          EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
+          EODHD_MAX_SYMBOLS_PER_RUN: '1429'
+          EODHD_WORKERS: '8'
+          EODHD_REQUESTS_PER_SECOND: '12'
+        run: python -m v182.decision.actions_v210_eodhd_backfill
+      - name: Finnhub analyst consensus and revisions backfill
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FINNHUB_MAX_SYMBOLS_PER_RUN: '550'
+          FINNHUB_METRIC_MAX_SYMBOLS_PER_RUN: '150'
+          FINNHUB_DELAY_SECONDS: '1.05'
+        run: python -m v182.decision.actions_v210_finnhub_backfill
       - name: Build Actions-specific Top Down funnel
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python -m v182.sources.actions_funnel_v210
       - name: Audit data and V21 weights before committee
         run: python -m v182.decision.actions_v210_audit
+      - name: Certify V21 data coverage
+        run: python -m v182.decision.actions_v210_coverage_certification
       - name: Build V21 Actions PEA multi-horizon committee
         run: python -m v182.decision.actions_v210_committee
       - name: V21 Actions integrated hard quality gates
@@ -142,17 +164,17 @@ jobs:
           import json,pandas as pd
           from pathlib import Path
           d=pd.read_csv('outputs/V21.0_ACTIONS_PEA_1429_COMMITTEE.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
-          cfg=json.loads(Path('data/reference/V21.0_ACTIONS_PEA_CONFIG.json').read_text()); pre=json.loads(Path('outputs/audit/V21.0_ACTIONS_PRECOMMIT_AUDIT.json').read_text()); com=json.loads(Path('outputs/audit/V21.0_ACTIONS_COMMITTEE_AUDIT.json').read_text()); td=json.loads(Path('outputs/audit/V21.0_ACTIONS_TOPDOWN_AUDIT.json').read_text()); it=json.loads(Path('outputs/audit/V18.3_SMART_MONEY_ITERATION_STATUS.json').read_text())
+          cfg=json.loads(Path('data/reference/V21.0_ACTIONS_PEA_CONFIG.json').read_text()); pre=json.loads(Path('outputs/audit/V21.0_ACTIONS_PRECOMMIT_AUDIT.json').read_text()); cert=json.loads(Path('outputs/audit/V21.0_ACTIONS_COVERAGE_CERTIFICATION.json').read_text()); com=json.loads(Path('outputs/audit/V21.0_ACTIONS_COMMITTEE_AUDIT.json').read_text()); td=json.loads(Path('outputs/audit/V21.0_ACTIONS_TOPDOWN_AUDIT.json').read_text()); it=json.loads(Path('outputs/audit/V18.3_SMART_MONEY_ITERATION_STATUS.json').read_text())
           assert len(d)==1429 and d['isin'].astype(str).nunique()==1429 and d['asset_class'].astype(str).str.upper().eq('ACTION').all()
           assert d['canonical_universe'].astype(str).eq('PEA_ACTIONS_1429').all() and d['execution'].astype(str).eq('RESEARCH_ONLY').all()
-          assert pre.get('passed') is True and com.get('passed') is True and td.get('passed') is True
+          assert pre.get('passed') is True and cert.get('passed') is True and com.get('passed') is True and td.get('passed') is True
           assert cfg['missing_data_policy']=='RENORMALIZE_OBSERVED_WEIGHTS_NO_NEUTRAL_50' and cfg['smart_money']['positive_score_boost_allowed'] is False and it.get('positive_score_activation_ready') is False
           for hz in ['ct','mt','lt','short']:
               cov=pd.to_numeric(d[f'weight_coverage_{hz}'],errors='coerce'); assert cov.notna().all() and cov.between(0,1).all()
           for hz in ['ct','mt','lt']:
               dec=d[f'decision_{hz}'].astype(str); assert not ((~d['pea_validation_gate'].astype(str).eq('PASS')) & dec.isin(['BUY_CANDIDATE','WATCH'])).any()
           assert not d['execution'].astype(str).str.upper().isin({'LIVE','ORDER','EXECUTE','BROKER','REAL_ORDER','LIVE_ORDER'}).any()
-          print('V21_ACTIONS_INTEGRATED_GATES_OK',com['decisions'],com['mean_weight_coverage'],td['risk_gates'])
+          print('V21_ACTIONS_INTEGRATED_GATES_OK',com['decisions'],com['mean_weight_coverage'],td['risk_gates'],cert['process_validation_status'])
           PY
       - name: Build exhaustive V21 Actions PEA reference
         run: python -m v182.decision.actions_v210_reference
@@ -168,14 +190,25 @@ jobs:
           assert (pd.to_numeric(cov.loc[cov['mandatory'].astype(str).str.lower().eq('true'),'coverage_pct'],errors='coerce')==100).all()
           print('V21_ACTIONS_REFERENCE_GATES_OK',{'rows':len(m),'columns':len(m.columns),'coverage':a['mean_field_coverage_pct'],'full_fields':a['full_coverage_fields']})
           PY
-      - name: Publish V21 Actions committee and reference summary
+      - name: Publish V21 Actions committee and coverage summary
         run: |
           cat outputs/V21.0_ACTIONS_COMMITTEE_SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
           python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
           from pathlib import Path
-          p=json.loads(Path('outputs/audit/V21.0_ACTIONS_PRECOMMIT_AUDIT.json').read_text()); r=json.loads(Path('outputs/audit/V21.0_ACTIONS_PEA_REFERENCE_AUDIT.json').read_text())
-          print('\n## V21.0 Actions PEA reference'); print(f"- Canonical universe: {r['rows']} actions / {r['unique_isin']} ISIN"); print(f"- Reference columns: {r['reference_columns']}"); print(f"- Criteria dictionary: {r['criteria_dictionary_rows']} rows"); print(f"- Mean field coverage: {r['mean_field_coverage_pct']}%"); print(f"- Mandatory fields: {r['mandatory_fields_full']}/{r['mandatory_fields']}"); print(f"- Precommittee coverage: {p['mean_weighted_input_coverage']}"); print('- Neutral 50 imputation: forbidden'); print('- Smart Money positive score: disabled'); print('- Execution: RESEARCH_ONLY')
+          p=json.loads(Path('outputs/audit/V21.0_ACTIONS_PRECOMMIT_AUDIT.json').read_text()); r=json.loads(Path('outputs/audit/V21.0_ACTIONS_PEA_REFERENCE_AUDIT.json').read_text()); c=json.loads(Path('outputs/audit/V21.0_ACTIONS_COVERAGE_CERTIFICATION.json').read_text()); y=json.loads(Path('outputs/audit/V21.0_ACTIONS_YAHOO_BACKFILL.json').read_text()); f=json.loads(Path('outputs/audit/V21.0_ACTIONS_FINNHUB_BACKFILL.json').read_text()); e=json.loads(Path('outputs/audit/V21.0_ACTIONS_EODHD_BACKFILL.json').read_text())
+          print('\n## V21.0 Actions PEA data validation')
+          print(f"- Process validation: **{c['process_validation_status']}**")
+          print(f"- Certification metrics: {c['metrics_pct']}")
+          print(f"- Certification gates: {c['gates']}")
+          print(f"- Precommittee weighted coverage: {p['mean_weighted_input_coverage']}")
+          print(f"- Yahoo slow backfill: attempted={y.get('attempted')} / applied={y.get('applied')} / filled={y.get('filled_cells')}")
+          print(f"- EODHD: {e.get('status')} / resolved={e.get('resolved')} / filled={e.get('filled_cells')}")
+          print(f"- Finnhub: {f.get('status')} / resolved={f.get('resolved')} / analyst process coverage={f.get('analyst_process_coverage_pct')}%")
+          print(f"- Reference: {r['rows']} actions / {r['reference_columns']} fields / mean field coverage {r['mean_field_coverage_pct']}%")
+          print('- Neutral 50 imputation: forbidden')
+          print('- Smart Money positive score: disabled')
+          print('- Execution: RESEARCH_ONLY')
           PY
       - name: Upload V21 Actions PEA complete reference pack
         uses: actions/upload-artifact@v6
@@ -188,12 +221,14 @@ jobs:
             outputs/V21.0_ACTIONS_PEA_1429_COMMITTEE.csv
             outputs/V21.0_ACTIONS_COMMITTEE_SUMMARY.md
             outputs/V21.0_ACTIONS_TOPDOWN_CONTEXT.csv
+            outputs/V21.0_ACTIONS_COVERAGE_CERTIFICATION.csv
             outputs/V21.0_ACTIONS_PEA_REFERENCE_MASTER.csv
             outputs/V21.0_ACTIONS_PEA_REFERENCE_COMPLETE.csv
             outputs/V21.0_ACTIONS_PEA_REFERENCE_COVERAGE.csv
             outputs/V21.0_ACTIONS_PEA_REFERENCE_GAPS.csv
             outputs/V21.0_ACTIONS_PEA_CRITERIA_DICTIONARY.csv
             outputs/V21.0_ACTIONS_PEA_WEIGHTS.csv
+            outputs/cache/V21.0_*_SYMBOL_MAP.csv
             outputs/audit/V21.0_ACTIONS_*.json
             outputs/audit/V18.3_SMART_MONEY_ITERATION_STATUS.json
             outputs/audit/V18.3_SMART_MONEY_QUALITY_GATES.json
