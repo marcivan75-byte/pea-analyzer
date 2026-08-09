@@ -110,14 +110,41 @@ def _extract_aaii_article(url: str) -> dict | None:
     text = soup.get_text(" ", strip=True).replace("–", "-").replace("−", "-")
 
     def value(label: str) -> float | None:
-        m = re.search(rf"{label} sentiment.*?percentage points to\s+([0-9]+(?:\.[0-9]+)?)%", text, flags=re.I)
+        # Prefer a single paragraph so a historical-average number from a later
+        # sentence can never be mistaken for the current survey result.
+        for node in soup.find_all(["p", "li"]):
+            t = node.get_text(" ", strip=True).replace("–", "-").replace("−", "-")
+            if not re.match(rf"^\s*{label}\s+sentiment\b", t, flags=re.I):
+                continue
+            m = re.search(r"percentage points to\s+([0-9]+(?:\.[0-9]+)?)%", t, flags=re.I)
+            if m:
+                return float(m.group(1))
+        # Sentence-bounded fallback only; do not cross into another sentiment line.
+        m = re.search(
+            rf"\b{label}\s+sentiment\b[^.]*?percentage points to\s+([0-9]+(?:\.[0-9]+)?)%",
+            text,
+            flags=re.I,
+        )
         return float(m.group(1)) if m else None
 
     bull, neutral, bear = value("Bullish"), value("Neutral"), value("Bearish")
-    spread_m = re.search(r"bull-bear spread.*?percentage points to\s+(-?[0-9]+(?:\.[0-9]+)?)%", text, flags=re.I)
-    spread = float(spread_m.group(1)) if spread_m else (bull - bear if bull is not None and bear is not None else None)
+    spread = None
+    for node in soup.find_all(["p", "li"]):
+        t = node.get_text(" ", strip=True).replace("–", "-").replace("−", "-")
+        if "bull-bear spread" not in t.lower():
+            continue
+        m = re.search(r"percentage points to\s+(-?[0-9]+(?:\.[0-9]+)?)%", t, flags=re.I)
+        if m:
+            spread = float(m.group(1)); break
+    if spread is None:
+        m = re.search(r"bull-bear spread[^.]*?percentage points to\s+(-?[0-9]+(?:\.[0-9]+)?)%", text, flags=re.I)
+        spread = float(m.group(1)) if m else (bull - bear if bull is not None and bear is not None else None)
     if bull is None or neutral is None or bear is None or spread is None:
         return None
+
+    # Internal arithmetic gate: official spread should reconcile with bull-bear.
+    if abs((bull - bear) - spread) > 0.15:
+        raise RuntimeError(f"AAII arithmetic mismatch: bull={bull}, bear={bear}, spread={spread}")
 
     asof = None
     meta = soup.find("meta", attrs={"property": "article:published_time"})
