@@ -11,6 +11,12 @@ on:
         description: 'Maximum Alpha Vantage symbols for this wave'
         required: false
         default: '10'
+  push:
+    branches: [feature/smart-money-v1]
+    paths:
+      - '.github/workflows/V21.1_free_capture.yml'
+      - 'src/v182/free_capture/**'
+      - 'data/reference/V21.1_FREE_CAPTURE_CONFIG.json'
 
 permissions:
   contents: read
@@ -117,8 +123,8 @@ jobs:
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
           MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
-          V211_TWELVE_MAX_SYMBOLS: ${{ inputs.twelve_symbols }}
-          V211_ALPHA_MAX_SYMBOLS: ${{ inputs.alpha_symbols }}
+          V211_TWELVE_MAX_SYMBOLS: ${{ inputs.twelve_symbols || '40' }}
+          V211_ALPHA_MAX_SYMBOLS: ${{ inputs.alpha_symbols || '10' }}
           V211_ALPHA_MAX_CALLS: '23'
           V211_MARKETSTACK_MAX_SYMBOLS: '3'
           V211_OPENFIGI_MAX_REQUESTS: '30'
