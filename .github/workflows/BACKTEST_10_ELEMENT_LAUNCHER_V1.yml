@@ -86,7 +86,7 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/raw-history /tmp/source-artifacts
           gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
-            --jq '.artifacts | sort_by(.created_at) | reverse | .[] | select(.expired == false) | select((.name | startswith("V20.7-ETF-PEA-102-Committee-")) or (.name | startswith("V20.4-GitOK-end-to-end-")) or (.name | startswith("V20.4-GitOK-full-cycle-")) or (.name | startswith("V20.4-GitOK-reference-"))) | [.id,.workflow_run.id,.created_at,.name] | @tsv' \
+            --jq '.artifacts | sort_by(.created_at) | reverse | .[] | select(.expired == false) | select((.name | startswith("V21.0-Actions-PEA-1429-Reference-")) or (.name | startswith("V20.7-ETF-PEA-102-Committee-")) or (.name | startswith("V20.4-GitOK-end-to-end-")) or (.name | startswith("V20.4-GitOK-full-cycle-")) or (.name | startswith("V20.4-GitOK-reference-"))) | [.id,.workflow_run.id,.created_at,.name] | @tsv' \
             | head -n "${ARTIFACT_LIMIT}" > /tmp/source-artifacts/candidates.tsv || true
           while IFS=$'\t' read -r ARTIFACT_ID RUN_ID CREATED_AT ARTIFACT_NAME; do
             [ -n "${ARTIFACT_ID:-}" ] || continue
@@ -98,10 +98,12 @@ jobs:
             rm -rf /tmp/source-artifacts/unpack/*
             gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > /tmp/source-artifacts/source.zip || continue
             unzip -oq /tmp/source-artifacts/source.zip -d /tmp/source-artifacts/unpack || continue
+            find /tmp/source-artifacts/unpack -type f -name 'V21.0_ACTIONS_PEA_1429_COMMITTEE.csv' -exec cp '{}' "$DEST/" ';'
             find /tmp/source-artifacts/unpack -type f -name 'V20.4_GITOK_ACTIONS_3609_DECISIONS.csv' -exec cp '{}' "$DEST/" ';'
             find /tmp/source-artifacts/unpack -type f -name 'V20.7_ETF102_COMMITTEE.csv' -exec cp '{}' "$DEST/" ';'
           done < /tmp/source-artifacts/candidates.tsv
-          echo "Recovered Actions snapshots: $(find /tmp/raw-history -type f -name '*ACTIONS_3609_DECISIONS*.csv' | wc -l)"
+          echo "Recovered V21 Action snapshots: $(find /tmp/raw-history -type f -name 'V21.0_ACTIONS_PEA_1429_COMMITTEE.csv' | wc -l)"
+          echo "Recovered legacy Action snapshots: $(find /tmp/raw-history -type f -name '*ACTIONS_3609_DECISIONS*.csv' | wc -l)"
           echo "Recovered ETF snapshots: $(find /tmp/raw-history -type f -name '*V20.7_ETF102_COMMITTEE*.csv' | wc -l)"
 
       - name: Enrich rolling point-in-time history and realized outcomes
@@ -137,6 +139,7 @@ jobs:
           w=pd.read_csv(p/'OPTIMIZATION_RECOMMENDATIONS.csv')
           assert a['element_count']==10 and a['expected_element_count']==10, a
           assert len(r)==10 and r['element'].nunique()==10
+          assert (r['asset_class']=='ETF').sum()==5 and (r['asset_class']=='ACTION').sum()==5
           assert not a['fatal_errors'], a['fatal_errors']
           assert a['production_weights_modified'] is False
           assert set(r['status']) <= {'ROBUST_RECOMMENDATION','NO_ROBUST_IMPROVEMENT','INSUFFICIENT_HISTORY','INSUFFICIENT_FEATURES'}
@@ -145,6 +148,9 @@ jobs:
           h=json.loads(Path('outputs/backtest_history/HISTORY_AUDIT.json').read_text(encoding='utf-8'))
           assert h['production_weights_modified'] is False
           assert h['lookahead_policy'].startswith('features preserved')
+          assert h['asset_classes']['ETF']['rows'] >= 100, h['asset_classes']['ETF']
+          assert h['asset_classes']['ACTION']['rows'] >= 1000, h['asset_classes']['ACTION']
+          assert h['asset_classes']['ACTION']['restored_component_score_columns'] >= 60, h['asset_classes']['ACTION']
           print('BACKTEST_10_ELEMENT_AUDIT_OK',a['statuses'])
           PY
 
@@ -164,7 +170,8 @@ jobs:
           if p.exists():
               a=json.loads(p.read_text())
               for asset,d in a.get('asset_classes',{}).items():
-                  print(f"- {asset}: {d.get('snapshots',0)} snapshots / {d.get('rows',0)} lignes / {d.get('first_snapshot')} -> {d.get('last_snapshot')}")
+                  print(f"- {asset}: {d.get('snapshots',0)} snapshots / {d.get('rows',0)} lignes / {d.get('columns',0)} colonnes / {d.get('first_snapshot')} -> {d.get('last_snapshot')}")
+                  print(f"  - Component scores restaurés: {d.get('restored_component_score_columns',0)}")
           PY
 
       - name: Upload rolling history for next launcher run
