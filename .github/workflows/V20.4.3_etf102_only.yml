@@ -55,19 +55,21 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/etf102 outputs
-          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" --jq '.artifacts|sort_by(.created_at)|reverse|.[]|select(.expired==false)|select(.name|startswith("V18.2-full-audit-"))|[.id,.workflow_run.id]|@tsv' > /tmp/etf102/list.tsv
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/V18.2_full_audit.yml/runs?status=success&per_page=100" --jq '.workflow_runs[].id' > /tmp/etf102/runs.txt
           FOUND=0
-          while IFS=$'\t' read -r ART RUN; do
-            [ -n "$ART" ] || continue
-            C=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}" --jq '.conclusion // ""' 2>/dev/null || true)
-            [ "$C" = success ] || continue
-            rm -rf /tmp/etf102/unpack; mkdir -p /tmp/etf102/unpack
-            if ! gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/etf102/a.zip; then continue; fi
-            if ! unzip -oq /tmp/etf102/a.zip -d /tmp/etf102/unpack; then continue; fi
-            SRC=$(find /tmp/etf102/unpack -name V18.2_PEA_ETF_MASTER_ENRICHED.csv -print -quit)
-            [ -n "$SRC" ] || continue
-            cp "$SRC" outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
-            if python - <<'PY'
+          while read -r RUN; do
+            [ -n "$RUN" ] || continue
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}/artifacts?per_page=100" --jq '.artifacts[]|select(.expired==false)|[.id,.name]|@tsv' > /tmp/etf102/artifacts.tsv || continue
+            while IFS=$'\t' read -r ART NAME; do
+              [ -n "$ART" ] || continue
+              case "$NAME" in V18.2-full-audit-*) ;; *) continue ;; esac
+              rm -rf /tmp/etf102/unpack; mkdir -p /tmp/etf102/unpack
+              if ! gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/etf102/a.zip; then continue; fi
+              if ! unzip -oq /tmp/etf102/a.zip -d /tmp/etf102/unpack; then continue; fi
+              SRC=$(find /tmp/etf102/unpack -name V18.2_PEA_ETF_MASTER_ENRICHED.csv -print -quit)
+              [ -n "$SRC" ] || continue
+              cp "$SRC" outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
+              if python - <<'PY'
           import pandas as pd
           p='outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv'
           d=pd.read_csv(p,sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
@@ -76,15 +78,16 @@ jobs:
               raise SystemExit(1)
           print('ETF102_REFERENCE_OK')
           PY
-            then
-              echo "ETF102_REFERENCE_RUN=$RUN" >> "$GITHUB_ENV"
-              FOUND=1; break
-            else
-              echo "Rejected non-canonical ETF artifact from run $RUN"
-              rm -f outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
-              continue
-            fi
-          done < /tmp/etf102/list.tsv
+              then
+                echo "ETF102_REFERENCE_RUN=$RUN" >> "$GITHUB_ENV"
+                echo "ETF102_REFERENCE_ARTIFACT=$NAME" >> "$GITHUB_ENV"
+                FOUND=1; break 2
+              else
+                echo "Rejected non-canonical ETF artifact $NAME from run $RUN"
+                rm -f outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
+              fi
+            done < /tmp/etf102/artifacts.tsv
+          done < /tmp/etf102/runs.txt
           test "$FOUND" = 1
 
       - name: Direct metadata enrichment on 102 ETF
@@ -146,6 +149,7 @@ jobs:
           cat outputs/V20.4.3_ETF102_COMMITTEE_SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "ETF102 reference run: ${ETF102_REFERENCE_RUN}" >> "$GITHUB_STEP_SUMMARY"
+          echo "ETF102 reference artifact: ${ETF102_REFERENCE_ARTIFACT}" >> "$GITHUB_STEP_SUMMARY"
           echo "Legacy 266 universe: NOT LOADED / NOT SCORED" >> "$GITHUB_STEP_SUMMARY"
           echo "Funnel: GLOBAL_MACRO -> COUNTRY -> NEWS -> SENTIMENT -> ETF_STRUCTURE -> TECHNICAL -> SMART_MONEY_GATE" >> "$GITHUB_STEP_SUMMARY"
 
