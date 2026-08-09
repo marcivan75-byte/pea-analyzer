@@ -1,0 +1,56 @@
+{
+  "version": "V20.4.3_ETF102",
+  "execution_mode": "RESEARCH_ONLY",
+  "universe_size": 102,
+  "legacy_266_allowed": false,
+  "missing_data_policy": "RENORMALIZE_OBSERVED_WEIGHTS_NO_NEUTRAL_50",
+  "horizon_weights": {
+    "CT": {"momentum": 0.50, "risk_efficiency": 0.25, "liquidity": 0.15, "cost": 0.05, "tracking": 0.03, "diversification": 0.02},
+    "MT": {"momentum": 0.30, "risk_efficiency": 0.25, "liquidity": 0.15, "cost": 0.10, "tracking": 0.10, "diversification": 0.10},
+    "LT": {"momentum": 0.10, "risk_efficiency": 0.25, "liquidity": 0.15, "cost": 0.20, "tracking": 0.15, "diversification": 0.15}
+  },
+  "component_rules": {
+    "momentum": {"perf_1m_pct": 0.12, "perf_3m_pct": 0.24, "perf_6m_pct": 0.20, "perf_1y_pct": 0.16, "relative_strength": 0.10, "macd_hist": 0.08, "rsi14": 0.05, "rvol20": 0.05},
+    "risk_efficiency": {"volatility_20d": 0.30, "volatility_60d": 0.30, "max_drawdown_1y": 0.40},
+    "liquidity": {"fund_total_assets_eur_m": 0.60, "volume": 0.40},
+    "tracking": {"tracking_error_1y_pct": 0.50, "tracking_error_3y_pct": 0.30, "tracking_error_5y_pct": 0.20},
+    "cost": {"ter_pct": 1.0},
+    "diversification": {"diversification_direct_score": 1.0}
+  },
+  "inverse_metrics": ["volatility_20d", "volatility_60d", "tracking_error_1y_pct", "tracking_error_3y_pct", "tracking_error_5y_pct", "ter_pct"],
+  "rsi_target": 60,
+  "rsi_slope": 3,
+  "coverage": {
+    "min_weight_coverage_buy": 0.75,
+    "min_weight_coverage_watch": 0.60,
+    "min_core_technical_coverage": 0.80,
+    "coverage_penalty_floor": 0.90,
+    "aum_required_for_buy": true,
+    "identity_min_buy": 0.95
+  },
+  "bonuses_maluses": {
+    "morningstar": {"3": 1.0, "4": 2.0, "5": 3.0},
+    "risk_indicator_ge_6": -3.0,
+    "spread_le_020": 1.5,
+    "spread_gt_070": -3.0,
+    "spread_gt_120": -6.0
+  },
+  "thresholds": {
+    "CT": {"BUY_CANDIDATE": 78, "WATCH": 70, "REVIEW": 60},
+    "MT": {"BUY_CANDIDATE": 76, "WATCH": 68, "REVIEW": 58},
+    "LT": {"BUY_CANDIDATE": 75, "WATCH": 68, "REVIEW": 58},
+    "SHORT": {"SHORT_CANDIDATE": 78, "WATCH_SHORT": 65}
+  },
+  "short_weights": {"bearish_momentum": 0.48, "risk_fragility": 0.27, "liquidity_weakness": 0.10, "tracking_cost_weakness": 0.10, "regime": 0.05},
+  "score_calibration": {"raw_weight": 0.55, "percentile_weight": 0.45, "short_raw_weight": 0.45},
+  "macro": {"min_multiplier": 0.82, "max_multiplier": 1.06},
+  "smart_money": {
+    "integration_mode": "SHADOW_PLUS_NEGATIVE_RISK_GATE",
+    "positive_score_boost_allowed": false,
+    "min_confidence_for_gate": 0.75,
+    "review_ifs_lte": -1.75,
+    "block_buy_ifs_lte": -3.0,
+    "full_score_activation_requires_empirical_walk_forward": true
+  },
+  "selection_limits": {"CT": 10, "MT": 10, "LT": 10, "SHORT": 10}
+}
