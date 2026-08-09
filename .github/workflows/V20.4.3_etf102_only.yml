@@ -9,7 +9,9 @@ on:
       - 'src/v182/decision/etf102_direct_enrichment.py'
       - 'src/v182/decision/etf102_committee_v2043.py'
       - 'src/v182/sources/etf102_sentiment_overlay.py'
+      - 'src/v182/sources/funnel_context.py'
       - 'data/reference/V20.4.3_ETF102_CONFIG.json'
+      - 'data/reference/V20.5_FUNNEL_CONFIG.json'
 
 permissions:
   contents: read
@@ -22,7 +24,7 @@ concurrency:
 jobs:
   etf102:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
         with:
@@ -81,6 +83,11 @@ jobs:
       - name: Refresh market sentiment on ETF102 only
         run: python -m v182.sources.etf102_sentiment_overlay
 
+      - name: Build top-down funnel context
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: python -m v182.sources.funnel_context
+
       - name: Build availability-aware ETF102 committee
         run: python -m v182.decision.etf102_committee_v2043
 
@@ -95,24 +102,26 @@ jobs:
           a=json.loads(Path('outputs/audit/V20.4.3_ETF102_COMMITTEE_AUDIT.json').read_text(encoding='utf-8'))
           e=json.loads(Path('outputs/audit/V20.4.3_ETF102_DIRECT_ENRICHMENT.json').read_text(encoding='utf-8'))
           s=json.loads(Path('outputs/audit/V20.4.3_ETF102_SENTIMENT.json').read_text(encoding='utf-8'))
+          f=json.loads(Path('outputs/audit/V20.5_FUNNEL_CONTEXT.json').read_text(encoding='utf-8'))
           assert len(d)==102 and d['isin'].nunique()==102
           assert d['legacy_266_used'].astype(str).str.lower().eq('false').all()
           assert a['legacy_266_used'] is False and e['legacy_266_used'] is False and s['legacy_266_used'] is False
           assert a['missing_data_policy']=='RENORMALIZE_OBSERVED_WEIGHTS_NO_NEUTRAL_50'
+          assert f['passed'] is True and f['rows']==102
           assert pd.to_numeric(d['fear_greed_index'],errors='coerce').notna().all()
           assert pd.to_numeric(d['aaii_bull_bear_spread'],errors='coerce').notna().all()
+          assert pd.to_numeric(d['funnel_context_coverage'],errors='coerce').between(0,1).all()
           assert d['execution'].astype(str).eq('RESEARCH_ONLY').all()
-          required={'score_ct','score_mt','score_lt','score_short','rank_ct','rank_mt','rank_lt','rank_short','decision_ct','decision_mt','decision_lt','decision_short','weight_coverage_ct','weight_coverage_mt','weight_coverage_lt','weight_coverage_short'}
+          required={'score_ct','score_mt','score_lt','score_short','rank_ct','rank_mt','rank_lt','rank_short','decision_ct','decision_mt','decision_lt','decision_short','weight_coverage_ct','weight_coverage_mt','weight_coverage_lt','weight_coverage_short','funnel_macro_multiplier','funnel_risk_gate'}
           assert required.issubset(d.columns), required-set(d.columns)
           for hz in ['ct','mt','lt']:
             cov=pd.to_numeric(d[f'weight_coverage_{hz}'],errors='coerce')
             assert cov.notna().all() and cov.between(0,1).all()
           cfg=json.loads(Path('data/reference/V20.4.3_ETF102_CONFIG.json').read_text(encoding='utf-8'))
           assert cfg['legacy_266_allowed'] is False
-          flat=str(cfg).lower()
           assert 'v9' not in str(cfg['horizon_weights']).lower()
           assert 'esg' not in str(cfg['horizon_weights']).lower()
-          print('V20_4_3_ETF102_HARD_GATES_OK',a['decisions'],a['mean_weight_coverage'])
+          print('V20_4_3_ETF102_HARD_GATES_OK',a['decisions'],a['mean_weight_coverage'],f['risk_gates'])
           PY
 
       - name: Publish committee summary
@@ -121,6 +130,7 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "ETF102 reference run: ${ETF102_REFERENCE_RUN}" >> "$GITHUB_STEP_SUMMARY"
           echo "Legacy 266 universe: NOT LOADED / NOT SCORED" >> "$GITHUB_STEP_SUMMARY"
+          echo "Funnel: GLOBAL_MACRO -> COUNTRY -> NEWS -> SENTIMENT -> ETF_STRUCTURE -> TECHNICAL -> SMART_MONEY_GATE" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload ETF102 decision pack
         uses: actions/upload-artifact@v6
@@ -130,9 +140,12 @@ jobs:
             outputs/V20.4.3_ETF102_DIRECT_ENRICHED.csv
             outputs/V20.4.3_ETF102_COMMITTEE.csv
             outputs/V20.4.3_ETF102_COMMITTEE_SUMMARY.md
+            outputs/V20.5_ETF102_FUNNEL_CONTEXT.csv
             outputs/audit/V20.4.3_ETF102_DIRECT_ENRICHMENT.json
             outputs/audit/V20.4.3_ETF102_SENTIMENT.json
             outputs/audit/V20.4.3_ETF102_COMMITTEE_AUDIT.json
+            outputs/audit/V20.5_FUNNEL_CONTEXT.json
             data/reference/V20.4.3_ETF102_CONFIG.json
+            data/reference/V20.5_FUNNEL_CONFIG.json
           if-no-files-found: error
           retention-days: 30
