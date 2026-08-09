@@ -14,11 +14,11 @@ on:
       gleif_symbols:
         description: 'Maximum GLEIF API fallback ISINs after bulk mapping'
         required: false
-        default: '300'
+        default: '50'
       esef_symbols:
         description: 'Maximum regulated issuers to query in filings.xbrl.org'
         required: false
-        default: '50'
+        default: '250'
   push:
     branches: [feature/smart-money-v1]
     paths:
@@ -134,8 +134,8 @@ jobs:
           MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
           V211_TWELVE_MAX_SYMBOLS: ${{ inputs.twelve_symbols || '5' }}
           V211_ALPHA_MAX_SYMBOLS: ${{ inputs.alpha_symbols || '3' }}
-          V211_GLEIF_MAX_SYMBOLS: ${{ inputs.gleif_symbols || '300' }}
-          V211_ESEF_MAX_SYMBOLS: ${{ inputs.esef_symbols || '50' }}
+          V211_GLEIF_MAX_SYMBOLS: ${{ inputs.gleif_symbols || '50' }}
+          V211_ESEF_MAX_SYMBOLS: ${{ inputs.esef_symbols || '250' }}
           V211_GLEIF_WORKERS: '3'
           V211_ALPHA_MAX_CALLS: '23'
           V211_MARKETSTACK_MAX_SYMBOLS: '1'
