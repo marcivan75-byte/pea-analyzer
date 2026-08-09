@@ -54,6 +54,9 @@ class OptimizerConfig:
     include_default_features: bool = True
     missing_feature_policy: str = "NEUTRAL_50"
     min_feature_weight_coverage: float = 0.60
+    coverage_penalty_floor: float = 1.0
+    score_multiplier_column: str = ""
+    score_offset_column: str = ""
     feature_overrides: dict[str, dict[str, object]] = field(default_factory=dict)
 
     @classmethod
