@@ -21,6 +21,7 @@
   "rsi_target": 60,
   "rsi_slope": 3,
   "coverage": {
+    "component_activation_min_universe_coverage": 0.30,
     "min_weight_coverage_buy": 0.75,
     "min_weight_coverage_watch": 0.60,
     "min_core_technical_coverage": 0.80,
