@@ -116,8 +116,16 @@ def normalize(frame: pd.DataFrame) -> pd.DataFrame:
 
 def public_position_history(frame: pd.DataFrame, as_of: str | None = None, depth_per_holder: int = 4) -> pd.DataFrame:
     f = normalize(frame) if "evidence_level" not in frame.columns else frame.copy()
-    availability = "publication_start" if "publication_start" in f.columns else "position_date"
-    f = f[f[availability].notna()].copy()
+    position = f["position_date"].astype("string").str.strip()
+    if "publication_start" in f.columns:
+        publication = f["publication_start"].astype("string").str.strip()
+        has_publication = publication.notna() & publication.fillna("").ne("")
+        f["_availability_date"] = publication.where(has_publication, position)
+    else:
+        f["_availability_date"] = position
+    availability = "_availability_date"
+    valid = f[availability].notna() & f[availability].astype("string").str.strip().fillna("").ne("")
+    f = f[valid].copy()
     if as_of:
         f = f[f[availability] <= as_of[:10]].copy()
     f = f.sort_values(["isin", "holder", availability, "position_date"])
