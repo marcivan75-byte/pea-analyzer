@@ -36,14 +36,28 @@ class BacktestOptimizer:
 
     def _resolve_features(self, df: pd.DataFrame) -> list[_FeatureSpec]:
         specs: list[_FeatureSpec] = []
-        for name, (default_candidates, default_baseline) in DEFAULT_FEATURES.items():
-            override = self.config.feature_overrides.get(name, {})
-            candidates = tuple(override.get("candidates", default_candidates))
-            baseline = float(override.get("baseline", default_baseline))
+        handled: set[str] = set()
+        if self.config.include_default_features:
+            for name, (default_candidates, default_baseline) in DEFAULT_FEATURES.items():
+                override = self.config.feature_overrides.get(name, {})
+                candidates = tuple(override.get("candidates", default_candidates))
+                baseline = float(override.get("baseline", default_baseline))
+                col = first_column(df, candidates)
+                handled.add(name)
+                if col is None:
+                    continue
+                optional = bool(override.get("optional", default_baseline == 0.0))
+                specs.append(_FeatureSpec(name, col, baseline, optional))
+        for name, override in self.config.feature_overrides.items():
+            if name in handled:
+                continue
+            candidates = tuple(override.get("candidates", (name,)))
             col = first_column(df, candidates)
             if col is None:
                 continue
-            specs.append(_FeatureSpec(name, col, baseline, default_baseline == 0.0))
+            baseline = float(override.get("baseline", 0.0))
+            optional = bool(override.get("optional", baseline == 0.0))
+            specs.append(_FeatureSpec(name, col, baseline, optional))
         if len(specs) < 2:
             raise ValueError("At least two point-in-time score features are required")
         return specs
@@ -55,11 +69,48 @@ class BacktestOptimizer:
             return np.repeat(1.0 / len(weights), len(weights))
         return weights / total
 
+    def _cap_and_normalise(self, weights: np.ndarray, specs: list[_FeatureSpec]) -> np.ndarray:
+        w = np.maximum(np.asarray(weights, dtype=float), 0.0)
+        caps = np.array([
+            self.config.max_optional_weight if spec.optional else self.config.max_single_weight
+            for spec in specs
+        ], dtype=float)
+        if float(caps.sum()) < 1.0 - 1e-9:
+            raise ValueError("Configured weight caps cannot sum to 100%")
+        w = self._normalise_weights(w)
+        for _ in range(20):
+            over = w > caps + 1e-12
+            if not over.any():
+                break
+            fixed = np.minimum(w, caps)
+            room = caps - fixed
+            deficit = 1.0 - float(fixed.sum())
+            if deficit <= 1e-12:
+                w = self._normalise_weights(fixed)
+                break
+            eligible = room > 1e-12
+            if not eligible.any():
+                w = self._normalise_weights(fixed)
+                break
+            seed = w.copy()
+            seed[~eligible] = 0.0
+            if seed.sum() <= 0:
+                seed = room.copy()
+            addition = deficit * seed / seed.sum()
+            w = fixed + np.minimum(addition, room)
+            remaining = 1.0 - float(w.sum())
+            if remaining > 1e-12:
+                room = caps - w
+                room_sum = float(room.clip(min=0).sum())
+                if room_sum > 0:
+                    w += remaining * room.clip(min=0) / room_sum
+        return self._normalise_weights(w)
+
     def _baseline(self, specs: list[_FeatureSpec]) -> np.ndarray:
         w = np.array([max(0.0, s.baseline) for s in specs], dtype=float)
         if w.sum() <= 0:
             w[:] = 1.0
-        return self._normalise_weights(w)
+        return self._cap_and_normalise(w, specs)
 
     def _candidate_weights(self, specs: list[_FeatureSpec]) -> np.ndarray:
         rng = np.random.default_rng(self.config.random_seed)
@@ -70,15 +121,11 @@ class BacktestOptimizer:
         for _ in range(max(1, self.config.candidate_count - 1)):
             sampled = rng.dirichlet(alpha)
             strength = rng.uniform(0.20, 1.0)
-            w = (1.0 - strength) * base + strength * sampled
-            for i, spec in enumerate(specs):
-                cap = self.config.max_optional_weight if spec.optional else self.config.max_single_weight
-                w[i] = min(w[i], cap)
-            w = self._normalise_weights(w)
+            w = self._cap_and_normalise((1.0 - strength) * base + strength * sampled, specs)
             drift = float(np.abs(w - base).sum())
             if drift > self.config.max_weight_drift_l1:
                 scale = self.config.max_weight_drift_l1 / drift
-                w = self._normalise_weights(base + scale * (w - base))
+                w = self._cap_and_normalise(base + scale * (w - base), specs)
             rows.append(w)
         return np.vstack(rows)
 
@@ -140,7 +187,7 @@ class BacktestOptimizer:
             for delta in (-0.20, 0.20):
                 w = baseline.copy()
                 w[i] = max(0.0, w[i] * (1.0 + delta))
-                w = self._normalise_weights(w)
+                w = self._cap_and_normalise(w, specs)
                 metrics, _ = self._simulate(train, specs, w)
                 rows.append({
                     "feature": spec.name,
@@ -174,8 +221,14 @@ class BacktestOptimizer:
             )
 
         split = int(len(dates) * self.config.train_fraction)
-        split = max(split, len(dates) - self.config.min_test_snapshots)
+        split = max(1, split)
         split = min(split, len(dates) - self.config.min_test_snapshots)
+        if split <= 0 or len(dates) - split < self.config.min_test_snapshots:
+            empty = pd.DataFrame()
+            audit["reason"] = "chronological holdout cannot satisfy minimum test snapshots"
+            return OptimizationResult(
+                "INSUFFICIENT_HISTORY", baseline_map, baseline_map, {}, {}, {}, empty, empty, audit
+            )
         train_dates = set(dates[:split])
         test_dates = set(dates[split:])
         train = df[df["__snapshot_date"].isin(train_dates)]
@@ -184,8 +237,9 @@ class BacktestOptimizer:
         leaderboard = self._leaderboard(train, specs)
         best = leaderboard.iloc[0]
         raw_best = np.array([float(best[f"w_{s.name}"]) for s in specs])
-        robust = self._normalise_weights(
-            self.config.baseline_blend * baseline + (1.0 - self.config.baseline_blend) * raw_best
+        robust = self._cap_and_normalise(
+            self.config.baseline_blend * baseline + (1.0 - self.config.baseline_blend) * raw_best,
+            specs,
         )
 
         base_train, _ = self._simulate(train, specs, baseline)
