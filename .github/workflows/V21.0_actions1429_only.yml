@@ -8,6 +8,7 @@ on:
       - '.github/workflows/V21.0_actions1429_only.yml'
       - 'src/v182/decision/actions_v210_prepare.py'
       - 'src/v182/decision/actions_v210_enrichment.py'
+      - 'src/v182/decision/actions_v210_yahoo_backfill.py'
       - 'src/v182/decision/actions_v210_audit.py'
       - 'src/v182/decision/actions_v210_committee.py'
       - 'src/v182/decision/actions_v210_reference.py'
@@ -125,6 +126,8 @@ jobs:
         run: python -m v182.decision.actions_v210_prepare
       - name: Enrich prioritized Actions PEA candidates
         run: python -m v182.decision.actions_v210_enrichment
+      - name: Slow Yahoo fundamentals and forward-data backfill
+        run: python -m v182.decision.actions_v210_yahoo_backfill
       - name: Build Actions-specific Top Down funnel
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
