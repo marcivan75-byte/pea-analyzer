@@ -110,7 +110,11 @@ def normalize(frame: pd.DataFrame) -> pd.DataFrame:
     out["source"] = "AMF_OPEN_DATA_SHORTS"
     out["evidence_level"] = "A"
     out["validation_status"] = "VALIDATED"
-    out["public_censored_below_05"] = out["short_position_pct"] < 0.5
+    pct = pd.to_numeric(out["short_position_pct"], errors="coerce")
+    # A published exact zero is an explicit observation, not a censored
+    # positive position below the 0.5% public threshold.
+    out["public_censored_below_05"] = pct.gt(0) & pct.lt(0.5)
+    out["public_explicit_zero"] = pct.eq(0)
     return out
 
 
@@ -167,19 +171,27 @@ def to_events(frame: pd.DataFrame, as_of: str | None = None, history_depth_per_h
         isin = _safe_text(r.get("isin")).upper()
         issuer = _safe_text(r.get("issuer"))
         holder_lei = _safe_text(r.get("holder_lei"))
-        censored = _safe_bool(r.get("public_censored_below_05"))
+        short_pct = float(r["short_position_pct"])
+        censored = _safe_bool(r.get("public_censored_below_05")) and short_pct > 0.0
+        explicit_zero = short_pct == 0.0
         if not pub or not position_date or not isin:
             continue
         e = SmartMoneyEvent(
             universe="ACTION", isin=isin, event_type="SHORT", event_subtype="PUBLIC_NET_SHORT",
             source="AMF_OPEN_DATA_SHORTS", evidence_level="A", validation_status="VALIDATED",
             publication_date=pub[:10], transaction_date=position_date[:10],
-            actor_name=holder, direction=0, short_position_pct=float(r["short_position_pct"]),
+            actor_name=holder, direction=0, short_position_pct=short_pct,
             source_document_id=f"AMF_SHORT:{holder}:{isin}:{position_date}",
-            metadata={"holder_lei": holder_lei, "issuer": issuer, "public_censored_below_05": censored},
+            metadata={
+                "holder_lei": holder_lei,
+                "issuer": issuer,
+                "public_censored_below_05": censored,
+                "public_explicit_zero": explicit_zero,
+            },
         ).to_dict()
         e["position_date"] = position_date[:10]
         e["public_censored_below_05"] = censored
+        e["public_explicit_zero"] = explicit_zero
         events.append(e)
     return events
 
