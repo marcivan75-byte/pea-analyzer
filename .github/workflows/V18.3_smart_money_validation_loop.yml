@@ -202,13 +202,14 @@ jobs:
           import json,re
           forbidden=re.compile(r'(?i)(submit[_ -]?order|place[_ -]?order|live[_ -]?order|broker[_ -]?execute|real[_ -]?order)')
           hits=[]
-          for root in [Path('src/v183'),Path('.github/workflows/V18.3_smart_money_validation_loop.yml')]:
-            files=[root] if root.is_file() else list(root.rglob('*'))
-            for p in files:
-              if not p.is_file(): continue
-              try:t=p.read_text(encoding='utf-8')
-              except Exception:continue
-              if forbidden.search(t):hits.append(str(p))
+          # Scan executable Smart Money code only. The workflow necessarily
+          # contains the forbidden phrases in this safety assertion itself.
+          root=Path('src/v183')
+          for p in root.rglob('*'):
+            if not p.is_file(): continue
+            try:t=p.read_text(encoding='utf-8')
+            except Exception:continue
+            if forbidden.search(t):hits.append(str(p))
           assert not hits, hits
           cfg=json.loads(Path('config/V18.3_SMART_MONEY_CONFIG.json').read_text())
           assert cfg['score_application']=='SHADOW_ONLY'
