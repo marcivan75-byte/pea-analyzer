@@ -11,6 +11,7 @@ on:
       - 'src/v182/decision/etf102_committee_v2043_hardened.py'
       - 'src/v182/sources/etf102_sentiment_overlay.py'
       - 'src/v182/sources/funnel_context.py'
+      - 'src/v182/sources/funnel_context_fast.py'
       - 'data/reference/V20.4.3_ETF102_CONFIG.json'
       - 'data/reference/V20.5_FUNNEL_CONFIG.json'
 
@@ -25,7 +26,7 @@ concurrency:
 jobs:
   etf102:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
@@ -87,7 +88,7 @@ jobs:
       - name: Build top-down funnel context
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-        run: python -m v182.sources.funnel_context
+        run: python -m v182.sources.funnel_context_fast
 
       - name: Build hardened availability-aware ETF102 committee
         run: python -m v182.decision.etf102_committee_v2043_hardened
@@ -109,7 +110,7 @@ jobs:
           assert a['legacy_266_used'] is False and e['legacy_266_used'] is False and s['legacy_266_used'] is False
           assert a['missing_data_policy']=='RENORMALIZE_OBSERVED_WEIGHTS_NO_NEUTRAL_50'
           assert a['sparse_component_policy']=='DISABLE_COMPONENT_FOR_ENTIRE_UNIVERSE_BELOW_ACTIVATION_THRESHOLD'
-          assert f['passed'] is True and f['rows']==102
+          assert f['passed'] is True and f['rows']==102 and f.get('parallel_news_collection') is True
           assert pd.to_numeric(d['fear_greed_index'],errors='coerce').notna().all()
           assert pd.to_numeric(d['aaii_bull_bear_spread'],errors='coerce').notna().all()
           assert pd.to_numeric(d['funnel_context_coverage'],errors='coerce').between(0,1).all()
@@ -123,7 +124,6 @@ jobs:
           assert cfg['legacy_266_allowed'] is False
           assert 'v9' not in str(cfg['horizon_weights']).lower()
           assert 'esg' not in str(cfg['horizon_weights']).lower()
-          # Tracking is globally disabled unless enough ETF have genuine tracking data.
           tr=a['component_status']['tracking']
           if tr['universe_coverage'] < cfg['coverage']['component_activation_min_universe_coverage']:
               assert tr['active'] is False
