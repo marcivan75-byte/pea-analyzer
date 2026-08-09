@@ -1,0 +1,78 @@
+{
+  "version": "V21.1_FREE_CAPTURE",
+  "execution_mode": "RESEARCH_ONLY",
+  "free_only": true,
+  "canonical_universe_size": 1429,
+  "principles": {
+    "no_paid_source": true,
+    "no_neutral_50_imputation": true,
+    "no_overwrite_with_lower_quality": true,
+    "incremental_cache_first": true,
+    "fetch_only_missing_or_stale": true,
+    "preserve_cell_provenance": true,
+    "yfinance_role": "LAST_RESORT_FALLBACK_ONLY"
+  },
+  "freshness_days": {
+    "identity": 90,
+    "market_daily": 2,
+    "technical_derived": 2,
+    "fundamentals_annual": 120,
+    "fundamentals_quarterly": 45,
+    "valuation": 7,
+    "prospective": 7,
+    "analyst_consensus": 7,
+    "earnings_calendar": 7,
+    "regulatory_events": 1
+  },
+  "capture_tiers": {
+    "TIER_0_IDENTITY": {"scope": 1429, "sources": ["OPENFIGI_V3", "CANONICAL_REFERENCE"]},
+    "TIER_1_MARKET": {"scope": 1429, "sources": ["EURONEXT_DELAYED", "DEUTSCHE_BOERSE_DELAYED", "NASDAQ_NORDIC_DELAYED", "OFFICIAL_OTHER", "TWELVEDATA_FREE", "MARKETSTACK_FREE", "ALPHA_VANTAGE_FREE", "YFINANCE_FALLBACK"]},
+    "TIER_2_FUNDAMENTALS": {"scope": 600, "sources": ["ESEF_IXBRL", "AMF_BDIF", "ISSUER_REPORTS", "ALPHA_VANTAGE_FREE", "YFINANCE_FALLBACK"]},
+    "TIER_3_PROSPECTIVE": {"scope": 250, "sources": ["BOURSORAMA_PUBLIC", "ZONEBOURSE_PUBLIC", "TWELVEDATA_IF_FREE_ENTITLED", "ALPHA_VANTAGE_FREE", "INTERNAL_SNAPSHOTS", "YFINANCE_FALLBACK"]}
+  },
+  "free_api_budgets": {
+    "OPENFIGI_V3": {"jobs_per_request_with_key": 100, "jobs_per_request_without_key": 5, "max_requests_per_run": 30},
+    "TWELVEDATA_FREE": {"credits_per_day_guard": 760, "credits_per_minute_guard": 7, "max_symbols_per_run": 700},
+    "ALPHA_VANTAGE_FREE": {"max_calls_per_day_guard": 23, "max_symbols_per_run": 20},
+    "MARKETSTACK_FREE": {"max_calls_per_month_guard": 90, "max_symbols_per_run": 3}
+  },
+  "official_delayed_feeds": {
+    "EURONEXT_DELAYED": {
+      "landing_url": "https://marketdata.euronext.com/data-reporting-service/trades-file",
+      "format": "csv",
+      "delay_minutes": 15,
+      "internal_use_only": true
+    },
+    "DEUTSCHE_BOERSE_DELAYED": {
+      "landing_url": "https://www.mds.deutsche-boerse.com/mds-en/real-time-data/Delayed-data",
+      "format": "gz",
+      "delay_minutes": 15,
+      "internal_use_only": true
+    }
+  },
+  "key_fields": {
+    "market": ["last_close", "volume", "high_52w", "low_52w"],
+    "fundamentals": ["market_cap_v21", "roe_v21_pct", "roa_v21_pct", "operating_margin_v21_pct", "revenue_growth_v21_pct", "earnings_growth_v21_pct", "debt_to_ebitda_v21", "free_cash_flow_v21"],
+    "valuation": ["per_forward_v21", "pb_v21", "fcf_yield_v21"],
+    "prospective": ["target_mean_v21", "target_low_v21", "target_high_v21", "n_analysts_v21", "consensus_score_100_v21", "consensus_delta_4w", "broker_weighted_revision_30d", "next_earnings_date"]
+  },
+  "validation_targets_pct": {
+    "identity": 99,
+    "market_history": 95,
+    "fundamentals_core": 85,
+    "valuation": 85,
+    "analyst_process_checked": 90,
+    "shortlist_weighted_mt": 90,
+    "shortlist_weighted_lt": 90
+  },
+  "cache": {
+    "root": "outputs/free_capture",
+    "artifact_retention_days": 90,
+    "restore_latest_artifact": true,
+    "deduplicate_keys": {
+      "identity": ["isin", "source"],
+      "market_daily": ["isin", "date", "source"],
+      "facts_long": ["isin", "field", "source", "as_of"]
+    }
+  }
+}
