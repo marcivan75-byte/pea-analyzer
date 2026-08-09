@@ -28,20 +28,38 @@ def _positive(value) -> float | None:
     return x if x is not None and x > 0 else None
 
 
-def _expense_pct(info: dict) -> float | None:
-    """Normalize Yahoo expense ratios to percentage points.
+def _text(value) -> str | None:
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    s = str(value).strip()
+    return s or None
 
-    Current European ETF metadata commonly exposes 0.25 for 0.25%, while
-    some feeds may expose 0.0025 for the same value. Values <=2bp in decimal
-    form are converted; already-percent values are kept. Implausible ETF TER
-    above 5% is rejected rather than silently scored.
-    """
+
+def _expense_pct(info: dict) -> float | None:
+    """Normalize Yahoo expense ratios to percentage points."""
     for key in ("annualReportExpenseRatio", "netExpenseRatio", "expenseRatio"):
         raw = _positive(info.get(key))
         if raw is None:
             continue
         pct = raw * 100.0 if raw <= 0.02 else raw
         if 0.0 < pct <= 5.0:
+            return round(pct, 6)
+    return None
+
+
+def _yield_pct(info: dict) -> float | None:
+    """Return an ETF distribution yield in percentage points when Yahoo exposes it."""
+    for key in ("yield", "trailingAnnualDividendYield", "dividendYield"):
+        raw = _positive(info.get(key))
+        if raw is None:
+            continue
+        pct = raw * 100.0 if raw <= 1.0 else raw
+        if 0.0 < pct <= 30.0:
             return round(pct, 6)
     return None
 
@@ -62,12 +80,24 @@ def _spread_pct(info: dict) -> float | None:
     return None if mid <= 0 else (ask - bid) / mid * 100.0
 
 
-def _funds_diversification(ticker) -> tuple[float | None, float | None, float | None]:
-    """Return diversification score, top-holdings concentration and sector HHI.
+def _candidate_number(info: dict, keys: tuple[str, ...]) -> float | None:
+    for key in keys:
+        value = _positive(info.get(key))
+        if value is not None:
+            return value
+    return None
 
-    Only published yfinance fund metadata are used. Missing fund metadata stays
-    missing; no neutral 50 is manufactured.
-    """
+
+def _candidate_text(info: dict, keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        value = _text(info.get(key))
+        if value:
+            return value
+    return None
+
+
+def _funds_diversification(ticker) -> tuple[float | None, float | None, float | None]:
+    """Return diversification score, top-holdings concentration and sector HHI."""
     try:
         fd = ticker.funds_data
     except Exception:
@@ -140,7 +170,142 @@ def _fx_to_eur(currencies: set[str]) -> dict[str, float]:
     return rates
 
 
-def enrich(df: pd.DataFrame, delay_seconds: float = 0.20) -> tuple[pd.DataFrame, dict]:
+def _price_metrics(close: pd.Series) -> dict:
+    close = pd.to_numeric(close, errors="coerce").dropna()
+    if close.empty:
+        return {}
+    close = close[~close.index.duplicated(keep="last")].sort_index()
+    try:
+        idx = pd.to_datetime(close.index, utc=True).tz_convert(None)
+    except Exception:
+        idx = pd.to_datetime(close.index).tz_localize(None)
+    close.index = idx
+    asof = close.index.max()
+    result: dict[str, float | str] = {"direct_history_asof": asof.date().isoformat()}
+
+    def perf_years(years: int) -> float | None:
+        target = asof - pd.DateOffset(years=years)
+        before = close.loc[:target]
+        after = close.loc[target:]
+        base = None
+        base_date = None
+        if not before.empty:
+            base, base_date = float(before.iloc[-1]), before.index[-1]
+        elif not after.empty:
+            base, base_date = float(after.iloc[0]), after.index[0]
+        if base is None or base <= 0 or base_date is None:
+            return None
+        if abs((pd.Timestamp(base_date) - pd.Timestamp(target)).days) > 20:
+            return None
+        return (float(close.iloc[-1]) / base - 1.0) * 100.0
+
+    for years, field in ((1, "direct_perf_1y_pct"), (3, "direct_perf_3y_pct"), (5, "direct_perf_5y_pct")):
+        value = perf_years(years)
+        if value is not None and math.isfinite(value):
+            result[field] = round(value, 6)
+
+    trailing = close.loc[asof - pd.Timedelta(days=370):]
+    returns = trailing.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
+    if len(returns) >= 120:
+        vol = float(returns.std(ddof=1) * np.sqrt(252.0) * 100.0)
+        if math.isfinite(vol):
+            result["direct_volatility_1y_pct"] = round(vol, 6)
+    if len(trailing) >= 20:
+        running_max = trailing.cummax()
+        drawdown = trailing / running_max - 1.0
+        mdd = float(drawdown.min() * 100.0)
+        if math.isfinite(mdd):
+            result["direct_max_drawdown_1y_pct"] = round(mdd, 6)
+    return result
+
+
+def _bulk_price_metrics(tickers: list[str]) -> dict[str, dict]:
+    import yfinance as yf
+
+    unique = sorted({t for t in tickers if t})
+    if not unique:
+        return {}
+    try:
+        raw = yf.download(
+            tickers=unique,
+            period="5y",
+            interval="1d",
+            auto_adjust=True,
+            actions=False,
+            group_by="ticker",
+            threads=True,
+            progress=False,
+            timeout=20,
+        )
+    except Exception:
+        return {}
+    result: dict[str, dict] = {}
+    if raw is None or raw.empty:
+        return result
+    for ticker_name in unique:
+        try:
+            if isinstance(raw.columns, pd.MultiIndex):
+                level0 = raw.columns.get_level_values(0)
+                level1 = raw.columns.get_level_values(1)
+                if ticker_name in level0:
+                    sub = raw[ticker_name]
+                elif ticker_name in level1:
+                    sub = raw.xs(ticker_name, axis=1, level=1)
+                else:
+                    continue
+            else:
+                sub = raw
+            if "Close" not in sub.columns:
+                continue
+            result[ticker_name] = _price_metrics(sub["Close"])
+        except Exception:
+            continue
+    return result
+
+
+def _fill_text(out: pd.DataFrame, target: str, source: str) -> None:
+    if target not in out.columns:
+        out[target] = pd.NA
+    if source not in out.columns:
+        return
+    old = out[target].astype("string")
+    new = out[source].astype("string")
+    missing = old.isna() | old.str.strip().fillna("").eq("")
+    valid_new = new.notna() & new.str.strip().fillna("").ne("")
+    out.loc[missing & valid_new, target] = new[missing & valid_new]
+
+
+def _fill_numeric(out: pd.DataFrame, target: str, source: str) -> None:
+    if target not in out.columns:
+        out[target] = np.nan
+    if source not in out.columns:
+        return
+    old = pd.to_numeric(out[target], errors="coerce")
+    new = pd.to_numeric(out[source], errors="coerce")
+    out[target] = old.where(old.notna(), new)
+
+
+def _derive_peer_ranks(out: pd.DataFrame) -> None:
+    peer = out.get("morningstar_category", pd.Series(index=out.index, dtype=object)).astype("string")
+    category = out.get("category", pd.Series(index=out.index, dtype=object)).astype("string")
+    peer = peer.where(peer.notna() & peer.str.strip().ne(""), category)
+    peer = peer.fillna("UNCLASSIFIED")
+    for period in (1, 3, 5):
+        perf_col = f"perf_{period}y_pct"
+        rank_col = f"rank_cat_{period}y"
+        if perf_col not in out.columns:
+            continue
+        perf = pd.to_numeric(out[perf_col], errors="coerce")
+        derived = perf.groupby(peer).rank(method="min", ascending=False)
+        if rank_col not in out.columns:
+            out[rank_col] = np.nan
+        old = pd.to_numeric(out[rank_col], errors="coerce")
+        out[rank_col] = old.where(old.notna(), derived)
+    out["rank_cat_method"] = "DERIVED_WITHIN_ETF102_PEER_GROUP_WHEN_OFFICIAL_RANK_MISSING"
+    out["rank_cat_peer_group"] = peer
+
+
+def enrich(df: pd.DataFrame, delay_seconds: float = 0.12) -> tuple[pd.DataFrame, dict]:
     if len(df) != 102 or df["isin"].astype(str).nunique() != 102:
         raise RuntimeError("ETF102 direct enrichment requires exactly 102 unique ISIN")
     if "ticker_identity_status" not in df or not df["ticker_identity_status"].astype(str).eq("FINAL_VALIDATED").all():
@@ -153,10 +318,13 @@ def enrich(df: pd.DataFrame, delay_seconds: float = 0.20) -> tuple[pd.DataFrame,
     failures: list[dict] = []
     currencies: set[str] = set()
     now = datetime.now(timezone.utc).isoformat()
+    ticker_names: list[str] = []
 
     for _, row in out.iterrows():
         isin = str(row.get("isin") or "").strip().upper()
         ticker_name = str(row.get("yahoo_ticker") or row.get("ticker_yahoo_final") or row.get("ticker_primary") or "").strip()
+        if ticker_name:
+            ticker_names.append(ticker_name)
         if not ticker_name:
             failures.append({"isin": isin, "reason": "MISSING_VALIDATED_TICKER"})
             records.append({"isin": isin})
@@ -177,10 +345,15 @@ def enrich(df: pd.DataFrame, delay_seconds: float = 0.20) -> tuple[pd.DataFrame,
                 "direct_spread_pct": _spread_pct(info),
                 "direct_beta3y": _float(info.get("beta3Year")),
                 "direct_nav": _positive(info.get("navPrice")),
+                "direct_dividend_yield_pct": _yield_pct(info),
+                "direct_holdings_count": _candidate_number(info, ("holdingsCount", "numberOfHoldings", "totalHoldings")),
+                "direct_benchmark": _candidate_text(info, ("benchmark", "benchmarkName", "benchmarkIndex")),
+                "direct_distribution_frequency": _candidate_text(info, ("dividendFrequency", "distributionFrequency")),
                 "direct_diversification_score": div_score,
                 "direct_top_holdings_concentration_pct": top10,
                 "direct_sector_hhi": sector_hhi,
                 "direct_source": "YFINANCE_FUND_METADATA",
+                "direct_source_url": f"https://finance.yahoo.com/quote/{ticker_name}",
                 "direct_collected_at_utc": now,
             })
         except Exception as exc:
@@ -194,41 +367,101 @@ def enrich(df: pd.DataFrame, delay_seconds: float = 0.20) -> tuple[pd.DataFrame,
     if not direct.empty:
         direct["direct_fx_to_eur"] = direct["direct_currency"].map(fx)
         direct["direct_aum_eur_m"] = pd.to_numeric(direct["direct_total_assets_raw"], errors="coerce") * pd.to_numeric(direct["direct_fx_to_eur"], errors="coerce") / 1_000_000.0
+
+    history = _bulk_price_metrics(ticker_names)
+    if history and not direct.empty:
+        hist_df = pd.DataFrame([{"direct_ticker": ticker, **metrics} for ticker, metrics in history.items()])
+        direct = direct.merge(hist_df, on="direct_ticker", how="left")
+
     out = out.merge(direct, on="isin", how="left")
 
-    fill_pairs = {
+    numeric_fill_pairs = {
         "ter_pct": "direct_ter_pct",
         "morningstar_rating": "direct_morningstar_rating",
         "spread_pct": "direct_spread_pct",
         "fund_total_assets_eur_m": "direct_aum_eur_m",
+        "aum_m": "direct_aum_eur_m",
         "diversification_direct_score": "direct_diversification_score",
+        "dividend_yield_pct": "direct_dividend_yield_pct",
+        "holdings": "direct_holdings_count",
+        "perf_1y_pct": "direct_perf_1y_pct",
+        "perf_3y_pct": "direct_perf_3y_pct",
+        "perf_5y_pct": "direct_perf_5y_pct",
+        "volatility_1y_pct": "direct_volatility_1y_pct",
+        "max_drawdown_1y_pct": "direct_max_drawdown_1y_pct",
     }
-    for target, source in fill_pairs.items():
-        if target not in out.columns:
-            out[target] = np.nan
-        old = pd.to_numeric(out[target], errors="coerce")
-        new = pd.to_numeric(out[source], errors="coerce")
-        out[target] = old.where(old.notna(), new)
+    for target, source in numeric_fill_pairs.items():
+        _fill_numeric(out, target, source)
+
+    text_fill_pairs = {
+        "official_benchmark": "direct_benchmark",
+        "distribution_frequency": "direct_distribution_frequency",
+        "source_name": "direct_source",
+        "source_url": "direct_source_url",
+        "ticker_euronext": "euronext_symbol",
+        "ticker_yahoo": "yahoo_ticker",
+        "official_exchange": "primary_exchange",
+        "ticker_validation_as_of": "ticker_validated_as_of",
+    }
+    for target, source in text_fill_pairs.items():
+        _fill_text(out, target, source)
+
+    if "ticker_validation_wave" not in out.columns:
+        out["ticker_validation_wave"] = pd.NA
+    wave = out["ticker_validation_wave"].astype("string")
+    missing_wave = wave.isna() | wave.str.strip().fillna("").eq("")
+    final_identity = out.get("ticker_identity_status", pd.Series(False, index=out.index)).astype(str).eq("FINAL_VALIDATED")
+    out.loc[missing_wave & final_identity, "ticker_validation_wave"] = "V20.5_REFERENCE_CONSOLIDATION"
+
+    if "perf_as_of" not in out.columns:
+        out["perf_as_of"] = pd.NA
+    if "direct_history_asof" in out.columns:
+        pa = out["perf_as_of"].astype("string")
+        ha = out["direct_history_asof"].astype("string")
+        mask = (pa.isna() | pa.str.strip().fillna("").eq("")) & ha.notna() & ha.str.strip().fillna("").ne("")
+        out.loc[mask, "perf_as_of"] = ha[mask]
+
+    _derive_peer_ranks(out)
 
     ter = pd.to_numeric(out.get("ter_pct"), errors="coerce")
     if bool((ter.dropna() > 5.0).any()):
         raise RuntimeError("ETF102 TER unit gate failed: value above 5%")
 
     fields = [
-        "ter_pct", "fund_total_assets_eur_m", "morningstar_rating", "spread_pct",
-        "diversification_direct_score", "tracking_error_1y_pct", "tracking_error_3y_pct",
+        "dividend_yield_pct", "ter_pct", "aum_m", "fund_total_assets_eur_m", "holdings",
+        "morningstar_rating", "official_benchmark", "distribution_frequency", "official_exchange",
+        "spread_pct", "diversification_direct_score", "tracking_error_1y_pct", "tracking_error_3y_pct",
         "tracking_error_5y_pct", "perf_1m_pct", "perf_3m_pct", "perf_6m_pct", "perf_1y_pct",
+        "perf_3y_pct", "perf_5y_pct", "rank_cat_1y", "rank_cat_3y", "rank_cat_5y",
         "relative_strength", "macd_hist", "rsi14", "rvol20", "volatility_20d",
-        "volatility_60d", "max_drawdown_1y", "volume",
+        "volatility_60d", "volatility_1y_pct", "max_drawdown_1y", "max_drawdown_1y_pct", "volume",
     ]
-    coverage = {f: int(pd.to_numeric(out.get(f), errors="coerce").notna().sum()) if f in out else 0 for f in fields}
+    coverage = {}
+    for field in fields:
+        if field not in out.columns:
+            coverage[field] = 0
+            continue
+        numeric = pd.to_numeric(out[field], errors="coerce")
+        if numeric.notna().any() or field in {
+            "dividend_yield_pct", "ter_pct", "aum_m", "fund_total_assets_eur_m", "holdings", "morningstar_rating",
+            "spread_pct", "diversification_direct_score", "tracking_error_1y_pct", "tracking_error_3y_pct",
+            "tracking_error_5y_pct", "perf_1m_pct", "perf_3m_pct", "perf_6m_pct", "perf_1y_pct", "perf_3y_pct",
+            "perf_5y_pct", "rank_cat_1y", "rank_cat_3y", "rank_cat_5y", "relative_strength", "macd_hist", "rsi14",
+            "rvol20", "volatility_20d", "volatility_60d", "volatility_1y_pct", "max_drawdown_1y", "max_drawdown_1y_pct", "volume"
+        }:
+            coverage[field] = int(numeric.notna().sum())
+        else:
+            s = out[field].astype("string")
+            coverage[field] = int((s.notna() & s.str.strip().fillna("").ne("")).sum())
+
     audit = {
         "passed": True,
-        "version": "V20.4.3_ETF102",
+        "version": "V20.5_ETF102_REFERENCE_ENRICHMENT",
         "rows": len(out),
         "unique_isin": int(out["isin"].nunique()),
         "legacy_266_used": False,
         "direct_metadata_success": int(direct.get("direct_total_assets_raw", pd.Series(dtype=float)).notna().sum()) if not direct.empty else 0,
+        "history_metric_tickers": len(history),
         "failures": failures[:102],
         "fx_to_eur": fx,
         "coverage_count_of_102": coverage,
@@ -239,6 +472,11 @@ def enrich(df: pd.DataFrame, delay_seconds: float = 0.20) -> tuple[pd.DataFrame,
             "max": round(float(ter.max()), 4) if ter.notna().any() else None,
         },
         "missing_data_policy": "NO_NEUTRAL_50",
+        "rank_cat_semantics": "OFFICIAL_VALUE_PRESERVED_ELSE_DERIVED_RANK_WITHIN_ETF102_PEER_GROUP",
+        "derived_fields": [
+            "perf_1y_pct", "perf_3y_pct", "perf_5y_pct", "volatility_1y_pct", "max_drawdown_1y_pct",
+            "rank_cat_1y", "rank_cat_3y", "rank_cat_5y"
+        ],
     }
     return out, audit
 
@@ -252,7 +490,7 @@ def main() -> None:
     AUDIT.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(OUT, sep=";", index=False, encoding="utf-8-sig")
     AUDIT.write_text(json.dumps(audit, indent=2, ensure_ascii=False), encoding="utf-8")
-    print("V20.4.3_ETF102_DIRECT_ENRICHMENT_OK", json.dumps({"rows": len(out), "coverage": audit["coverage_count_of_102"], "ter": audit["ter_pct_stats"]}, ensure_ascii=False))
+    print("V20.5_ETF102_DIRECT_ENRICHMENT_OK", json.dumps({"rows": len(out), "coverage": audit["coverage_count_of_102"], "ter": audit["ter_pct_stats"], "history_tickers": audit["history_metric_tickers"]}, ensure_ascii=False))
 
 
 if __name__ == "__main__":
