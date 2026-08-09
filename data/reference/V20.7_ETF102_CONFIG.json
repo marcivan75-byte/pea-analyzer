@@ -1,0 +1,88 @@
+{
+  "version": "V20.7_ETF102",
+  "execution_mode": "RESEARCH_ONLY",
+  "universe_size": 102,
+  "universe_contract": "ETF_PEA_ONLY_FINAL_VALIDATED",
+  "legacy_266_allowed": false,
+  "missing_data_policy": "RENORMALIZE_OBSERVED_WEIGHTS_NO_NEUTRAL_50",
+  "direct_weights": {
+    "CT": {
+      "perf_1m_pct": 0.11, "perf_3m_pct": 0.08, "perf_6m_pct": 0.04, "perf_1y_pct": 0.02,
+      "relative_strength": 0.10, "rvol20": 0.04, "positive_reversal_flag": 0.12,
+      "macd_hist": 0.04, "rsi14": 0.02, "max_drawdown_1y": 0.08,
+      "volatility_20d": 0.05, "volatility_60d": 0.04, "direct_beta3y": 0.02,
+      "volume": 0.10, "fund_total_assets_eur_m": 0.06, "ter_pct": 0.02,
+      "diversification_direct_score": 0.06
+    },
+    "MT": {
+      "perf_3m_pct": 0.04, "perf_6m_pct": 0.08, "perf_1y_pct": 0.09, "perf_3y_pct": 0.07,
+      "relative_strength": 0.04, "max_drawdown_1y": 0.15, "volatility_1y_pct": 0.10,
+      "volatility_60d": 0.06, "direct_beta3y": 0.04, "fund_total_assets_eur_m": 0.08,
+      "volume": 0.06, "ter_pct": 0.10, "diversification_direct_score": 0.07,
+      "dividend_yield_pct": 0.02
+    },
+    "LT": {
+      "max_drawdown_1y": 0.18, "volatility_1y_pct": 0.12, "direct_beta3y": 0.04,
+      "ter_pct": 0.14, "dividend_yield_pct": 0.12, "distribution_policy": 0.04,
+      "perf_5y_pct": 0.10, "perf_3y_pct": 0.07, "perf_1y_pct": 0.03,
+      "diversification_direct_score": 0.08, "fund_total_assets_eur_m": 0.06, "volume": 0.02
+    },
+    "SHORT": {
+      "perf_1m_pct": 0.12, "perf_3m_pct": 0.09, "relative_strength": 0.09,
+      "macd_hist": 0.06, "rsi14": 0.03, "rvol20": 0.03, "volatility_20d": 0.09,
+      "volatility_60d": 0.08, "max_drawdown_1y": 0.09, "direct_beta3y": 0.04,
+      "sentiment_regime_score": 0.16, "fund_total_assets_eur_m": 0.05, "volume": 0.07
+    }
+  },
+  "metric_modes": {
+    "higher_better": [
+      "perf_1m_pct", "perf_3m_pct", "perf_6m_pct", "perf_1y_pct", "perf_3y_pct", "perf_5y_pct",
+      "relative_strength", "rvol20", "volume", "fund_total_assets_eur_m", "dividend_yield_pct"
+    ],
+    "lower_better": ["volatility_20d", "volatility_60d", "volatility_1y_pct", "direct_beta3y", "ter_pct"],
+    "less_negative_better": ["max_drawdown_1y"],
+    "direct_0_100": ["diversification_direct_score"],
+    "binary_positive": ["positive_reversal_flag"],
+    "ct_rsi_target": 55,
+    "ct_rsi_slope": 2.5,
+    "short_rsi_target": 42,
+    "short_rsi_slope": 2.5,
+    "distribution_policy_scores": {"DIST": 100, "ACC_OR_DIST": 50, "ACC": 0}
+  },
+  "coverage": {
+    "min_weight_coverage_buy": 0.75,
+    "min_weight_coverage_watch": 0.60,
+    "coverage_penalty_floor": 0.90,
+    "identity_min_buy": 0.95,
+    "aum_required_for_buy": true
+  },
+  "gates": {
+    "CT": {"aum_reject_below_eur_m": 50, "drawdown_penalty_below_pct": -30, "drawdown_penalty_points": -5},
+    "MT": {"aum_reject_below_eur_m": 50, "aum_soft_below_eur_m": 100, "aum_soft_penalty_points": -2, "drawdown_penalty_below_pct": -28, "drawdown_penalty_points": -5},
+    "LT": {"aum_reject_below_eur_m": 40, "aum_soft_below_eur_m": 100, "aum_soft_penalty_points": -2, "drawdown_penalty_below_pct": -22, "drawdown_penalty_points": -6},
+    "SHORT": {"aum_no_short_below_eur_m": 80, "drawdown_late_short_below_pct": -35, "drawdown_late_short_penalty_points": -8}
+  },
+  "bonuses_maluses": {
+    "morningstar": {"3": 1.0, "4": 2.0, "5": 3.0},
+    "risk_indicator_ge_6": -3.0,
+    "spread_le_020": 1.5,
+    "spread_gt_070": -3.0,
+    "spread_gt_120": -6.0
+  },
+  "thresholds": {
+    "CT": {"BUY_CANDIDATE": 78, "WATCH": 70, "REVIEW": 60},
+    "MT": {"BUY_CANDIDATE": 76, "WATCH": 68, "REVIEW": 58},
+    "LT": {"BUY_CANDIDATE": 75, "WATCH": 68, "REVIEW": 58},
+    "SHORT": {"SHORT_CANDIDATE": 78, "WATCH_SHORT": 65}
+  },
+  "score_calibration": {"raw_weight": 0.55, "percentile_weight": 0.45, "short_raw_weight": 0.45},
+  "smart_money": {
+    "integration_mode": "SHADOW_PLUS_NEGATIVE_RISK_GATE",
+    "positive_score_boost_allowed": false,
+    "min_confidence_for_gate": 0.75,
+    "review_ifs_lte": -1.75,
+    "block_buy_ifs_lte": -3.0,
+    "full_score_activation_requires_empirical_walk_forward": true
+  },
+  "selection_limits": {"CT": 10, "MT": 10, "LT": 10, "SHORT": 10}
+}
