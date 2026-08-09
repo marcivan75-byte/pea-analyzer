@@ -9,6 +9,7 @@ import pandas as pd
 
 from .core import CaptureStore, is_observed, load_config, load_universe, priority_frame, write_csv
 from .openfigi_v3 import capture as capture_openfigi
+from .gleif_bulk import capture as capture_gleif_bulk
 from .gleif_lei import capture as capture_gleif
 from .esef_xbrl import capture as capture_esef
 from .official_delayed import capture as capture_official
@@ -21,9 +22,31 @@ from .derive_fundamentals import capture as derive_fundamentals
 ROOT = Path(__file__).resolve().parents[3]
 INPUT = Path(os.getenv("V211_INPUT", str(ROOT / "outputs/V21.0_ACTIONS_PEA_REFERENCE_MASTER.csv")))
 
+# Markets where ESEF/EEA annual reporting is structurally most likely. Access/Growth MTFs are
+# deliberately not in this first-priority lane; they move to issuer/regulator document capture.
+REGULATED_MICS = {"XPAR", "XAMS", "XBRU", "XLIS", "MTAA", "XOSL", "XMAD", "XSTO", "XHEL", "XCSE"}
+REGULATED_COUNTRIES = {"FRANCE", "NETHERLANDS", "BELGIUM", "PORTUGAL", "ITALY", "NORWAY", "SPAIN", "SWEDEN", "FINLAND", "DENMARK"}
+
 
 def _observed_series(s: pd.Series) -> pd.Series:
     return s.map(is_observed)
+
+
+def _regulated_priority(base: pd.DataFrame, missing_priority: pd.DataFrame) -> pd.DataFrame:
+    """Put regulated/main-market issuers first for GLEIF/ESEF, then preserve missing-data priority."""
+    x = base.copy()
+    mic = x.get("euronext_mic", pd.Series("", index=x.index)).astype(str).str.upper()
+    country = x.get("country", pd.Series("", index=x.index)).astype(str).str.upper()
+    x["_regulated"] = mic.isin(REGULATED_MICS) | (country.isin(REGULATED_COUNTRIES) & ~mic.isin({"ALXP", "ALXB", "XMLI", "EXGM", "MERK", "MLXB", "MTAH", "ENXL", "XESM"}))
+    x["_mc"] = pd.to_numeric(x.get("market_cap_v21"), errors="coerce").fillna(-1)
+    x["_volume"] = pd.to_numeric(x.get("volume"), errors="coerce").fillna(-1)
+    x["_mt"] = pd.to_numeric(x.get("score_mt"), errors="coerce").fillna(0)
+    x["_lt"] = pd.to_numeric(x.get("score_lt"), errors="coerce").fillna(0)
+    x = x.sort_values(["_regulated", "_mc", "_volume", "_mt", "_lt"], ascending=[False, False, False, False, False], kind="stable")
+    # Add any rows not present (defensive), ordered by the general missing-data priority.
+    seen = set(x["isin"].astype(str))
+    tail = missing_priority.loc[~missing_priority["isin"].astype(str).isin(seen)]
+    return pd.concat([x, tail], ignore_index=True)
 
 
 def _materialize(base: pd.DataFrame, store: CaptureStore, cfg: dict) -> tuple[pd.DataFrame, dict]:
@@ -50,11 +73,10 @@ def _materialize(base: pd.DataFrame, store: CaptureStore, cfg: dict) -> tuple[pd
             out[f"free_{field}_source"] = idx.map(sub["source"].to_dict())
             out[f"free_{field}_as_of"] = idx.map(sub["as_of"].to_dict())
 
-    # Coalesce identity attributes independently across sources; do not lose LEI by choosing one whole row.
     identity = store.identity()
     if not identity.empty:
         idx = out["isin"].astype(str)
-        id_priority = {"GLEIF_ISIN_LEI": 1, "OPENFIGI_V3": 2}
+        id_priority = {"GLEIF_ISIN_LEI_BULK": 1, "GLEIF_ISIN_LEI": 2, "OPENFIGI_V3": 3}
         identity = identity.copy()
         identity["_p"] = identity["source"].map(id_priority).fillna(9)
         for f in ["figi", "composite_figi", "share_class_figi", "ticker", "exchange", "mic", "lei", "lei_source"]:
@@ -91,11 +113,11 @@ def _materialize(base: pd.DataFrame, store: CaptureStore, cfg: dict) -> tuple[pd
     return out, metrics
 
 
-def _queues(prioritized: pd.DataFrame, store: CaptureStore) -> None:
+def _queues(prioritized: pd.DataFrame, regulated: pd.DataFrame, store: CaptureStore) -> None:
     qroot = store.root / "queues"
     qroot.mkdir(parents=True, exist_ok=True)
-    cols = [c for c in ["isin", "name", "country", "euronext_symbol", "euronext_mic", "yahoo_ticker", "score_mt", "score_lt", "free_capture_priority"] if c in prioritized]
-    write_csv(prioritized.head(600)[cols], qroot / "V21.1_ESEF_ISSUER_QUEUE.csv", ["free_capture_priority"])
+    cols = [c for c in ["isin", "name", "country", "euronext_symbol", "euronext_mic", "yahoo_ticker", "market_cap_v21", "score_mt", "score_lt", "free_capture_priority"] if c in prioritized]
+    write_csv(regulated.head(600)[[c for c in cols if c in regulated]], qroot / "V21.1_ESEF_ISSUER_QUEUE.csv", ["isin"])
     public = prioritized.head(250)[cols].copy()
     public["boursorama_status"] = "PENDING_TARGETED_CAPTURE_VALIDATION"
     public["zonebourse_status"] = "PENDING_TARGETED_CAPTURE_VALIDATION"
@@ -109,21 +131,22 @@ def main() -> None:
         raise RuntimeError("V21.1 FREE_ONLY safety gate")
     base = load_universe(INPUT)
     prioritized = priority_frame(base, cfg)
+    regulated = _regulated_priority(base, prioritized)
     store = CaptureStore(Path(os.getenv("V211_STORE", str(ROOT / cfg["cache"]["root"]))))
     store.root.mkdir(parents=True, exist_ok=True)
 
     results = {}
     results["openfigi"] = capture_openfigi(base, store, int(os.getenv("V211_OPENFIGI_MAX_REQUESTS", "30")))
-    results["gleif"] = capture_gleif(
-        prioritized, store,
+    results["gleif_bulk"] = capture_gleif_bulk(base, store)
+    results["gleif_api"] = capture_gleif(
+        regulated, store,
         max_symbols=int(os.getenv("V211_GLEIF_MAX_SYMBOLS", "300")),
-        workers=int(os.getenv("V211_GLEIF_WORKERS", "6")),
+        workers=int(os.getenv("V211_GLEIF_WORKERS", "3")),
     )
-    results["esef"] = capture_esef(prioritized, store, int(os.getenv("V211_ESEF_MAX_SYMBOLS", "40")))
+    results["esef"] = capture_esef(regulated, store, int(os.getenv("V211_ESEF_MAX_SYMBOLS", "50")))
     results["derived_fundamentals"] = derive_fundamentals(base, store)
     results["official_delayed"] = capture_official(store)
 
-    # Scarce commercial free tiers are fallback lanes, not the backbone.
     twelve_max = int(os.getenv("V211_TWELVE_MAX_SYMBOLS", "5"))
     alpha_max = int(os.getenv("V211_ALPHA_MAX_SYMBOLS", "3"))
     marketstack_max = int(os.getenv("V211_MARKETSTACK_MAX_SYMBOLS", "1"))
@@ -139,9 +162,8 @@ def main() -> None:
     results["derived_market"] = derive_market(store)
 
     overlay, metrics = _materialize(base, store, cfg)
-    _queues(prioritized, store)
-    overlay_path = store.root / "V21.1_FREE_CAPTURE_OVERLAY.csv"
-    write_csv(overlay, overlay_path, ["isin"])
+    _queues(prioritized, regulated, store)
+    write_csv(overlay, store.root / "V21.1_FREE_CAPTURE_OVERLAY.csv", ["isin"])
 
     health = store.health()
     source_status = health.groupby("source").tail(1).set_index("source")["status"].to_dict() if not health.empty else {}
