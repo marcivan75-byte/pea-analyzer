@@ -5,16 +5,21 @@ import json
 from pathlib import Path
 from typing import Iterable
 
+import numpy as np
 import pandas as pd
 
 from .data import attach_forward_returns, first_column, infer_snapshot_date, normalise_id
 
-ACTION_PATTERNS = ("*ACTIONS_3609_DECISIONS*.csv", "*ACTIONS*3609*DECISIONS*.csv")
+ACTION_PATTERNS = (
+    "*V21.0_ACTIONS_PEA_1429_COMMITTEE*.csv",
+    "*ACTIONS_3609_DECISIONS*.csv",
+    "*ACTIONS*3609*DECISIONS*.csv",
+)
 ETF_PATTERNS = ("*V20.7_ETF102_COMMITTEE*.csv", "*ETF102*COMMITTEE*.csv")
 
-ACTION_IDS = ("canonical_isin", "ISIN", "isin", "canonical_name", "Nom société", "name")
+ACTION_IDS = ("isin", "canonical_isin", "ISIN", "canonical_name", "Nom société", "name")
 ETF_IDS = ("isin", "ISIN", "ticker_yahoo_final", "ticker_primary", "name")
-ACTION_PRICES = ("canonical_last_close", "Cours €", "last_close", "price", "close")
+ACTION_PRICES = ("last_close", "canonical_last_close", "Cours €", "price", "close")
 ETF_PRICES = ("last_close", "price", "close", "nav", "daily_last_close")
 
 
@@ -24,6 +29,28 @@ def _discover(root: Path, patterns: Iterable[str]) -> list[Path]:
         for path in root.rglob(pattern):
             found[str(path.resolve())] = path
     return sorted(found.values())
+
+
+def _restore_v21_component_scores(raw: pd.DataFrame, out: pd.DataFrame) -> int:
+    """Recover the point-in-time 0..100 component score from archived V21 contribution/effective-weight evidence.
+
+    This deliberately uses values written by the historical committee run rather than recalculating an old
+    snapshot with today's scoring code. Rounding error is small and preferable to model-version look-ahead.
+    """
+    restored = 0
+    for contrib_col in raw.columns:
+        if not contrib_col.startswith(("contrib_ct_", "contrib_mt_", "contrib_lt_")):
+            continue
+        suffix = contrib_col[len("contrib_"):]
+        effective_col = f"effective_weight_{suffix}"
+        if effective_col not in raw.columns:
+            continue
+        contrib = pd.to_numeric(raw[contrib_col], errors="coerce")
+        effective = pd.to_numeric(raw[effective_col], errors="coerce")
+        score = contrib.div(effective.replace(0.0, np.nan)).where(effective.gt(0.0)).clip(0.0, 100.0)
+        out[f"component_score_{suffix}"] = score
+        restored += 1
+    return restored
 
 
 def _snapshot(path: Path, asset_class: str) -> pd.DataFrame | None:
@@ -41,6 +68,8 @@ def _snapshot(path: Path, asset_class: str) -> pd.DataFrame | None:
     out = df.copy()
     for col in list(out.columns):
         out[col] = out[col].astype("string")
+    if asset_class == "ACTION":
+        _restore_v21_component_scores(df, out)
     out["__instrument_id"] = normalise_id(df[id_col])
     out["__snapshot_date"] = pd.Timestamp(date).normalize()
     out["__price"] = pd.to_numeric(df[price_col], errors="coerce")
@@ -77,8 +106,13 @@ def _merge_history(previous: pd.DataFrame, current: list[pd.DataFrame]) -> pd.Da
     df = df.dropna(subset=["__instrument_id", "__snapshot_date", "__price"])
     df = df[df["__price"] > 0]
     source = df.get("__source_file", pd.Series("", index=df.index)).astype(str)
-    df = df.assign(__source_sort=source).sort_values(["__snapshot_date", "__instrument_id", "__source_sort"])
-    df = df.drop_duplicates(["__snapshot_date", "__instrument_id"], keep="last").drop(columns="__source_sort")
+    source_priority = source.str.contains("V21.0_ACTIONS_PEA_1429_COMMITTEE", regex=False).astype(int)
+    df = df.assign(__source_priority=source_priority, __source_sort=source).sort_values(
+        ["__snapshot_date", "__instrument_id", "__source_priority", "__source_sort"]
+    )
+    df = df.drop_duplicates(["__snapshot_date", "__instrument_id"], keep="last").drop(
+        columns=["__source_priority", "__source_sort"]
+    )
     return df.reset_index(drop=True)
 
 
@@ -98,6 +132,7 @@ def build_rolling_history(raw_root: Path, previous_root: Path | None, output_roo
     audit: dict[str, object] = {
         "version": "POINT_IN_TIME_HISTORY_V1",
         "lookahead_policy": "features preserved from archived committee snapshots; outcomes use later archived prices only",
+        "component_reconstruction_policy": "V21 metric scores recovered from archived contribution/effective-weight evidence, not recalculated with future code",
         "production_weights_modified": False,
         "asset_classes": {},
     }
@@ -123,13 +158,16 @@ def build_rolling_history(raw_root: Path, previous_root: Path | None, output_roo
                 "labeled_snapshots": labeled_dates,
                 "label_coverage_pct": round(100.0 * len(labeled) / max(1, len(history)), 2),
             }
+        component_cols = [c for c in history.columns if c.startswith("component_score_")] if not history.empty else []
         audit["asset_classes"][asset_class] = {
             "rows": int(len(history)),
+            "columns": int(len(history.columns)) if not history.empty else 0,
             "snapshots": len(dates),
             "first_snapshot": str(dates[0].date()) if dates else None,
             "last_snapshot": str(dates[-1].date()) if dates else None,
             "new_snapshot_files": len(current_frames),
             "previous_rows_restored": int(len(previous)),
+            "restored_component_score_columns": len(component_cols),
             "outcomes": horizon_audit,
         }
     (output_root / "HISTORY_AUDIT.json").write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
