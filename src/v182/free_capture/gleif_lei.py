@@ -39,13 +39,13 @@ def _resolve(isin: str) -> tuple[str, str, str]:
 
 def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 600, workers: int = 6) -> dict:
     identity = store.identity()
-    mapped = set()
+    mapped: set[str] = set()
     if not identity.empty:
-        g = identity[identity["source"].eq("GLEIF_ISIN_LEI")]
-        mapped = set(g.loc[g["lei"].astype(str).str.len().eq(20), "isin"].astype(str))
+        # Any valid LEI already captured (bulk or API) is definitive enough to skip another API call.
+        mapped = set(identity.loc[identity["lei"].astype(str).str.len().eq(20), "isin"].astype(str))
     targets = [str(x) for x in universe["isin"] if str(x) not in mapped][:max_symbols]
     if not targets:
-        store.add_health("GLEIF_ISIN_LEI", "NO_NEW_DATA")
+        store.add_health("GLEIF_ISIN_LEI", "NO_NEW_DATA", message="No true LEI gaps after bulk/cache")
         return {"status": "NO_NEW_DATA", "attempted": 0, "resolved": 0}
 
     resolved: list[tuple[str, str, str]] = []
@@ -75,6 +75,6 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 600,
     added = store.upsert_identity(rows)
     store.add_health(
         "GLEIF_ISIN_LEI", "OK" if ok else "NO_NEW_DATA", len(targets), ok, no_match + errors,
-        message=f"added={added}; no_match={no_match}; errors={errors}; workers={workers}"
+        message=f"added={added}; true_gaps={len(targets)}; no_match={no_match}; errors={errors}; workers={workers}"
     )
     return {"status": "OK", "attempted": len(targets), "resolved": ok, "no_match": no_match, "errors": errors}
