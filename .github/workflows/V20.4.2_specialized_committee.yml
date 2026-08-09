@@ -1,0 +1,144 @@
+name: V20.4.2 Specialized Committee - Actions and ETF CT MT LT Short
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/smart-money-v1]
+    paths:
+      - '.github/workflows/V20.4.2_specialized_committee.yml'
+      - 'src/v182/decision/v2042_specialized_committee.py'
+      - 'data/reference/V20.4.2_SCORING_CONFIG.json'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v2042-specialized-committee
+  cancel-in-progress: true
+
+jobs:
+  specialized-committee:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install validated dependency set
+        run: pip install -c constraints-ci.txt -e .[test]
+      - name: Preflight
+        run: |
+          python -m pip check
+          python -m compileall -q src tests
+          ruff check --select E9,F63,F7,F82 src tests
+
+      - name: Reuse latest successful V20.4 total Actions artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/v2042 outputs/audit
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" --jq '.artifacts|sort_by(.created_at)|reverse|.[]|select(.expired==false)|select(.name|startswith("V20.4-Total-1829-266-"))|[.id,.workflow_run.id]|@tsv' > /tmp/v2042/list.tsv
+          FOUND=0
+          while IFS=$'\t' read -r ART RUN; do
+            [ -n "$ART" ] || continue
+            C=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}" --jq '.conclusion // ""' 2>/dev/null || true)
+            [ "$C" = success ] || continue
+            rm -rf /tmp/v2042/art; mkdir -p /tmp/v2042/art
+            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/v2042/a.zip
+            unzip -oq /tmp/v2042/a.zip -d /tmp/v2042/art
+            A=$(find /tmp/v2042/art -name V20.4_GITOK_ACTIONS_1829_DECISIONS.csv -print -quit)
+            E=$(find /tmp/v2042/art -name V20.4_GITOK_ETF_266_DECISIONS.csv -print -quit)
+            [ -n "$A" ] && [ -n "$E" ] || continue
+            cp "$A" outputs/V20.4_GITOK_ACTIONS_1829_DECISIONS.csv
+            cp "$E" outputs/V20.4_GITOK_ETF_266_DECISIONS.csv
+            echo "V204_SOURCE_RUN=$RUN" >> "$GITHUB_ENV"
+            FOUND=1; break
+          done < /tmp/v2042/list.tsv
+          test "$FOUND" = 1
+
+      - name: Reuse latest fully audited validated ETF master
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/etfref
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" --jq '.artifacts|sort_by(.created_at)|reverse|.[]|select(.expired==false)|select(.name|startswith("V18.2-full-audit-"))|[.id,.workflow_run.id]|@tsv' > /tmp/etfref/list.tsv
+          FOUND=0
+          while IFS=$'\t' read -r ART RUN; do
+            [ -n "$ART" ] || continue
+            C=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}" --jq '.conclusion // ""' 2>/dev/null || true)
+            [ "$C" = success ] || continue
+            rm -rf /tmp/etfref/art; mkdir -p /tmp/etfref/art
+            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/etfref/a.zip
+            unzip -oq /tmp/etfref/a.zip -d /tmp/etfref/art
+            E=$(find /tmp/etfref/art -name V18.2_PEA_ETF_MASTER_ENRICHED.csv -print -quit)
+            [ -n "$E" ] || continue
+            cp "$E" outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
+            echo "ETF_REFERENCE_RUN=$RUN" >> "$GITHUB_ENV"
+            FOUND=1; break
+          done < /tmp/etfref/list.tsv
+          test "$FOUND" = 1
+
+      - name: Build V20.4.1 corrected Actions baseline
+        run: python -m v182.decision.v2041_corrective_reweight
+
+      - name: Execute V20.4.2 independent CT MT LT Short engines
+        run: python -m v182.decision.v2042_specialized_committee
+
+      - name: Quality gates V20.4.2
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+          a=pd.read_csv('outputs/V20.4.2_ACTIONS_SPECIALIZED_DECISIONS.csv',sep=';',dtype=object,encoding='utf-8-sig')
+          e=pd.read_csv('outputs/V20.4.2_ETF_SPECIALIZED_DECISIONS.csv',sep=';',dtype=object,encoding='utf-8-sig')
+          au=json.loads(Path('outputs/audit/V20.4.2_SPECIALIZED_AUDIT.json').read_text(encoding='utf-8'))
+          assert len(a)==1829 and a['isin'].nunique()==1829
+          assert len(e)==102 and e['isin'].nunique()==102
+          required={'score_ct','score_mt','score_lt','score_short','decision_ct','decision_mt','decision_lt','decision_short','selection_ct','selection_mt','selection_lt','selection_short','execution'}
+          assert required.issubset(a.columns), required-set(a.columns)
+          assert required.issubset(e.columns), required-set(e.columns)
+          assert au.get('passed') is True
+          assert au.get('smart_money_enabled') is False
+          assert au.get('live_order_execution_enabled') is False
+          live={'LIVE','ORDER','EXECUTE','BROKER','REAL_ORDER','LIVE_ORDER'}
+          assert not a.execution.astype(str).str.upper().isin(live).any()
+          assert not e.execution.astype(str).str.upper().isin(live).any()
+          assert int(a.selection_ct.astype(str).str.lower().isin({'true','1'}).sum()) <= 20
+          assert int(a.selection_mt.astype(str).str.lower().isin({'true','1'}).sum()) <= 30
+          assert int(a.selection_lt.astype(str).str.lower().isin({'true','1'}).sum()) <= 30
+          assert int(a.selection_short.astype(str).str.lower().isin({'true','1'}).sum()) <= 20
+          assert int(e.selection_ct.astype(str).str.lower().isin({'true','1'}).sum()) <= 10
+          assert int(e.selection_mt.astype(str).str.lower().isin({'true','1'}).sum()) <= 12
+          assert int(e.selection_lt.astype(str).str.lower().isin({'true','1'}).sum()) <= 12
+          assert int(e.selection_short.astype(str).str.lower().isin({'true','1'}).sum()) <= 8
+          print('V20_4_2_GATES_OK')
+          PY
+
+      - name: Publish committee summary
+        run: |
+          cat outputs/V20.4.2_COMMITTEE_SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Actions source run: ${V204_SOURCE_RUN}" >> "$GITHUB_STEP_SUMMARY"
+          echo "ETF validated source run: ${ETF_REFERENCE_RUN}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload V20.4.2 committee evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: V20.4.2-Specialized-Committee-${{ github.run_id }}
+          path: |
+            outputs/V20.4.2_ACTIONS_SPECIALIZED_DECISIONS.csv
+            outputs/V20.4.2_ETF_SPECIALIZED_DECISIONS.csv
+            outputs/V20.4.2_COMMITTEE_SUMMARY.md
+            outputs/audit/V20.4.2_SPECIALIZED_AUDIT.json
+            data/reference/V20.4.2_SCORING_CONFIG.json
+          if-no-files-found: error
+          retention-days: 30
