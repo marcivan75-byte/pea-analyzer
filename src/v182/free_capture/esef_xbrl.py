@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 import gzip
 import json
 import os
@@ -40,6 +40,15 @@ CONCEPTS = {
 }
 
 
+def _links(session: requests.Session, url: str) -> list[str]:
+    r = session.get(url, timeout=30, headers={"User-Agent": os.getenv("V182_USER_AGENT", "PEA-FreeCapture/1.0")})
+    if r.status_code == 404:
+        return []
+    r.raise_for_status()
+    soup = BeautifulSoup(r.text, "html.parser")
+    return [urljoin(url, a["href"]) for a in soup.find_all("a", href=True)]
+
+
 def _period_end(period: object) -> str:
     s = clean_text(period)
     if "/" in s:
@@ -68,8 +77,7 @@ def _extract(payload: dict, report_period: str) -> list[tuple[str, float, str]]:
     report_ts = pd.Timestamp(report_period) if report_period else pd.NaT
     for fact in _fact_candidates(payload):
         dims = fact.get("dimensions") or {}
-        concept = dims.get("concept") or fact.get("concept")
-        field = aliases.get(_concept_local(concept).lower())
+        field = aliases.get(_concept_local(dims.get("concept") or fact.get("concept")).lower())
         if not field:
             continue
         val = number(fact.get("value"))
@@ -93,45 +101,31 @@ def _extract(payload: dict, report_period: str) -> list[tuple[str, float, str]]:
     return out
 
 
-def _json_from_filing_page(session: requests.Session, filing_url: str) -> str:
-    r = session.get(filing_url, timeout=25, headers={"User-Agent": os.getenv("V182_USER_AGENT", "PEA-FreeCapture/1.0")})
-    if not r.ok:
-        return ""
-    soup = BeautifulSoup(r.text, "html.parser")
-    candidates = []
-    for a in soup.find_all("a", href=True):
-        text = a.get_text(" ", strip=True).lower()
-        href = urljoin(filing_url, a["href"])
-        if text == "json" or href.lower().endswith((".json", ".json.gz")):
-            candidates.append(href)
-    return candidates[0] if candidates else ""
-
-
 def _latest_json_url(lei: str, session: requests.Session) -> tuple[str, str, str] | None:
-    """Resolve latest filing via the public LEI entity page, avoiding fragile API relation filters."""
-    entity_url = urljoin(BASE, f"entity/{lei}")
-    r = session.get(entity_url, timeout=30, headers={"User-Agent": os.getenv("V182_USER_AGENT", "PEA-FreeCapture/1.0")})
-    if r.status_code == 404:
-        return None
-    r.raise_for_status()
-    soup = BeautifulSoup(r.text, "html.parser")
-    today = date.today().isoformat()
-    candidates: list[tuple[str, str, str]] = []
-    seen: set[str] = set()
-    for a in soup.find_all("a", href=True):
-        href = urljoin(entity_url, a["href"])
-        m = re.search(r"/filing/([A-Z0-9]{20})-(20\d{2}-\d{2}-\d{2})-(ESEF|UKSEF)-([A-Z]{2})-(\d+)", href, re.I)
-        if not m or m.group(1).upper() != lei.upper():
+    """Traverse the public directory index: LEI/date/ESEF/country/report/*.json.gz."""
+    root = urljoin(BASE, f"{lei}/")
+    periods: list[tuple[date, str]] = []
+    for href in _links(session, root):
+        m = re.search(r"/(20\d{2}-\d{2}-\d{2})/$", href)
+        if not m:
             continue
-        period = m.group(2)
-        if period > today or href in seen:
+        try:
+            d = datetime.strptime(m.group(1), "%Y-%m-%d").date()
+        except ValueError:
             continue
-        seen.add(href)
-        candidates.append((period, href, href.rstrip("/").split("/")[-1]))
-    for period, filing_url, filing_index in sorted(candidates, reverse=True):
-        json_url = _json_from_filing_page(session, filing_url)
-        if json_url:
-            return json_url, period, filing_index
+        if d <= date.today():
+            periods.append((d, href))
+    for period, period_url in sorted(periods, reverse=True)[:5]:
+        esef_url = urljoin(period_url, "ESEF/")
+        country_dirs = [u for u in _links(session, esef_url) if re.search(r"/[A-Z]{2}/$", u)]
+        for country_url in sorted(country_dirs):
+            report_dirs = [u for u in _links(session, country_url) if re.search(r"/\d+/$", u)]
+            for report_url in sorted(report_dirs):
+                files = _links(session, report_url)
+                json_files = [u for u in files if u.lower().endswith(".json.gz") and "metadata.json.gz" not in u.lower()]
+                if json_files:
+                    filing_index = f"{lei}-{period.isoformat()}-{country_url.rstrip('/').split('/')[-1]}-{report_url.rstrip('/').split('/')[-1]}"
+                    return sorted(json_files)[0], period.isoformat(), filing_index
     return None
 
 
@@ -204,7 +198,7 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 80) 
             errors += 1
             if len(samples) < 5:
                 samples.append({"isin": isin, "lei": lei, "error": f"{type(exc).__name__}:{str(exc)[:160]}"})
-        time.sleep(0.08)
+        time.sleep(0.05)
 
     added = store.upsert_facts(rows)
     status = "OK" if filings else "NO_NEW_DATA"
