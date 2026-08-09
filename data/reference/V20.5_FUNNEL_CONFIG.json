@@ -1,5 +1,5 @@
 {
-  "version": "V20.5_FUNNEL_RC1",
+  "version": "V20.5_FUNNEL_RC2",
   "mode": "TOP_DOWN_THEN_BOTTOM_UP",
   "execution": "RESEARCH_ONLY",
   "stages": [
@@ -37,9 +37,10 @@
     "us_unemployment": "UNRATE"
   },
   "eurostat": {
-    "hicp_dataset": "prc_hicp_manr",
+    "hicp_dataset": "prc_hicp_minr",
     "unit": "RCH_A",
-    "coicop": "CP00"
+    "coicop": "CP00",
+    "max_age_days": 55
   },
   "ecb": {
     "deposit_rate_flow": "FM",
