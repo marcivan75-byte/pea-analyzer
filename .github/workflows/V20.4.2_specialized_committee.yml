@@ -2,6 +2,10 @@ name: V20.4.2 Fast Committee - Actions and ETF CT MT LT Short
 
 on:
   workflow_dispatch:
+  push:
+    branches: [feature/smart-money-v1]
+    paths:
+      - '.github/workflows/V20.4.2_specialized_committee.yml'
 
 permissions:
   contents: read
