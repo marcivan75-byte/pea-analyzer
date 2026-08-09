@@ -6,6 +6,9 @@ on:
     branches: [feature/smart-money-v1]
     paths:
       - '.github/workflows/V20.4.2_specialized_committee.yml'
+      - 'src/v182/sources/market_sentiment.py'
+      - 'src/v182/decision/v2042_committee_live_sentiment.py'
+      - 'data/reference/V20.4.2_SCORING_CONFIG.json'
 
 permissions:
   contents: read
@@ -98,15 +101,16 @@ jobs:
           se=json.loads(Path('outputs/audit/V20.4.2_MARKET_SENTIMENT.json').read_text(encoding='utf-8'))
           assert len(a)==1829 and a['isin'].nunique()==1829
           assert len(e)==102 and e['isin'].nunique()==102
-          required={'score_ct','score_mt','score_lt','score_short','decision_ct','decision_mt','decision_lt','decision_short','selection_ct','selection_mt','selection_lt','selection_short','execution','macro_multiplier_ct','fear_greed_index','aaii_bullish_pct','aaii_bearish_pct','aaii_bull_bear_spread','sentiment_data_status'}
+          required={'score_ct','score_mt','score_lt','score_short','decision_ct','decision_mt','decision_lt','decision_short','selection_ct','selection_mt','selection_lt','selection_short','execution','macro_multiplier_ct','fear_greed_index','aaii_bullish_pct','aaii_neutral_pct','aaii_bearish_pct','aaii_bull_bear_spread','sentiment_data_status'}
           assert required.issubset(a.columns) and required.issubset(e.columns)
           assert 'sentiment_regime_score' in e.columns
           contribution_cols=[c for c in a.columns if c.startswith('contrib_')]
           etf_contribution_cols=[c for c in e.columns if c.startswith('contrib_')]
           assert contribution_cols and etf_contribution_cols
-          sentiment_cols=['fear_greed_index','aaii_bullish_pct','aaii_bearish_pct','aaii_bull_bear_spread','sentiment_data_status']
+          sentiment_cols=['fear_greed_index','aaii_bullish_pct','aaii_neutral_pct','aaii_bearish_pct','aaii_bull_bear_spread','sentiment_data_status']
           assert not a[sentiment_cols].isna().any().any()
           assert not e[sentiment_cols].isna().any().any()
+          assert abs(float(se['aaii']['bullish_pct']) - float(se['aaii']['bearish_pct']) - float(se['aaii']['bull_bear_spread'])) <= 0.15
           assert se.get('status') in {'LIVE','DEGRADED_FRESH'}
           assert au.get('passed') is True
           assert au.get('version') == 'V20.4.2_SPECIALIZED_SENTIMENT'
