@@ -8,6 +8,7 @@ on:
       - '.github/workflows/V20.4.3_etf102_only.yml'
       - 'src/v182/decision/etf102_direct_enrichment.py'
       - 'src/v182/decision/etf102_committee_v2043.py'
+      - 'src/v182/decision/etf102_committee_v2043_hardened.py'
       - 'src/v182/sources/etf102_sentiment_overlay.py'
       - 'src/v182/sources/funnel_context.py'
       - 'data/reference/V20.4.3_ETF102_CONFIG.json'
@@ -88,8 +89,8 @@ jobs:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python -m v182.sources.funnel_context
 
-      - name: Build availability-aware ETF102 committee
-        run: python -m v182.decision.etf102_committee_v2043
+      - name: Build hardened availability-aware ETF102 committee
+        run: python -m v182.decision.etf102_committee_v2043_hardened
 
       - name: ETF102 hard quality gates
         run: |
@@ -107,6 +108,7 @@ jobs:
           assert d['legacy_266_used'].astype(str).str.lower().eq('false').all()
           assert a['legacy_266_used'] is False and e['legacy_266_used'] is False and s['legacy_266_used'] is False
           assert a['missing_data_policy']=='RENORMALIZE_OBSERVED_WEIGHTS_NO_NEUTRAL_50'
+          assert a['sparse_component_policy']=='DISABLE_COMPONENT_FOR_ENTIRE_UNIVERSE_BELOW_ACTIVATION_THRESHOLD'
           assert f['passed'] is True and f['rows']==102
           assert pd.to_numeric(d['fear_greed_index'],errors='coerce').notna().all()
           assert pd.to_numeric(d['aaii_bull_bear_spread'],errors='coerce').notna().all()
@@ -121,7 +123,11 @@ jobs:
           assert cfg['legacy_266_allowed'] is False
           assert 'v9' not in str(cfg['horizon_weights']).lower()
           assert 'esg' not in str(cfg['horizon_weights']).lower()
-          print('V20_4_3_ETF102_HARD_GATES_OK',a['decisions'],a['mean_weight_coverage'],f['risk_gates'])
+          # Tracking is globally disabled unless enough ETF have genuine tracking data.
+          tr=a['component_status']['tracking']
+          if tr['universe_coverage'] < cfg['coverage']['component_activation_min_universe_coverage']:
+              assert tr['active'] is False
+          print('V20_4_3_ETF102_HARD_GATES_OK',a['decisions'],a['mean_weight_coverage'],f['risk_gates'],a['component_status'])
           PY
 
       - name: Publish committee summary
