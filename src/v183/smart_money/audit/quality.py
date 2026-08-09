@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
+import numpy as np
 import pandas as pd
 
 
@@ -7,6 +8,20 @@ import pandas as pd
 class SmartMoneyQualityResult:
     passed: bool
     checks: list[dict]
+
+
+def _business_days_elapsed(start: pd.Timestamp, end: pd.Timestamp) -> int:
+    """Business days strictly after publication through as-of date.
+
+    A Thursday publication observed on Sunday is one business day old (Friday),
+    not three calendar days old. This prevents weekend false failures while
+    still failing stale weekday data.
+    """
+    s = pd.Timestamp(start).normalize()
+    e = pd.Timestamp(end).normalize()
+    if e <= s:
+        return 0
+    return int(np.busday_count((s + pd.Timedelta(days=1)).date(), (e + pd.Timedelta(days=1)).date()))
 
 
 def run(
@@ -47,12 +62,23 @@ def run(
         if not short_rows.empty and "short_position_pct" in short_rows.columns:
             censored = short_rows.get("public_censored_below_05", pd.Series(False, index=short_rows.index)).fillna(False).astype(bool)
             pct = pd.to_numeric(short_rows["short_position_pct"], errors="coerce")
+            # Censorship means a positive position known only to be below the
+            # public threshold. A source-published exact zero is not censored.
             invalid_zero = int((censored & pct.eq(0)).sum())
             add("censored_short_not_forced_zero", invalid_zero == 0, invalid_zero, 0)
             short_pub = pd.to_datetime(short_rows["publication_date"], errors="coerce").dropna()
             if not short_pub.empty:
-                age = max(0, int((pd.Timestamp(as_of) - short_pub.max()).days))
-                add("amf_short_freshness_days", age <= int(q["max_short_data_age_days"]), age, q["max_short_data_age_days"])
+                last_pub = short_pub.max()
+                calendar_age = max(0, int((pd.Timestamp(as_of) - last_pub).days))
+                business_age = _business_days_elapsed(last_pub, pd.Timestamp(as_of))
+                max_age = int(q["max_short_data_age_days"])
+                add(
+                    "amf_short_freshness_business_days",
+                    business_age <= max_age,
+                    business_age,
+                    max_age,
+                    detail=f"calendar_days={calendar_age}; weekend-safe business-day freshness",
+                )
 
     if not scores.empty:
         if "smart_money_confidence" in scores.columns:
@@ -77,10 +103,7 @@ def run(
             base = pd.to_numeric(scores["score_base"], errors="coerce")
             shadow = pd.to_numeric(scores["score_shadow"], errors="coerce")
             delta = (shadow - base).abs()
-            for universe, threshold_key in (
-                ("ACTION", "max_abs_action_shadow_delta"),
-                ("ETF", "max_abs_etf_shadow_delta"),
-            ):
+            for universe, threshold_key in (("ACTION", "max_abs_action_shadow_delta"), ("ETF", "max_abs_etf_shadow_delta")):
                 subset = delta[scores["universe"].astype(str).eq(universe) & delta.notna()]
                 maximum = 0.0 if subset.empty else float(subset.max())
                 limit = float(q[threshold_key])
@@ -93,8 +116,6 @@ def run(
     if coverage is not None:
         registry = float(coverage.get("registry_coverage_pct", 0.0))
         add("etf_provider_registry_coverage_pct", registry >= float(q["etf_provider_registry_min_pct"]), registry, q["etf_provider_registry_min_pct"])
-        # Flow-ready coverage is reported but deliberately not a hard RC1 gate:
-        # the first run bootstraps persistent AUM+NAV history without fabricating backfill.
         add("etf_flow_ready_coverage_reported", "flow_ready_20d_pct" in coverage, coverage.get("flow_ready_20d_pct"), "reported")
 
     if calibration is not None:
