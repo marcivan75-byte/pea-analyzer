@@ -52,6 +52,8 @@ class OptimizerConfig:
     objective_turnover_weight: float = 0.08
     objective_hit_rate_weight: float = 0.10
     include_default_features: bool = True
+    missing_feature_policy: str = "NEUTRAL_50"
+    min_feature_weight_coverage: float = 0.60
     feature_overrides: dict[str, dict[str, object]] = field(default_factory=dict)
 
     @classmethod
