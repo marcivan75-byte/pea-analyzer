@@ -131,7 +131,9 @@ def _latest_json_url(lei: str, session: requests.Session) -> tuple[str, str, str
 
 def _load_json_response(r: requests.Response, url: str) -> dict:
     raw = r.content
-    if url.lower().endswith(".gz") or raw[:2] == b"\x1f\x8b":
+    # requests/HTTP servers may transparently decode gzip while preserving a .json.gz URL.
+    # Only decompress when the actual gzip magic bytes are present.
+    if raw[:2] == b"\x1f\x8b":
         raw = gzip.decompress(raw)
     return json.loads(raw.decode("utf-8-sig"))
 
