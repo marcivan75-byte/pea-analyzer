@@ -72,23 +72,25 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p outputs/audit /tmp/v182base
-          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" --jq '.artifacts|sort_by(.created_at)|reverse|.[]|select(.expired==false)|select(.name|startswith("V18.2-full-audit-"))|[.id,.workflow_run.id,.name]|@tsv' > /tmp/v182base/list.tsv
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/V18.2_full_audit.yml/runs?status=success&per_page=100" --jq '.workflow_runs[].id' > /tmp/v182base/runs.txt
           FOUND=0
-          while IFS=$'\t' read -r ART RUN NAME; do
-            [ -n "$ART" ] || continue
-            C=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}" --jq '.conclusion // ""' 2>/dev/null || true)
-            [ "$C" = success ] || continue
-            rm -rf /tmp/v182base/unpack; mkdir -p /tmp/v182base/unpack
-            if ! gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/v182base/base.zip; then continue; fi
-            if ! unzip -oq /tmp/v182base/base.zip -d /tmp/v182base/unpack; then continue; fi
-            A=$(find /tmp/v182base/unpack -name V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv -print -quit)
-            E=$(find /tmp/v182base/unpack -name V18.2_PEA_ETF_MASTER_ENRICHED.csv -print -quit)
-            Q=$(find /tmp/v182base/unpack -name V18.2_QUALITY_GATES.json -print -quit)
-            [ -n "$A" ] && [ -n "$E" ] && [ -n "$Q" ] || continue
-            cp "$A" outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv
-            cp "$E" outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
-            cp "$Q" outputs/audit/V18.2_QUALITY_GATES.json
-            if python - <<'PY'
+          while read -r RUN; do
+            [ -n "$RUN" ] || continue
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}/artifacts?per_page=100" --jq '.artifacts[]|select(.expired==false)|[.id,.name]|@tsv' > /tmp/v182base/artifacts.tsv || continue
+            while IFS=$'\t' read -r ART NAME; do
+              [ -n "$ART" ] || continue
+              case "$NAME" in V18.2-full-audit-*) ;; *) continue ;; esac
+              rm -rf /tmp/v182base/unpack; mkdir -p /tmp/v182base/unpack
+              if ! gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/v182base/base.zip; then continue; fi
+              if ! unzip -oq /tmp/v182base/base.zip -d /tmp/v182base/unpack; then continue; fi
+              A=$(find /tmp/v182base/unpack -name V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv -print -quit)
+              E=$(find /tmp/v182base/unpack -name V18.2_PEA_ETF_MASTER_ENRICHED.csv -print -quit)
+              Q=$(find /tmp/v182base/unpack -name V18.2_QUALITY_GATES.json -print -quit)
+              [ -n "$A" ] && [ -n "$E" ] && [ -n "$Q" ] || continue
+              cp "$A" outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv
+              cp "$E" outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
+              cp "$Q" outputs/audit/V18.2_QUALITY_GATES.json
+              if python - <<'PY'
           import json
           import pandas as pd
           from pathlib import Path
@@ -100,16 +102,16 @@ jobs:
               raise SystemExit(1)
           print('VALIDATED_BASE_RESTORED', {'actions':len(a),'etfs':len(e)})
           PY
-            then
-              echo "V182_BASE_RUN=$RUN" >> "$GITHUB_ENV"
-              echo "V182_BASE_ARTIFACT=$NAME" >> "$GITHUB_ENV"
-              FOUND=1; break
-            else
-              echo "Rejected non-canonical V18.2 base artifact $NAME from run $RUN"
-              rm -f outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv outputs/audit/V18.2_QUALITY_GATES.json
-              continue
-            fi
-          done < /tmp/v182base/list.tsv
+              then
+                echo "V182_BASE_RUN=$RUN" >> "$GITHUB_ENV"
+                echo "V182_BASE_ARTIFACT=$NAME" >> "$GITHUB_ENV"
+                FOUND=1; break 2
+              else
+                echo "Rejected non-canonical V18.2 base artifact $NAME from run $RUN"
+                rm -f outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv outputs/audit/V18.2_QUALITY_GATES.json
+              fi
+            done < /tmp/v182base/artifacts.tsv
+          done < /tmp/v182base/runs.txt
           test "$FOUND" = 1
 
       - name: Restore previous persistent Smart Money state
