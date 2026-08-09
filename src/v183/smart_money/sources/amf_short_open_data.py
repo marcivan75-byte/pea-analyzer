@@ -9,14 +9,36 @@ import requests
 STABLE_RESOURCE_URL = "https://www.data.gouv.fr/api/1/datasets/r/c2539d1c-8531-4937-9cba-3bd8e9786cc5"
 
 ALIASES = {
-    "holder": {"nom_du_detenteur", "detenteur", "holder", "holder_name"},
-    "holder_lei": {"lei_du_detenteur", "lei_detenteur", "holder_lei"},
-    "issuer": {"nom_de_lemetteur", "nom_de_l_emetteur", "emetteur", "issuer", "issuer_name"},
-    "isin": {"isin"},
-    "short_position_pct": {"position_courte_nette", "position_nette_courte", "net_short_position", "position"},
-    "position_date": {"date_de_debut_de_position", "date_position", "position_date"},
-    "publication_start": {"date_de_debut_de_publication_de_la_position", "date_debut_publication", "publication_start"},
-    "publication_end": {"date_de_fin_de_publication_de_la_position", "date_fin_publication", "publication_end"},
+    "holder": {
+        "nom_du_detenteur", "detenteur", "holder", "holder_name",
+        "detenteur_de_la_position_courte_nette",
+    },
+    "holder_lei": {
+        "lei_du_detenteur", "lei_detenteur", "holder_lei",
+        "legal_entity_identifier_detenteur",
+    },
+    "issuer": {
+        "nom_de_lemetteur", "nom_de_l_emetteur", "emetteur", "issuer", "issuer_name",
+        "nom_de_l_emetteur_de_la_position_courte_nette",
+    },
+    "isin": {"isin", "code_isin", "isin_de_l_emetteur"},
+    "short_position_pct": {
+        "position_courte_nette", "position_nette_courte", "net_short_position", "position",
+        "ratio_de_la_position_courte_nette", "taux_de_la_position_courte_nette",
+        "pourcentage_de_la_position_courte_nette",
+    },
+    "position_date": {
+        "date_de_debut_de_position", "date_position", "position_date",
+        "date_de_la_position_courte_nette", "date_de_position_courte_nette",
+    },
+    "publication_start": {
+        "date_de_debut_de_publication_de_la_position", "date_debut_publication", "publication_start",
+        "date_de_debut_de_publication",
+    },
+    "publication_end": {
+        "date_de_fin_de_publication_de_la_position", "date_fin_publication", "publication_end",
+        "date_de_fin_de_publication",
+    },
 }
 
 
@@ -30,19 +52,83 @@ def load_csv(path: str | Path) -> pd.DataFrame:
     return _read_csv_bytes(Path(path).read_bytes())
 
 
-def normalize(frame: pd.DataFrame) -> pd.DataFrame:
-    columns = {_norm(c): c for c in frame.columns}
-    rename = {}
+def _semantic_target(normalized: str) -> str | None:
+    """Map AMF headers by meaning when wording changes.
+
+    AMF open-data labels have evolved over time. We first use exact aliases,
+    then deterministic token rules. A semantic match must be unambiguous and
+    never infer a numeric field from an unrelated column.
+    """
+    n = normalized
+    is_lei = "legal_entity_identifier" in n or re.search(r"(^|_)lei(_|$)", n) is not None
+    has_holder = "detenteur" in n or "holder" in n
+    has_issuer = "emetteur" in n or "issuer" in n
+    has_short = ("position_courte" in n or "position_nette_courte" in n or "net_short" in n)
+    has_date = "date" in n
+    has_publication = "publication" in n
+
+    if "isin" in n:
+        return "isin"
+    if is_lei and has_holder:
+        return "holder_lei"
+    if has_holder and has_short and not is_lei and not has_date:
+        return "holder"
+    if has_issuer and not is_lei and not has_date:
+        return "issuer"
+    if has_publication and has_date:
+        if "fin" in n or "end" in n:
+            return "publication_end"
+        if "debut" in n or "start" in n:
+            return "publication_start"
+    if has_short and has_date and not has_publication:
+        return "position_date"
+    if has_short and not has_date and not has_holder and not has_issuer and not is_lei:
+        # Ratios/percentages are the only remaining short-position numeric field.
+        if any(token in n for token in ("ratio", "taux", "pourcentage", "pct", "percent")):
+            return "short_position_pct"
+        # Historical AMF export used simply 'Position courte nette'.
+        if n in {"position_courte_nette", "position_nette_courte", "net_short_position", "position"}:
+            return "short_position_pct"
+    return None
+
+
+def _column_mapping(frame: pd.DataFrame) -> dict[str, str]:
+    normalized = {_norm(c): c for c in frame.columns}
+    rename: dict[str, str] = {}
+    assigned: set[str] = set()
+
+    # 1. Exact aliases, preferred.
     for target, aliases in ALIASES.items():
         for alias in aliases:
-            if alias in columns:
-                rename[columns[alias]] = target
+            if alias in normalized:
+                source = normalized[alias]
+                rename[source] = target
+                assigned.add(target)
                 break
+
+    # 2. Semantic fallbacks for renamed official columns.
+    for norm, source in normalized.items():
+        if source in rename:
+            continue
+        target = _semantic_target(norm)
+        if target is not None and target not in assigned:
+            rename[source] = target
+            assigned.add(target)
+
+    return rename
+
+
+def normalize(frame: pd.DataFrame) -> pd.DataFrame:
+    rename = _column_mapping(frame)
     out = frame.rename(columns=rename).copy()
     required = {"holder", "issuer", "isin", "short_position_pct", "position_date"}
     missing = required - set(out.columns)
     if missing:
-        raise ValueError(f"AMF short CSV schema not recognized; missing={sorted(missing)}; columns={list(frame.columns)}")
+        diagnostics = {str(c): _norm(c) for c in frame.columns}
+        raise ValueError(
+            "AMF short CSV schema not recognized; "
+            f"missing={sorted(missing)}; columns={list(frame.columns)}; normalized={diagnostics}"
+        )
     out["isin"] = out["isin"].astype(str).str.strip().str.upper()
     out["short_position_pct"] = out["short_position_pct"].map(_pct)
     for c in ("position_date", "publication_start", "publication_end"):
