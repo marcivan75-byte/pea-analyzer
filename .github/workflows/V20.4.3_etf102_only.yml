@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/V20.4.3_etf102_only.yml'
       - 'src/v182/decision/etf102_direct_enrichment.py'
+      - 'src/v182/decision/etf102_reference_v205.py'
       - 'src/v182/decision/etf102_committee_v2043.py'
       - 'src/v182/decision/etf102_committee_v2043_hardened.py'
       - 'src/v182/sources/etf102_sentiment_overlay.py'
@@ -29,7 +30,7 @@ concurrency:
 jobs:
   etf102:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
         with:
@@ -89,7 +90,7 @@ jobs:
           done < /tmp/etf102/runs.txt
           test "$FOUND" = 1
 
-      - name: Direct metadata enrichment on 102 ETF
+      - name: Direct metadata and history enrichment on 102 ETF
         run: python -m v182.decision.etf102_direct_enrichment
 
       - name: Refresh market sentiment on ETF102 only
@@ -209,7 +210,34 @@ jobs:
           print('V20_5_ETF102_SMART_MONEY_INTEGRATED_OK',a['decisions'],a['mean_weight_coverage'],f['risk_gates'],gates,{'sm_dates':it['distinct_shadow_run_dates']})
           PY
 
-      - name: Publish committee summary
+      - name: Build complete ETF102 master reference
+        run: python -m v182.decision.etf102_reference_v205
+
+      - name: ETF102 master reference quality gates
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+          master=pd.read_csv('outputs/V20.5_ETF102_REFERENCE_MASTER.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          complete=pd.read_csv('outputs/V20.5_ETF102_REFERENCE_COMPLETE.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False,keep_default_na=False)
+          coverage=pd.read_csv('outputs/V20.5_ETF102_REFERENCE_COVERAGE.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          audit=json.loads(Path('outputs/audit/V20.5_ETF102_REFERENCE_AUDIT.json').read_text(encoding='utf-8'))
+          assert audit.get('passed') is True, audit
+          assert len(master)==102 and master['isin'].astype(str).nunique()==102
+          assert len(complete)==102 and complete['isin'].astype(str).nunique()==102
+          assert master['legacy_266_used'].astype(str).str.lower().eq('false').all()
+          assert master['ticker_identity_status'].astype(str).eq('FINAL_VALIDATED').all()
+          assert master['execution'].astype(str).eq('RESEARCH_ONLY').all()
+          assert master['reference_version'].astype(str).eq('V20.5_ETF102_REFERENCE_MASTER').all()
+          assert master['reference_missing_data_policy'].astype(str).eq('VALUE_OR_EXPLICIT_NA_NO_NEUTRAL_50').all()
+          assert (coverage.loc[coverage['mandatory'].astype(str).str.lower().eq('true'),'coverage_pct'].astype(float) == 100.0).all()
+          blanks=complete.astype(str).apply(lambda s: s.str.strip().eq('')).sum().sum()
+          assert int(blanks)==0, blanks
+          print('V20_5_ETF102_REFERENCE_GATES_OK', {'rows':len(master),'columns':len(master.columns),'mean_field_coverage':audit['mean_field_coverage_pct'],'full_fields':audit['full_coverage_fields'],'unavailable':audit['unavailable_fields']})
+          PY
+
+      - name: Publish committee and reference summary
         run: |
           cat outputs/V20.4.3_ETF102_COMMITTEE_SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -219,24 +247,38 @@ jobs:
           echo "Smart Money source artifact: ${SMART_MONEY_SOURCE_ARTIFACT}" >> "$GITHUB_STEP_SUMMARY"
           echo "Smart Money integration: NEGATIVE HIGH-CONFIDENCE RISK GATE ONLY; POSITIVE SCORE BOOST OFF" >> "$GITHUB_STEP_SUMMARY"
           echo "Legacy 266 universe: NOT LOADED / NOT SCORED" >> "$GITHUB_STEP_SUMMARY"
+          echo "Reference: MACHINE MASTER + COMPLETE VIEW (explicit N/A) + COVERAGE + GAPS" >> "$GITHUB_STEP_SUMMARY"
           echo "Funnel: GLOBAL_MACRO -> COUNTRY_INFLATION/RATES -> GLOBAL/COUNTRY/SECTOR/ETF_NEWS -> SENTIMENT -> ETF_STRUCTURE -> TECHNICAL -> SMART_MONEY -> RISK_GATE" >> "$GITHUB_STEP_SUMMARY"
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          a=json.loads(Path('outputs/audit/V20.5_ETF102_REFERENCE_AUDIT.json').read_text(encoding='utf-8'))
+          print(f"Reference mean field coverage: {a['mean_field_coverage_pct']}%")
+          print(f"Reference full-coverage fields: {a['full_coverage_fields']}/{a['original_committee_columns']}")
+          print(f"Reference unavailable fields: {', '.join(a['unavailable_fields']) if a['unavailable_fields'] else 'none'}")
+          PY
 
-      - name: Upload integrated ETF102 decision pack
+      - name: Upload integrated ETF102 decision and reference pack
         uses: actions/upload-artifact@v6
         with:
-          name: V20.5-ETF102-Funnel-SmartMoney-${{ github.run_id }}
+          name: V20.5-ETF102-Funnel-SmartMoney-Reference-${{ github.run_id }}
           path: |
             outputs/V20.4.3_ETF102_DIRECT_ENRICHED.csv
             outputs/V20.4.3_ETF102_COMMITTEE.csv
             outputs/V20.4.3_ETF102_COMMITTEE_SUMMARY.md
             outputs/V20.5_ETF102_FUNNEL_CONTEXT.csv
             outputs/V18.3_PEA_ETF_SMART_MONEY_SHADOW.csv
+            outputs/V20.5_ETF102_REFERENCE_MASTER.csv
+            outputs/V20.5_ETF102_REFERENCE_COMPLETE.csv
+            outputs/V20.5_ETF102_REFERENCE_COVERAGE.csv
+            outputs/V20.5_ETF102_REFERENCE_GAPS.csv
             outputs/audit/V20.4.3_ETF102_DIRECT_ENRICHMENT.json
             outputs/audit/V20.4.3_ETF102_SENTIMENT.json
             outputs/audit/V20.4.3_ETF102_COMMITTEE_AUDIT.json
             outputs/audit/V20.5_FUNNEL_CONTEXT.json
             outputs/audit/V18.3_SMART_MONEY_ITERATION_STATUS.json
             outputs/audit/V18.3_SMART_MONEY_QUALITY_GATES.json
+            outputs/audit/V20.5_ETF102_REFERENCE_AUDIT.json
             data/reference/V20.4.3_ETF102_CONFIG.json
             data/reference/V20.5_FUNNEL_CONFIG.json
           if-no-files-found: error
