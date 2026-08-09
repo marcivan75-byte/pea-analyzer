@@ -1,0 +1,168 @@
+name: V21.1 FREE ONLY - Incremental Data Capture
+
+on:
+  workflow_dispatch:
+    inputs:
+      twelve_symbols:
+        description: 'Maximum Twelve Data symbols for this wave'
+        required: false
+        default: '40'
+      alpha_symbols:
+        description: 'Maximum Alpha Vantage symbols for this wave'
+        required: false
+        default: '10'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v211-free-capture
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -c constraints-ci.txt -e .[test]
+
+      - name: Static FREE_ONLY preflight
+        run: |
+          set -euo pipefail
+          python -m pip check
+          python -m compileall -q src tests
+          ruff check --select E9,F63,F7,F82 src tests
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          c=json.loads(Path('data/reference/V21.1_FREE_CAPTURE_CONFIG.json').read_text())
+          assert c['version']=='V21.1_FREE_CAPTURE'
+          assert c['free_only'] is True
+          assert c['execution_mode']=='RESEARCH_ONLY'
+          assert c['canonical_universe_size']==1429
+          assert c['principles']['no_paid_source'] is True
+          assert c['principles']['yfinance_role']=='LAST_RESORT_FALLBACK_ONLY'
+          print('V21_1_FREE_ONLY_CONFIG_OK')
+          PY
+
+      - name: Restore latest successful V21.0 Actions reference
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/v211base outputs
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/V21.0_actions1429_only.yml/runs?status=success&branch=feature%2Fsmart-money-v1&per_page=20" --jq '.workflow_runs[].id' > /tmp/v211base/runs.txt
+          FOUND=0
+          while read -r RUN; do
+            [ -n "$RUN" ] || continue
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}/artifacts?per_page=100" --jq '.artifacts[]|select(.expired==false)|[.id,.name]|@tsv' > /tmp/v211base/arts.tsv || continue
+            while IFS=$'\t' read -r ART NAME; do
+              case "$NAME" in V21.0-Actions-PEA-1429-Reference-*) ;; *) continue ;; esac
+              rm -rf /tmp/v211base/unpack && mkdir -p /tmp/v211base/unpack
+              gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/v211base/a.zip || continue
+              unzip -oq /tmp/v211base/a.zip -d /tmp/v211base/unpack || continue
+              SRC=$(find /tmp/v211base/unpack -name V21.0_ACTIONS_PEA_REFERENCE_MASTER.csv -print -quit)
+              [ -n "$SRC" ] || continue
+              cp "$SRC" outputs/V21.0_ACTIONS_PEA_REFERENCE_MASTER.csv
+              if python - <<'PY'
+          import pandas as pd
+          d=pd.read_csv('outputs/V21.0_ACTIONS_PEA_REFERENCE_MASTER.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          assert len(d)==1429 and d['isin'].astype(str).nunique()==1429
+          print('V21_1_BASE_OK',len(d),len(d.columns))
+          PY
+              then FOUND=1; echo "V211_BASE_RUN=$RUN" >> "$GITHUB_ENV"; break 2; fi
+            done < /tmp/v211base/arts.tsv
+          done < /tmp/v211base/runs.txt
+          test "$FOUND" = 1
+
+      - name: Restore latest V21.1 cumulative capture cache when available
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/v211cache outputs/free_capture
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/V21.1_free_capture.yml/runs?status=success&branch=feature%2Fsmart-money-v1&per_page=20" --jq '.workflow_runs[] | select(.id != '${GITHUB_RUN_ID}') | .id' > /tmp/v211cache/runs.txt || true
+          RESTORED=0
+          while read -r RUN; do
+            [ -n "$RUN" ] || continue
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}/artifacts?per_page=100" --jq '.artifacts[]|select(.expired==false)|[.id,.name]|@tsv' > /tmp/v211cache/arts.tsv || continue
+            while IFS=$'\t' read -r ART NAME; do
+              case "$NAME" in V21.1-Free-Capture-*) ;; *) continue ;; esac
+              gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/v211cache/a.zip || continue
+              rm -rf /tmp/v211cache/unpack && mkdir -p /tmp/v211cache/unpack
+              unzip -oq /tmp/v211cache/a.zip -d /tmp/v211cache/unpack || continue
+              OLD=$(find /tmp/v211cache/unpack -type d -path '*/outputs/free_capture' -print -quit)
+              if [ -n "$OLD" ]; then cp -a "$OLD/." outputs/free_capture/; RESTORED=1; echo "V211_CACHE_RUN=$RUN" >> "$GITHUB_ENV"; break 2; fi
+            done < /tmp/v211cache/arts.tsv
+          done < /tmp/v211cache/runs.txt
+          echo "V21_1_CACHE_RESTORED=$RESTORED"
+
+      - name: Run V21.1 FREE_ONLY incremental capture
+        env:
+          OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
+          TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
+          V211_TWELVE_MAX_SYMBOLS: ${{ inputs.twelve_symbols }}
+          V211_ALPHA_MAX_SYMBOLS: ${{ inputs.alpha_symbols }}
+          V211_ALPHA_MAX_CALLS: '23'
+          V211_MARKETSTACK_MAX_SYMBOLS: '3'
+          V211_OPENFIGI_MAX_REQUESTS: '30'
+          V182_USER_AGENT: 'PEA-V21.1-FreeCapture/1.0'
+        run: python -m v182.free_capture.orchestrator
+
+      - name: FREE_ONLY hard audit
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+          a=json.loads(Path('outputs/free_capture/V21.1_FREE_CAPTURE_AUDIT.json').read_text())
+          d=pd.read_csv('outputs/free_capture/V21.1_FREE_CAPTURE_OVERLAY.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          assert a['passed'] is True and a['free_only'] is True
+          assert a['paid_sources_called'] is False and a['yfinance_called_by_v211'] is False
+          assert len(d)==1429 and d['isin'].astype(str).nunique()==1429
+          assert Path('outputs/free_capture/V21.1_SOURCE_HEALTH.csv').exists()
+          print('V21_1_FREE_CAPTURE_GATES_OK',a['cache_identity_isin'],a['cache_market_isin'],a['cache_fact_rows'],a['metrics_pct_base_plus_free'])
+          PY
+
+      - name: Publish capture summary
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          a=json.loads(Path('outputs/free_capture/V21.1_FREE_CAPTURE_AUDIT.json').read_text())
+          print('# V21.1 FREE_ONLY capture')
+          print(f"- Base run: {a['rows']} Actions / {a['unique_isin']} ISIN")
+          print(f"- Identity cache: {a['cache_identity_isin']}")
+          print(f"- Market cache: {a['cache_market_isin']} instruments / {a['cache_market_rows']} rows")
+          print(f"- Fact cache: {a['cache_fact_rows']} rows")
+          print(f"- Coverage base + free: {a['metrics_pct_base_plus_free']}")
+          print(f"- Source status: {a['source_status']}")
+          print('- Paid source calls: 0')
+          print('- yfinance calls in V21.1: 0')
+          PY
+
+      - name: Upload cumulative V21.1 free capture cache
+        uses: actions/upload-artifact@v6
+        with:
+          name: V21.1-Free-Capture-${{ github.run_id }}
+          retention-days: 90
+          if-no-files-found: error
+          path: |
+            data/reference/V21.1_FREE_CAPTURE_CONFIG.json
+            outputs/free_capture/
