@@ -1,0 +1,138 @@
+name: V20.4.3 ETF102 Only Committee
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/smart-money-v1]
+    paths:
+      - '.github/workflows/V20.4.3_etf102_only.yml'
+      - 'src/v182/decision/etf102_direct_enrichment.py'
+      - 'src/v182/decision/etf102_committee_v2043.py'
+      - 'src/v182/sources/etf102_sentiment_overlay.py'
+      - 'data/reference/V20.4.3_ETF102_CONFIG.json'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v2043-etf102-only
+  cancel-in-progress: true
+
+jobs:
+  etf102:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -c constraints-ci.txt -e .[test]
+
+      - name: Static preflight
+        run: |
+          set -euo pipefail
+          python -m pip check
+          python -m compileall -q src tests
+          ruff check --select E9,F63,F7,F82 src tests
+
+      - name: Reuse latest validated ETF102 master only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/etf102 outputs
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" --jq '.artifacts|sort_by(.created_at)|reverse|.[]|select(.expired==false)|select(.name|startswith("V18.2-full-audit-"))|[.id,.workflow_run.id]|@tsv' > /tmp/etf102/list.tsv
+          FOUND=0
+          while IFS=$'\t' read -r ART RUN; do
+            [ -n "$ART" ] || continue
+            C=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}" --jq '.conclusion // ""' 2>/dev/null || true)
+            [ "$C" = success ] || continue
+            rm -rf /tmp/etf102/unpack; mkdir -p /tmp/etf102/unpack
+            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/etf102/a.zip
+            unzip -oq /tmp/etf102/a.zip -d /tmp/etf102/unpack
+            SRC=$(find /tmp/etf102/unpack -name V18.2_PEA_ETF_MASTER_ENRICHED.csv -print -quit)
+            [ -n "$SRC" ] || continue
+            cp "$SRC" outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
+            python - <<'PY'
+          import pandas as pd
+          p='outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv'
+          d=pd.read_csv(p,sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          assert len(d)==102 and d['isin'].nunique()==102
+          assert d['ticker_identity_status'].astype(str).eq('FINAL_VALIDATED').all()
+          print('ETF102_REFERENCE_OK')
+          PY
+            echo "ETF102_REFERENCE_RUN=$RUN" >> "$GITHUB_ENV"
+            FOUND=1; break
+          done < /tmp/etf102/list.tsv
+          test "$FOUND" = 1
+
+      - name: Direct metadata enrichment on 102 ETF
+        run: python -m v182.decision.etf102_direct_enrichment
+
+      - name: Refresh market sentiment on ETF102 only
+        run: python -m v182.sources.etf102_sentiment_overlay
+
+      - name: Build availability-aware ETF102 committee
+        run: python -m v182.decision.etf102_committee_v2043
+
+      - name: ETF102 hard quality gates
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+          p=Path('outputs/V20.4.3_ETF102_COMMITTEE.csv')
+          d=pd.read_csv(p,sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          a=json.loads(Path('outputs/audit/V20.4.3_ETF102_COMMITTEE_AUDIT.json').read_text(encoding='utf-8'))
+          e=json.loads(Path('outputs/audit/V20.4.3_ETF102_DIRECT_ENRICHMENT.json').read_text(encoding='utf-8'))
+          s=json.loads(Path('outputs/audit/V20.4.3_ETF102_SENTIMENT.json').read_text(encoding='utf-8'))
+          assert len(d)==102 and d['isin'].nunique()==102
+          assert d['legacy_266_used'].astype(str).str.lower().eq('false').all()
+          assert a['legacy_266_used'] is False and e['legacy_266_used'] is False and s['legacy_266_used'] is False
+          assert a['missing_data_policy']=='RENORMALIZE_OBSERVED_WEIGHTS_NO_NEUTRAL_50'
+          assert pd.to_numeric(d['fear_greed_index'],errors='coerce').notna().all()
+          assert pd.to_numeric(d['aaii_bull_bear_spread'],errors='coerce').notna().all()
+          assert d['execution'].astype(str).eq('RESEARCH_ONLY').all()
+          required={'score_ct','score_mt','score_lt','score_short','rank_ct','rank_mt','rank_lt','rank_short','decision_ct','decision_mt','decision_lt','decision_short','weight_coverage_ct','weight_coverage_mt','weight_coverage_lt','weight_coverage_short'}
+          assert required.issubset(d.columns), required-set(d.columns)
+          for hz in ['ct','mt','lt']:
+            cov=pd.to_numeric(d[f'weight_coverage_{hz}'],errors='coerce')
+            assert cov.notna().all() and cov.between(0,1).all()
+          cfg=json.loads(Path('data/reference/V20.4.3_ETF102_CONFIG.json').read_text(encoding='utf-8'))
+          assert cfg['legacy_266_allowed'] is False
+          flat=str(cfg).lower()
+          assert 'v9' not in str(cfg['horizon_weights']).lower()
+          assert 'esg' not in str(cfg['horizon_weights']).lower()
+          print('V20_4_3_ETF102_HARD_GATES_OK',a['decisions'],a['mean_weight_coverage'])
+          PY
+
+      - name: Publish committee summary
+        run: |
+          cat outputs/V20.4.3_ETF102_COMMITTEE_SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "ETF102 reference run: ${ETF102_REFERENCE_RUN}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Legacy 266 universe: NOT LOADED / NOT SCORED" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload ETF102 decision pack
+        uses: actions/upload-artifact@v6
+        with:
+          name: V20.4.3-ETF102-Only-${{ github.run_id }}
+          path: |
+            outputs/V20.4.3_ETF102_DIRECT_ENRICHED.csv
+            outputs/V20.4.3_ETF102_COMMITTEE.csv
+            outputs/V20.4.3_ETF102_COMMITTEE_SUMMARY.md
+            outputs/audit/V20.4.3_ETF102_DIRECT_ENRICHMENT.json
+            outputs/audit/V20.4.3_ETF102_SENTIMENT.json
+            outputs/audit/V20.4.3_ETF102_COMMITTEE_AUDIT.json
+            data/reference/V20.4.3_ETF102_CONFIG.json
+          if-no-files-found: error
+          retention-days: 30
