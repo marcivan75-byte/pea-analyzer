@@ -5,7 +5,7 @@
   "source_universe_size": 1486,
   "excluded_isin_count": 57,
   "missing_data_policy": "RENORMALIZE_OBSERVED_WEIGHTS_NO_NEUTRAL_50",
-  "enrichment_priority_limit": 300,
+  "enrichment_priority_limit": 1429,
   "instrument_news_limit": 150,
   "horizon_weights": {
     "CT": {
