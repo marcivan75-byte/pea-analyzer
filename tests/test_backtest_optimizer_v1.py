@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from v182.decision.backtest_optimizer_v1 import BacktestOptimizer, OptimizerConfig, attach_forward_returns
+from v182.backtest_optimizer import BacktestOptimizer, OptimizerConfig, attach_forward_returns
 
 
 def _history(n_dates: int = 18, n_assets: int = 50) -> pd.DataFrame:
@@ -15,8 +15,6 @@ def _history(n_dates: int = 18, n_assets: int = 50) -> pd.DataFrame:
         for i in range(n_assets):
             momentum = np.clip(50 + 22 * latent[i] + rng.normal(0, 5), 0, 100)
             quality = np.clip(50 + rng.normal(0, 18), 0, 100)
-            # Price path is intentionally driven by momentum, so the optimiser
-            # has a real signal to discover without seeing future rows directly.
             price = 100 * np.exp(0.0025 * d_i * latent[i] + 0.0005 * d_i)
             rows.append({
                 "__instrument_id": f"ASSET{i:03d}",
