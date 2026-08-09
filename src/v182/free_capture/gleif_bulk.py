@@ -25,11 +25,8 @@ def _find_latest_zip(session: requests.Session) -> str:
         text = a.get_text(" ", strip=True)
         m = re.search(r"isin-lei-(20\d{6}T\d+)\.zip", href + " " + text, re.I)
         if m:
-            url = requests.compat.urljoin(PAGE, href)
-            links.append((m.group(1), url))
-    if not links:
-        return ""
-    return sorted(links, reverse=True)[0][1]
+            links.append((m.group(1), requests.compat.urljoin(PAGE, href)))
+    return sorted(links, reverse=True)[0][1] if links else ""
 
 
 def _read_mapping(content: bytes) -> pd.DataFrame:
@@ -57,6 +54,16 @@ def _read_mapping(content: bytes) -> pd.DataFrame:
 
 
 def capture(universe: pd.DataFrame, store: CaptureStore) -> dict:
+    today = date.today().isoformat()
+    existing = store.identity()
+    if not existing.empty:
+        cached = existing[(existing["source"].eq("GLEIF_ISIN_LEI_BULK")) & (existing["as_of"].astype(str).eq(today))]
+        covered = cached.loc[cached["lei"].astype(str).str.len().eq(20), "isin"].astype(str).nunique()
+        if covered >= int(len(universe) * 0.95):
+            store.add_health("GLEIF_ISIN_LEI_BULK", "CACHED_TODAY", len(universe), covered, len(universe)-covered,
+                             message="Daily bulk relationship file already represented in restored cache")
+            return {"status": "CACHED_TODAY", "resolved": covered, "added": 0, "mapping_rows": "CACHED"}
+
     session = requests.Session()
     try:
         url = _find_latest_zip(session)
@@ -76,7 +83,7 @@ def capture(universe: pd.DataFrame, store: CaptureStore) -> dict:
         "isin": r.isin, "name": clean_text(r.name), "source": "GLEIF_ISIN_LEI_BULK",
         "ticker": "", "exchange": "", "mic": "", "figi": "", "composite_figi": "",
         "share_class_figi": "", "security_type": "", "lei": r.lei, "lei_source": "GLEIF_ANNA_BULK",
-        "resolution_status": "CERTIFIED_BULK", "as_of": date.today().isoformat(), "observed_at_utc": utcnow(),
+        "resolution_status": "CERTIFIED_BULK", "as_of": today, "observed_at_utc": utcnow(),
     } for r in hit.itertuples(index=False)]
     added = store.upsert_identity(rows)
     store.add_health("GLEIF_ISIN_LEI_BULK", "OK" if added else "NO_NEW_DATA", len(universe), len(hit), len(universe)-len(hit),
