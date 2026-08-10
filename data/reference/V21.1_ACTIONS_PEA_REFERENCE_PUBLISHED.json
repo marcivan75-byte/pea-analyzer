@@ -1,24 +1,37 @@
 {
-  "reference_publication_version": "V21.1_ACTIONS_PEA_REFERENCE_STATIC",
-  "published_at_utc": "2026-08-10T12:09:00Z",
-  "publication_status": "STATIC_PUBLISHED_NOT_EXECUTED",
-  "runtime_validation_status": "NOT_RUN_BY_USER_REQUEST",
+  "reference_publication_version": "V21.1_ACTIONS_PEA_1829_REFERENCE_STATIC",
+  "published_at_utc": "2026-08-10T12:13:00Z",
+  "publication_status": "STATIC_PUBLISHED_1829_NOT_EXECUTED",
+  "runtime_validation_status": "NOT_RUN_AFTER_1829_SWITCH",
   "execution_mode": "RESEARCH_ONLY",
   "universe": {
     "documented_reference_actions": 1829,
-    "active_validated_actions": 1429,
-    "decision_universe": 1429,
+    "active_validated_actions": 1829,
+    "decision_universe": 1829,
     "source_universe_before_exclusions": 1486,
     "excluded_isin_count": 57,
-    "silent_universe_expansion_allowed": false
+    "validated_additions_count": 400,
+    "composition": "1486_SOURCE_MINUS_57_EXCLUSIONS_PLUS_400_PREVIOUSLY_VALIDATED_ADDITIONS_EQUALS_1829",
+    "silent_universe_reduction_allowed": false
   },
   "engine": {
     "active_scoring_config": "data/reference/V21.0_ACTIONS_PEA_CONFIG.json",
     "free_capture_config": "data/reference/V21.1_FREE_CAPTURE_CONFIG.json",
-    "workflow": ".github/workflows/V21.0_actions1429_only.yml",
+    "workflow": ".github/workflows/V21.1_actions1829_only.yml",
     "reference_generator": "src/v182/decision/actions_v210_reference.py",
+    "prepared_dataset": "outputs/V21.0_ACTIONS_PEA_1829_PREPARED.csv",
+    "committee_dataset": "outputs/V21.0_ACTIONS_PEA_1829_COMMITTEE.csv",
     "future_materialized_master": "outputs/V21.0_ACTIONS_PEA_REFERENCE_MASTER.csv",
     "future_materialized_complete": "outputs/V21.0_ACTIONS_PEA_REFERENCE_COMPLETE.csv"
+  },
+  "bootstrap": {
+    "base_validated_actions": 1429,
+    "validated_additions": 400,
+    "validated_additions_origin": "V20.4 Actions 506 validation run 31292369240",
+    "first_run_policy": "REBUILD_1829_FROM_1429_PLUS_400",
+    "subsequent_run_policy": "RETAIN_VALIDATED_400_IN_EACH_1829_ARTIFACT_AND_REUSE",
+    "revalidation_required_for_400_before_activation": false,
+    "reason": "The 400 additions were already validated before this universe switch"
   },
   "source_audit": {
     "version": "V21.1_SOURCE_AUDIT_2026-08-10_STATIC",
@@ -28,75 +41,30 @@
     "audited_sources_and_references": 36
   },
   "source_priority": {
-    "identity": [
-      "CANONICAL_VALIDATED_ISIN",
-      "EURONEXT_LIVE_PUBLIC",
-      "OPENFIGI_V3",
-      "GLEIF_ISIN_LEI_BULK",
-      "GLEIF_ISIN_LEI"
-    ],
-    "market_and_technical": [
-      "OFFICIAL_EXCHANGE_DELAYED",
-      "EURONEXT_LIVE_PUBLIC",
-      "YFINANCE_MARKET_TECHNICAL",
-      "TWELVEDATA_FREE",
-      "MARKETSTACK_FREE",
-      "ALPHA_VANTAGE_FREE",
-      "EODHD_FREE_EOD"
-    ],
-    "fundamentals": [
-      "ESEF_XBRL_JSON_AND_DERIVED",
-      "OFFICIAL_ISSUER_REPORTS",
-      "FINNHUB_FREE",
-      "ALPHA_VANTAGE_FREE",
-      "YFINANCE_FUNDAMENTAL_FALLBACK"
-    ],
-    "analyst_and_prospective": [
-      "FINNHUB_FREE",
-      "ZONEBOURSE_PUBLIC_V3",
-      "BOURSORAMA_PUBLIC_V2",
-      "YFINANCE_PROSPECTIVE_FALLBACK"
-    ],
-    "regulatory_smart_money": [
-      "AMF_SHORT_POSITIONS"
-    ],
-    "macro_news_sentiment": [
-      "FRED",
-      "ECB",
-      "EUROSTAT",
-      "EIA",
-      "GDELT",
-      "GOOGLE_NEWS_RSS",
-      "CNN_FEAR_GREED",
-      "AAII"
-    ]
+    "identity": ["CANONICAL_VALIDATED_ISIN","EURONEXT_LIVE_PUBLIC","OPENFIGI_V3","GLEIF_ISIN_LEI_BULK","GLEIF_ISIN_LEI"],
+    "market_and_technical": ["OFFICIAL_EXCHANGE_DELAYED","EURONEXT_LIVE_PUBLIC","YFINANCE_MARKET_TECHNICAL","TWELVEDATA_FREE","EODHD_FREE_EOD","MARKETSTACK_FREE","ALPHA_VANTAGE_FREE"],
+    "fundamentals": ["ESEF_XBRL_JSON_AND_DERIVED","OFFICIAL_ISSUER_REPORTS","FINNHUB_FREE","ALPHA_VANTAGE_FREE","YFINANCE_FUNDAMENTAL_FALLBACK"],
+    "analyst_and_prospective": ["FINNHUB_FREE","ZONEBOURSE_PUBLIC_V3","BOURSORAMA_PUBLIC_V2","YFINANCE_PROSPECTIVE_FALLBACK"],
+    "regulatory_smart_money": ["AMF_SHORT_POSITIONS"],
+    "macro_news_sentiment": ["FRED","ECB","EUROSTAT","EIA","GDELT","GOOGLE_NEWS_RSS","CNN_FEAR_GREED","AAII"]
   },
-  "new_data_families": [
-    "EURONEXT_LIVE_PRICE_FLOAT_SPREAD",
-    "AMF_PUBLIC_SHORT_POSITIONS",
-    "FINNHUB_EXTENDED_RATIOS_TARGETS_REVISIONS",
-    "FULL_FREE_OHLCV_TECHNICALS",
-    "FRED_CPI_INFLATION",
-    "GDELT_NEWS_POLARITY_MATERIALITY",
-    "EIA_ENERGY_CONTEXT",
-    "FREE_CELL_PROVENANCE"
-  ],
   "data_policy": {
     "merge_mode": "MISSING_ONLY",
     "no_neutral_50_imputation": true,
     "no_lower_quality_overwrite": true,
     "preserve_cell_provenance": true,
-    "unknown_or_unentitled_data_remains_missing": true
+    "unknown_or_unentitled_data_remains_missing": true,
+    "smart_money_for_added_400": "MISSING_OR_SHADOW_ONLY_NO_POSITIVE_IMPUTATION"
   },
   "weights": {
-    "status": "UNCHANGED_FROM_ACTIVE_V21.0_SCORING",
+    "status": "UNCHANGED_FROM_V21_SCORING",
     "new_source_weight_activation": false,
     "policy": "NO_NEW_WEIGHT_WITHOUT_BACKTEST"
   },
   "paid_and_excluded_sources": {
-    "EODHD_FUNDAMENTALS": "DISABLED_BY_DEFAULT_MANUAL_OPT_IN_ONLY",
+    "EODHD_FUNDAMENTALS": "NOT_IN_DEFAULT_1829_WORKFLOW",
     "MARKETBEAT": "EXCLUDED_NO_VERIFIED_DURABLE_FREE_PEA_EUROPE_API"
   },
   "workflow_trigger_policy": "MANUAL_ONLY_UNTIL_EXPLICIT_REACTIVATION",
-  "publication_note": "This file publishes the V21.1 static definition of the Actions PEA reference. It does not claim that a new 1429-row master has been recalculated; materialization requires a future explicitly authorized manual run."
+  "publication_note": "The active static Actions PEA contract is now 1829 validated actions. No runtime master is claimed until the new 1829 workflow is explicitly run and passes its hard 1829 integrity gates."
 }
