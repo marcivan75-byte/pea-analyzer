@@ -13,6 +13,10 @@ on:
         description: 'Maximum Alpha Vantage fallback symbols for this wave'
         required: false
         default: '3'
+      eodhd_free_symbols:
+        description: 'Maximum EODHD Free EOD fallback symbols; hard-capped below the 20/day free limit'
+        required: false
+        default: '18'
       finnhub_symbols:
         description: 'Maximum Finnhub free complementary symbols for this wave'
         required: false
@@ -98,6 +102,8 @@ jobs:
           assert len(required)>=24
           assert required['implementation'].str.strip().ne('').all()
           assert not required['static_status'].str.contains('UNMAPPED|MISSING_CONNECTOR',case=False,regex=True).any()
+          assert (audit['source']=='EODHD_FREE_EOD').any()
+          assert Path('src/v182/free_capture/eodhd_free.py').exists()
           assert Path('config/V21.1_METHODOLOGY_REFERENCES.csv').exists()
           print('V21_1_FREE_ONLY_SOURCE_AUDIT_PREFLIGHT_OK',len(required))
           PY
@@ -154,6 +160,13 @@ jobs:
           done < /tmp/v211cache/runs.txt
           echo "V21_1_CACHE_RESTORED=$RESTORED"
 
+      - name: Seed remaining market-history gaps with EODHD Free EOD
+        env:
+          EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
+          V211_EODHD_FREE_MAX_SYMBOLS: ${{ inputs.eodhd_free_symbols || '18' }}
+          V182_USER_AGENT: 'PEA-V21.1-FreeCapture/1.3'
+        run: python -m v182.free_capture.eodhd_free
+
       - name: Run V21.1 FREE_ONLY incremental capture
         env:
           OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
@@ -177,7 +190,7 @@ jobs:
           V211_MARKETSTACK_MAX_SYMBOLS: '1'
           V211_OPENFIGI_MAX_REQUESTS: '30'
           V211_FINNHUB_DELAY_SECONDS: '1.05'
-          V182_USER_AGENT: 'PEA-V21.1-FreeCapture/1.2'
+          V182_USER_AGENT: 'PEA-V21.1-FreeCapture/1.3'
         run: python -m v182.free_capture.orchestrator
 
       - name: FREE_ONLY hard audit
@@ -189,13 +202,14 @@ jobs:
           a=json.loads(Path('outputs/free_capture/V21.1_FREE_CAPTURE_AUDIT.json').read_text())
           d=pd.read_csv('outputs/free_capture/V21.1_FREE_CAPTURE_OVERLAY.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
           cm=json.loads(Path('outputs/free_capture/V21.1_COMPLEMENTARY_MERGE_AUDIT.json').read_text())
+          health=pd.read_csv('outputs/free_capture/V21.1_SOURCE_HEALTH.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
           assert a['passed'] is True and a['free_only'] is True
           assert a['paid_sources_called'] is False and a['yfinance_called_by_v211'] is False
           assert len(d)==1429 and d['isin'].astype(str).nunique()==1429
           assert a['cache_identity_isin'] >= 1429
           assert cm['passed'] is True and cm['overwrites']==0
-          assert Path('outputs/free_capture/V21.1_SOURCE_HEALTH.csv').exists()
           assert Path('outputs/free_capture/V21.1_COMPLEMENTARY_CONTEXT.json').exists()
+          assert health['source'].astype(str).eq('EODHD_FREE_EOD').any()
           expected={'complementary_context','openfigi','euronext_live','gleif_bulk','gleif_api','esef','amf_short_positions','official_delayed','manual_imports','twelvedata','marketstack','alpha_vantage','finnhub','boursorama_public','zonebourse_public','derived_market','final_canonical_merge','complementary_merge'}
           missing=expected-set(a.get('results',{}))
           assert not missing, missing
@@ -207,18 +221,23 @@ jobs:
           python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
           from pathlib import Path
+          import pandas as pd
           a=json.loads(Path('outputs/free_capture/V21.1_FREE_CAPTURE_AUDIT.json').read_text())
           cm=json.loads(Path('outputs/free_capture/V21.1_COMPLEMENTARY_MERGE_AUDIT.json').read_text())
+          h=pd.read_csv('outputs/free_capture/V21.1_SOURCE_HEALTH.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          e=h[h['source'].astype(str).eq('EODHD_FREE_EOD')].tail(1).to_dict('records')
           print('# V21.1 FREE_ONLY capture')
           print(f"- Base: {a['rows']} Actions / {a['unique_isin']} ISIN")
           print('- Documented source reference: 1931 instruments = 1829 Actions + 102 ETF; Action decision universe remains 1429 validated ISIN')
           print(f"- Identity cache: {a['cache_identity_isin']} / LEI: {a['cache_lei_isin']}")
           print(f"- Market cache: {a['cache_market_isin']} instruments / {a['cache_market_rows']} rows")
+          print(f"- EODHD free EOD: {e[0] if e else 'NO_STATUS'}")
           print(f"- Fact cache: {a['cache_fact_rows']} rows")
           print(f"- Complementary missing-only cells applied: {cm['applied_cells']} / overwrites: {cm['overwrites']}")
           print(f"- Coverage base + free: {a['metrics_pct_base_plus_free']}")
           print(f"- Source status: {a['source_status']}")
           print('- Paid source calls: 0')
+          print('- EODHD Fundamentals remains paid-only and is NOT called by V21.1')
           print('- yfinance calls inside V21.1: 0; Yahoo is handled downstream as market/technical fallback')
           PY
 
