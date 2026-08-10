@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import math
 import os
 from datetime import date
-from pathlib import Path
 import time
 import pandas as pd
 
@@ -28,7 +28,7 @@ FIELD_MAP = {
 
 
 def _rank(universe: pd.DataFrame) -> pd.DataFrame:
-    """Use scarce Alpha calls where support and missing-data value are both plausible."""
+    """Spend scarce Alpha calls on securities most likely to exist in its global catalogue."""
     x = universe.copy()
     idx = x.index
     target_fields = sorted({field for field, _ in FIELD_MAP.values()})
@@ -38,20 +38,30 @@ def _rank(universe: pd.DataFrame) -> pd.DataFrame:
             missing += (~x[field].map(is_observed)).astype(float)
         else:
             missing += 1.0
+
     mc = pd.to_numeric(x.get("market_cap_v21", pd.Series(0, index=idx)), errors="coerce").fillna(0).clip(lower=0)
     analysts = pd.to_numeric(x.get("n_analysts_v21", pd.Series(0, index=idx)), errors="coerce").fillna(0).clip(lower=0)
     mt = pd.to_numeric(x.get("score_mt", pd.Series(0, index=idx)), errors="coerce").fillna(0)
     lt = pd.to_numeric(x.get("score_lt", pd.Series(0, index=idx)), errors="coerce").fillna(0)
-    # Known analyst coverage / meaningful capitalization strongly increase the odds that the
-    # global symbol exists at Alpha. This is capture ranking only; no investment score changes.
+    selected = x.get("selection_mt", pd.Series(False, index=idx)).astype(str).str.lower().isin({"true", "1", "yes"})
+    selected |= x.get("selection_lt", pd.Series(False, index=idx)).astype(str).str.lower().isin({"true", "1", "yes"})
+
+    has_analysts = analysts.gt(0)
+    meaningful_cap = mc.ge(200_000_000)
+    eligible = missing.gt(0) & (has_analysts | meaningful_cap)
+
+    # Capture ranking only: this cannot modify investment scores or horizon weights.
+    log_cap = mc.map(lambda v: max(0.0, math.log10(v) - 7.0) if v > 0 else 0.0)
     x["_alpha_rank"] = (
-        missing * 1000.0
-        + analysts.clip(upper=30) * 100.0
-        + mc.map(lambda v: min(1200.0, 100.0 * (0 if v <= 0 else max(0.0, __import__('math').log10(v) - 6.0))))
+        has_analysts.astype(float) * 50_000.0
+        + analysts.clip(upper=30) * 1_500.0
+        + log_cap.clip(upper=5) * 3_000.0
+        + selected.astype(float) * 5_000.0
+        + missing * 250.0
         + (mt + lt) / 4.0
     )
     x["_alpha_missing"] = missing
-    return x[x["_alpha_missing"].gt(0)].sort_values("_alpha_rank", ascending=False, kind="stable")
+    return x[eligible].sort_values("_alpha_rank", ascending=False, kind="stable")
 
 
 def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 10, max_calls: int = 23) -> dict:
@@ -74,6 +84,7 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 10, 
     cached_negative_skipped = 0
     failed = 0
     resolved_count = 0
+    samples: list[dict] = []
     today = date.today().isoformat()
 
     for _, row in ranked.iterrows():
@@ -86,13 +97,13 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 10, 
             resolved = av.resolve_symbol(row.to_dict(), key, cache_path=cache_path)
             calls += int(resolved.api_calls)
             if not resolved.symbol:
-                # A fresh cached negative costs neither a daily API call nor a wave slot. Move on
-                # until this run actually probes up to max_symbols new/resolved securities.
                 if resolved.source == "CACHE" and int(resolved.api_calls) == 0:
                     cached_negative_skipped += 1
                     continue
                 attempted += 1
                 failed += 1
+                if len(samples) < 6:
+                    samples.append({"isin": isin, "name": clean_text(row.get("name")), "status": resolved.reason or "UNRESOLVED"})
                 continue
 
             attempted += 1
@@ -105,18 +116,25 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 10, 
             if not body or clean_text(body.get("Symbol")) == "":
                 failed += 1
                 continue
+            fields = []
             for api_field, (field, mult) in FIELD_MAP.items():
                 val = number(body.get(api_field))
                 if val is None:
                     continue
+                fields.append(field)
                 rows.append({
                     "isin": isin, "field": field, "value": val * mult, "value_text": "",
                     "as_of": today, "source": "ALPHA_VANTAGE_FREE", "evidence": "API_OVERVIEW_RESOLVED_SYMBOL",
                     "confidence": 0.80, "status": "OBSERVED", "observed_at_utc": utcnow(),
                 })
-        except Exception:
+            if len(samples) < 6:
+                samples.append({"isin": isin, "name": clean_text(row.get("name")), "symbol": resolved.symbol,
+                                "region": resolved.region, "match_score": resolved.match_score, "fields": fields})
+        except Exception as exc:
             attempted += 1
             failed += 1
+            if len(samples) < 6:
+                samples.append({"isin": isin, "name": clean_text(row.get("name")), "error": f"{type(exc).__name__}:{str(exc)[:120]}"})
         time.sleep(1.15)
 
     added = store.upsert_facts(rows)
@@ -124,7 +142,7 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 10, 
     store.add_health(
         "ALPHA_VANTAGE_FREE", status, attempted, added, failed,
         calls, max(0, max_calls - calls),
-        f"OVERVIEW + cached SYMBOL_SEARCH; cached_negative_skipped={cached_negative_skipped}; resolved={resolved_count}; hard daily guard",
+        f"OVERVIEW + cached SYMBOL_SEARCH; cached_negative_skipped={cached_negative_skipped}; resolved={resolved_count}; samples={samples}; hard daily guard",
     )
     return {
         "status": status,
@@ -134,4 +152,5 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 10, 
         "failed": failed,
         "resolved": resolved_count,
         "cached_negative_skipped": cached_negative_skipped,
+        "samples": samples,
     }
