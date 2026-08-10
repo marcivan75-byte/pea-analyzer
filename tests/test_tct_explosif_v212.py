@@ -11,6 +11,8 @@ def _base(name='X'):
     return {'isin':name,'pea_confidence':'HIGH','v182_ticker_validation_confidence_pct':99,'liquidity_percentile':.8,'max_drawdown_1y':-20,'volatility_20d':35,'sector_v21':'Tech','coverage_grade_v21':'B_PARTIAL_FORWARD'}
 def test_weights_sum_to_one():
     for key in ['pillar_weights','technical_weights','volume_weights','catalyst_weights','analyst_weights']:assert abs(sum(CFG[key].values())-1)<1e-12
+def test_missing_pillars_never_redistribute_weight():
+    r=pd.DataFrame([{'isin':'M','action_topdown_score':100,'sentiment_regime_score':100}]); out=compute_scores(r,CFG); assert out.loc[0,'tct_score_raw_v212']<=1.01
 def test_gdelt_discovery_never_directly_changes_score():
     a=_base('A'); a.update({'breakout_20d_flag':True,'rsi14':58,'macd_hist':1,'rvol20':2.2,'volume_acceleration_20d':1.4,'relative_strength':80}); b=dict(a); b['isin']='B'; b['gdelt_catalyst_discovery_score']=100; out=compute_scores(pd.DataFrame([a,b]),CFG); assert out.loc[0,'tct_score_v212']==out.loc[1,'tct_score_v212']; assert bool(out.loc[1,'tct_gdelt_attention_flag'])
 def test_gap_is_only_volume_not_technical():
