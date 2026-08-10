@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-import json, math
+import json
 import numpy as np
 import pandas as pd
 
 ROOT=Path(__file__).resolve().parents[3]
 CONFIG=ROOT/'data/reference/V21.0_ACTIONS_PEA_CONFIG.json'
-IN=ROOT/'outputs/V21.0_ACTIONS_PEA_1429_PREPARED.csv'
-OUT=ROOT/'outputs/V21.0_ACTIONS_PEA_1429_COMMITTEE.csv'
+IN=ROOT/'outputs/V21.0_ACTIONS_PEA_1829_PREPARED.csv'
+OUT=ROOT/'outputs/V21.0_ACTIONS_PEA_1829_COMMITTEE.csv'
 AUDIT=ROOT/'outputs/audit/V21.0_ACTIONS_COMMITTEE_AUDIT.json'
 SUMMARY=ROOT/'outputs/V21.0_ACTIONS_COMMITTEE_SUMMARY.md'
 
@@ -42,8 +42,7 @@ def _sector_rank(df,field,higher):
     return out
 
 def _distribution_score(s):
-    x=s.astype(str).str.upper().str.strip(); mp={'DIST':100.0,'ACC_OR_DIST':60.0,'ACC':0.0}
-    return x.map(mp)
+    x=s.astype(str).str.upper().str.strip(); return x.map({'DIST':100.0,'ACC_OR_DIST':60.0,'ACC':0.0})
 
 def _metric_score(df,field,horizon,cfg):
     if field=='distribution_policy': return _distribution_score(df[field])
@@ -79,26 +78,29 @@ def _decision(s,th):
     if s>=float(th['REVIEW']): return 'REVIEW'
     return 'REJECT'
 
+def _pea_high(df,cfg):
+    raw=df.get('pea_confidence',pd.Series('',index=df.index)); num=pd.to_numeric(raw,errors='coerce')
+    threshold=float(cfg['coverage'].get('pea_numeric_high_confidence_min',.90))
+    return raw.astype(str).str.upper().str.startswith('HIGH') | num.ge(threshold) | num.ge(threshold*100)
+
 def build(root:Path|None=None)->dict:
     root=root or ROOT; cfg=json.loads((root/CONFIG.relative_to(ROOT)).read_text(encoding='utf-8'))
     df=pd.read_csv(root/IN.relative_to(ROOT),sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
-    if len(df)!=1429 or df['isin'].astype(str).nunique()!=1429: raise RuntimeError('V21 committee universe gate')
+    expected=int(cfg['canonical_universe_size'])
+    if len(df)!=expected or df['isin'].astype(str).nunique()!=expected: raise RuntimeError(f'V21 committee universe gate requires {expected}')
 
-    # Valuation discount is a distinct sector-aware composite; no target-price input avoids double-counting analyst upside.
     parts=[]
     for field,higher,w in [('per_forward_v21',False,.45),('pb_v21',False,.20),('fcf_yield_v21',True,.35)]:
         s=_sector_rank(df,field,higher); parts.append((s,w))
     n=sum(s.fillna(0)*w for s,w in parts); d=sum(s.notna().astype(float)*w for s,w in parts)
     df['valuation_discount_score']=(n/d.replace(0,np.nan)).clip(0,100)
 
-    # Refresh coalesced analyst revision fields without inventing observations.
     if 'broker_weighted_revision_30d' in df:
         x=_num(df,'broker_weighted_revision_30d'); alt=_num(df,'analyst_momentum_score')
-        # analyst_momentum is 0..100; use only when explicit revision metric is absent, but preserve separate semantics by converting around 50.
         df['broker_weighted_revision_30d']=x.where(x.notna(),(alt-50)/5.0)
-    
+
     coverage_floor=float(cfg['coverage']['coverage_penalty_floor'])
-    horizon_scores={}; horizon_cov={}; contribution_cols={}
+    contribution_cols={}
     for hz in ['CT','MT','LT']:
         weights=cfg['horizon_weights'][hz]
         raw,cov,scored,den=_weighted(df,weights,hz,cfg)
@@ -115,8 +117,7 @@ def build(root:Path|None=None)->dict:
             contribution_cols[f'effective_weight_{low}_{f}']=np.round(ew,5)
             contribution_cols[f'contrib_{low}_{f}']=(scored[f].fillna(0)*ew).round(3)
         pct=_rank(adj,True); rw=float(cfg['score_calibration']['raw_weight']); pw=float(cfg['score_calibration']['percentile_weight'])
-        final=(rw*adj+pw*pct).clip(0,100)
-        df[f'score_{low}']=final.round(2); horizon_scores[low]=final; horizon_cov[low]=cov
+        df[f'score_{low}']=(rw*adj+pw*pct).clip(0,100).round(2)
 
     short_raw,short_cov,short_scored,short_den=_weighted(df,cfg['short_weights'],'SHORT',cfg)
     short_raw=short_raw*(coverage_floor+(1-coverage_floor)*short_cov)
@@ -126,13 +127,12 @@ def build(root:Path|None=None)->dict:
     for f,w in cfg['short_weights'].items():
         ew=np.where(short_scored[f].notna() & short_den.gt(0),float(w)/short_den,0.0)
         contribution_cols[f'effective_weight_short_{f}']=np.round(ew,5); contribution_cols[f'contrib_short_{f}']=(short_scored[f].fillna(0)*ew).round(3)
-    if contribution_cols:
-        df=pd.concat([df,pd.DataFrame(contribution_cols,index=df.index)],axis=1)
+    if contribution_cols: df=pd.concat([df,pd.DataFrame(contribution_cols,index=df.index)],axis=1)
     srw=float(cfg['score_calibration']['short_raw_weight']); df['score_short']=(srw*short_raw+(1-srw)*_rank(short_raw,True)).clip(0,100).round(2)
 
     identity=_num(df,'v182_ticker_validation_confidence_pct')/100.0
-    pea_high=df['pea_confidence'].astype(str).str.upper().str.startswith('HIGH')
-    liq=_num(df,'iquidity_percentile'); td_gate=df.get('action_topdown_gate',pd.Series('DATA_REQUIRED',index=df.index)).astype(str)
+    pea_high=_pea_high(df,cfg)
+    liq=_num(df,'liquidity_percentile'); td_gate=df.get('action_topdown_gate',pd.Series('DATA_REQUIRED',index=df.index)).astype(str)
     sm_conf=_num(df,'action_smart_money_confidence'); sm_gate=df.get('action_smart_money_gate',pd.Series('NONE',index=df.index)).astype(str)
     earnings_gate=df.get('earnings_risk_gate',pd.Series('DATA_NOT_AVAILABLE',index=df.index)).astype(str)
     catalyst=_num(df,'earnings_catalyst_score')
@@ -145,7 +145,7 @@ def build(root:Path|None=None)->dict:
         for i in df.index:
             dec=_decision(score.loc[i],th); reason='SCORE'
             if identity.loc[i] < float(cfg['coverage']['identity_min']): dec,reason='REVIEW','IDENTITY_CONFIDENCE'
-            elif cfg['coverage'].get('pea_buy_requires_high_confidence',True) and not bool(pea_high.loc[i]) and dec in {'BUY_CANDIDATE','WATCH'}: dec,reason='REVIEW' ,'PEA_ELIGIBILITY_REVIEW_ONLY'
+            elif cfg['coverage'].get('pea_buy_requires_high_confidence',True) and not bool(pea_high.loc[i]) and dec in {'BUY_CANDIDATE','WATCH'}: dec,reason='REVIEW','PEA_ELIGIBILITY_REVIEW_ONLY'
             elif cov.loc[i] < float(cfg['coverage']['min_weight_coverage_watch'][hz.upper()]): dec,reason='REVIEW','DATA_COVERAGE_LOW'
             elif dec=='BUY_CANDIDATE' and cov.loc[i] < float(cfg['coverage']['min_weight_coverage_buy'][hz.upper()]): dec,reason='WATCH','DATA_COVERAGE_BUY_GATE'
             elif dec=='BUY_CANDIDATE' and pd.notna(liq.loc[i]) and liq.loc[i] < float(cfg['gates']['bottom_liquidity_percentile_review']): dec,reason='WATCH','LIQUIDITY_BOTTOM_5PCT'
@@ -159,7 +159,6 @@ def build(root:Path|None=None)->dict:
         df[f'rank_{hz}']=score.rank(method='min',ascending=False).astype('Int64')
         reasons_by_hz[hz]=pd.Series(reasons).value_counts().to_dict()
 
-    # Short is an avoidance/risk signal only. Low liquidity makes it non-actionable rather than more attractive.
     st=cfg['thresholds']['SHORT']; sscore=_num(df,'score_short'); scov=_num(df,'weight_coverage_short')
     sdec=[]; sreason=[]
     for i in df.index:
@@ -171,8 +170,6 @@ def build(root:Path|None=None)->dict:
         sdec.append(dec); sreason.append(reason)
     df['decision_short']=sdec; df['decision_reason_short']=sreason; df['rank_short']=sscore.rank(method='min',ascending=False).astype('Int64')
 
-    # Committee ranking is recomputed AFTER all decision gates. Raw score ranks are retained,
-    # while committee_rank_* ranks only actionable BUY/WATCH or SHORT/WATCH_SHORT rows.
     for hz in ['ct','mt','lt']:
         actionable=df[f'decision_{hz}'].isin(['BUY_CANDIDATE','WATCH'])
         committee_score=_num(df,f'score_{hz}').where(actionable)
@@ -200,11 +197,11 @@ def build(root:Path|None=None)->dict:
 
     outp=root/OUT.relative_to(ROOT); outp.parent.mkdir(parents=True,exist_ok=True); df.to_csv(outp,sep=';',index=False,encoding='utf-8-sig')
     decisions={hz:df[f'decision_{hz}'].value_counts().to_dict() for hz in ['ct','mt','lt','short']}
-    audit={'passed':True,'version':cfg['version'],'rows':len(df),'columns':len(df.columns),'unique_isin':int(df['isin'].nunique()),'decisions':decisions,'selection_counts':{hz:int(df[f'selection_{hz}'].sum()) for hz in ['ct','mt','lt','short']},'mean_weight_coverage':{hz:round(float(pd.to_numeric(df[f'weight_coverage_{hz}'],errors='coerce').mean()),4) for hz in ['ct','mt','lt','short']},'pea_review_only_rows':int((~pea_high).sum()),'topdown_gates':td_gate.value_counts().to_dict(),'smart_money_positive_score_boost_allowed':False,'smart_money_negative_gate_rows':int((sm_gate!='NONE').sum()),'earnings_imminent_rows':int((earnings_gate=='IMMINENT_REVIEW').sum()),'reason_counts':reasons_by_hz,'execution':'RESEARCH_ONLY','generated_at_utc':datetime.now(timezone.utc).isoformat()}
+    audit={'passed':True,'version':cfg['version'],'rows':len(df),'expected_rows':expected,'columns':len(df.columns),'unique_isin':int(df['isin'].nunique()),'decisions':decisions,'selection_counts':{hz:int(df[f'selection_{hz}'].sum()) for hz in ['ct','mt','lt','short']},'mean_weight_coverage':{hz:round(float(pd.to_numeric(df[f'weight_coverage_{hz}'],errors='coerce').mean()),4) for hz in ['ct','mt','lt','short']},'pea_review_only_rows':int((~pea_high).sum()),'topdown_gates':td_gate.value_counts().to_dict(),'smart_money_positive_score_boost_allowed':False,'smart_money_negative_gate_rows':int((sm_gate!='NONE').sum()),'earnings_imminent_rows':int((earnings_gate=='IMMINENT_REVIEW').sum()),'reason_counts':reasons_by_hz,'execution':'RESEARCH_ONLY','generated_at_utc':datetime.now(timezone.utc).isoformat()}
     ap=root/AUDIT.relative_to(ROOT); ap.parent.mkdir(parents=True,exist_ok=True); ap.write_text(json.dumps(audit,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
-    lines=['# V21.0 PEA Actions 1429 — Comité','',f"- Universe: {len(df)} canonical PEA Actions",f"- Columns: {len(df.columns)}",f"- Mean weighted coverage: {audit['mean_weight_coverage']}",f"- Decisions: {decisions}",f"- Selections: {audit['selection_counts']}",'- Smart Money positive contribution: OFF; negative high-confidence gate only','- Execution: RESEARCH_ONLY']
+    lines=['# V21.0 PEA Actions 1829 — Comité','',f"- Universe: {len(df)} validated PEA Actions",f"- Columns: {len(df.columns)}",f"- Mean weighted coverage: {audit['mean_weight_coverage']}",f"- Decisions: {decisions}",f"- Selections: {audit['selection_counts']}",'- Smart Money positive contribution: OFF; negative high-confidence gate only','- Execution: RESEARCH_ONLY']
     (root/SUMMARY.relative_to(ROOT)).write_text('\n'.join(lines)+'\n',encoding='utf-8')
-    print('V21_ACTIONS_COMMITTEE_OK',{'decisions':decisions,'selection':audit['selection_counts'],'coverage':audit['mean_weight_coverage']})
+    print('V21_ACTIONS_COMMITTEE_1829_OK',{'decisions':decisions,'selection':audit['selection_counts'],'coverage':audit['mean_weight_coverage']})
     return audit
 
 if __name__=='__main__': build()
