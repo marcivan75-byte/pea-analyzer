@@ -7,6 +7,71 @@
   "missing_data_policy": "RENORMALIZE_OBSERVED_WEIGHTS_NO_NEUTRAL_50",
   "enrichment_priority_limit": 1429,
   "instrument_news_limit": 150,
+  "source_contract": {
+    "audit_version": "V21.1_SOURCE_AUDIT_2026-08-10_STATIC",
+    "runtime_validation_status": "NOT_RUN_BY_USER_REQUEST",
+    "workflow_trigger_policy": "MANUAL_ONLY_UNTIL_EXPLICIT_REACTIVATION",
+    "free_first": true,
+    "documented_reference_actions": 1829,
+    "active_canonical_actions": 1429,
+    "universe_policy": "DO_NOT_EXPAND_1429_CANONICAL_DECISION_UNIVERSE_WITHOUT_SEPARATE_ELIGIBILITY_VALIDATION",
+    "source_audit_file": "config/V21.1_FREE_SOURCE_AUDIT.csv",
+    "methodology_registry": "config/V21.1_METHODOLOGY_REFERENCES.csv",
+    "identity_priority": [
+      "CANONICAL_VALIDATED_ISIN",
+      "EURONEXT_LIVE_PUBLIC",
+      "OPENFIGI_V3",
+      "GLEIF_ISIN_LEI_BULK",
+      "GLEIF_ISIN_LEI"
+    ],
+    "market_priority": [
+      "OFFICIAL_EXCHANGE_DELAYED",
+      "EURONEXT_LIVE_PUBLIC",
+      "YFINANCE_MARKET_TECHNICAL",
+      "TWELVEDATA_FREE",
+      "MARKETSTACK_FREE",
+      "ALPHA_VANTAGE_FREE"
+    ],
+    "fundamental_priority": [
+      "ESEF_XBRL_JSON_AND_DERIVED",
+      "OFFICIAL_ISSUER_REPORTS",
+      "FINNHUB_FREE",
+      "ALPHA_VANTAGE_FREE",
+      "YFINANCE_FUNDAMENTAL_FALLBACK"
+    ],
+    "prospective_priority": [
+      "FINNHUB_FREE",
+      "ZONEBOURSE_PUBLIC_V3",
+      "BOURSORAMA_PUBLIC_V2",
+      "YFINANCE_PROSPECTIVE_FALLBACK"
+    ],
+    "regulatory_sources": [
+      "AMF_SHORT_POSITIONS"
+    ],
+    "context_sources": [
+      "FRED",
+      "ECB",
+      "EUROSTAT",
+      "EIA",
+      "GDELT",
+      "GOOGLE_NEWS_RSS",
+      "CNN_FEAR_GREED",
+      "AAII"
+    ],
+    "methodology_only_sources": [
+      "ECB_FINANCIAL_STABILITY_REPORT",
+      "NBER_W30917",
+      "NBER_W16601"
+    ],
+    "paid_fallback_default": "DISABLED",
+    "paid_fallback_manual_opt_in_only": true,
+    "no_lower_quality_overwrite": true,
+    "no_neutral_50_imputation": true,
+    "no_new_weight_without_backtest": true,
+    "smart_money_positive_activation": false,
+    "amf_short_position_use": "OBSERVED_REGULATORY_EVIDENCE_AND_RISK_CONTEXT_ONLY_UNTIL_BACKTEST",
+    "pmi_policy": "NO_OBSOLETE_SERIES_HARDCODED_FRED_PMI_REQUIRES_EXPLICIT_VALIDATED_SERIES_ID"
+  },
   "horizon_weights": {
     "CT": {
       "perf_1m_pct": 0.08, "perf_3m_pct": 0.05, "perf_6m_pct": 0.02, "relative_strength": 0.07,
@@ -96,17 +161,26 @@
   "new_reference_fields": [
     "high_52w", "low_52w", "distance_to_52w_high_pct", "distance_to_52w_low_pct", "stoch_k", "stoch_d",
     "stoch_bull_cross_flag", "stoch_bear_cross_flag", "volume_avg_20d", "volume_acceleration_20d", "breakout_20d_flag",
-    "volatility_1y_pct", "market_cap_v21", "enterprise_value_v21", "per_forward_v21", "per_ttm_v21", "pb_v21",
-    "roe_v21_pct", "roa_v21_pct", "operating_margin_v21_pct", "net_margin_v21_pct", "gross_margin_v21_pct",
-    "revenue_growth_v21_pct", "earnings_growth_v21_pct", "free_cash_flow_v21", "operating_cash_flow_v21", "fcf_yield_v21",
+    "mm20", "mm50", "mm100", "mm200", "rsi14", "macd_line", "macd_signal", "macd_hist", "atr14",
+    "bollinger_mid", "bollinger_upper", "bollinger_lower", "bollinger_width_pct", "sharpe_1y_rf0",
+    "volatility_1y_pct", "market_cap_v21", "enterprise_value_v21", "per_forward_v21", "per_ttm_v21", "pb_v21", "ev_to_ebitda_v21",
+    "roe_v21_pct", "roa_v21_pct", "roic_v21_pct", "operating_margin_v21_pct", "net_margin_v21_pct", "gross_margin_v21_pct",
+    "revenue_growth_v21_pct", "revenue_cagr_5y_v21_pct", "earnings_growth_v21_pct", "free_cash_flow_v21", "operating_cash_flow_v21", "fcf_yield_v21",
     "total_debt_v21", "total_cash_v21", "ebitda_v21", "debt_to_ebitda_v21", "debt_to_equity_v21", "current_ratio_v21",
-    "interest_coverage_v21", "dividend_yield_v21_pct", "payout_ratio_v21_pct", "target_mean_v21", "target_low_v21", "target_high_v21",
-    "n_analysts_v21", "consensus_score_100_v21", "target_upside_pct_v21", "potential_gt_15_flag", "consensus_delta_4w",
-    "net_upgrades_30d_v21", "broker_weighted_revision_30d", "next_earnings_date", "days_to_earnings", "earnings_window_7d_flag",
-    "earnings_window_30d_flag", "earnings_risk_gate", "earnings_catalyst_score", "guidance_revision_score", "profit_warning_flag",
+    "interest_coverage_v21", "dividend_yield_v21_pct", "payout_ratio_v21_pct", "target_mean_v21", "target_low_v21", "target_high_v21", "target_median_v21",
+    "n_analysts_v21", "consensus_score_100_v21", "consensus_score_100_4w_ago_v21", "target_upside_pct_v21", "potential_gt_15_flag", "consensus_delta_4w",
+    "upgrades_30d_v21", "downgrades_30d_v21", "net_upgrades_30d_v21", "broker_weighted_revision_30d", "next_earnings_date", "days_to_earnings",
+    "earnings_window_7d_flag", "earnings_window_30d_flag", "earnings_risk_gate", "earnings_catalyst_score", "guidance_revision_score", "profit_warning_flag",
     "buyback_signal", "mna_rumor_score", "news_catalyst_score", "valuation_discount_score", "sector_v21",
-    "institutional_ownership_pct", "insider_ownership_pct", "short_percent_float_pct", "short_ratio", "insider_net_buy_90d",
-    "insider_buyers_90d", "insider_sellers_90d", "action_smart_money_score", "action_smart_money_confidence", "action_smart_money_gate",
+    "institutional_ownership_pct", "insider_ownership_pct", "short_percent_float_pct", "short_ratio", "insider_net_buy_90d", "insider_buyers_90d", "insider_sellers_90d",
+    "euronext_live_last_price", "euronext_live_bid", "euronext_live_ask", "free_float_pct", "spread_pct",
+    "amf_public_net_short_pct", "amf_public_net_short_max_holder_pct", "amf_public_net_short_holders", "amf_public_net_short_latest_date",
+    "free_identity_figi", "free_identity_composite_figi", "free_identity_share_class_figi", "free_identity_ticker", "free_identity_exchange", "free_identity_mic", "free_identity_lei",
+    "v211_macro_vix", "v211_macro_curve_10y2y", "v211_macro_cpi_index", "v211_macro_inflation_yoy_pct", "v211_macro_pmi", "v211_macro_pmi_status",
+    "v211_ecb_deposit_rate_pct", "v211_ecb_recent_change_pp", "v211_wti_spot_usd_bbl", "v211_brent_spot_usd_bbl", "v211_brent_wti_spread_usd_bbl",
+    "v211_global_news_score", "v211_global_news_polarity", "v211_global_news_materiality_score", "v211_global_news_material_articles",
+    "v211_fear_greed_index", "v211_aaii_bull_bear_spread", "v211_free_capture_propagated", "v211_free_capture_propagated_at_utc",
+    "action_smart_money_score", "action_smart_money_confidence", "action_smart_money_gate",
     "liquidity_percentile", "pea_validation_gate", "identity_gate", "v210_enrichment_priority_score", "v210_enrichment_priority",
     "action_topdown_score", "action_topdown_coverage", "action_topdown_multiplier_ct", "action_topdown_multiplier_mt", "action_topdown_gate",
     "weight_coverage_ct", "weight_coverage_mt", "weight_coverage_lt", "weight_coverage_short",
