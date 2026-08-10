@@ -18,6 +18,9 @@ from .twelvedata_free import capture as capture_twelve
 from .alpha_free import capture as capture_alpha
 from .marketstack_free import capture as capture_marketstack
 from .finnhub_free import capture as capture_finnhub
+from .boursorama_public import capture as capture_boursorama
+from .zonebourse_public_v3 import capture as capture_zonebourse
+from .amf_short_positions import capture as capture_amf_short_positions
 from .complementary_context import capture as capture_complementary_context
 from .derive_market import capture as derive_market
 from .derive_fundamentals import capture as derive_fundamentals
@@ -75,12 +78,15 @@ def _materialize(base: pd.DataFrame, store: CaptureStore, cfg: dict) -> tuple[pd
     source_priority = {
         "INTERNAL_FROM_ESEF": 1,
         "ESEF_XBRL_JSON": 2,
+        "AMF_SHORT_POSITIONS": 2,
         "INTERNAL_FROM_FREE_OHLCV": 2,
-        "FINNHUB_FREE": 3,
-        "ALPHA_VANTAGE_FREE_PROXY": 4,
-        "ALPHA_VANTAGE_FREE": 5,
-        "TWELVEDATA_FREE": 6,
-        "MARKETSTACK_FREE": 7,
+        "ZONEBOURSE_PUBLIC_V3": 3,
+        "BOURSORAMA_PUBLIC_V2": 3,
+        "FINNHUB_FREE": 4,
+        "ALPHA_VANTAGE_FREE_PROXY": 5,
+        "ALPHA_VANTAGE_FREE": 6,
+        "TWELVEDATA_FREE": 7,
+        "MARKETSTACK_FREE": 8,
     }
     if not facts.empty:
         facts = facts.copy()
@@ -194,9 +200,9 @@ def _queues(prioritized: pd.DataFrame, regulated: pd.DataFrame, store: CaptureSt
     cols = [c for c in ["isin", "name", "country", "euronext_symbol", "euronext_mic", "yahoo_ticker", "market_cap_v21", "score_mt", "score_lt", "free_capture_priority"] if c in prioritized]
     write_csv(regulated.head(600)[[c for c in cols if c in regulated]], qroot / "V21.1_ESEF_ISSUER_QUEUE.csv", ["isin"])
     public = prioritized.head(250)[cols].copy()
-    public["boursorama_status"] = "PENDING_TARGETED_CAPTURE_VALIDATION"
-    public["zonebourse_status"] = "PENDING_TARGETED_CAPTURE_VALIDATION"
-    public["capture_policy"] = "TARGETED_ONLY_CACHE_WEEKLY"
+    public["boursorama_status"] = "ACTIVE_TARGETED_WEEKLY_CACHE"
+    public["zonebourse_status"] = "ACTIVE_TARGETED_WEEKLY_CACHE"
+    public["capture_policy"] = "TARGETED_ONLY_CACHE_WEEKLY_IDENTITY_GUARDED"
     write_csv(public, qroot / "V21.1_PUBLIC_PROSPECTIVE_QUEUE.csv", ["free_capture_priority"])
 
 
@@ -221,6 +227,7 @@ def main() -> None:
     )
     results["esef"] = capture_esef(regulated, store, int(os.getenv("V211_ESEF_MAX_SYMBOLS", "50")))
     results["derived_fundamentals"] = derive_fundamentals(base, store)
+    results["amf_short_positions"] = capture_amf_short_positions(base, store)
 
     results["official_delayed"] = capture_official(store)
     results["manual_imports"] = capture_manual(base, store, IMPORT_ROOT)
@@ -230,6 +237,8 @@ def main() -> None:
     marketstack_max = int(os.getenv("V211_MARKETSTACK_MAX_SYMBOLS", "1"))
     finnhub_max = int(os.getenv("V211_FINNHUB_MAX_SYMBOLS", "120"))
     finnhub_metric_max = int(os.getenv("V211_FINNHUB_METRIC_MAX_SYMBOLS", "60"))
+    boursorama_max = int(os.getenv("V211_BOURSORAMA_MAX_SYMBOLS", "40"))
+    zonebourse_max = int(os.getenv("V211_ZONEBOURSE_MAX_SYMBOLS", "40"))
     results["twelvedata"] = capture_twelve(
         prioritized, store, max_symbols=twelve_max,
         credit_guard=int(os.getenv("V211_TWELVE_CREDIT_GUARD", "760")),
@@ -242,6 +251,8 @@ def main() -> None:
     results["finnhub"] = capture_finnhub(
         prioritized, store, max_symbols=finnhub_max, metric_max=finnhub_metric_max,
     ) if finnhub_max > 0 else {"status": "DISABLED_THIS_WAVE"}
+    results["boursorama_public"] = capture_boursorama(base, store, cfg, max_symbols=boursorama_max) if boursorama_max > 0 else {"status": "DISABLED_THIS_WAVE"}
+    results["zonebourse_public"] = capture_zonebourse(base, store, cfg, max_symbols=zonebourse_max) if zonebourse_max > 0 else {"status": "DISABLED_THIS_WAVE"}
 
     results["derived_market"] = derive_market(store)
     results["final_canonical_merge"] = write_merged(base, store, cfg)
