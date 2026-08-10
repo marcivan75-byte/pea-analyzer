@@ -4,7 +4,8 @@ from datetime import date
 import numpy as np
 import pandas as pd
 
-from .core import CaptureStore, is_observed, number, utcnow, write_csv
+from .canonical_merge import write_merged
+from .core import CaptureStore, is_observed, load_config, number, utcnow, write_csv
 
 
 PLAUSIBILITY_BOUNDS = {
@@ -199,10 +200,12 @@ def capture(base: pd.DataFrame, store: CaptureStore) -> dict:
         rejected_plausibility + rejected_period_mismatch,
         message=msg,
     )
+    merge_audit = write_merged(base, store, load_config())
     return {
         "status": "OK",
         "instruments": instruments,
         "facts_added": added,
         "rejected_plausibility": rejected_plausibility,
         "rejected_period_mismatch": rejected_period_mismatch,
+        "canonical_merge": merge_audit,
     }
