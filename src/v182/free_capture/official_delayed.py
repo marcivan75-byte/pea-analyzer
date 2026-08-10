@@ -12,6 +12,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from .core import CaptureStore, clean_text, number, utcnow
+from .nasdaq_nordic_delayed import capture as capture_nasdaq_nordic
 
 SOURCES = {
     "EURONEXT_DELAYED": "https://marketdata.euronext.com/data-reporting-service/trades-file",
@@ -90,7 +91,7 @@ def _aggregate(df: pd.DataFrame, source: str) -> list[dict]:
     return out
 
 
-def capture(store: CaptureStore) -> dict:
+def _capture_legacy_official(store: CaptureStore) -> dict:
     session = requests.Session()
     raw_root = store.root / "raw_official"
     raw_root.mkdir(parents=True, exist_ok=True)
@@ -123,4 +124,27 @@ def capture(store: CaptureStore) -> dict:
         status = "OK" if added else ("FILES_ARCHIVED_NO_OHLCV" if downloaded else "NO_DIRECT_FILE_DISCOVERED")
         store.add_health(source, status, len(urls), added, max(0, len(urls) - downloaded), message=f"downloaded={downloaded}")
         summary[source] = {"status": status, "discovered": len(urls), "downloaded": downloaded, "market_rows": added}
+    return summary
+
+
+def capture(store: CaptureStore) -> dict:
+    """Capture every official free delayed market lane currently automatable.
+
+    Euronext/Deutsche Börse retain their generic discovery path. Nasdaq Nordic has a dedicated
+    collector because its post-trade service publishes minute CSV files. The universe is recovered
+    from the already validated identity cache, so the main orchestrator remains unchanged.
+    """
+    summary = _capture_legacy_official(store)
+    identity = store.identity()
+    if identity.empty:
+        nasdaq = {"status": "NO_IDENTITY_CACHE", "market_rows": 0}
+        store.add_health("NASDAQ_NORDIC_DELAYED", "NO_IDENTITY_CACHE")
+    else:
+        universe = pd.DataFrame({"isin": sorted(set(identity["isin"].astype(str)))})
+        nasdaq = capture_nasdaq_nordic(
+            universe,
+            store,
+            max_files=int(os.getenv("V211_NASDAQ_NORDIC_MAX_FILES", "120")),
+        )
+    summary["NASDAQ_NORDIC_DELAYED"] = nasdaq
     return summary
