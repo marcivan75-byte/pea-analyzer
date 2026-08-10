@@ -1,0 +1,78 @@
+name: V21.2 TCT Explosif Optimized
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/tct-explosif-v21-2-opt]
+    paths:
+      - 'src/v182/tct/**'
+      - 'data/reference/V21.2_TCT_EXPLOSIF_OPT_CONFIG.json'
+      - 'tests/test_tct_explosif_v212.py'
+      - 'scripts/run_tct_explosif_v212.py'
+      - '.github/workflows/V21.2_tct_explosif.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v212-tct-explosif
+  cancel-in-progress: true
+
+jobs:
+  validate-and-score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install
+        run: pip install -c constraints-ci.txt -e .[test]
+      - name: Static and unit audit
+        run: |
+          python -m compileall -q src tests scripts
+          ruff check --select E9,F63,F7,F82 src tests scripts
+          pytest -q tests/test_tct_explosif_v212.py
+      - name: Restore latest V21.1 Free Capture merged reference
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/v212 outputs/free_capture
+          RUN=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/V21.1_free_capture.yml/runs?status=success&branch=feature%2Fsmart-money-v1&per_page=20" --jq '.workflow_runs[0].id')
+          ART=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}/artifacts?per_page=100" --jq '.artifacts[]|select(.expired==false and (.name|startswith("V21.1-Free-Capture-")))|.id' | head -1)
+          test -n "$ART"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/v212/a.zip
+          unzip -oq /tmp/v212/a.zip -d /tmp/v212/unpack
+          SRC=$(find /tmp/v212/unpack -name V21.1_ACTIONS_PEA_REFERENCE_MERGED.csv -print -quit)
+          test -n "$SRC"
+          cp "$SRC" outputs/free_capture/V21.1_ACTIONS_PEA_REFERENCE_MERGED.csv
+      - name: Score V21.2 TCT
+        run: python scripts/run_tct_explosif_v212.py
+      - name: Audit outputs
+        run: |
+          python - <<'PY'
+          import json,pandas as pd
+          from pathlib import Path
+          a=json.loads(Path('outputs/audit/V21.2_TCT_EXPLOSIF_AUDIT.json').read_text())
+          d=pd.read_csv('outputs/V21.2_TCT_EXPLOSIF_1429.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          assert a['passed'] is True and a['weights_sum']==1.0
+          assert a['gdelt_direct_weight']==0.0
+          assert len(d)==1429 and d['isin'].astype(str).nunique()==1429
+          print('V21_2_TCT_GATES_OK',a)
+          PY
+      - uses: actions/upload-artifact@v6
+        with:
+          name: V21.2-TCT-Explosif-${{ github.run_id }}
+          retention-days: 90
+          if-no-files-found: error
+          path: |
+            data/reference/V21.2_TCT_EXPLOSIF_OPT_CONFIG.json
+            outputs/V21.2_TCT_EXPLOSIF_1429.csv
+            outputs/V21.2_TCT_EXPLOSIF_TOP20.csv
+            outputs/audit/V21.2_TCT_EXPLOSIF_AUDIT.json
