@@ -15,6 +15,9 @@ from bs4 import BeautifulSoup
 from .core import CaptureStore, clean_text, number, utcnow
 
 BASE = "https://filings.xbrl.org/"
+DISCOVERY_SOURCE = "ESEF_DISCOVERY"
+DISCOVERY_FIELD = "esef_discovery_status"
+NEGATIVE_CACHE_DAYS = 30
 
 CONCEPTS = {
     "revenue_esef": [
@@ -131,11 +134,39 @@ def _latest_json_url(lei: str, session: requests.Session) -> tuple[str, str, str
 
 def _load_json_response(r: requests.Response, url: str) -> dict:
     raw = r.content
-    # requests/HTTP servers may transparently decode gzip while preserving a .json.gz URL.
-    # Only decompress when the actual gzip magic bytes are present.
     if raw[:2] == b"\x1f\x8b":
         raw = gzip.decompress(raw)
     return json.loads(raw.decode("utf-8-sig"))
+
+
+def _recent_negative_isins(facts: pd.DataFrame) -> set[str]:
+    if facts.empty:
+        return set()
+    d = facts[
+        facts["source"].astype(str).eq(DISCOVERY_SOURCE)
+        & facts["field"].astype(str).eq(DISCOVERY_FIELD)
+        & facts["status"].astype(str).isin({"NO_FILING", "NO_CANONICAL_CONCEPTS"})
+    ].copy()
+    if d.empty:
+        return set()
+    d["_observed"] = pd.to_datetime(d["observed_at_utc"], errors="coerce", utc=True)
+    cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=NEGATIVE_CACHE_DAYS)
+    return set(d.loc[d["_observed"].ge(cutoff), "isin"].astype(str))
+
+
+def _discovery_row(isin: str, status: str, evidence: str) -> dict:
+    return {
+        "isin": isin,
+        "field": DISCOVERY_FIELD,
+        "value": "",
+        "value_text": status,
+        "as_of": date.today().isoformat(),
+        "source": DISCOVERY_SOURCE,
+        "evidence": evidence,
+        "confidence": 0.95,
+        "status": status,
+        "observed_at_utc": utcnow(),
+    }
 
 
 def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 80) -> dict:
@@ -150,15 +181,20 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 80) 
     lei_map = lei_rows.drop_duplicates("isin", keep="last").set_index("isin")["lei"].astype(str).to_dict()
 
     facts_old = store.facts()
-    completed = set()
+    completed: set[str] = set()
     if not facts_old.empty:
         e = facts_old[facts_old["source"].eq("ESEF_XBRL_JSON")]
         completed = set(e["isin"].astype(str))
+    negative_cached = _recent_negative_isins(facts_old)
 
     targets = []
+    skipped_negative_cache = 0
     for _, row in universe.iterrows():
         isin = str(row["isin"])
         if isin in completed or isin not in lei_map:
+            continue
+        if isin in negative_cached:
+            skipped_negative_cache += 1
             continue
         targets.append((row, lei_map[isin]))
         if len(targets) >= max_symbols:
@@ -166,6 +202,7 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 80) 
 
     session = requests.Session()
     rows: list[dict] = []
+    discovery_rows: list[dict] = []
     filings = 0
     no_filing = 0
     errors = 0
@@ -177,6 +214,9 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 80) 
             found = _latest_json_url(lei, session)
             if not found:
                 no_filing += 1
+                discovery_rows.append(_discovery_row(isin, "NO_FILING", "A_OFFICIAL_DIRECTORY_NO_ESEF_JSON"))
+                if len(samples) < 5:
+                    samples.append({"isin": isin, "lei": lei, "reason": "NO_FILING_CACHED_30D"})
                 continue
             url, report_period, filing_index = found
             r = session.get(url, timeout=60, headers={"User-Agent": os.getenv("V182_USER_AGENT", "PEA-FreeCapture/1.0")})
@@ -184,8 +224,9 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 80) 
             extracted = _extract(_load_json_response(r, url), report_period)
             if not extracted:
                 extracted_zero += 1
+                discovery_rows.append(_discovery_row(isin, "NO_CANONICAL_CONCEPTS", f"A_OFFICIAL_STRUCTURED|{filing_index}"))
                 if len(samples) < 5:
-                    samples.append({"isin": isin, "lei": lei, "filing": filing_index, "reason": "NO_CANONICAL_CONCEPTS"})
+                    samples.append({"isin": isin, "lei": lei, "filing": filing_index, "reason": "NO_CANONICAL_CONCEPTS_CACHED_30D"})
                 continue
             filings += 1
             if len(samples) < 5:
@@ -203,10 +244,25 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 80) 
         time.sleep(0.05)
 
     added = store.upsert_facts(rows)
+    discovery_added = store.upsert_facts(discovery_rows)
     status = "OK" if filings else "NO_NEW_DATA"
     store.add_health(
         "ESEF_XBRL_JSON", status, len(targets), filings, no_filing + errors + extracted_zero,
-        message=f"facts_added={added}; no_filing={no_filing}; no_concepts={extracted_zero}; errors={errors}; samples={samples}"
+        message=(
+            f"facts_added={added}; discovery_markers={discovery_added}; no_filing={no_filing}; "
+            f"no_concepts={extracted_zero}; errors={errors}; negative_cache_skipped={skipped_negative_cache}; samples={samples}"
+        )
     )
-    return {"status": status, "attempted": len(targets), "filings": filings, "facts_added": added,
-            "no_filing": no_filing, "no_concepts": extracted_zero, "errors": errors, "samples": samples}
+    return {
+        "status": status,
+        "attempted": len(targets),
+        "filings": filings,
+        "facts_added": added,
+        "discovery_markers_added": discovery_added,
+        "no_filing": no_filing,
+        "no_concepts": extracted_zero,
+        "errors": errors,
+        "negative_cache_skipped": skipped_negative_cache,
+        "negative_cache_days": NEGATIVE_CACHE_DAYS,
+        "samples": samples,
+    }
