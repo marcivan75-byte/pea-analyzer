@@ -6,9 +6,13 @@ on:
     branches: [feature/smart-money-v1]
     paths:
       - '.github/workflows/V20.7_etf102_only.yml'
+      - 'src/v182/decision/etf102_direct_enrichment.py'
       - 'src/v182/decision/etf102_committee_v207.py'
       - 'src/v182/decision/etf102_v207_audit.py'
       - 'src/v182/decision/etf102_reference_v207.py'
+      - 'src/v182/sources/etf102_sentiment_overlay.py'
+      - 'src/v182/sources/funnel_context_fast.py'
+      - 'src/v182/sources/funnel_context_final.py'
       - 'src/v182/free_capture/propagate.py'
       - 'data/reference/V20.7_ETF102_CONFIG.json'
       - 'data/reference/V20.7_FUNNEL_CONFIG.json'
@@ -265,7 +269,7 @@ jobs:
           print(f"- Full fields: **{r['full_coverage_fields']}**")
           prop=Path('outputs/audit/V21.1_PROPAGATION_V20.4.3_ETF102_DIRECT_ENRICHED.json')
           if prop.exists():
-              pa=json.loads(prop.read_text()); print(f"- V21.1 complementary context: fields={pa.get('context_fields_added')} / overwrites={pa.get('overwrites')}")
+              pa=json.loads(prop.read_text()); print(f"- V21.1 complementary context: fields={pa.get('context_fields_added')} / canonical fallback cells={pa.get('canonical_context_fallback_cells')} / overwrites={pa.get('overwrites')}")
           else:
               print('- V21.1 complementary context: no prior successful free-capture artifact available')
           PY
