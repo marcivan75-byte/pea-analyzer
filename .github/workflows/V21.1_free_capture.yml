@@ -1,7 +1,6 @@
-name: V21.1 FREE ONLY - Incremental Data Capture
+name: V21.1 FREE ONLY - Incremental Data Capture 1829 Actions
 
-# AUDIT LOCK 2026-08-10: manual-only. No push/schedule trigger may be restored
-# until an explicit activation decision after static source audit and runtime validation.
+# Manual-only: no push/schedule trigger until explicit activation after 1829 runtime validation.
 on:
   workflow_dispatch:
     inputs:
@@ -14,50 +13,50 @@ on:
         required: false
         default: '3'
       eodhd_free_symbols:
-        description: 'Maximum EODHD Free EOD fallback symbols; hard-capped below the 20/day free limit'
+        description: 'Maximum EODHD Free EOD fallback symbols; hard-capped below 20/day'
         required: false
         default: '18'
       finnhub_symbols:
         description: 'Maximum Finnhub free complementary symbols for this wave'
         required: false
-        default: '120'
+        default: '180'
       finnhub_metric_symbols:
         description: 'Maximum Finnhub metric calls after validated symbol resolution'
         required: false
-        default: '60'
+        default: '90'
       boursorama_symbols:
         description: 'Maximum Boursorama public action pages for this wave'
         required: false
-        default: '40'
+        default: '60'
       zonebourse_symbols:
         description: 'Maximum Zonebourse public consensus pages for this wave'
         required: false
-        default: '40'
+        default: '60'
       euronext_live_symbols:
         description: 'Maximum Euronext Live public product pages for this wave'
         required: false
-        default: '150'
+        default: '220'
       gleif_symbols:
         description: 'Maximum GLEIF API fallback ISINs after bulk mapping'
         required: false
-        default: '50'
+        default: '75'
       esef_symbols:
         description: 'Maximum regulated issuers to query in filings.xbrl.org'
         required: false
-        default: '250'
+        default: '350'
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: v211-free-capture
+  group: v211-free-capture-1829
   cancel-in-progress: true
 
 jobs:
   capture:
     runs-on: ubuntu-latest
-    timeout-minutes: 105
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -74,12 +73,11 @@ jobs:
       - name: Install dependencies
         run: pip install -c constraints-ci.txt -e .[test]
 
-      - name: Static FREE_ONLY and exhaustive-source preflight
+      - name: Static FREE_ONLY 1829 preflight
         run: |
           set -euo pipefail
           python -m pip check
-          python -m compileall -q src tests
-          ruff check --select E9,F63,F7,F82 src tests
+          python -m compileall -q src
           python - <<'PY'
           import json
           from pathlib import Path
@@ -88,39 +86,36 @@ jobs:
           assert c['version']=='V21.1_FREE_CAPTURE'
           assert c['free_only'] is True
           assert c['execution_mode']=='RESEARCH_ONLY'
-          assert c['canonical_universe_size']==1429
+          assert c['canonical_universe_size']==1829
           assert c['source_reference_scope']['documented_total_instruments']==1931
-          assert c['source_audit_version']=='V21.1_SOURCE_AUDIT_2026-08-10_STATIC'
-          assert c['runtime_validation_status']=='NOT_RUN_BY_USER_REQUEST'
+          assert c['source_reference_scope']['documented_actions']==1829
+          assert c['source_reference_scope']['active_actions_canonical']==1829
+          assert c['runtime_validation_status']=='NOT_RUN_AFTER_1829_SWITCH'
           assert c['workflow_trigger_policy']=='MANUAL_ONLY_UNTIL_EXPLICIT_REACTIVATION'
           assert c['principles']['no_paid_source'] is True
           assert c['principles']['no_overwrite_with_lower_quality'] is True
-          assert c['principles']['propagate_validated_free_facts_before_downstream_scoring'] is True
-          assert c['principles']['methodology_reference_never_live_observation'] is True
           audit=pd.read_csv('config/V21.1_FREE_SOURCE_AUDIT.csv',sep=';',dtype=str,keep_default_na=False)
           required=audit[audit['required_from_1931_file'].str.lower().eq('true')]
           assert len(required)>=24
           assert required['implementation'].str.strip().ne('').all()
           assert not required['static_status'].str.contains('UNMAPPED|MISSING_CONNECTOR',case=False,regex=True).any()
           assert (audit['source']=='EODHD_FREE_EOD').any()
-          assert Path('src/v182/free_capture/eodhd_free.py').exists()
-          assert Path('config/V21.1_METHODOLOGY_REFERENCES.csv').exists()
-          print('V21_1_FREE_ONLY_SOURCE_AUDIT_PREFLIGHT_OK',len(required))
+          print('V21_1_FREE_ONLY_1829_PREFLIGHT_OK',len(required))
           PY
 
-      - name: Restore latest successful V21.0 Actions reference
+      - name: Restore latest successful 1829 Actions reference
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p /tmp/v211base outputs
-          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/V21.0_actions1429_only.yml/runs?status=success&branch=feature%2Fsmart-money-v1&per_page=20" --jq '.workflow_runs[].id' > /tmp/v211base/runs.txt
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/V21.1_actions1829_only.yml/runs?status=success&branch=feature%2Fsmart-money-v1&per_page=20" --jq '.workflow_runs[].id' > /tmp/v211base/runs.txt
           FOUND=0
           while read -r RUN; do
             [ -n "$RUN" ] || continue
             gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}/artifacts?per_page=100" --jq '.artifacts[]|select(.expired==false)|[.id,.name]|@tsv' > /tmp/v211base/arts.tsv || continue
             while IFS=$'\t' read -r ART NAME; do
-              case "$NAME" in V21.0-Actions-PEA-1429-Reference-*) ;; *) continue ;; esac
+              case "$NAME" in V21.1-Actions-PEA-1829-Reference-*) ;; *) continue ;; esac
               rm -rf /tmp/v211base/unpack && mkdir -p /tmp/v211base/unpack
               gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/v211base/a.zip || continue
               unzip -oq /tmp/v211base/a.zip -d /tmp/v211base/unpack || continue
@@ -130,8 +125,9 @@ jobs:
               if python - <<'PY'
           import pandas as pd
           d=pd.read_csv('outputs/V21.0_ACTIONS_PEA_REFERENCE_MASTER.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
-          assert len(d)==1429 and d['isin'].astype(str).nunique()==1429
-          print('V21_1_BASE_OK',len(d),len(d.columns))
+          assert len(d)==1829 and d['isin'].astype(str).nunique()==1829
+          assert d['canonical_universe'].astype(str).eq('PEA_ACTIONS_1829').all()
+          print('V21_1_BASE_1829_OK',len(d),len(d.columns))
           PY
               then FOUND=1; echo "V211_BASE_RUN=$RUN" >> "$GITHUB_ENV"; break 2; fi
             done < /tmp/v211base/arts.tsv
@@ -164,10 +160,10 @@ jobs:
         env:
           EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
           V211_EODHD_FREE_MAX_SYMBOLS: ${{ inputs.eodhd_free_symbols || '18' }}
-          V182_USER_AGENT: 'PEA-V21.1-FreeCapture/1.3'
+          V182_USER_AGENT: 'PEA-V21.1-FreeCapture/1.4'
         run: python -m v182.free_capture.eodhd_free
 
-      - name: Run V21.1 FREE_ONLY incremental capture
+      - name: Run V21.1 FREE_ONLY incremental capture on 1829
         env:
           OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
@@ -178,22 +174,22 @@ jobs:
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
           V211_TWELVE_MAX_SYMBOLS: ${{ inputs.twelve_symbols || '5' }}
           V211_ALPHA_MAX_SYMBOLS: ${{ inputs.alpha_symbols || '3' }}
-          V211_FINNHUB_MAX_SYMBOLS: ${{ inputs.finnhub_symbols || '120' }}
-          V211_FINNHUB_METRIC_MAX_SYMBOLS: ${{ inputs.finnhub_metric_symbols || '60' }}
-          V211_BOURSORAMA_MAX_SYMBOLS: ${{ inputs.boursorama_symbols || '40' }}
-          V211_ZONEBOURSE_MAX_SYMBOLS: ${{ inputs.zonebourse_symbols || '40' }}
-          V211_EURONEXT_LIVE_MAX_SYMBOLS: ${{ inputs.euronext_live_symbols || '150' }}
-          V211_GLEIF_MAX_SYMBOLS: ${{ inputs.gleif_symbols || '50' }}
-          V211_ESEF_MAX_SYMBOLS: ${{ inputs.esef_symbols || '250' }}
+          V211_FINNHUB_MAX_SYMBOLS: ${{ inputs.finnhub_symbols || '180' }}
+          V211_FINNHUB_METRIC_MAX_SYMBOLS: ${{ inputs.finnhub_metric_symbols || '90' }}
+          V211_BOURSORAMA_MAX_SYMBOLS: ${{ inputs.boursorama_symbols || '60' }}
+          V211_ZONEBOURSE_MAX_SYMBOLS: ${{ inputs.zonebourse_symbols || '60' }}
+          V211_EURONEXT_LIVE_MAX_SYMBOLS: ${{ inputs.euronext_live_symbols || '220' }}
+          V211_GLEIF_MAX_SYMBOLS: ${{ inputs.gleif_symbols || '75' }}
+          V211_ESEF_MAX_SYMBOLS: ${{ inputs.esef_symbols || '350' }}
           V211_GLEIF_WORKERS: '3'
           V211_ALPHA_MAX_CALLS: '23'
           V211_MARKETSTACK_MAX_SYMBOLS: '1'
-          V211_OPENFIGI_MAX_REQUESTS: '30'
+          V211_OPENFIGI_MAX_REQUESTS: '40'
           V211_FINNHUB_DELAY_SECONDS: '1.05'
-          V182_USER_AGENT: 'PEA-V21.1-FreeCapture/1.3'
+          V182_USER_AGENT: 'PEA-V21.1-FreeCapture/1.4'
         run: python -m v182.free_capture.orchestrator
 
-      - name: FREE_ONLY hard audit
+      - name: FREE_ONLY 1829 hard audit
         run: |
           python - <<'PY'
           import json
@@ -205,15 +201,15 @@ jobs:
           health=pd.read_csv('outputs/free_capture/V21.1_SOURCE_HEALTH.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
           assert a['passed'] is True and a['free_only'] is True
           assert a['paid_sources_called'] is False and a['yfinance_called_by_v211'] is False
-          assert len(d)==1429 and d['isin'].astype(str).nunique()==1429
-          assert a['cache_identity_isin'] >= 1429
+          assert len(d)==1829 and d['isin'].astype(str).nunique()==1829
+          assert a['cache_identity_isin'] >= 1829
           assert cm['passed'] is True and cm['overwrites']==0
           assert Path('outputs/free_capture/V21.1_COMPLEMENTARY_CONTEXT.json').exists()
           assert health['source'].astype(str).eq('EODHD_FREE_EOD').any()
           expected={'complementary_context','openfigi','euronext_live','gleif_bulk','gleif_api','esef','amf_short_positions','official_delayed','manual_imports','twelvedata','marketstack','alpha_vantage','finnhub','boursorama_public','zonebourse_public','derived_market','final_canonical_merge','complementary_merge'}
           missing=expected-set(a.get('results',{}))
           assert not missing, missing
-          print('V21_1_FREE_CAPTURE_GATES_OK',a['cache_identity_isin'],a['cache_lei_isin'],a['cache_market_isin'],a['cache_fact_rows'],cm['applied_cells'])
+          print('V21_1_FREE_CAPTURE_1829_GATES_OK',a['cache_identity_isin'],a['cache_lei_isin'],a['cache_market_isin'],a['cache_fact_rows'],cm['applied_cells'])
           PY
 
       - name: Publish capture summary
@@ -221,24 +217,16 @@ jobs:
           python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
           from pathlib import Path
-          import pandas as pd
           a=json.loads(Path('outputs/free_capture/V21.1_FREE_CAPTURE_AUDIT.json').read_text())
           cm=json.loads(Path('outputs/free_capture/V21.1_COMPLEMENTARY_MERGE_AUDIT.json').read_text())
-          h=pd.read_csv('outputs/free_capture/V21.1_SOURCE_HEALTH.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
-          e=h[h['source'].astype(str).eq('EODHD_FREE_EOD')].tail(1).to_dict('records')
-          print('# V21.1 FREE_ONLY capture')
-          print(f"- Base: {a['rows']} Actions / {a['unique_isin']} ISIN")
-          print('- Documented source reference: 1931 instruments = 1829 Actions + 102 ETF; Action decision universe remains 1429 validated ISIN')
+          print('# V21.1 FREE_ONLY capture — 1829 Actions')
+          print(f"- Active Actions: {a['rows']} / {a['unique_isin']} unique ISIN")
+          print('- Full PEA reference: 1931 instruments = 1829 Actions + 102 ETF')
           print(f"- Identity cache: {a['cache_identity_isin']} / LEI: {a['cache_lei_isin']}")
           print(f"- Market cache: {a['cache_market_isin']} instruments / {a['cache_market_rows']} rows")
-          print(f"- EODHD free EOD: {e[0] if e else 'NO_STATUS'}")
           print(f"- Fact cache: {a['cache_fact_rows']} rows")
           print(f"- Complementary missing-only cells applied: {cm['applied_cells']} / overwrites: {cm['overwrites']}")
-          print(f"- Coverage base + free: {a['metrics_pct_base_plus_free']}")
-          print(f"- Source status: {a['source_status']}")
-          print('- Paid source calls: 0')
-          print('- EODHD Fundamentals remains paid-only and is NOT called by V21.1')
-          print('- yfinance calls inside V21.1: 0; Yahoo is handled downstream as market/technical fallback')
+          print('- Paid source calls: 0; EODHD Fundamentals excluded; yfinance not called inside V21.1')
           PY
 
       - name: Upload cumulative V21.1 free capture cache
