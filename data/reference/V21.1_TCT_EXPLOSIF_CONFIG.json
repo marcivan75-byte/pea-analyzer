@@ -1,0 +1,114 @@
+{
+  "version": "V21.1_TCT_EXPLOSIF",
+  "execution_mode": "RESEARCH_ONLY",
+  "integration_mode": "SHADOW",
+  "input_candidates": [
+    "outputs/V21.1_TCT_TECHNICAL_ENRICHED.csv",
+    "outputs/V21.0_ACTIONS_PEA_1429_COMMITTEE.csv",
+    "outputs/V21.0_ACTIONS_PEA_1429_PREPARED.csv"
+  ],
+  "canonical_universe_size": 1429,
+  "missing_data_policy": "RENORMALIZE_OBSERVED_WEIGHTS_NO_NEUTRAL_50",
+  "objective": {
+    "target_return_pct": 15.0,
+    "horizon_sessions": 20,
+    "entry_rule": "NEXT_SESSION_OPEN",
+    "risk_control_mae_floor_pct": -12.0,
+    "probability_target": 0.65,
+    "probability_is_gate_only_after_calibration": true
+  },
+  "pillar_weights": {
+    "technical_impulse": 0.3,
+    "catalyst_event": 0.2,
+    "volume_squeeze": 0.15,
+    "news_sector": 0.12,
+    "valuation_relative": 0.08,
+    "analyst_revision": 0.06,
+    "risk_liquidity": 0.05,
+    "corporate_insider": 0.02,
+    "macro_rotation": 0.02
+  },
+  "shadow_pillars": [
+    "social_sentiment",
+    "microstructure_orderflow"
+  ],
+  "thresholds": {
+    "COEUR_TCT_EXPLOSIF": 82.0,
+    "SATELLITE_TCT_EXPLOSIF": 72.0,
+    "SCAN_TCT_EXPLOSIF": 62.0
+  },
+  "coverage": {
+    "min_score": 0.55,
+    "min_satellite": 0.62,
+    "min_core": 0.72,
+    "identity_min": 0.92
+  },
+  "gates": {
+    "min_liquidity_percentile_core": 0.1,
+    "min_liquidity_percentile_any": 0.05,
+    "max_drawdown_review_below_pct": -40.0,
+    "profit_warning_penalty": -20.0,
+    "topdown_block_penalty": -12.0,
+    "topdown_review_penalty": -5.0,
+    "extreme_gap_chase_above_pct": 15.0,
+    "extreme_gap_chase_penalty": -8.0,
+    "rumor_only_event_cap": 40.0
+  },
+  "synergy": {
+    "technical_volume_min": 70.0,
+    "technical_volume_bonus": 5.0,
+    "catalyst_news_min": 65.0,
+    "catalyst_news_bonus": 4.0,
+    "short_squeeze_short_pct_min": 15.0,
+    "short_squeeze_rvol_min": 2.0,
+    "short_squeeze_bonus": 4.0,
+    "max_total_bonus": 8.0
+  },
+  "backtest": {
+    "windows_months": [12, 18, 36],
+    "min_snapshots": 60,
+    "min_positive_events_for_probability": 75,
+    "calibration_bins": 10,
+    "test_fraction": 0.3,
+    "required_metrics": [
+      "precision",
+      "recall",
+      "base_rate",
+      "lift_vs_base",
+      "precision_at_k",
+      "brier",
+      "mean_max_forward_return",
+      "mean_mae",
+      "profit_factor_proxy"
+    ]
+  },
+  "source_policy": {
+    "primary": [
+      "issuer_ir",
+      "amf_bdif",
+      "amf_open_data",
+      "euronext_issuer_notices"
+    ],
+    "secondary": [
+      "finnhub",
+      "gdelt",
+      "yfinance"
+    ],
+    "discovery_only": [
+      "gdelt",
+      "social"
+    ],
+    "rumor_never_sufficient_alone": true,
+    "microstructure_requires_licensed_or_reliable_feed": true
+  },
+  "output": {
+    "full": "outputs/V21.1_TCT_EXPLOSIF_1429.csv",
+    "top20": "outputs/V21.1_TCT_EXPLOSIF_TOP20.csv",
+    "audit": "outputs/audit/V21.1_TCT_EXPLOSIF_AUDIT.json"
+  },
+  "smart_money_governance": {
+    "positive_insider_score_active": false,
+    "activation_requires_out_of_sample_walk_forward": true,
+    "insider_shadow_target_weight_after_validation": 0.02
+  }
+}
