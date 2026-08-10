@@ -11,7 +11,7 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[3] if len(Path(__file__).resolve().parents) > 3 else Path.cwd()
 CONFIG = Path('data/reference/V21.0_ACTIONS_PEA_CONFIG.json')
-TARGET = Path('outputs/V21.0_ACTIONS_PEA_1429_PREPARED.csv')
+TARGET = Path('outputs/V21.0_ACTIONS_PEA_1829_PREPARED.csv')
 AUDIT = Path('outputs/audit/V21.0_ACTIONS_DIRECT_ENRICHMENT.json')
 
 
@@ -52,7 +52,6 @@ def _price_match(canonical, observed, tolerance=0.25):
 
 
 def _free_protected(df: pd.DataFrame, idx, field: str) -> pd.Series:
-    """Protect values injected by V21.1 validated free capture from lower-priority Yahoo fundamentals."""
     source_col = f'v211_{field}_source'
     if source_col not in df.columns:
         return pd.Series(False, index=idx, dtype=bool)
@@ -120,14 +119,14 @@ def apply(root: Path | None = None) -> dict:
     cfg = json.loads((root / CONFIG).read_text(encoding='utf-8'))
     path = root / TARGET
     df = pd.read_csv(path, sep=';', dtype=object, encoding='utf-8-sig', low_memory=False)
-    if len(df) != int(cfg['canonical_universe_size']):
-        raise RuntimeError('V21 enrichment universe gate')
+    expected = int(cfg['canonical_universe_size'])
+    if len(df) != expected or df['isin'].astype(str).nunique() != expected:
+        raise RuntimeError(f'V21 enrichment universe gate requires {expected} unique Actions')
 
     priority = df['v210_enrichment_priority'].astype(str).str.lower().isin({'true', '1', 'yes'})
     tickers = df.loc[priority, 'yahoo_ticker'].dropna().astype(str).str.strip()
     tickers = [x for x in tickers.unique().tolist() if x and x.lower() != 'nan']
 
-    # Explicit identity provenance for every row. Direct Yahoo data is never trusted solely by symbol.
     df['direct_yahoo_identity_status'] = np.where(priority, 'PENDING_VALIDATION', 'NOT_PRIORITIZED')
     df['direct_yahoo_price_ratio'] = np.nan
     df['direct_yahoo_history_applied'] = False
@@ -166,7 +165,6 @@ def apply(root: Path | None = None) -> dict:
                         df.loc[idx, 'direct_yahoo_identity_status'] = 'HISTORY_PRICE_MISMATCH_REJECTED'
                         history_mismatches += 1
                         continue
-                    # Yahoo remains the principal daily price/technical source; these fields may refresh free OHLCV fallbacks.
                     for field, val in metrics.items():
                         df.loc[idx, field] = val
                     df.loc[idx, 'direct_yahoo_history_applied'] = True
@@ -219,16 +217,17 @@ def apply(root: Path | None = None) -> dict:
                         protected_free_cells += _assign_unprotected(df, idx, dst, val)
                 ts = info.get('earningsTimestamp') or info.get('earningsTimestampStart')
                 if ts:
-                    dt = datetime.fromtimestamp(float(ts), tz=timezone.utc)
-                    if not _free_protected(df, idx, 'next_earnings_date').all():
-                        allowed = _free_protected(df, idx, 'next_earnings_date').index[~_free_protected(df, idx, 'next_earnings_date')]
+                    protected = _free_protected(df, idx, 'next_earnings_date')
+                    if not protected.all():
+                        allowed = protected.index[~protected]
                         if len(allowed):
+                            dt = datetime.fromtimestamp(float(ts), tz=timezone.utc)
                             df.loc[allowed, 'next_earnings_date'] = dt.date().isoformat()
                             days = (dt.date() - datetime.now(timezone.utc).date()).days
                             df.loc[allowed, 'days_to_earnings'] = days
                             df.loc[allowed, 'earnings_window_7d_flag'] = bool(0 <= days <= 7)
                             df.loc[allowed, 'earnings_window_30d_flag'] = bool(0 <= days <= 30)
-                    protected_free_cells += int(_free_protected(df, idx, 'next_earnings_date').sum())
+                    protected_free_cells += int(protected.sum())
                 rec = info.get('recommendationMean')
                 if rec is not None:
                     score = (5.0 - float(rec)) / 4.0 * 100.0
@@ -255,8 +254,7 @@ def apply(root: Path | None = None) -> dict:
     except Exception as exc:
         info_failures.append({'ticker': '__SETUP__', 'error': f'{type(exc).__name__}: {str(exc)[:180]}'})
 
-    # Safe coalescing to inherited/canonical fields after guarded direct collection.
-    for target, sources in {
+    for target_field, sources in {
         'market_cap': ['market_cap_v21', 'market_cap'],
         'per_forward_v21': ['per_forward_v21', 'per_forward', 'per_forward_yf'],
         'per_ttm_v21': ['per_ttm_v21', 'per_ttm', 'per_ttm_yf'],
@@ -267,11 +265,11 @@ def apply(root: Path | None = None) -> dict:
         for src in sources:
             if src in df:
                 out = out.where(out.notna(), _num(df, src))
-        if target in df.columns:
-            protected = _free_protected(df, df.index, target)
-            existing = _num(df, target)
+        if target_field in df.columns:
+            protected = _free_protected(df, df.index, target_field)
+            existing = _num(df, target_field)
             out = out.where(~protected, existing)
-        df[target] = out
+        df[target_field] = out
 
     last = _num(df, 'last_close')
     target = _num(df, 'target_mean_v21')
@@ -299,6 +297,7 @@ def apply(root: Path | None = None) -> dict:
     audit = {
         'passed': True,
         'rows': len(df),
+        'expected_rows': expected,
         'priority_tickers': len(tickers),
         'history_success': history_success,
         'info_success': info_success,
@@ -315,7 +314,7 @@ def apply(root: Path | None = None) -> dict:
     ap = root / AUDIT
     ap.parent.mkdir(parents=True, exist_ok=True)
     ap.write_text(json.dumps(audit, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-    print('V21_ACTIONS_DIRECT_ENRICHMENT_OK', audit)
+    print('V21_ACTIONS_DIRECT_ENRICHMENT_1829_OK', audit)
     return audit
 
 
