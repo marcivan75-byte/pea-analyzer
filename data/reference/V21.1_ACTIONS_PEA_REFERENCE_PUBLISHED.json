@@ -28,10 +28,12 @@
     "base_validated_actions": 1429,
     "validated_additions": 400,
     "validated_additions_origin": "V20.4 Actions 506 validation run 31292369240",
-    "first_run_policy": "REBUILD_1829_FROM_1429_PLUS_400",
-    "subsequent_run_policy": "RETAIN_VALIDATED_400_IN_EACH_1829_ARTIFACT_AND_REUSE",
+    "persistent_validated_additions_reference": "data/reference/PEA_ACTIONS_400_VALIDATED_ADDITIONS.csv.gz.b64",
+    "first_run_policy": "REBUILD_1829_FROM_1429_PLUS_PERSISTENT_VALIDATED_400",
+    "subsequent_run_policy": "REBUILD_DETERMINISTICALLY_FROM_THE_SAME_PERSISTENT_400_AND_CURRENT_1486_SOURCE",
+    "artifact_expiration_dependency": false,
     "revalidation_required_for_400_before_activation": false,
-    "reason": "The 400 additions were already validated before this universe switch"
+    "reason": "The 400 additions were already validated and are now persisted in the repository"
   },
   "source_audit": {
     "version": "V21.1_SOURCE_AUDIT_2026-08-10_STATIC",
