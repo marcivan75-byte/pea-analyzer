@@ -15,6 +15,11 @@ PLAUSIBILITY_BOUNDS = {
     "roe_v21_pct": (-300.0, 300.0),
     "roa_v21_pct": (-150.0, 150.0),
     "operating_margin_v21_pct": (-150.0, 150.0),
+    "net_margin_v21_pct": (-200.0, 200.0),
+    "gross_margin_v21_pct": (-100.0, 100.0),
+    "current_ratio_v21": (0.0, 50.0),
+    "interest_coverage_v21": (-1000.0, 1000.0),
+    "debt_to_equity_v21": (0.0, 2000.0),
     "fcf_yield_v21": (-100.0, 100.0),
     "pb_v21": (0.0, 100.0),
     "debt_to_ebitda_v21": (0.0, 50.0),
@@ -83,6 +88,11 @@ def _plausible(field: str, value: float) -> bool:
     return lo <= float(value) <= hi
 
 
+def _match_value_near(series: list[tuple[pd.Timestamp, float]], anchor: pd.Timestamp) -> float | None:
+    candidates = [(abs((anchor - d).days), v) for d, v in series[:4] if abs((anchor - d).days) <= MAX_RATIO_PERIOD_GAP_DAYS]
+    return sorted(candidates, key=lambda x: x[0])[0][1] if candidates else None
+
+
 def capture(base: pd.DataFrame, store: CaptureStore) -> dict:
     facts_all = store.facts()
     if not facts_all.empty and facts_all["source"].eq("INTERNAL_FROM_ESEF").any():
@@ -97,6 +107,7 @@ def capture(base: pd.DataFrame, store: CaptureStore) -> dict:
     instruments = 0
     rejected_plausibility = 0
     rejected_period_mismatch = 0
+    v2_fields_generated: dict[str, int] = {}
     today = date.today().isoformat()
 
     for _, base_row in base.iterrows():
@@ -111,15 +122,37 @@ def capture(base: pd.DataFrame, store: CaptureStore) -> dict:
             ("roe_v21_pct", "net_income_esef", "equity_esef", 100.0),
             ("roa_v21_pct", "net_income_esef", "assets_esef", 100.0),
             ("operating_margin_v21_pct", "operating_income_esef", "revenue_esef", 100.0),
+            ("net_margin_v21_pct", "net_income_esef", "revenue_esef", 100.0),
+            ("gross_margin_v21_pct", "gross_profit_esef", "revenue_esef", 100.0),
+            ("current_ratio_v21", "current_assets_esef", "current_liabilities_esef", 1.0),
+            ("interest_coverage_v21", "operating_income_esef", "interest_expense_esef", 1.0),
         ]:
             pair = _paired_latest(e, isin, num_field, den_field)
             if pair is None:
+                if out_field in {"gross_margin_v21_pct", "current_ratio_v21", "interest_coverage_v21"}:
+                    continue
                 rejected_period_mismatch += 1
                 continue
             num, den, as_of = pair
             if den == 0:
                 continue
-            derived[out_field] = (num / den * scale, as_of)
+            if out_field == "interest_coverage_v21":
+                value = num / abs(den)
+            elif out_field == "current_ratio_v21":
+                if den <= 0:
+                    continue
+                value = num / den
+            else:
+                value = num / den * scale
+            derived[out_field] = (value, as_of)
+
+        # Gross margin fallback when the issuer reports cost of sales but not gross profit.
+        if "gross_margin_v21_pct" not in derived:
+            pair = _paired_latest(e, isin, "cost_of_sales_esef", "revenue_esef")
+            if pair is not None:
+                cost, revenue, as_of = pair
+                if revenue != 0:
+                    derived["gross_margin_v21_pct"] = ((revenue - abs(cost)) / revenue * 100.0, as_of)
 
         cfo = _latest_series(e, isin, "cfo_esef")
         capex = _latest_series(e, isin, "capex_esef")
@@ -145,22 +178,50 @@ def capture(base: pd.DataFrame, store: CaptureStore) -> dict:
         if market_cap not in {None, 0} and equity and equity[0][1] != 0:
             derived["pb_v21"] = (market_cap / equity[0][1], equity[0][0].date().isoformat())
 
-        ebitda = _latest_series(e, isin, "ebitda_esef")
         debt_c = _latest_series(e, isin, "borrowings_current_esef")
         debt_nc = _latest_series(e, isin, "borrowings_noncurrent_esef")
-        if ebitda and ebitda[0][1] != 0:
-            edate, eval_ = ebitda[0]
+
+        # Explicit EBITDA first; otherwise operating profit + combined D&A on a coherent period.
+        ebitda = _latest_series(e, isin, "ebitda_esef")
+        ebitda_point: tuple[pd.Timestamp, float] | None = ebitda[0] if ebitda else None
+        if ebitda_point is None:
+            op = _latest_series(e, isin, "operating_income_esef")
+            da = _latest_series(e, isin, "da_combined_esef")
+            if op:
+                odate, oval = op[0]
+                daval = _match_value_near(da, odate)
+                if daval is not None:
+                    ebitda_point = (odate, oval + abs(daval))
+                    derived["ebitda_v21"] = (ebitda_point[1], odate.date().isoformat())
+        elif ebitda_point:
+            derived["ebitda_v21"] = (ebitda_point[1], ebitda_point[0].date().isoformat())
+
+        if ebitda_point and ebitda_point[1] != 0:
+            edate, eval_ = ebitda_point
             total_debt = 0.0
             matched = False
             for series in (debt_c, debt_nc):
-                if not series:
-                    continue
-                candidates = [(abs((edate - d).days), v) for d, v in series[:4] if abs((edate - d).days) <= MAX_RATIO_PERIOD_GAP_DAYS]
-                if candidates:
-                    total_debt += sorted(candidates, key=lambda x: x[0])[0][1]
+                val = _match_value_near(series, edate)
+                if val is not None:
+                    total_debt += val
                     matched = True
             if matched and total_debt >= 0:
+                derived["total_debt_v21"] = (total_debt, edate.date().isoformat())
                 derived["debt_to_ebitda_v21"] = (total_debt / eval_, edate.date().isoformat())
+
+        # Debt/equity uses only balance-sheet items on compatible dates and positive equity.
+        if equity:
+            eq_date, eq_val = equity[0]
+            if eq_val > 0:
+                total_debt = 0.0
+                matched = False
+                for series in (debt_c, debt_nc):
+                    val = _match_value_near(series, eq_date)
+                    if val is not None:
+                        total_debt += val
+                        matched = True
+                if matched and total_debt >= 0:
+                    derived["debt_to_equity_v21"] = (total_debt / eq_val * 100.0, eq_date.date().isoformat())
 
         for out_field, raw_field in [
             ("revenue_growth_v21_pct", "revenue_esef"),
@@ -171,11 +232,13 @@ def capture(base: pd.DataFrame, store: CaptureStore) -> dict:
                 derived[out_field] = growth
 
         for field, (value, as_of) in derived.items():
-            if field != "free_cash_flow_v21" and not _plausible(field, value):
+            if field not in {"free_cash_flow_v21", "ebitda_v21", "total_debt_v21"} and not _plausible(field, value):
                 rejected_plausibility += 1
                 continue
             if value is None or not np.isfinite(value):
                 continue
+            if field in {"net_margin_v21_pct", "gross_margin_v21_pct", "current_ratio_v21", "interest_coverage_v21", "ebitda_v21", "debt_to_equity_v21"}:
+                v2_fields_generated[field] = v2_fields_generated.get(field, 0) + 1
             rows.append({
                 "isin": isin,
                 "field": field,
@@ -183,7 +246,7 @@ def capture(base: pd.DataFrame, store: CaptureStore) -> dict:
                 "value_text": "",
                 "as_of": as_of or today,
                 "source": "INTERNAL_FROM_ESEF",
-                "evidence": "DERIVED_FROM_A_OFFICIAL_STRUCTURED",
+                "evidence": "DERIVED_FROM_A_OFFICIAL_STRUCTURED_V2",
                 "confidence": 0.90,
                 "status": "VALIDATED_DERIVED",
                 "observed_at_utc": utcnow(),
@@ -191,8 +254,8 @@ def capture(base: pd.DataFrame, store: CaptureStore) -> dict:
 
     added = store.upsert_facts(rows)
     msg = (
-        "period-coherent ROE/ROA/margins/growth/PB/FCF yield/debt-EBITDA; "
-        f"rejected_plausibility={rejected_plausibility}; "
+        "period-coherent ESEF V2 derivations; "
+        f"v2_fields={v2_fields_generated}; rejected_plausibility={rejected_plausibility}; "
         f"rejected_period_mismatch={rejected_period_mismatch}"
     )
     store.add_health(
@@ -221,6 +284,7 @@ def capture(base: pd.DataFrame, store: CaptureStore) -> dict:
         "status": "OK",
         "instruments": instruments,
         "facts_added": added,
+        "v2_fields_generated": v2_fields_generated,
         "rejected_plausibility": rejected_plausibility,
         "rejected_period_mismatch": rejected_period_mismatch,
         "boursorama": boursorama,
