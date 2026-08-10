@@ -11,6 +11,14 @@ on:
         description: 'Maximum Alpha Vantage fallback symbols for this wave'
         required: false
         default: '0'
+      finnhub_symbols:
+        description: 'Maximum Finnhub free complementary symbols for this wave'
+        required: false
+        default: '120'
+      finnhub_metric_symbols:
+        description: 'Maximum Finnhub metric calls after validated symbol resolution'
+        required: false
+        default: '60'
       zonebourse_symbols:
         description: 'Maximum Zonebourse public consensus pages for this wave'
         required: false
@@ -42,7 +50,7 @@ concurrency:
 jobs:
   capture:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -73,8 +81,10 @@ jobs:
           assert c['free_only'] is True
           assert c['execution_mode']=='RESEARCH_ONLY'
           assert c['canonical_universe_size']==1429
+          assert c['source_reference_scope']['documented_total_instruments']==1931
           assert c['principles']['no_paid_source'] is True
           assert c['principles']['yfinance_role']=='LAST_RESORT_FALLBACK_ONLY'
+          assert c['principles']['propagate_validated_free_facts_before_downstream_scoring'] is True
           print('V21_1_FREE_ONLY_CONFIG_OK')
           PY
 
@@ -136,8 +146,13 @@ jobs:
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
           MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
           V211_TWELVE_MAX_SYMBOLS: ${{ inputs.twelve_symbols || '5' }}
           V211_ALPHA_MAX_SYMBOLS: ${{ inputs.alpha_symbols || '0' }}
+          V211_FINNHUB_MAX_SYMBOLS: ${{ inputs.finnhub_symbols || '120' }}
+          V211_FINNHUB_METRIC_MAX_SYMBOLS: ${{ inputs.finnhub_metric_symbols || '60' }}
           V211_ZONEBOURSE_MAX_SYMBOLS: ${{ inputs.zonebourse_symbols || '0' }}
           V211_BOURSORAMA_MAX_SYMBOLS: '40'
           V211_GLEIF_MAX_SYMBOLS: ${{ inputs.gleif_symbols || '50' }}
@@ -146,7 +161,7 @@ jobs:
           V211_ALPHA_MAX_CALLS: '23'
           V211_MARKETSTACK_MAX_SYMBOLS: '1'
           V211_OPENFIGI_MAX_REQUESTS: '30'
-          V182_USER_AGENT: 'PEA-V21.1-FreeCapture/1.0'
+          V182_USER_AGENT: 'PEA-V21.1-FreeCapture/1.1'
         run: python -m v182.free_capture.orchestrator
 
       - name: FREE_ONLY hard audit
@@ -157,12 +172,15 @@ jobs:
           import pandas as pd
           a=json.loads(Path('outputs/free_capture/V21.1_FREE_CAPTURE_AUDIT.json').read_text())
           d=pd.read_csv('outputs/free_capture/V21.1_FREE_CAPTURE_OVERLAY.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          cm=json.loads(Path('outputs/free_capture/V21.1_COMPLEMENTARY_MERGE_AUDIT.json').read_text())
           assert a['passed'] is True and a['free_only'] is True
           assert a['paid_sources_called'] is False and a['yfinance_called_by_v211'] is False
           assert len(d)==1429 and d['isin'].astype(str).nunique()==1429
           assert a['cache_identity_isin'] >= 1429
+          assert cm['passed'] is True and cm['overwrites']==0
           assert Path('outputs/free_capture/V21.1_SOURCE_HEALTH.csv').exists()
-          print('V21_1_FREE_CAPTURE_GATES_OK',a['cache_identity_isin'],a['cache_lei_isin'],a['cache_market_isin'],a['cache_fact_rows'],a['metrics_pct_base_plus_free'])
+          assert Path('outputs/free_capture/V21.1_COMPLEMENTARY_CONTEXT.json').exists()
+          print('V21_1_FREE_CAPTURE_GATES_OK',a['cache_identity_isin'],a['cache_lei_isin'],a['cache_market_isin'],a['cache_fact_rows'],cm['applied_cells'],a['metrics_pct_base_plus_free'])
           PY
 
       - name: Publish capture summary
@@ -171,11 +189,14 @@ jobs:
           import json
           from pathlib import Path
           a=json.loads(Path('outputs/free_capture/V21.1_FREE_CAPTURE_AUDIT.json').read_text())
+          cm=json.loads(Path('outputs/free_capture/V21.1_COMPLEMENTARY_MERGE_AUDIT.json').read_text())
           print('# V21.1 FREE_ONLY capture')
           print(f"- Base run: {a['rows']} Actions / {a['unique_isin']} ISIN")
+          print('- Documented source reference: 1931 instruments = 1829 Actions + 102 ETF; active Action gate remains 1429 validated ISIN')
           print(f"- Identity cache: {a['cache_identity_isin']} / LEI: {a['cache_lei_isin']}")
           print(f"- Market cache: {a['cache_market_isin']} instruments / {a['cache_market_rows']} rows")
           print(f"- Fact cache: {a['cache_fact_rows']} rows")
+          print(f"- Complementary missing-only cells applied: {cm['applied_cells']} / overwrites: {cm['overwrites']}")
           print(f"- Coverage base + free: {a['metrics_pct_base_plus_free']}")
           print(f"- Source status: {a['source_status']}")
           print('- Paid source calls: 0')
