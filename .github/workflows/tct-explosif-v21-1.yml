@@ -1,0 +1,64 @@
+name: TCT Explosif V21.1
+
+"on":
+  workflow_dispatch:
+  schedule:
+    - cron: "0 16 * * 1-5"
+    - cron: "0 17 * * 1-5"
+
+permissions:
+  contents: read
+
+jobs:
+  tct-explosif:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Paris 18h gate
+        id: paris
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$(TZ=Europe/Paris date +%H)" = "18" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.paris.outputs.run == 'true'
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        if: steps.paris.outputs.run == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        if: steps.paris.outputs.run == 'true'
+        run: python -m pip install -e ".[test]"
+
+      - name: Validate TCT module
+        if: steps.paris.outputs.run == 'true'
+        run: pytest -q tests/test_tct_explosif_v211.py
+
+      - name: Run V21 base and TCT Explosif
+        if: steps.paris.outputs.run == 'true'
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: python scripts/run_tct_explosif_v211.py
+
+      - name: Upload TCT outputs
+        if: always() && steps.paris.outputs.run == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: tct-explosif-v21-1
+          path: |
+            outputs/V21.1_TCT_EXPLOSIF_1429.csv
+            outputs/V21.1_TCT_EXPLOSIF_TOP20.csv
+            outputs/audit/V21.1_TCT_EXPLOSIF_AUDIT.json
+            outputs/audit/V21.1_TCT_TECHNICAL_ENRICHMENT.json
+          if-no-files-found: warn
+          retention-days: 30
