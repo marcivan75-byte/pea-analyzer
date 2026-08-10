@@ -1,20 +1,25 @@
 {
-  "version": "V21.0_ACTIONS_PEA_1429",
+  "version": "V21.0_ACTIONS_PEA_1829",
   "execution_mode": "RESEARCH_ONLY",
-  "canonical_universe_size": 1429,
+  "canonical_universe_size": 1829,
   "source_universe_size": 1486,
   "excluded_isin_count": 57,
+  "validated_additions_count": 400,
+  "validated_additions_source": "V20.4_ACTIONS_506_CANDIDATES_TO_INTEGRATE.csv",
+  "universe_formula": "1486_SOURCE_MINUS_57_EXCLUSIONS_PLUS_400_VALIDATED_ADDITIONS_EQUALS_1829",
   "missing_data_policy": "RENORMALIZE_OBSERVED_WEIGHTS_NO_NEUTRAL_50",
-  "enrichment_priority_limit": 1429,
+  "enrichment_priority_limit": 1829,
   "instrument_news_limit": 150,
   "source_contract": {
     "audit_version": "V21.1_SOURCE_AUDIT_2026-08-10_STATIC",
-    "runtime_validation_status": "NOT_RUN_BY_USER_REQUEST",
+    "runtime_validation_status": "NOT_RUN_AFTER_1829_SWITCH",
     "workflow_trigger_policy": "MANUAL_ONLY_UNTIL_EXPLICIT_REACTIVATION",
     "free_first": true,
     "documented_reference_actions": 1829,
-    "active_canonical_actions": 1429,
-    "universe_policy": "DO_NOT_EXPAND_1429_CANONICAL_DECISION_UNIVERSE_WITHOUT_SEPARATE_ELIGIBILITY_VALIDATION",
+    "active_canonical_actions": 1829,
+    "decision_universe_actions": 1829,
+    "universe_policy": "ALL_1829_VALIDATED_PEA_ACTIONS_ARE_ACTIVE_IN_COLLECTION_SCORING_COMMITTEE_AND_REFERENCE",
+    "bootstrap_policy": "FIRST_1829_RUN_REBUILDS_FROM_1429_CANONICAL_PLUS_400_PREVIOUSLY_VALIDATED_ADDITIONS_THEN_FUTURE_RUNS_REUSE_LATEST_1829_MASTER",
     "source_audit_file": "config/V21.1_FREE_SOURCE_AUDIT.csv",
     "methodology_registry": "config/V21.1_METHODOLOGY_REFERENCES.csv",
     "identity_priority": [
@@ -29,6 +34,7 @@
       "EURONEXT_LIVE_PUBLIC",
       "YFINANCE_MARKET_TECHNICAL",
       "TWELVEDATA_FREE",
+      "EODHD_FREE_EOD",
       "MARKETSTACK_FREE",
       "ALPHA_VANTAGE_FREE"
     ],
@@ -69,6 +75,7 @@
     "no_neutral_50_imputation": true,
     "no_new_weight_without_backtest": true,
     "smart_money_positive_activation": false,
+    "smart_money_missing_for_new_400_policy": "MISSING_OR_SHADOW_ONLY_NO_POSITIVE_IMPUTATION",
     "amf_short_position_use": "OBSERVED_REGULATORY_EVIDENCE_AND_RISK_CONTEXT_ONLY_UNTIL_BACKTEST",
     "pmi_policy": "NO_OBSOLETE_SERIES_HARDCODED_FRED_PMI_REQUIRES_EXPLICIT_VALIDATED_SERIES_ID"
   },
@@ -124,7 +131,8 @@
     "min_weight_coverage_short": 0.65,
     "coverage_penalty_floor": 0.88,
     "identity_min": 0.92,
-    "pea_buy_requires_high_confidence": true
+    "pea_buy_requires_high_confidence": true,
+    "pea_numeric_high_confidence_min": 0.90
   },
   "thresholds": {
     "CT": {"BUY_CANDIDATE": 78, "WATCH": 70, "REVIEW": 60},
