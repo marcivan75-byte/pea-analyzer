@@ -9,7 +9,7 @@ import pandas as pd
 from v182.sources import alpha_vantage as av
 from .core import CaptureStore, clean_text, is_observed, number, utcnow
 
-RESOLVER_POLICY = "COUNTRY_MATCH_GE_0.70_WITH_CANDIDATE_PREVIEW_ON_REJECT"
+RESOLVER_POLICY = "PRIMARY_COUNTRY_OR_GUARDED_EUR_ENTITY_PROXY"
 
 FIELD_MAP = {
     "MarketCapitalization": ("market_cap_v21", 1.0),
@@ -28,9 +28,20 @@ FIELD_MAP = {
     "Beta": ("beta_v21", 1.0),
 }
 
+# Entity proxy fields are deliberately restricted to issuer-level, dimensionless accounting
+# metrics. No target price, EPS/share, revenue/share, beta, market cap or valuation multiple is
+# accepted from a secondary listing at this stage.
+PROXY_FIELD_MAP = {
+    "ReturnOnEquityTTM": ("roe_v21_pct", 100.0),
+    "ReturnOnAssetsTTM": ("roa_v21_pct", 100.0),
+    "OperatingMarginTTM": ("operating_margin_v21_pct", 100.0),
+    "ProfitMargin": ("net_margin_v21_pct", 100.0),
+    "QuarterlyRevenueGrowthYOY": ("revenue_growth_v21_pct", 100.0),
+    "QuarterlyEarningsGrowthYOY": ("earnings_growth_v21_pct", 100.0),
+}
+
 
 def _rank(universe: pd.DataFrame) -> pd.DataFrame:
-    """Spend scarce Alpha calls on securities most likely to exist in its global catalogue."""
     x = universe.copy()
     idx = x.index
     target_fields = sorted({field for field, _ in FIELD_MAP.values()})
@@ -52,7 +63,6 @@ def _rank(universe: pd.DataFrame) -> pd.DataFrame:
     meaningful_cap = mc.ge(200_000_000)
     eligible = missing.gt(0) & (has_analysts | meaningful_cap)
 
-    # Capture ranking only: this cannot modify investment scores or horizon weights.
     log_cap = mc.map(lambda v: max(0.0, math.log10(v) - 7.0) if v > 0 else 0.0)
     x["_alpha_rank"] = (
         has_analysts.astype(float) * 50_000.0
@@ -76,7 +86,7 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 10, 
     facts = store.facts()
     existing: set[tuple[str, str]] = set()
     if not facts.empty:
-        recent = facts[facts["source"].eq("ALPHA_VANTAGE_FREE")]
+        recent = facts[facts["source"].astype(str).isin({"ALPHA_VANTAGE_FREE", "ALPHA_VANTAGE_FREE_PROXY"})]
         existing = set(zip(recent["isin"].astype(str), recent["field"].astype(str)))
 
     ranked = _rank(universe)
@@ -86,6 +96,7 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 10, 
     cached_negative_skipped = 0
     failed = 0
     resolved_count = 0
+    proxy_resolved = 0
     samples: list[dict] = []
     today = date.today().isoformat()
 
@@ -108,8 +119,10 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 10, 
                     samples.append({"isin": isin, "name": clean_text(row.get("name")), "status": resolved.reason or "UNRESOLVED"})
                 continue
 
+            is_proxy = resolved.source in {"API_PROXY", "CACHE_PROXY"} or resolved.reason == "RESOLVED_ENTITY_PROXY"
             attempted += 1
             resolved_count += 1
+            proxy_resolved += int(is_proxy)
             if calls >= max_calls:
                 failed += 1
                 break
@@ -118,20 +131,27 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 10, 
             if not body or clean_text(body.get("Symbol")) == "":
                 failed += 1
                 continue
+
+            mapping = PROXY_FIELD_MAP if is_proxy else FIELD_MAP
+            source = "ALPHA_VANTAGE_FREE_PROXY" if is_proxy else "ALPHA_VANTAGE_FREE"
+            evidence = "API_OVERVIEW_EUR_ENTITY_PROXY_DIMENSIONLESS_ONLY" if is_proxy else "API_OVERVIEW_RESOLVED_SYMBOL"
+            confidence = 0.72 if is_proxy else 0.80
+            fact_status = "OBSERVED_ENTITY_PROXY" if is_proxy else "OBSERVED"
             fields = []
-            for api_field, (field, mult) in FIELD_MAP.items():
+            for api_field, (field, mult) in mapping.items():
                 val = number(body.get(api_field))
                 if val is None:
                     continue
                 fields.append(field)
                 rows.append({
                     "isin": isin, "field": field, "value": val * mult, "value_text": "",
-                    "as_of": today, "source": "ALPHA_VANTAGE_FREE", "evidence": "API_OVERVIEW_RESOLVED_SYMBOL",
-                    "confidence": 0.80, "status": "OBSERVED", "observed_at_utc": utcnow(),
+                    "as_of": today, "source": source, "evidence": evidence,
+                    "confidence": confidence, "status": fact_status, "observed_at_utc": utcnow(),
                 })
             if len(samples) < 6:
                 samples.append({"isin": isin, "name": clean_text(row.get("name")), "symbol": resolved.symbol,
-                                "region": resolved.region, "match_score": resolved.match_score, "fields": fields})
+                                "region": resolved.region, "match_score": resolved.match_score,
+                                "proxy": is_proxy, "fields": fields})
         except Exception as exc:
             attempted += 1
             failed += 1
@@ -144,7 +164,7 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 10, 
     store.add_health(
         "ALPHA_VANTAGE_FREE", status, attempted, added, failed,
         calls, max(0, max_calls - calls),
-        f"{RESOLVER_POLICY}; OVERVIEW + cached SYMBOL_SEARCH; cached_negative_skipped={cached_negative_skipped}; resolved={resolved_count}; samples={samples}; hard daily guard",
+        f"{RESOLVER_POLICY}; proxy_resolved={proxy_resolved}; cached_negative_skipped={cached_negative_skipped}; resolved={resolved_count}; samples={samples}; hard daily guard",
     )
     return {
         "status": status,
@@ -153,6 +173,7 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 10, 
         "facts_added": added,
         "failed": failed,
         "resolved": resolved_count,
+        "proxy_resolved": proxy_resolved,
         "cached_negative_skipped": cached_negative_skipped,
         "resolver_policy": RESOLVER_POLICY,
         "samples": samples,
