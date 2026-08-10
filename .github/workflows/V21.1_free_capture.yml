@@ -31,6 +31,8 @@ on:
         description: 'Maximum regulated issuers to query in filings.xbrl.org'
         required: false
         default: '250'
+  schedule:
+    - cron: '0 16 * * 1-5'
   push:
     branches: [feature/smart-money-v1]
     paths:
