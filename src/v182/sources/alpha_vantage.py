@@ -133,6 +133,26 @@ def _pick_search_match(matches: list[dict], name: str, country: str | None, isin
     return candidates[0][4], ""
 
 
+def _search_preview(matches: list[dict], limit: int = 4) -> str:
+    """Compact, non-secret audit preview of the candidates returned by SYMBOL_SEARCH."""
+    items: list[str] = []
+    for row in matches:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("1. symbol") or "").strip()
+        name = str(row.get("2. name") or "").strip().replace("|", "/")
+        kind = str(row.get("3. type") or "").strip()
+        region = str(row.get("4. region") or "").strip()
+        currency = str(row.get("8. currency") or "").strip()
+        score = str(row.get("9. matchScore") or "").strip()
+        if not symbol:
+            continue
+        items.append(f"{symbol}~{name[:42]}~{kind}~{region}~{currency}~{score}")
+        if len(items) >= limit:
+            break
+    return "|".join(items)
+
+
 def _load_cache(path: str | Path | None) -> dict[str, dict]:
     if not path:
         return {}
@@ -190,7 +210,8 @@ def resolve_symbol(security: dict, api_key: str, cache_path: str | Path | None =
         return AlphaResolutionResult(None, "CACHE", api_calls=0, reason=str(old.get("status") or "CACHED_NEGATIVE"))
 
     body = _request(api_key, "SYMBOL_SEARCH", keywords=name)
-    best, reason = _pick_search_match(body.get("bestMatches") or [], name, country, isin, min_match_score)
+    matches = body.get("bestMatches") or []
+    best, reason = _pick_search_match(matches, name, country, isin, min_match_score)
     now = datetime.now(timezone.utc).isoformat()
     if best:
         symbol = str(best.get("1. symbol") or "").strip()
@@ -202,11 +223,13 @@ def resolve_symbol(security: dict, api_key: str, cache_path: str | Path | None =
         _save_cache(cache_path, cache)
         return AlphaResolutionResult(symbol, "API", region, score, 1)
 
+    preview = _search_preview(matches)
+    audited_reason = f"{reason}::{preview}" if preview else reason
     cache[isin] = {"isin": isin, "yahoo_ticker": yahoo_ticker, "name": name, "country": country,
-                   "alpha_symbol": "", "region": "", "match_score": "", "status": reason,
+                   "alpha_symbol": "", "region": "", "match_score": "", "status": audited_reason,
                    "updated_at": now}
     _save_cache(cache_path, cache)
-    return AlphaResolutionResult(None, "API", api_calls=1, reason=reason)
+    return AlphaResolutionResult(None, "API", api_calls=1, reason=audited_reason)
 
 
 def fetch_daily_history(symbol: str, api_key: str, canonical_ticker: str,
