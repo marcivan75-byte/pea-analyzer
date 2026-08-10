@@ -51,6 +51,25 @@ def _price_match(canonical, observed, tolerance=0.25):
     return (ratio is not None and (1.0 - tolerance) <= ratio <= (1.0 + tolerance)), ratio
 
 
+def _free_protected(df: pd.DataFrame, idx, field: str) -> pd.Series:
+    """Protect values injected by V21.1 validated free capture from lower-priority Yahoo fundamentals."""
+    source_col = f'v211_{field}_source'
+    if source_col not in df.columns:
+        return pd.Series(False, index=idx, dtype=bool)
+    s = df.loc[idx, source_col].astype('string').fillna('').str.strip()
+    return s.ne('') & ~s.str.lower().isin({'nan', 'none', 'null', 'n/a', '<na>'})
+
+
+def _assign_unprotected(df: pd.DataFrame, idx, field: str, value) -> int:
+    if value is None:
+        return 0
+    protected = _free_protected(df, idx, field)
+    allowed = protected.index[~protected]
+    if len(allowed):
+        df.loc[allowed, field] = value
+    return int(protected.sum())
+
+
 def _history_metrics(h: pd.DataFrame) -> dict:
     if h is None or h.empty:
         return {}
@@ -118,6 +137,7 @@ def apply(root: Path | None = None) -> dict:
     info_success = 0
     history_mismatches = 0
     info_mismatches = 0
+    protected_free_cells = 0
     info_failures = []
 
     try:
@@ -146,6 +166,7 @@ def apply(root: Path | None = None) -> dict:
                         df.loc[idx, 'direct_yahoo_identity_status'] = 'HISTORY_PRICE_MISMATCH_REJECTED'
                         history_mismatches += 1
                         continue
+                    # Yahoo remains the principal daily price/technical source; these fields may refresh free OHLCV fallbacks.
                     for field, val in metrics.items():
                         df.loc[idx, field] = val
                     df.loc[idx, 'direct_yahoo_history_applied'] = True
@@ -179,8 +200,6 @@ def apply(root: Path | None = None) -> dict:
                 matched, ratio = _price_match(canonical, observed)
                 if ratio is not None:
                     df.loc[idx, 'direct_yahoo_price_ratio'] = ratio
-                # If Yahoo gives a price, it must match the canonical instrument. If it gives no price,
-                # a qualified European ticker is allowed only when the history path already matched.
                 qualified = '.' in ticker
                 history_ok = df.loc[idx, 'direct_yahoo_history_applied'].astype(bool).any()
                 allow = matched or (observed is None and qualified and history_ok)
@@ -193,28 +212,32 @@ def apply(root: Path | None = None) -> dict:
                 for src, dst in mappings.items():
                     val = _f(info.get(src))
                     if val is not None:
-                        df.loc[idx, dst] = val
+                        protected_free_cells += _assign_unprotected(df, idx, dst, val)
                 for src, dst in pct_maps.items():
                     val = _pct(info.get(src))
                     if val is not None:
-                        df.loc[idx, dst] = val
+                        protected_free_cells += _assign_unprotected(df, idx, dst, val)
                 ts = info.get('earningsTimestamp') or info.get('earningsTimestampStart')
                 if ts:
                     dt = datetime.fromtimestamp(float(ts), tz=timezone.utc)
-                    df.loc[idx, 'next_earnings_date'] = dt.date().isoformat()
-                    days = (dt.date() - datetime.now(timezone.utc).date()).days
-                    df.loc[idx, 'days_to_earnings'] = days
-                    df.loc[idx, 'earnings_window_7d_flag'] = bool(0 <= days <= 7)
-                    df.loc[idx, 'earnings_window_30d_flag'] = bool(0 <= days <= 30)
+                    if not _free_protected(df, idx, 'next_earnings_date').all():
+                        allowed = _free_protected(df, idx, 'next_earnings_date').index[~_free_protected(df, idx, 'next_earnings_date')]
+                        if len(allowed):
+                            df.loc[allowed, 'next_earnings_date'] = dt.date().isoformat()
+                            days = (dt.date() - datetime.now(timezone.utc).date()).days
+                            df.loc[allowed, 'days_to_earnings'] = days
+                            df.loc[allowed, 'earnings_window_7d_flag'] = bool(0 <= days <= 7)
+                            df.loc[allowed, 'earnings_window_30d_flag'] = bool(0 <= days <= 30)
+                    protected_free_cells += int(_free_protected(df, idx, 'next_earnings_date').sum())
                 rec = info.get('recommendationMean')
                 if rec is not None:
                     score = (5.0 - float(rec)) / 4.0 * 100.0
-                    df.loc[idx, 'consensus_score_100_v21'] = max(0, min(100, score))
+                    protected_free_cells += _assign_unprotected(df, idx, 'consensus_score_100_v21', max(0, min(100, score)))
                 mc, fcf, debt, ebitda = _f(info.get('marketCap')), _f(info.get('freeCashflow')), _f(info.get('totalDebt')), _f(info.get('ebitda'))
                 if mc and fcf is not None and mc != 0:
-                    df.loc[idx, 'fcf_yield_v21'] = fcf / mc * 100.0
+                    protected_free_cells += _assign_unprotected(df, idx, 'fcf_yield_v21', fcf / mc * 100.0)
                 if debt is not None and ebitda and ebitda != 0:
-                    df.loc[idx, 'debt_to_ebitda_v21'] = debt / ebitda
+                    protected_free_cells += _assign_unprotected(df, idx, 'debt_to_ebitda_v21', debt / ebitda)
                 df.loc[idx, 'direct_yahoo_info_applied'] = True
                 df.loc[idx, 'direct_yahoo_identity_status'] = 'INFO_PRICE_MATCH' if matched else 'INFO_ACCEPTED_AFTER_HISTORY_MATCH'
                 info_success += 1
@@ -244,6 +267,10 @@ def apply(root: Path | None = None) -> dict:
         for src in sources:
             if src in df:
                 out = out.where(out.notna(), _num(df, src))
+        if target in df.columns:
+            protected = _free_protected(df, df.index, target)
+            existing = _num(df, target)
+            out = out.where(~protected, existing)
         df[target] = out
 
     last = _num(df, 'last_close')
@@ -270,9 +297,18 @@ def apply(root: Path | None = None) -> dict:
     df.to_csv(path, sep=';', index=False, encoding='utf-8-sig')
     coverage = {f: round(float(df[f].notna().mean()), 4) for f in ['high_52w', 'stoch_k', 'volatility_1y_pct', 'market_cap_v21', 'per_forward_v21', 'roe_v21_pct', 'target_mean_v21', 'next_earnings_date'] if f in df}
     audit = {
-        'passed': True, 'rows': len(df), 'priority_tickers': len(tickers), 'history_success': history_success, 'info_success': info_success,
-        'history_identity_rejections': history_mismatches, 'info_identity_rejections': info_mismatches,
-        'info_failures': len(info_failures), 'coverage': coverage, 'failures_sample': info_failures[:20],
+        'passed': True,
+        'rows': len(df),
+        'priority_tickers': len(tickers),
+        'history_success': history_success,
+        'info_success': info_success,
+        'history_identity_rejections': history_mismatches,
+        'info_identity_rejections': info_mismatches,
+        'v211_free_protected_cells': protected_free_cells,
+        'free_capture_priority_policy': 'YAHOO_PRIMARY_MARKET_TECHNICAL_FREE_VALIDATED_PROTECTED_FUNDAMENTALS_CONSENSUS',
+        'info_failures': len(info_failures),
+        'coverage': coverage,
+        'failures_sample': info_failures[:20],
         'identity_status_counts': df['direct_yahoo_identity_status'].value_counts().to_dict(),
         'generated_at_utc': datetime.now(timezone.utc).isoformat(),
     }
