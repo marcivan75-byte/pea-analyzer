@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 from .boursorama_public import capture as capture_boursorama
-from .zonebourse_public_v2 import capture as capture_zonebourse
+from .zonebourse_public_v3 import capture as capture_zonebourse
 from .canonical_merge import write_merged
 from .core import CaptureStore, is_observed, load_config, number, utcnow, write_csv
 
@@ -214,7 +214,7 @@ def capture(base: pd.DataFrame, store: CaptureStore) -> dict:
         base,
         store,
         cfg,
-        max_symbols=int(os.getenv("V211_ZONEBOURSE_MAX_SYMBOLS", "60")),
+        max_symbols=int(os.getenv("V211_ZONEBOURSE_MAX_SYMBOLS", "80")),
     )
     merge_audit = write_merged(base, store, cfg)
     return {
