@@ -138,13 +138,17 @@ def _deep_audit(base: pd.DataFrame, merged: pd.DataFrame, store: CaptureStore) -
     for field in DEEP_FUNDAMENTAL_FIELDS:
         base_ok = base[field].map(is_observed) if field in base else pd.Series(False, index=base.index)
         merged_ok = merged[field].map(is_observed) if field in merged else pd.Series(False, index=merged.index)
-        b = float(base_ok.mean() * 100.0)
-        m = float(merged_ok.mean() * 100.0)
+        base_count = int(base_ok.sum())
+        merged_count = int(merged_ok.sum())
+        b = float(base_count / max(1, len(base)) * 100.0)
+        m = float(merged_count / max(1, len(merged)) * 100.0)
         per_field[field] = {
             "base_pct": round(b, 2),
             "merged_pct": round(m, 2),
             "gain_points": round(m - b, 2),
-            "new_cells": int(((~base_ok) & merged_ok).sum()),
+            "base_cells": base_count,
+            "merged_cells": merged_count,
+            "new_cells": max(0, merged_count - base_count),
         }
         base_total += b
         merged_total += m
