@@ -5,6 +5,79 @@
   "universe_contract": "ETF_PEA_ONLY_FINAL_VALIDATED",
   "legacy_266_allowed": false,
   "missing_data_policy": "RENORMALIZE_OBSERVED_WEIGHTS_NO_NEUTRAL_50",
+  "source_contract": {
+    "audit_version": "V21.1_SOURCE_AUDIT_2026-08-10_STATIC",
+    "runtime_validation_status": "NOT_RUN_BY_USER_REQUEST",
+    "workflow_trigger_policy": "MANUAL_ONLY_UNTIL_EXPLICIT_REACTIVATION",
+    "free_first": true,
+    "documented_reference_etf": 102,
+    "active_canonical_etf": 102,
+    "source_audit_file": "config/V21.1_FREE_SOURCE_AUDIT.csv",
+    "methodology_registry": "config/V21.1_METHODOLOGY_REFERENCES.csv",
+    "identity_priority": [
+      "CANONICAL_FINAL_VALIDATED_ISIN",
+      "EURONEXT_LIVE_PUBLIC",
+      "OPENFIGI_V3"
+    ],
+    "eligibility_crosschecks": [
+      "CANONICAL_PEA_VALIDATION",
+      "BOURSORAMA_ETF",
+      "LESMEILLEURSFONDS_PEA",
+      "OFFICIAL_ISSUER_EXPLICIT_PEA_WHEN_EXPOSED"
+    ],
+    "issuer_reference_priority": [
+      "AMUNDI_ETF",
+      "BNPP_ETF",
+      "SPDR_ETF",
+      "EURONEXT_LIVE_PUBLIC",
+      "BOURSORAMA_ETF",
+      "LESMEILLEURSFONDS_PEA",
+      "MORNINGSTAR_FR",
+      "YFINANCE_FALLBACK"
+    ],
+    "issuer_fields": [
+      "TER",
+      "AUM",
+      "HOLDINGS",
+      "DISTRIBUTION",
+      "REPLICATION",
+      "BENCHMARK",
+      "KID",
+      "FACTSHEET"
+    ],
+    "rating_fields": [
+      "MORNINGSTAR_RATING",
+      "MORNINGSTAR_CATEGORY",
+      "CATEGORY_RANK_1Y",
+      "CATEGORY_RANK_3Y",
+      "CATEGORY_RANK_5Y"
+    ],
+    "market_technical_priority": [
+      "OFFICIAL_EXCHANGE_OR_EURONEXT_LIVE",
+      "YFINANCE_MARKET_TECHNICAL",
+      "V21.1_FREE_OHLCV_CONTEXT_WHERE_MATCHING_ISIN"
+    ],
+    "context_sources": [
+      "FRED",
+      "ECB",
+      "EUROSTAT",
+      "EIA",
+      "GDELT",
+      "GOOGLE_NEWS_RSS",
+      "CNN_FEAR_GREED",
+      "AAII"
+    ],
+    "methodology_only_sources": [
+      "AMF_ETF_GUIDE",
+      "NBER_W30917",
+      "NBER_W16601"
+    ],
+    "no_lower_quality_overwrite": true,
+    "no_neutral_50_imputation": true,
+    "no_new_weight_without_backtest": true,
+    "no_internal_morningstar_id_guessing": true,
+    "amundi_search_page_policy": "DISCOVERY_ONLY_PEA_CONFIRMATION_REQUIRES_EXPLICIT_PRODUCT_PAGE_OR_CANONICAL_EVIDENCE"
+  },
   "direct_weights": {
     "CT": {
       "perf_1m_pct": 0.11, "perf_3m_pct": 0.08, "perf_6m_pct": 0.04, "perf_1y_pct": 0.02,
@@ -84,5 +157,24 @@
     "block_buy_ifs_lte": -3.0,
     "full_score_activation_requires_empirical_walk_forward": true
   },
-  "selection_limits": {"CT": 10, "MT": 10, "LT": 10, "SHORT": 10}
+  "selection_limits": {"CT": 10, "MT": 10, "LT": 10, "SHORT": 10},
+  "new_reference_fields": [
+    "free_identity_figi", "free_identity_composite_figi", "free_identity_share_class_figi", "free_identity_ticker", "free_identity_exchange", "free_identity_mic", "free_identity_security_type",
+    "euronext_live_last_price", "euronext_live_bid", "euronext_live_ask", "free_float_pct", "spread_pct",
+    "pea_eligibility_boursorama", "pea_eligibility_lesmeilleursfonds", "pea_eligibility_bnpp_reference", "pea_issuer_status",
+    "issuer_aum_m", "issuer_aum_currency", "fund_total_assets_eur_m", "aum_m", "ter_pct", "holdings",
+    "official_benchmark", "distribution_policy", "distribution_frequency", "replication_method", "replication_hint",
+    "official_kid_url", "official_factsheet_url", "official_prospectus_url", "official_document_url",
+    "morningstar_rating", "morningstar_category", "rank_cat_1y", "rank_cat_3y", "rank_cat_5y",
+    "v211_openfigi_etf_status", "v211_openfigi_etf_url", "v211_euronext_live_etf_status", "v211_euronext_live_etf_url",
+    "v211_boursorama_etf_status", "v211_boursorama_etf_url", "v211_lesmeilleursfonds_pea_status", "v211_lesmeilleursfonds_pea_url",
+    "v211_amundi_etf_status", "v211_amundi_etf_url", "v211_bnpp_etf_status", "v211_bnpp_etf_url", "v211_spdr_etf_status", "v211_spdr_etf_url",
+    "v211_morningstar_fr_status", "v211_morningstar_fr_url", "v211_etf_public_reference_checked", "v211_etf_public_reference_version", "v211_etf_public_reference_as_of_utc",
+    "mm20", "mm50", "mm100", "mm200", "rsi14", "stoch_k", "stoch_d", "macd_line", "macd_signal", "macd_hist", "atr14",
+    "bollinger_mid", "bollinger_upper", "bollinger_lower", "bollinger_width_pct", "sharpe_1y_rf0", "volatility_1y_pct",
+    "v211_macro_vix", "v211_macro_curve_10y2y", "v211_macro_cpi_index", "v211_macro_inflation_yoy_pct", "v211_macro_pmi", "v211_macro_pmi_status",
+    "v211_ecb_deposit_rate_pct", "v211_ecb_recent_change_pp", "v211_wti_spot_usd_bbl", "v211_brent_spot_usd_bbl", "v211_brent_wti_spread_usd_bbl",
+    "v211_global_news_score", "v211_global_news_polarity", "v211_global_news_materiality_score", "v211_global_news_material_articles",
+    "v211_fear_greed_index", "v211_aaii_bull_bear_spread", "v211_free_capture_propagated", "v211_free_capture_propagated_at_utc"
+  ]
 }
