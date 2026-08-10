@@ -1,0 +1,117 @@
+application:
+  version: "24.1.4"
+  mode: "RESEARCH_ONLY_SHADOW"
+
+universe:
+  n_actions: 1829
+  n_etf: 102
+
+t1_t2:
+  ratio_t2_vs_t1: 1.07
+  bonus_t1: 15
+  bonus_t2: 30
+  multi_t1: 1.2
+  multi_t2: 1.4
+  squeeze_percentile: 0.20
+  squeeze_lookback: 100
+  squeeze_window: 10
+  vol_multiplier: 1.10
+  # Un T1 ne peut confirmer un T2 au-delà de 40 séances ouvrées.
+  t1_ttl_sessions: 40
+  network_refresh:
+    # Off dans le repo: le Free Capture est la source de vérité; aucune collecte
+    # Yahoo massive et cachée n'est déclenchée au milieu du scoring.
+    enabled: false
+    max_symbols: 0
+    period: "1y"
+    interval: "1d"
+    cache_dir: data/raw/ohlcv
+
+# Pondération V24.1.2 (inchangée dans la correction applicative V24.1.4)
+scoring:
+  version: "V24.1.2"
+  weights:
+    squeeze: 0.18
+    setup: 0.16
+    earnings: 0.14
+    t1_tech: 0.14
+    bayes: 0.10
+    cata: 0.08
+    regime: 0.07
+    rs: 0.05
+    news: 0.04
+    valo: 0.04
+
+earnings:
+  weight: 0.14
+  ultra_min_days: 5
+  ultra_min_revision: 5.0
+  ultra_min_short: 15.0
+
+meta_labeling:
+  model_dir: models/meta_labeling
+  min_proba: 0.55
+  reduced_proba: 0.65
+  full_proba: 0.75
+  oversize_proba: 0.82
+  fallback_proba: 0.50
+  preserve_upstream_if_model_missing: true
+
+gap_risk:
+  model_dir: models/gap_risk
+  days_hard_ignore: 1
+  days_strong_reduce: 2
+  days_reduce: 3
+  p_adverse_ignore: 0.38
+  p_adverse_strong: 0.28
+  p_adverse_medium: 0.20
+
+position_sizing:
+  base_risk_pct: 0.008
+  max_position_pct: 0.06
+  # 0.004 permet réellement un mode réduit; 0.008 annulait tous les multiplicateurs <1.
+  min_position_pct: 0.004
+  max_positions: 12
+
+short_interest:
+  enabled: true
+  force_refresh: false
+  allow_demo_fallback: false
+
+paths:
+  persistence: data/persistence/last_T1_bandwidth.json
+  output: output/
+  logs: logs/
+  processed: data/processed/
+  universe: data/raw/universe.csv
+
+runtime:
+  capital: 100000
+  max_workers: 6
+  timezone: Europe/Paris
+  # Production intégrée : si Free Capture manque, le run doit échouer et non fabriquer des décisions.
+  allow_demo_fallback: false
+  allow_network_build_signals: false
+
+adaptive_weights:
+  enabled: true
+  learning_rate: 0.08
+  lookback_days: 60
+  min_samples: 30
+  weight_min: 0.02
+  weight_max: 0.30
+  allow_proxy_learning: false
+  # alias historique conservé pour compatibilité
+  proxy_learning_enabled: false
+
+reinforcement:
+  enabled: true
+  # Le RL reste observable mais ne modifie pas le sizing tant qu'il n'est pas validé sur outcomes réels.
+  apply_to_sizing: false
+  learning_enabled: true
+  min_validated_samples: 100
+  alpha: 0.05
+  epsilon: 0.12
+  epsilon_min: 0.03
+  epsilon_decay: 0.995
+  model_dir: models/rl

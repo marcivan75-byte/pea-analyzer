@@ -1,0 +1,235 @@
+name: V24.1.4 TCT - Actions + ETF Shadow
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [feature/smart-money-v1]
+    paths:
+      - 'apps/tct_v24/**'
+      - '.github/workflows/V24.1_tct.yml'
+  push:
+    branches: [agent/tct-v24-1-4-integration]
+    paths:
+      - 'apps/tct_v24/**'
+      - '.github/workflows/V24.1_tct.yml'
+
+# Shadow only until the full 1829 Actions + 102 ETF contract is validated.
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v24-1-4-tct-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-and-score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: apps/tct_v24/requirements.txt
+
+      - name: Install TCT dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r apps/tct_v24/requirements.txt
+          python -m pip check
+
+      - name: Restore TCT persistent state
+        uses: actions/cache@v5
+        with:
+          path: |
+            apps/tct_v24/data/persistence/last_T1_bandwidth.json
+            apps/tct_v24/data/persistence/adaptive_weights.json
+            apps/tct_v24/data/persistence/signal_outcomes.csv
+            apps/tct_v24/models/rl/linear_q.npz
+            apps/tct_v24/models/rl/experience.json
+            apps/tct_v24/models/rl/model_meta.json
+          key: tct-v24-1-4-state-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            tct-v24-1-4-state-${{ runner.os }}-
+
+      - name: Static audit and regression tests
+        working-directory: apps/tct_v24
+        run: |
+          set -euo pipefail
+          python -m compileall -q main.py src dashboard tests
+          pytest -q
+
+      - name: Restore latest successful Actions Free Capture
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/tct-actions && mkdir -p /tmp/tct-actions
+          FOUND=0
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/V21.1_free_capture.yml/runs?status=success&branch=feature%2Fsmart-money-v1&per_page=30" \
+            --jq '.workflow_runs[].id' > /tmp/tct-actions/runs.txt
+          while read -r RUN; do
+            [ -n "$RUN" ] || continue
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}/artifacts?per_page=100" \
+              --jq '.artifacts[]|select(.expired==false)|[.id,.name]|@tsv' > /tmp/tct-actions/artifacts.tsv || continue
+            while IFS=$'\t' read -r ART NAME; do
+              case "$NAME" in V21.1-Free-Capture-*) ;; *) continue ;; esac
+              rm -rf /tmp/tct-actions/unpack && mkdir -p /tmp/tct-actions/unpack
+              gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/tct-actions/a.zip || continue
+              unzip -oq /tmp/tct-actions/a.zip -d /tmp/tct-actions/unpack || continue
+              SRC=$(find /tmp/tct-actions/unpack -name V21.1_ACTIONS_PEA_REFERENCE_MERGED.csv -print -quit)
+              [ -n "$SRC" ] || continue
+              cp "$SRC" /tmp/tct-actions/actions.csv
+              if python - <<'PY'
+          import pandas as pd
+          d=pd.read_csv('/tmp/tct-actions/actions.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          n=len(d); u=d['isin'].astype(str).nunique()
+          assert n in {1429,1829}, (n,u)
+          assert u==n, (n,u)
+          print('TCT_ACTIONS_INPUT_OK',n,u)
+          PY
+              then
+                FOUND=1
+                echo "TCT_ACTIONS_SOURCE_RUN=$RUN" >> "$GITHUB_ENV"
+                break 2
+              fi
+            done < /tmp/tct-actions/artifacts.tsv
+          done < /tmp/tct-actions/runs.txt
+          test "$FOUND" = 1
+
+      - name: Restore latest validated ETF PEA 102 reference
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/tct-etf && mkdir -p /tmp/tct-etf
+          FOUND=0
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/V20.7_etf102_only.yml/runs?status=success&branch=feature%2Fsmart-money-v1&per_page=30" \
+            --jq '.workflow_runs[].id' > /tmp/tct-etf/runs.txt
+          while read -r RUN; do
+            [ -n "$RUN" ] || continue
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}/artifacts?per_page=100" \
+              --jq '.artifacts[]|select(.expired==false)|[.id,.name]|@tsv' > /tmp/tct-etf/artifacts.tsv || continue
+            while IFS=$'\t' read -r ART NAME; do
+              case "$NAME" in V20.7-ETF-PEA-102-*) ;; *) continue ;; esac
+              rm -rf /tmp/tct-etf/unpack && mkdir -p /tmp/tct-etf/unpack
+              gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/tct-etf/a.zip || continue
+              unzip -oq /tmp/tct-etf/a.zip -d /tmp/tct-etf/unpack || continue
+              SRC=$(find /tmp/tct-etf/unpack -name V20.7_ETF102_REFERENCE_MASTER.csv -print -quit)
+              [ -n "$SRC" ] || continue
+              cp "$SRC" /tmp/tct-etf/etf.csv
+              if python - <<'PY'
+          import pandas as pd
+          d=pd.read_csv('/tmp/tct-etf/etf.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          assert len(d)==102 and d['isin'].astype(str).nunique()==102
+          assert d['asset_class'].astype(str).str.upper().eq('ETF').all()
+          print('TCT_ETF102_INPUT_OK',len(d))
+          PY
+              then
+                FOUND=1
+                echo "TCT_ETF_SOURCE_RUN=$RUN" >> "$GITHUB_ENV"
+                break 2
+              fi
+            done < /tmp/tct-etf/artifacts.tsv
+          done < /tmp/tct-etf/runs.txt
+          test "$FOUND" = 1
+
+      - name: Build canonical combined TCT input
+        run: |
+          set -euo pipefail
+          mkdir -p apps/tct_v24/data/processed
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+
+          actions=pd.read_csv('/tmp/tct-actions/actions.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          etf=pd.read_csv('/tmp/tct-etf/etf.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+          actions['tct_input_asset_class']='ACTION'
+          etf['tct_input_asset_class']='ETF'
+          combined=pd.concat([actions,etf],ignore_index=True,sort=False)
+          n_actions=len(actions); n_etf=len(etf)
+          assert n_actions in {1429,1829}
+          assert n_etf==102
+          assert combined['isin'].astype(str).nunique()==len(combined)
+          target=1931
+          scope='FULL_CANONICAL_1931' if len(combined)==target else 'TRANSITIONAL_SCOPE'
+          out=Path('apps/tct_v24/data/processed/repo_combined.csv')
+          combined.to_csv(out,sep=';',index=False,encoding='utf-8-sig')
+          Path('/tmp/tct_scope.env').write_text(
+              f'TCT_ACTIONS_ROWS={n_actions}\nTCT_ETF_ROWS={n_etf}\nTCT_TOTAL_ROWS={len(combined)}\nTCT_SCOPE_STATUS={scope}\n',
+              encoding='utf-8'
+          )
+          print('TCT_COMBINED_INPUT_OK',n_actions,n_etf,len(combined),scope)
+          PY
+          cat /tmp/tct_scope.env >> "$GITHUB_ENV"
+
+      - name: Run V24.1.4 TCT shadow
+        working-directory: apps/tct_v24
+        env:
+          TCT_FREE_CAPTURE_PATH: data/processed/repo_combined.csv
+          TCT_SKIP_SHORT_REFRESH: '1'
+        run: python main.py
+
+      - name: Hard audit V24.1.4 outputs
+        working-directory: apps/tct_v24
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+
+          audit=json.loads(Path('output/V24.1.4_TCT_AUDIT.json').read_text())
+          full=pd.read_csv('output/V24.1.4_TCT_FULL.csv',dtype=object,low_memory=False)
+          top=pd.read_csv('output/V24.1.4_TCT_TOP20_RESEARCH.csv',dtype=object,low_memory=False)
+          actionable=pd.read_csv('output/V24.1.4_TCT_ACTIONABLE.csv',dtype=object,low_memory=False)
+
+          assert audit['passed'] is True
+          assert audit['execution_mode']=='RESEARCH_ONLY_SHADOW'
+          assert audit['rows']==audit['unique_isin']==len(full)
+          assert len(full) in {1531,1931}
+          assert audit['asset_class_counts'].get('ETF')==102
+          assert audit['asset_class_counts'].get('ACTION') in {1429,1829}
+          assert len(top)<=20 and 'tct_asset_class' in top.columns
+          assert 'isin' in actionable.columns
+          if len(full)==1931:
+              assert audit['scope_status']=='FULL_CANONICAL_1931'
+          else:
+              assert audit['scope_status']=='TRANSITIONAL_SCOPE'
+          print('V24_1_4_TCT_HARD_GATES_OK',audit['scope_status'],audit['rows'],audit['take'],len(top),len(actionable))
+          PY
+
+      - name: Publish run summary
+        if: always()
+        run: |
+          echo '# TCT V24.1.4 — Actions + ETF' >> "$GITHUB_STEP_SUMMARY"
+          echo "- Actions input: **${TCT_ACTIONS_ROWS:-unknown}**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- ETF input: **${TCT_ETF_ROWS:-unknown}**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Total: **${TCT_TOTAL_ROWS:-unknown}**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Scope: **${TCT_SCOPE_STATUS:-unknown}**" >> "$GITHUB_STEP_SUMMARY"
+          echo '- Mode: **RESEARCH_ONLY_SHADOW**' >> "$GITHUB_STEP_SUMMARY"
+          echo '- No hidden Yahoo/AMF refresh inside TCT scoring' >> "$GITHUB_STEP_SUMMARY"
+          echo '- No synthetic-model training' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload TCT V24.1.4 artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: V24.1.4-TCT-${{ github.run_id }}
+          retention-days: 90
+          if-no-files-found: warn
+          path: |
+            apps/tct_v24/output/
+            apps/tct_v24/logs/
+            apps/tct_v24/data/pit/
+            apps/tct_v24/data/persistence/
+            apps/tct_v24/models/rl/
+            apps/tct_v24/AUDIT_V24_1_4.md

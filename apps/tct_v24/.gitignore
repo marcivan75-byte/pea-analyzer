@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+.env
+*.egg-info/
+dist/
+build/
+
+# Data & models (ne pas versionner les gros fichiers)
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+data/pit/*
+!data/pit/.gitkeep
+data/persistence/*
+!data/persistence/.gitkeep
+output/*
+!output/.gitkeep
+logs/*
+!logs/.gitkeep
+models/gap_risk/*
+!models/gap_risk/.gitkeep
+models/meta_labeling/*
+!models/meta_labeling/.gitkeep
+models/rl/*
+!models/rl/.gitkeep
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+.ipynb_checkpoints/
+
+# Secrets
+.env
+*.pem
+secrets.yaml
