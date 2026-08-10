@@ -18,6 +18,10 @@ BASE = "https://filings.xbrl.org/"
 DISCOVERY_SOURCE = "ESEF_DISCOVERY"
 DISCOVERY_FIELD = "esef_discovery_status"
 NEGATIVE_CACHE_DAYS = 30
+SCHEMA_SOURCE = "ESEF_SCHEMA"
+SCHEMA_FIELD = "esef_capture_schema"
+SCHEMA_VERSION = "V2"
+SCHEMA_STATUS = "SCHEMA_V2_COMPLETE"
 
 CONCEPTS = {
     "revenue_esef": [
@@ -27,8 +31,10 @@ CONCEPTS = {
     "net_income_esef": ["ProfitLoss", "ProfitLossAttributableToOwnersOfParent", "NetIncomeLoss"],
     "operating_income_esef": ["ProfitLossFromOperatingActivities", "OperatingProfitLoss", "OperatingIncomeLoss"],
     "assets_esef": ["Assets"],
+    "current_assets_esef": ["CurrentAssets"],
     "equity_esef": ["Equity", "EquityAttributableToOwnersOfParent", "StockholdersEquity"],
     "liabilities_esef": ["Liabilities"],
+    "current_liabilities_esef": ["CurrentLiabilities"],
     "cash_esef": ["CashAndCashEquivalents", "CashAndCashEquivalentsAtCarryingValue"],
     "cfo_esef": ["CashFlowsFromUsedInOperatingActivities", "NetCashProvidedByUsedInOperatingActivities"],
     "capex_esef": [
@@ -38,6 +44,14 @@ CONCEPTS = {
     "borrowings_current_esef": ["CurrentBorrowings", "ShorttermBorrowings", "ShortTermBorrowings"],
     "borrowings_noncurrent_esef": ["NoncurrentBorrowings", "LongtermBorrowings", "LongTermDebt"],
     "ebitda_esef": ["EarningsBeforeInterestTaxesDepreciationAndAmortisation", "EBITDA"],
+    "da_combined_esef": [
+        "DepreciationAndAmortisationExpense", "DepreciationAndAmortizationExpense",
+        "DepreciationDepletionAndAmortization"
+    ],
+    "gross_profit_esef": ["GrossProfit"],
+    "cost_of_sales_esef": ["CostOfSales", "CostOfRevenue", "CostOfGoodsSold"],
+    "interest_expense_esef": ["InterestExpense", "InterestExpenseNonOperating", "InterestAndDebtExpense"],
+    "finance_costs_esef": ["FinanceCosts"],
     "eps_basic_esef": ["BasicEarningsLossPerShare", "EarningsPerShareBasic"],
     "eps_diluted_esef": ["DilutedEarningsLossPerShare", "EarningsPerShareDiluted"],
 }
@@ -105,7 +119,6 @@ def _extract(payload: dict, report_period: str) -> list[tuple[str, float, str]]:
 
 
 def _latest_json_url(lei: str, session: requests.Session) -> tuple[str, str, str] | None:
-    """Traverse the public directory index: LEI/date/ESEF/country/report/*.json.gz."""
     root = urljoin(BASE, f"{lei}/")
     periods: list[tuple[date, str]] = []
     for href in _links(session, root):
@@ -154,6 +167,18 @@ def _recent_negative_isins(facts: pd.DataFrame) -> set[str]:
     return set(d.loc[d["_observed"].ge(cutoff), "isin"].astype(str))
 
 
+def _schema_completed_isins(facts: pd.DataFrame) -> set[str]:
+    if facts.empty:
+        return set()
+    x = facts[
+        facts["source"].astype(str).eq(SCHEMA_SOURCE)
+        & facts["field"].astype(str).eq(SCHEMA_FIELD)
+        & facts["status"].astype(str).eq(SCHEMA_STATUS)
+        & facts["value_text"].astype(str).eq(SCHEMA_VERSION)
+    ]
+    return set(x["isin"].astype(str))
+
+
 def _discovery_row(isin: str, status: str, evidence: str) -> dict:
     return {
         "isin": isin,
@@ -165,6 +190,21 @@ def _discovery_row(isin: str, status: str, evidence: str) -> dict:
         "evidence": evidence,
         "confidence": 0.95,
         "status": status,
+        "observed_at_utc": utcnow(),
+    }
+
+
+def _schema_row(isin: str, filing_index: str) -> dict:
+    return {
+        "isin": isin,
+        "field": SCHEMA_FIELD,
+        "value": "",
+        "value_text": SCHEMA_VERSION,
+        "as_of": date.today().isoformat(),
+        "source": SCHEMA_SOURCE,
+        "evidence": f"A_OFFICIAL_STRUCTURED|{filing_index}",
+        "confidence": 1.0,
+        "status": SCHEMA_STATUS,
         "observed_at_utc": utcnow(),
     }
 
@@ -181,17 +221,18 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 80) 
     lei_map = lei_rows.drop_duplicates("isin", keep="last").set_index("isin")["lei"].astype(str).to_dict()
 
     facts_old = store.facts()
-    completed: set[str] = set()
-    if not facts_old.empty:
-        e = facts_old[facts_old["source"].eq("ESEF_XBRL_JSON")]
-        completed = set(e["isin"].astype(str))
+    schema_completed = _schema_completed_isins(facts_old)
     negative_cached = _recent_negative_isins(facts_old)
 
     targets = []
     skipped_negative_cache = 0
+    skipped_schema_complete = 0
     for _, row in universe.iterrows():
         isin = str(row["isin"])
-        if isin in completed or isin not in lei_map:
+        if isin not in lei_map:
+            continue
+        if isin in schema_completed:
+            skipped_schema_complete += 1
             continue
         if isin in negative_cached:
             skipped_negative_cache += 1
@@ -203,6 +244,7 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 80) 
     session = requests.Session()
     rows: list[dict] = []
     discovery_rows: list[dict] = []
+    schema_rows: list[dict] = []
     filings = 0
     no_filing = 0
     errors = 0
@@ -229,13 +271,21 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 80) 
                     samples.append({"isin": isin, "lei": lei, "filing": filing_index, "reason": "NO_CANONICAL_CONCEPTS_CACHED_30D"})
                 continue
             filings += 1
+            schema_rows.append(_schema_row(isin, filing_index))
             if len(samples) < 5:
-                samples.append({"isin": isin, "lei": lei, "filing": filing_index, "facts": len(extracted)})
+                samples.append({"isin": isin, "lei": lei, "filing": filing_index, "facts": len(extracted), "schema": SCHEMA_VERSION})
             for field, value, period in extracted:
                 rows.append({
-                    "isin": isin, "field": field, "value": value, "value_text": "", "as_of": period,
-                    "source": "ESEF_XBRL_JSON", "evidence": "A_OFFICIAL_STRUCTURED",
-                    "confidence": 0.95, "status": "OBSERVED", "observed_at_utc": utcnow(),
+                    "isin": isin,
+                    "field": field,
+                    "value": value,
+                    "value_text": "",
+                    "as_of": period,
+                    "source": "ESEF_XBRL_JSON",
+                    "evidence": f"A_OFFICIAL_STRUCTURED_{SCHEMA_VERSION}",
+                    "confidence": 0.95,
+                    "status": "OBSERVED",
+                    "observed_at_utc": utcnow(),
                 })
         except Exception as exc:
             errors += 1
@@ -245,24 +295,34 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 80) 
 
     added = store.upsert_facts(rows)
     discovery_added = store.upsert_facts(discovery_rows)
-    status = "OK" if filings else "NO_NEW_DATA"
+    schema_added = store.upsert_facts(schema_rows)
+    status = "OK" if filings else ("SCHEMA_V2_COMPLETE" if not targets and schema_completed else "NO_NEW_DATA")
     store.add_health(
-        "ESEF_XBRL_JSON", status, len(targets), filings, no_filing + errors + extracted_zero,
+        "ESEF_XBRL_JSON",
+        status,
+        len(targets),
+        filings,
+        no_filing + errors + extracted_zero,
         message=(
-            f"facts_added={added}; discovery_markers={discovery_added}; no_filing={no_filing}; "
-            f"no_concepts={extracted_zero}; errors={errors}; negative_cache_skipped={skipped_negative_cache}; samples={samples}"
-        )
+            f"schema={SCHEMA_VERSION}; facts_processed={added}; schema_markers={schema_added}; "
+            f"discovery_markers={discovery_added}; no_filing={no_filing}; no_concepts={extracted_zero}; "
+            f"errors={errors}; negative_cache_skipped={skipped_negative_cache}; "
+            f"schema_complete_skipped={skipped_schema_complete}; samples={samples}"
+        ),
     )
     return {
         "status": status,
+        "schema_version": SCHEMA_VERSION,
         "attempted": len(targets),
         "filings": filings,
         "facts_added": added,
+        "schema_markers_added": schema_added,
         "discovery_markers_added": discovery_added,
         "no_filing": no_filing,
         "no_concepts": extracted_zero,
         "errors": errors,
         "negative_cache_skipped": skipped_negative_cache,
+        "schema_complete_skipped": skipped_schema_complete,
         "negative_cache_days": NEGATIVE_CACHE_DAYS,
         "samples": samples,
     }
