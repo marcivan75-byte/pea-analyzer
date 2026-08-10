@@ -1,0 +1,22 @@
+{
+  "version":"V21.2_TCT_EXPLOSIF_OPT",
+  "execution_mode":"RESEARCH_ONLY",
+  "integration_mode":"SHADOW_OPTIMIZED",
+  "optimization_status":"STRUCTURAL_PRIOR_PENDING_POINT_IN_TIME_BACKTEST",
+  "canonical_universe_size":1429,
+  "input_candidates":["outputs/free_capture/V21.1_ACTIONS_PEA_REFERENCE_MERGED.csv","outputs/V21.0_ACTIONS_PEA_1429_COMMITTEE.csv","outputs/V21.0_ACTIONS_PEA_1429_PREPARED.csv","outputs/V21.0_ACTIONS_PEA_REFERENCE_MASTER.csv"],
+  "objective":{"target_return_pct":15.0,"horizon_sessions":20,"primary_stop_loss_pct":10.0,"probability_target":0.65},
+  "pillar_weights":{"technical_impulse":0.32,"catalyst_event":0.24,"volume_flow_squeeze":0.18,"news_sector":0.08,"analyst_revision":0.06,"risk_liquidity":0.06,"valuation_relative":0.03,"corporate_support":0.02,"macro_rotation":0.01},
+  "technical_weights":{"breakout_strength":0.22,"trend_alignment":0.14,"macd_acceleration":0.14,"rsi_sweet_zone":0.10,"bollinger_expansion":0.12,"atr_expansion":0.10,"relative_strength":0.10,"reversal_stoch":0.08},
+  "volume_weights":{"relative_volume":0.40,"volume_trend":0.20,"short_float":0.20,"amf_public_short":0.10,"days_to_cover":0.05,"gap_confirmation":0.05},
+  "catalyst_weights":{"mna":0.24,"earnings":0.20,"guidance":0.18,"major_contract":0.18,"regulatory":0.10,"fda_ema":0.10},
+  "analyst_weights":{"broker_revision":0.35,"net_upgrades":0.30,"consensus_delta":0.25,"analyst_momentum":0.10},
+  "thresholds":{"COEUR_TCT_EXPLOSIF":80.0,"SATELLITE_TCT_EXPLOSIF":70.0,"SCAN_TCT_EXPLOSIF":60.0},
+  "coverage":{"min_global":0.60,"min_satellite":0.70,"min_core":0.80,"min_technical_satellite":0.65,"min_technical_core":0.80,"min_volume_satellite":0.55,"min_volume_core":0.70,"min_catalyst_core_if_used":0.50,"identity_min_any":0.92,"identity_min_core":0.95},
+  "gates":{"min_liquidity_percentile_any":0.05,"min_liquidity_percentile_core":0.15,"profit_warning_policy":"REJECT","max_drawdown_review_below_pct":-45.0,"extreme_gap_penalty_above_pct":12.0,"extreme_gap_core_block_above_pct":18.0,"extreme_gap_penalty":-10.0,"topdown_block_penalty":-10.0,"topdown_review_penalty":-4.0,"rumor_only_event_cap":25.0,"secondary_news_cap":65.0,"sector_news_cap":70.0,"coverage_grade_d_max_decision":"SCAN_TCT_EXPLOSIF","coverage_grade_c_max_decision":"SATELLITE_TCT_EXPLOSIF"},
+  "synergy":{"technical_volume_min":75.0,"technical_volume_bonus":3.0,"catalyst_technical_min":70.0,"catalyst_technical_bonus":2.0,"catalyst_volume_min":70.0,"catalyst_volume_bonus":2.0,"short_squeeze_short_pct_min":15.0,"short_squeeze_rvol_min":2.0,"short_squeeze_volume_trend_min":1.25,"short_squeeze_bonus":2.0,"max_total_bonus":6.0},
+  "source_policy":{"gdelt_direct_score_weight":0.0,"social_direct_score_weight":0.0,"microstructure_direct_score_weight":0.0,"stale_warning_multiplier":0.75,"minimum_confidence_multiplier":0.50},
+  "backtest":{"target_return_pct":15.0,"stop_loss_pct":10.0,"horizon_sessions":20,"test_fraction":0.30,"purge_sessions":20,"walk_forward_min_train_snapshots":120,"walk_forward_test_snapshots":20,"walk_forward_step_snapshots":20,"calibration_bins":10,"min_positive_events_for_probability":100},
+  "outputs":{"full":"outputs/V21.2_TCT_EXPLOSIF_1429.csv","top20":"outputs/V21.2_TCT_EXPLOSIF_TOP20.csv","audit":"outputs/audit/V21.2_TCT_EXPLOSIF_AUDIT.json"},
+  "governance":{"no_live_execution":true,"no_neutral_50_imputation":true,"production_v21_weights_modified":false,"insider_positive_weight_active":false,"score_is_probability":false}
+}
