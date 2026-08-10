@@ -28,8 +28,8 @@ MERGE_POLICIES = {
             "fcf_yield_v21",
         ],
     },
-    "BOURSORAMA_PUBLIC": {
-        "status": "OBSERVED",
+    "BOURSORAMA_PUBLIC_V2": {
+        "status": "OBSERVED_VALIDATED_ISIN",
         "max_age_days": 14,
         "stale_warning_days": 7,
         "fields": [
@@ -80,7 +80,7 @@ def _valid_value(field: str, value: object, value_text: object, now: pd.Timestam
     if not math.isfinite(x):
         return None
     bounds = {
-        "per_forward_v21": (0.0, 250.0),
+        "per_forward_v21": (0.01, 250.0),
         "n_analysts_v21": (0.0, 100.0),
         "consensus_score_100_v21": (0.0, 100.0),
         "consensus_delta_4w": (-100.0, 100.0),
@@ -144,7 +144,7 @@ def merge(base: pd.DataFrame, store: CaptureStore, cfg: dict) -> tuple[pd.DataFr
     v = pd.concat(chunks, ignore_index=True)
     v["_asof"] = pd.to_datetime(v["as_of"], errors="coerce")
     v = v.dropna(subset=["_asof"])
-    source_priority = {"INTERNAL_FROM_ESEF": 1, "BOURSORAMA_PUBLIC": 2}
+    source_priority = {"INTERNAL_FROM_ESEF": 1, "BOURSORAMA_PUBLIC_V2": 2}
     v["_p"] = v["_source_policy"].map(source_priority).fillna(9)
     v = v.sort_values(["isin", "field", "_asof", "_p"], ascending=[True, True, False, True])
     v = v.drop_duplicates(["isin", "field"], keep="first")
