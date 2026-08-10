@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from datetime import date
+import os
 import numpy as np
 import pandas as pd
 
+from .boursorama_public import capture as capture_boursorama
 from .canonical_merge import write_merged
 from .core import CaptureStore, is_observed, load_config, number, utcnow, write_csv
 
@@ -200,12 +202,20 @@ def capture(base: pd.DataFrame, store: CaptureStore) -> dict:
         rejected_plausibility + rejected_period_mismatch,
         message=msg,
     )
-    merge_audit = write_merged(base, store, load_config())
+    cfg = load_config()
+    boursorama = capture_boursorama(
+        base,
+        store,
+        cfg,
+        max_symbols=int(os.getenv("V211_BOURSORAMA_MAX_SYMBOLS", "40")),
+    )
+    merge_audit = write_merged(base, store, cfg)
     return {
         "status": "OK",
         "instruments": instruments,
         "facts_added": added,
         "rejected_plausibility": rejected_plausibility,
         "rejected_period_mismatch": rejected_period_mismatch,
+        "boursorama": boursorama,
         "canonical_merge": merge_audit,
     }
