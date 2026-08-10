@@ -3,6 +3,14 @@
   "execution_mode": "RESEARCH_ONLY",
   "free_only": true,
   "canonical_universe_size": 1429,
+  "source_reference_scope": {
+    "documented_total_instruments": 1931,
+    "documented_actions": 1829,
+    "documented_etf": 102,
+    "active_actions_canonical": 1429,
+    "active_etf_canonical": 102,
+    "policy": "ENRICH_ACTIVE_VALIDATED_UNIVERSES_WITHOUT_SILENT_UNIVERSE_EXPANSION"
+  },
   "principles": {
     "no_paid_source": true,
     "no_neutral_50_imputation": true,
@@ -10,7 +18,9 @@
     "incremental_cache_first": true,
     "fetch_only_missing_or_stale": true,
     "preserve_cell_provenance": true,
-    "yfinance_role": "LAST_RESORT_FALLBACK_ONLY"
+    "yfinance_role": "LAST_RESORT_FALLBACK_ONLY",
+    "complementary_context_no_new_weight_without_backtest": true,
+    "propagate_validated_free_facts_before_downstream_scoring": true
   },
   "freshness_days": {
     "identity": 90,
@@ -22,19 +32,62 @@
     "prospective": 7,
     "analyst_consensus": 7,
     "earnings_calendar": 7,
-    "regulatory_events": 1
+    "regulatory_events": 1,
+    "macro": 7,
+    "energy": 7,
+    "sentiment": 1,
+    "news": 1
   },
   "capture_tiers": {
-    "TIER_0_IDENTITY": {"scope": 1429, "sources": ["OPENFIGI_V3", "CANONICAL_REFERENCE"]},
-    "TIER_1_MARKET": {"scope": 1429, "sources": ["EURONEXT_DELAYED", "DEUTSCHE_BOERSE_DELAYED", "NASDAQ_NORDIC_DELAYED", "OFFICIAL_OTHER", "TWELVEDATA_FREE", "MARKETSTACK_FREE", "ALPHA_VANTAGE_FREE", "YFINANCE_FALLBACK"]},
-    "TIER_2_FUNDAMENTALS": {"scope": 600, "sources": ["ESEF_IXBRL", "AMF_BDIF", "ISSUER_REPORTS", "ALPHA_VANTAGE_FREE", "YFINANCE_FALLBACK"]},
-    "TIER_3_PROSPECTIVE": {"scope": 250, "sources": ["BOURSORAMA_PUBLIC", "ZONEBOURSE_PUBLIC", "TWELVEDATA_IF_FREE_ENTITLED", "ALPHA_VANTAGE_FREE", "INTERNAL_SNAPSHOTS", "YFINANCE_FALLBACK"]}
+    "TIER_0_IDENTITY": {
+      "scope": 1429,
+      "sources": ["OPENFIGI_V3", "GLEIF_ISIN_LEI_BULK", "GLEIF_ISIN_LEI", "CANONICAL_REFERENCE"]
+    },
+    "TIER_1_MARKET": {
+      "scope": 1429,
+      "sources": ["EURONEXT_DELAYED", "DEUTSCHE_BOERSE_DELAYED", "NASDAQ_NORDIC_DELAYED", "OFFICIAL_OTHER", "TWELVEDATA_FREE", "MARKETSTACK_FREE", "ALPHA_VANTAGE_FREE", "YFINANCE_FALLBACK"]
+    },
+    "TIER_2_FUNDAMENTALS": {
+      "scope": 600,
+      "sources": ["ESEF_IXBRL", "AMF_BDIF", "ISSUER_REPORTS", "FINNHUB_FREE", "ALPHA_VANTAGE_FREE", "YFINANCE_FALLBACK"]
+    },
+    "TIER_3_PROSPECTIVE": {
+      "scope": 250,
+      "sources": ["FINNHUB_FREE", "BOURSORAMA_PUBLIC", "ZONEBOURSE_PUBLIC", "TWELVEDATA_IF_FREE_ENTITLED", "ALPHA_VANTAGE_FREE", "INTERNAL_SNAPSHOTS", "YFINANCE_FALLBACK"]
+    },
+    "TIER_4_COMPLEMENTARY_CONTEXT": {
+      "scope": "GLOBAL_AND_EU_CONTEXT",
+      "sources": ["FRED", "ECB", "EUROSTAT", "EIA", "GDELT", "GOOGLE_NEWS", "CNN_FEAR_GREED", "AAII"]
+    },
+    "TIER_5_ETF_REFERENCE": {
+      "scope": 102,
+      "sources": ["BOURSORAMA_ETF", "AMUNDI_ETF", "BNPP_ETF", "SPDR_ETF", "MORNINGSTAR_FR", "YFINANCE_PIPELINE"]
+    }
   },
   "free_api_budgets": {
-    "OPENFIGI_V3": {"jobs_per_request_with_key": 100, "jobs_per_request_without_key": 5, "max_requests_per_run": 30},
-    "TWELVEDATA_FREE": {"credits_per_day_guard": 760, "credits_per_minute_guard": 7, "max_symbols_per_run": 700},
-    "ALPHA_VANTAGE_FREE": {"max_calls_per_day_guard": 23, "max_symbols_per_run": 20},
-    "MARKETSTACK_FREE": {"max_calls_per_month_guard": 90, "max_symbols_per_run": 3}
+    "OPENFIGI_V3": {
+      "jobs_per_request_with_key": 100,
+      "jobs_per_request_without_key": 5,
+      "max_requests_per_run": 30
+    },
+    "TWELVEDATA_FREE": {
+      "credits_per_day_guard": 760,
+      "credits_per_minute_guard": 7,
+      "max_symbols_per_run": 700
+    },
+    "ALPHA_VANTAGE_FREE": {
+      "max_calls_per_day_guard": 23,
+      "max_symbols_per_run": 20
+    },
+    "MARKETSTACK_FREE": {
+      "max_calls_per_month_guard": 90,
+      "max_symbols_per_run": 3
+    },
+    "FINNHUB_FREE": {
+      "requests_per_minute_guard": 55,
+      "max_symbols_per_run": 120,
+      "max_metric_symbols_per_run": 60
+    }
   },
   "official_delayed_feeds": {
     "EURONEXT_DELAYED": {
@@ -55,6 +108,15 @@
     "fundamentals": ["market_cap_v21", "roe_v21_pct", "roa_v21_pct", "operating_margin_v21_pct", "revenue_growth_v21_pct", "earnings_growth_v21_pct", "debt_to_ebitda_v21", "free_cash_flow_v21"],
     "valuation": ["per_forward_v21", "pb_v21", "fcf_yield_v21"],
     "prospective": ["target_mean_v21", "target_low_v21", "target_high_v21", "n_analysts_v21", "consensus_score_100_v21", "consensus_delta_4w", "broker_weighted_revision_30d", "next_earnings_date"]
+  },
+  "propagation": {
+    "actions_target": "outputs/V21.0_ACTIONS_PEA_1429_PREPARED.csv",
+    "etf_target": "outputs/V20.4.3_ETF102_DIRECT_ENRICHED.csv",
+    "merge_mode": "MISSING_ONLY",
+    "carry_identity_provenance": true,
+    "carry_complementary_context": true,
+    "allow_new_context_weight": false,
+    "require_zero_overwrite": true
   },
   "validation_targets_pct": {
     "identity": 99,
