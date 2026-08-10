@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 import os
+import time
 
 import pandas as pd
 
@@ -92,12 +93,13 @@ def capture(prioritized: pd.DataFrame, store: CaptureStore, max_symbols: int = 1
             "name": str(row.get("name") or "").strip(),
         })
 
+    delay_seconds = max(1.05, float(os.getenv("V211_FINNHUB_DELAY_SECONDS", "1.05")))
     symbol_cache = store.root / "V21.1_FINNHUB_SYMBOL_MAP.csv"
     observations, failures = fetch_consensus(
         securities,
         token,
         symbol_cache_path=symbol_cache,
-        delay_seconds=float(os.getenv("V211_FINNHUB_DELAY_SECONDS", "1.05")),
+        delay_seconds=delay_seconds,
         max_retries=2,
     )
 
@@ -160,6 +162,8 @@ def capture(prioritized: pd.DataFrame, store: CaptureStore, max_symbols: int = 1
                     metric_success += 1
             except Exception as exc:
                 failures.append({"isin": isin, "finnhub_symbol": symbol, "stage": "metric", "reason": type(exc).__name__})
+            finally:
+                time.sleep(delay_seconds)
 
     added = store.upsert_facts(facts)
     status = "OK" if added else ("NO_NEW_DATA" if not failures else "PARTIAL")
@@ -169,7 +173,7 @@ def capture(prioritized: pd.DataFrame, store: CaptureStore, max_symbols: int = 1
         attempted=len(securities),
         succeeded=len(by_isin),
         failed=len(failures),
-        message=f"facts={added}; metric_attempted={metric_attempted}; metric_success={metric_success}",
+        message=f"facts={added}; metric_attempted={metric_attempted}; metric_success={metric_success}; delay_seconds={delay_seconds}",
     )
     return {
         "status": status,
@@ -179,5 +183,6 @@ def capture(prioritized: pd.DataFrame, store: CaptureStore, max_symbols: int = 1
         "metric_attempted": metric_attempted,
         "metric_success": metric_success,
         "facts_added": added,
+        "delay_seconds": delay_seconds,
         "endpoint": FINNHUB_BASE,
     }
