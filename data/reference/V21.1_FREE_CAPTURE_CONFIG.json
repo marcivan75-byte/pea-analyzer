@@ -2,17 +2,17 @@
   "version": "V21.1_FREE_CAPTURE",
   "execution_mode": "RESEARCH_ONLY",
   "free_only": true,
-  "canonical_universe_size": 1429,
+  "canonical_universe_size": 1829,
   "source_audit_version": "V21.1_SOURCE_AUDIT_2026-08-10_STATIC",
-  "runtime_validation_status": "NOT_RUN_BY_USER_REQUEST",
+  "runtime_validation_status": "NOT_RUN_AFTER_1829_SWITCH",
   "workflow_trigger_policy": "MANUAL_ONLY_UNTIL_EXPLICIT_REACTIVATION",
   "source_reference_scope": {
     "documented_total_instruments": 1931,
     "documented_actions": 1829,
     "documented_etf": 102,
-    "active_actions_canonical": 1429,
+    "active_actions_canonical": 1829,
     "active_etf_canonical": 102,
-    "policy": "ENRICH_ACTIVE_VALIDATED_UNIVERSES_WITHOUT_SILENT_UNIVERSE_EXPANSION"
+    "policy": "ALL_1829_VALIDATED_PEA_ACTIONS_ACTIVE_PLUS_102_VALIDATED_PEA_ETF"
   },
   "principles": {
     "no_paid_source": true,
@@ -31,271 +31,92 @@
     "no_internal_identifier_guessing": true
   },
   "freshness_days": {
-    "identity": 90,
-    "market_daily": 2,
-    "technical_derived": 2,
-    "fundamentals_annual": 120,
-    "fundamentals_quarterly": 45,
-    "valuation": 7,
-    "prospective": 7,
-    "analyst_consensus": 7,
-    "earnings_calendar": 7,
-    "regulatory_events": 1,
-    "amf_short_positions": 1,
-    "macro": 7,
-    "energy": 7,
-    "sentiment": 1,
-    "news": 1,
-    "etf_official_reference": 30,
-    "morningstar": 7
+    "identity": 90, "market_daily": 2, "technical_derived": 2, "fundamentals_annual": 120,
+    "fundamentals_quarterly": 45, "valuation": 7, "prospective": 7, "analyst_consensus": 7,
+    "earnings_calendar": 7, "regulatory_events": 1, "amf_short_positions": 1, "macro": 7,
+    "energy": 7, "sentiment": 1, "news": 1, "etf_official_reference": 30, "morningstar": 7
   },
   "capture_tiers": {
     "TIER_0_IDENTITY": {
-      "scope": "ACTIONS_1429_PLUS_ETF_102_WHERE_RELEVANT",
-      "sources": [
-        "EURONEXT_LIVE_PUBLIC",
-        "OPENFIGI_V3",
-        "GLEIF_ISIN_LEI_BULK",
-        "GLEIF_ISIN_LEI",
-        "CANONICAL_REFERENCE"
-      ]
+      "scope": "ACTIONS_1829_PLUS_ETF_102_WHERE_RELEVANT",
+      "sources": ["EURONEXT_LIVE_PUBLIC","OPENFIGI_V3","GLEIF_ISIN_LEI_BULK","GLEIF_ISIN_LEI","CANONICAL_REFERENCE"]
     },
     "TIER_1_MARKET": {
       "scope": "ACTIONS_ETF",
-      "sources": [
-        "EURONEXT_LIVE_PUBLIC",
-        "EURONEXT_DELAYED",
-        "DEUTSCHE_BOERSE_DELAYED",
-        "NASDAQ_NORDIC_DELAYED",
-        "TWELVEDATA_FREE",
-        "MARKETSTACK_FREE",
-        "ALPHA_VANTAGE_FREE",
-        "YFINANCE_PIPELINE"
-      ]
+      "sources": ["EURONEXT_LIVE_PUBLIC","EURONEXT_DELAYED","DEUTSCHE_BOERSE_DELAYED","NASDAQ_NORDIC_DELAYED","TWELVEDATA_FREE","EODHD_FREE_EOD","MARKETSTACK_FREE","ALPHA_VANTAGE_FREE","YFINANCE_PIPELINE"]
     },
     "TIER_2_ACTION_FUNDAMENTALS": {
-      "scope": 1429,
-      "sources": [
-        "ESEF_XBRL_JSON",
-        "INTERNAL_FROM_ESEF",
-        "ISSUER_REPORTS",
-        "FINNHUB_FREE",
-        "ALPHA_VANTAGE_FREE",
-        "YFINANCE_PIPELINE"
-      ]
+      "scope": 1829,
+      "sources": ["ESEF_XBRL_JSON","INTERNAL_FROM_ESEF","ISSUER_REPORTS","FINNHUB_FREE","ALPHA_VANTAGE_FREE","YFINANCE_PIPELINE"]
     },
     "TIER_3_ACTION_PROSPECTIVE": {
-      "scope": 250,
-      "sources": [
-        "FINNHUB_FREE",
-        "ZONEBOURSE_PUBLIC_V3",
-        "BOURSORAMA_PUBLIC_V2",
-        "YFINANCE_PIPELINE"
-      ]
+      "scope": 350,
+      "sources": ["FINNHUB_FREE","ZONEBOURSE_PUBLIC_V3","BOURSORAMA_PUBLIC_V2","YFINANCE_PIPELINE"]
     },
     "TIER_4_REGULATORY_SMART_MONEY": {
       "scope": "FRENCH_ACTIONS_WHERE_PUBLIC_POSITION_EXISTS",
-      "sources": ["AMF_SHORT_POSITIONS", "SMART_MONEY_VALIDATED_SHADOW"],
+      "sources": ["AMF_SHORT_POSITIONS","SMART_MONEY_VALIDATED_SHADOW"],
       "positive_score_activation": false
     },
     "TIER_5_COMPLEMENTARY_CONTEXT": {
       "scope": "GLOBAL_AND_EU_CONTEXT",
-      "sources": [
-        "FRED",
-        "ECB",
-        "EUROSTAT",
-        "EIA",
-        "GDELT",
-        "GOOGLE_NEWS_RSS",
-        "CNN_FEAR_GREED",
-        "AAII"
-      ]
+      "sources": ["FRED","ECB","EUROSTAT","EIA","GDELT","GOOGLE_NEWS_RSS","CNN_FEAR_GREED","AAII"]
     },
     "TIER_6_ETF_REFERENCE": {
       "scope": 102,
-      "priority": [
-        "AMUNDI_ETF",
-        "BNPP_ETF",
-        "SPDR_ETF",
-        "EURONEXT_LIVE_PUBLIC",
-        "BOURSORAMA_ETF",
-        "LESMEILLEURSFONDS_PEA",
-        "MORNINGSTAR_FR",
-        "OPENFIGI_V3",
-        "YFINANCE_PIPELINE"
-      ],
-      "fields": [
-        "PEA_ELIGIBILITY",
-        "TER",
-        "AUM",
-        "HOLDINGS",
-        "DISTRIBUTION",
-        "REPLICATION",
-        "BENCHMARK",
-        "RATING",
-        "CATEGORY",
-        "RANK_1Y_3Y_5Y",
-        "PERFORMANCE",
-        "KID_FACTSHEET_URL"
-      ]
+      "priority": ["AMUNDI_ETF","BNPP_ETF","SPDR_ETF","EURONEXT_LIVE_PUBLIC","BOURSORAMA_ETF","LESMEILLEURSFONDS_PEA","MORNINGSTAR_FR","OPENFIGI_V3","YFINANCE_PIPELINE"],
+      "fields": ["PEA_ELIGIBILITY","TER","AUM","HOLDINGS","DISTRIBUTION","REPLICATION","BENCHMARK","RATING","CATEGORY","RANK_1Y_3Y_5Y","PERFORMANCE","KID_FACTSHEET_URL"]
     },
     "TIER_7_METHODOLOGY_ONLY": {
       "scope": "MODEL_GOVERNANCE",
-      "sources": [
-        "ECB_FINANCIAL_STABILITY_REPORT",
-        "NBER_W30917",
-        "NBER_W16601",
-        "AMF_ETF_GUIDE"
-      ],
+      "sources": ["ECB_FINANCIAL_STABILITY_REPORT","NBER_W30917","NBER_W16601","AMF_ETF_GUIDE"],
       "live_data_allowed": false,
       "automatic_weight_change_allowed": false
     }
   },
   "free_api_budgets": {
-    "OPENFIGI_V3": {
-      "jobs_per_request_with_key": 100,
-      "jobs_per_request_without_key": 5,
-      "max_requests_per_run": 30
-    },
-    "TWELVEDATA_FREE": {
-      "credits_per_day_guard": 760,
-      "credits_per_minute_guard": 7,
-      "max_symbols_per_run": 700
-    },
-    "ALPHA_VANTAGE_FREE": {
-      "max_calls_per_day_guard": 23,
-      "max_symbols_per_run": 20
-    },
-    "MARKETSTACK_FREE": {
-      "max_calls_per_month_guard": 90,
-      "max_symbols_per_run": 3
-    },
-    "FINNHUB_FREE": {
-      "requests_per_minute_guard": 55,
-      "max_symbols_per_run": 120,
-      "max_metric_symbols_per_run": 60
-    },
-    "EURONEXT_LIVE_PUBLIC": {
-      "max_product_pages_per_run": 150,
-      "minimum_delay_seconds": 0.35
-    },
-    "BOURSORAMA_PUBLIC": {
-      "max_action_pages_per_run": 40,
-      "targeted_cache_only": true
-    },
-    "ZONEBOURSE_PUBLIC": {
-      "max_action_pages_per_run": 40,
-      "targeted_cache_only": true
-    }
+    "OPENFIGI_V3": {"jobs_per_request_with_key": 100, "jobs_per_request_without_key": 5, "max_requests_per_run": 40},
+    "TWELVEDATA_FREE": {"credits_per_day_guard": 760, "credits_per_minute_guard": 7, "max_symbols_per_run": 700},
+    "ALPHA_VANTAGE_FREE": {"max_calls_per_day_guard": 23, "max_symbols_per_run": 20},
+    "EODHD_FREE_EOD": {"max_calls_per_day_guard": 18, "documented_free_calls_per_day": 20, "history_window": "PAST_YEAR"},
+    "MARKETSTACK_FREE": {"max_calls_per_month_guard": 90, "max_symbols_per_run": 3},
+    "FINNHUB_FREE": {"requests_per_minute_guard": 55, "max_symbols_per_run": 180, "max_metric_symbols_per_run": 90},
+    "EURONEXT_LIVE_PUBLIC": {"max_product_pages_per_run": 220, "minimum_delay_seconds": 0.35},
+    "BOURSORAMA_PUBLIC": {"max_action_pages_per_run": 60, "targeted_cache_only": true},
+    "ZONEBOURSE_PUBLIC": {"max_action_pages_per_run": 60, "targeted_cache_only": true}
   },
   "official_delayed_feeds": {
-    "EURONEXT_DELAYED": {
-      "landing_url": "https://marketdata.euronext.com/data-reporting-service/trades-file",
-      "format": "csv",
-      "delay_minutes": 15,
-      "internal_use_only": true
-    },
-    "DEUTSCHE_BOERSE_DELAYED": {
-      "landing_url": "https://www.mds.deutsche-boerse.com/mds-en/real-time-data/Delayed-data",
-      "format": "gz",
-      "delay_minutes": 15,
-      "internal_use_only": true
-    }
+    "EURONEXT_DELAYED": {"landing_url": "https://marketdata.euronext.com/data-reporting-service/trades-file", "format": "csv", "delay_minutes": 15, "internal_use_only": true},
+    "DEUTSCHE_BOERSE_DELAYED": {"landing_url": "https://www.mds.deutsche-boerse.com/mds-en/real-time-data/Delayed-data", "format": "gz", "delay_minutes": 15, "internal_use_only": true}
   },
   "key_fields": {
-    "market": [
-      "last_close",
-      "volume",
-      "high_52w",
-      "low_52w",
-      "rsi14",
-      "macd_hist",
-      "atr14",
-      "bollinger_width_pct",
-      "volatility_20d",
-      "max_drawdown_1y"
-    ],
-    "fundamentals": [
-      "market_cap_v21",
-      "roe_v21_pct",
-      "roa_v21_pct",
-      "roic_v21_pct",
-      "operating_margin_v21_pct",
-      "revenue_growth_v21_pct",
-      "revenue_cagr_5y_v21_pct",
-      "earnings_growth_v21_pct",
-      "debt_to_ebitda_v21",
-      "free_cash_flow_v21"
-    ],
-    "valuation": [
-      "per_forward_v21",
-      "per_ttm_v21",
-      "pb_v21",
-      "ev_to_ebitda_v21",
-      "fcf_yield_v21"
-    ],
-    "prospective": [
-      "target_mean_v21",
-      "target_low_v21",
-      "target_high_v21",
-      "n_analysts_v21",
-      "consensus_score_100_v21",
-      "consensus_delta_4w",
-      "net_upgrades_30d_v21",
-      "broker_weighted_revision_30d",
-      "next_earnings_date"
-    ],
-    "regulatory_supplemental": [
-      "amf_public_net_short_pct",
-      "amf_public_net_short_max_holder_pct",
-      "amf_public_net_short_holders",
-      "amf_public_net_short_latest_date"
-    ]
+    "market": ["last_close","volume","high_52w","low_52w","rsi14","macd_hist","atr14","bollinger_width_pct","volatility_20d","max_drawdown_1y"],
+    "fundamentals": ["market_cap_v21","roe_v21_pct","roa_v21_pct","roic_v21_pct","operating_margin_v21_pct","revenue_growth_v21_pct","revenue_cagr_5y_v21_pct","earnings_growth_v21_pct","debt_to_ebitda_v21","free_cash_flow_v21"],
+    "valuation": ["per_forward_v21","per_ttm_v21","pb_v21","ev_to_ebitda_v21","fcf_yield_v21"],
+    "prospective": ["target_mean_v21","target_low_v21","target_high_v21","n_analysts_v21","consensus_score_100_v21","consensus_delta_4w","net_upgrades_30d_v21","broker_weighted_revision_30d","next_earnings_date"],
+    "regulatory_supplemental": ["amf_public_net_short_pct","amf_public_net_short_max_holder_pct","amf_public_net_short_holders","amf_public_net_short_latest_date"]
   },
   "propagation": {
-    "actions_target": "outputs/V21.0_ACTIONS_PEA_1429_PREPARED.csv",
+    "actions_target": "outputs/V21.0_ACTIONS_PEA_1829_PREPARED.csv",
     "etf_target": "outputs/V20.4.3_ETF102_DIRECT_ENRICHED.csv",
     "merge_mode": "MISSING_ONLY",
     "carry_identity_provenance": true,
     "carry_complementary_context": true,
     "carry_supplemental_fields": true,
-    "supplemental_fields": [
-      "free_float_pct",
-      "spread_pct",
-      "roic_v21_pct",
-      "revenue_cagr_5y_v21_pct",
-      "ev_to_ebitda_v21",
-      "upgrades_30d_v21",
-      "downgrades_30d_v21",
-      "net_upgrades_30d_v21",
-      "broker_weighted_revision_30d",
-      "amf_public_net_short_pct",
-      "amf_public_net_short_max_holder_pct",
-      "amf_public_net_short_holders",
-      "amf_public_net_short_latest_date"
-    ],
+    "supplemental_fields": ["free_float_pct","spread_pct","roic_v21_pct","revenue_cagr_5y_v21_pct","ev_to_ebitda_v21","upgrades_30d_v21","downgrades_30d_v21","net_upgrades_30d_v21","broker_weighted_revision_30d","amf_public_net_short_pct","amf_public_net_short_max_holder_pct","amf_public_net_short_holders","amf_public_net_short_latest_date"],
     "allow_new_context_weight": false,
     "require_zero_overwrite": true
   },
   "methodology_registry": "config/V21.1_METHODOLOGY_REFERENCES.csv",
   "static_source_audit": "config/V21.1_FREE_SOURCE_AUDIT.csv",
   "validation_targets_pct": {
-    "identity": 99,
-    "market_history": 95,
-    "fundamentals_core": 85,
-    "valuation": 85,
-    "analyst_process_checked": 90,
-    "shortlist_weighted_mt": 90,
-    "shortlist_weighted_lt": 90
+    "identity": 99, "market_history": 95, "fundamentals_core": 85, "valuation": 85,
+    "analyst_process_checked": 90, "shortlist_weighted_mt": 90, "shortlist_weighted_lt": 90
   },
   "cache": {
     "root": "outputs/free_capture",
     "artifact_retention_days": 90,
     "restore_latest_artifact": true,
-    "deduplicate_keys": {
-      "identity": ["isin", "source"],
-      "market_daily": ["isin", "date", "source"],
-      "facts_long": ["isin", "field", "source", "as_of"]
-    }
+    "deduplicate_keys": {"identity": ["isin","source"], "market_daily": ["isin","date","source"], "facts_long": ["isin","field","source","as_of"]}
   }
 }
