@@ -17,29 +17,37 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
+from .euronext_live_public import (
+    EURONEXT_MICS,
+    _first_json_number as _euronext_json_number,
+    _json_candidates as _euronext_json_candidates,
+    _label_number as _euronext_label_number,
+    _url as _euronext_url,
+)
+from .openfigi_v3 import URL as OPENFIGI_URL, _pick_result as _openfigi_pick
+
 
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_TARGET = ROOT / "outputs/V20.4.3_ETF102_DIRECT_ENRICHED.csv"
 DEFAULT_AUDIT = ROOT / "outputs/audit/V21.1_ETF_PUBLIC_REFERENCE_AUDIT.json"
-UA = "PEA-V21.1-ETF-PublicReference/1.0"
+UA = "PEA-V21.1-ETF-PublicReference/1.1"
 
 BOURSORAMA_PEA_URLS = (
     "https://www.boursorama.com/bourse/trackers/recherche/?beginnerEtfSearch%5BisEtf%5D=1&beginnerEtfSearch%5Btaxation%5D=1&tableName=partner-table",
     "https://www.boursorama.com/bourse/trackers/recherche/autres/?beginnerEtfSearch%5BisEtf%5D=1&beginnerEtfSearch%5Btaxation%5D=1&tableName=other-table",
 )
 LESMEILLEURSFONDS_URL = "https://www.lesmeilleursfonds.com/article/liste-des-etf-eligibles-au-pea-avec-les-frais"
-AMUNDI_PEA_SEARCH = "https://www.amundietf.fr/fr/particuliers/produits-etf/recherche?pea=true"
+AMUNDI_SEARCH = "https://www.amundietf.fr/fr/particuliers/produits-etf/recherche?pea=true"
 BNPP_ETF_LIST = "https://www.bnpparibas-am.com/fr-fr/nos-fonds/notre-selection-detf/"
 SPDR_FINDER = "https://www.ssga.com/fr/fr/intermediary/fund-finder"
 MORNINGSTAR_QUICKRANK = "https://tools.morningstar.fr/fr/etfquickrank/default.aspx?LanguageId=fr-FR&Site=fr&Universe=ETALL%24%24ALL"
-
 ISIN_RE = re.compile(r"\b[A-Z]{2}[A-Z0-9]{9}[0-9]\b")
 
 
 def _norm(value: object) -> str:
     text = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
     text = text.upper()
-    text = re.sub(r"\b(UCITS|ETF|EUR|USD|ACC|DIST|CAP|C|D|DR|PEA|THE|INDEX|FUND)\b", " ", text)
+    text = re.sub(r"\b(UCITS|ETF|EUR|USD|ACC|DIST|CAP|DR|PEA|THE|INDEX|FUND)\b", " ", text)
     return re.sub(r"[^A-Z0-9]+", " ", text).strip()
 
 
@@ -58,16 +66,6 @@ def _float(value: object) -> float | None:
         return None
 
 
-def _response(session: requests.Session, url: str, timeout: int = 25) -> requests.Response:
-    response = session.get(
-        url,
-        headers={"User-Agent": os.getenv("V182_USER_AGENT", UA), "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.7"},
-        timeout=timeout,
-    )
-    response.raise_for_status()
-    return response
-
-
 def _is_missing(value: object) -> bool:
     if value is None:
         return True
@@ -79,6 +77,19 @@ def _is_missing(value: object) -> bool:
     return str(value).strip().lower() in {"", "nan", "none", "null", "n/a", "<na>", "not_available"}
 
 
+def _response(session: requests.Session, url: str, timeout: int = 25) -> requests.Response:
+    response = session.get(
+        url,
+        headers={
+            "User-Agent": os.getenv("V182_USER_AGENT", UA),
+            "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.7",
+        },
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    return response
+
+
 def _fill(df: pd.DataFrame, index: int, field: str, value: object, source: str, source_url: str, audit: dict) -> bool:
     if value is None or (isinstance(value, str) and not value.strip()):
         return False
@@ -88,7 +99,7 @@ def _fill(df: pd.DataFrame, index: int, field: str, value: object, source: str, 
         audit["skipped_existing"] += 1
         return False
     df.at[index, field] = value
-    for suffix, v in {
+    for suffix, provenance_value in {
         "source": source,
         "url": source_url,
         "collected_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -96,14 +107,14 @@ def _fill(df: pd.DataFrame, index: int, field: str, value: object, source: str, 
         col = f"v211_{field}_{suffix}"
         if col not in df.columns:
             df[col] = pd.Series(pd.NA, index=df.index, dtype="object")
-        df.at[index, col] = v
+        df.at[index, col] = provenance_value
     audit["applied_cells"] += 1
     audit["field_applied"][field] = int(audit["field_applied"].get(field, 0)) + 1
     audit["source_applied"][source] = int(audit["source_applied"].get(source, 0)) + 1
     return True
 
 
-def _set_source_status(df: pd.DataFrame, index: int, source: str, status: str, url: str = "") -> None:
+def _set_status(df: pd.DataFrame, index: int, source: str, status: str, url: str = "") -> None:
     key = re.sub(r"[^a-z0-9]+", "_", source.lower()).strip("_")
     for suffix, value in (("status", status), ("url", url)):
         col = f"v211_{key}_{suffix}"
@@ -124,94 +135,81 @@ def _parse_label_value(text: str, labels: tuple[str, ...], max_chars: int = 120)
     return None
 
 
-def _issuer_page_fields(html: str, isin: str) -> dict:
+def _issuer_page_fields(html: str, isin: str, page_url: str) -> dict:
     soup = BeautifulSoup(html, "html.parser")
     text = " ".join(soup.stripped_strings)
-    if isin not in text.upper():
+    if isin not in text.upper() and isin not in html.upper():
         return {"identity": "REJECTED_ISIN_NOT_ON_PAGE"}
     out: dict[str, object] = {"identity": "VALIDATED_ISIN"}
 
-    # TER / ongoing charges.
-    for labels in (
-        ("Ongoing Charges", "Frais courants", "Total des Frais sur Encours", "Total Expense Ratio", "TER"),
-    ):
-        value = _parse_label_value(text, labels)
-        n = _float(value)
-        if n is not None and 0 <= n <= 10:
-            out["ter_pct"] = n
-            break
+    raw = _parse_label_value(text, ("Ongoing Charges", "Frais courants", "Total des Frais sur Encours", "Total Expense Ratio", "TER"))
+    ter = _float(raw)
+    if ter is not None and 0 <= ter <= 10:
+        out["ter_pct"] = ter
 
-    # AUM. Preserve source currency; only convert directly to EUR millions when the page states EUR.
     aum_raw = _parse_label_value(text, ("Assets Under Management", "Actifs gérés", "Actifs sous gestion", "AUM"), 160)
     if aum_raw:
-        n = _float(aum_raw)
+        amount = _float(aum_raw)
         currency = "EUR" if "€" in aum_raw or re.search(r"\bEUR\b", aum_raw, re.I) else ("USD" if "$" in aum_raw or re.search(r"\bUSD\b", aum_raw, re.I) else ("GBP" if "£" in aum_raw else ""))
-        multiplier_m = 1.0
-        low = aum_raw.lower()
-        if any(token in low for token in ["bn", "billion", "mrd", "milliard"]):
-            multiplier_m = 1000.0
-        elif any(token in low for token in ["mio", "million", " m"]):
-            multiplier_m = 1.0
-        if n is not None:
-            out["issuer_aum_m"] = n * multiplier_m
+        multiplier_m = 1000.0 if any(token in aum_raw.lower() for token in ("bn", "billion", "mrd", "milliard")) else 1.0
+        if amount is not None:
+            out["issuer_aum_m"] = amount * multiplier_m
             out["issuer_aum_currency"] = currency
             if currency == "EUR":
-                out["fund_total_assets_eur_m"] = n * multiplier_m
-                out["aum_m"] = n * multiplier_m
+                out["fund_total_assets_eur_m"] = amount * multiplier_m
+                out["aum_m"] = amount * multiplier_m
 
-    holdings = _parse_label_value(text, ("Nombre de Lignes", "Number of Holdings", "Nombre de positions", "Holdings"), 60)
-    h = _float(holdings)
-    if h is not None and 0 < h < 100000:
-        out["holdings"] = int(round(h))
+    holdings = _float(_parse_label_value(text, ("Nombre de Lignes", "Number of Holdings", "Nombre de positions", "Holdings"), 60))
+    if holdings is not None and 0 < holdings < 100000:
+        out["holdings"] = int(round(holdings))
 
-    benchmark = _parse_label_value(text, ("Indice", "Benchmark", "Indice de référence", "Reference Index"), 180)
+    benchmark = _parse_label_value(text, ("Indice de référence", "Reference Index", "Benchmark", "Indice"), 180)
     if benchmark and len(benchmark) < 180:
         out["official_benchmark"] = benchmark
 
     distribution = _parse_label_value(text, ("Traitement des revenus", "Fréquence de Distribution", "Income Treatment", "Distribution Frequency"), 100)
     if distribution:
-        d = distribution.upper()
-        if "ACC" in d or "CAPITAL" in d:
+        upper = distribution.upper()
+        if "ACC" in upper or "CAPITAL" in upper:
             out["distribution_policy"] = "ACC"
-        elif "DIST" in d or "DISTRIB" in d:
+        elif "DIST" in upper or "DISTRIB" in upper:
             out["distribution_policy"] = "DIST"
         out["distribution_frequency"] = distribution
 
     replication = _parse_label_value(text, ("Méthode de Réplication", "Replication Method", "Réplication", "Replication"), 120)
     if replication:
         out["replication_method"] = replication
-        r = replication.upper()
-        if any(token in r for token in ["PHYSICAL", "PHYSIQUE", "DIRECT", "RÉPLICATION", "REPLICATION"]):
+        upper = replication.upper()
+        if any(token in upper for token in ("PHYSICAL", "PHYSIQUE", "DIRECT")):
             out["replication_hint"] = "PHYSICAL_OR_DIRECT"
-        if any(token in r for token in ["SWAP", "SYNTH"]):
+        elif any(token in upper for token in ("SWAP", "SYNTH")):
             out["replication_hint"] = "SYNTHETIC_OR_SWAP"
 
-    pea = re.search(r"(?:Eligible|Éligible)\s+PEA\s*[:|]?\s*(Oui|Non|Yes|No)", text, flags=re.I)
+    pea = re.search(r"(?:Eligible|Éligible)\s+(?:au\s+)?PEA\s*[:|]?\s*(Oui|Non|Yes|No)", text, flags=re.I)
     if pea:
         out["pea_issuer_status"] = "CONFIRMED" if pea.group(1).lower() in {"oui", "yes"} else "NOT_ELIGIBLE"
 
-    # Price/performance fields when explicitly exposed on issuer page.
     for field, labels in {
         "perf_1m_pct": ("1 Mois", "1 Month"),
         "perf_1y_pct": ("1 An", "1 Year"),
         "perf_3y_pct": ("3 Ans", "3 Years"),
         "perf_5y_pct": ("5 Ans", "5 Years"),
     }.items():
-        raw = _parse_label_value(text, labels, 40)
-        value = _float(raw)
+        value = _float(_parse_label_value(text, labels, 40))
         if value is not None and -1000 < value < 10000:
             out[field] = value
 
-    docs = {}
+    docs: dict[str, str] = {}
     for link in soup.find_all("a", href=True):
         label = " ".join(link.stripped_strings).lower()
-        href = urljoin("https://invalid.local/", str(link.get("href") or ""))
-        if not href.lower().endswith((".pdf", ".xls", ".xlsx")) and "document" not in label and "kid" not in label and "fiche" not in label and "factsheet" not in label:
+        href = urljoin(page_url, str(link.get("href") or ""))
+        marker = href.lower() + " " + label
+        if not any(token in marker for token in (".pdf", ".xls", ".xlsx", "document", "kid", "dic", "factsheet", "fiche", "prospect")):
             continue
         kind = "document"
-        if "kid" in label or "dic" in label or "key information" in label:
+        if any(token in label for token in ("kid", "dic", "key information")):
             kind = "kid"
-        elif "fiche" in label or "factsheet" in label or "product sheet" in label:
+        elif any(token in label for token in ("fiche", "factsheet", "product sheet")):
             kind = "factsheet"
         elif "prospect" in label:
             kind = "prospectus"
@@ -223,17 +221,15 @@ def _issuer_page_fields(html: str, isin: str) -> dict:
 def _apply_fields(df: pd.DataFrame, index: int, fields: dict, source: str, url: str, audit: dict) -> int:
     applied = 0
     for field, value in fields.items():
-        if field in {"identity", "official_documents", "issuer_aum_currency"}:
+        if field in {"identity", "official_documents", "issuer_aum_currency", "issuer_aum_m"}:
             continue
-        if _fill(df, index, field, value, source, url, audit):
-            applied += 1
+        applied += int(_fill(df, index, field, value, source, url, audit))
     if fields.get("issuer_aum_currency"):
-        _fill(df, index, "issuer_aum_currency", fields["issuer_aum_currency"], source, url, audit)
+        applied += int(_fill(df, index, "issuer_aum_currency", fields["issuer_aum_currency"], source, url, audit))
     if fields.get("issuer_aum_m") is not None:
-        _fill(df, index, "issuer_aum_m", fields["issuer_aum_m"], source, url, audit)
-    docs = fields.get("official_documents") if isinstance(fields.get("official_documents"), dict) else {}
-    for kind, doc_url in docs.items():
-        _fill(df, index, f"official_{kind}_url", doc_url, source, url, audit)
+        applied += int(_fill(df, index, "issuer_aum_m", fields["issuer_aum_m"], source, url, audit))
+    for kind, doc_url in (fields.get("official_documents") or {}).items():
+        applied += int(_fill(df, index, f"official_{kind}_url", doc_url, source, url, audit))
     return applied
 
 
@@ -247,13 +243,103 @@ def _links_by_isin(html: str, base_url: str) -> dict[str, str]:
     return out
 
 
+def _openfigi(session: requests.Session, df: pd.DataFrame, audit: dict) -> dict:
+    key = str(os.getenv("OPENFIGI_API_KEY") or "").strip()
+    batch_size = 100 if key else 5
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if key:
+        headers["X-OPENFIGI-APIKEY"] = key
+    attempted = matched = requests_used = 0
+    for start in range(0, len(df), batch_size):
+        chunk = df.iloc[start:start + batch_size]
+        payload = [{"idType": "ID_ISIN", "idValue": str(value).upper()} for value in chunk["isin"]]
+        try:
+            response = session.post(OPENFIGI_URL, json=payload, headers=headers, timeout=30)
+            requests_used += 1
+            if response.status_code == 429:
+                time.sleep(6 if key else 15)
+                response = session.post(OPENFIGI_URL, json=payload, headers=headers, timeout=30)
+                requests_used += 1
+            response.raise_for_status()
+            answers = response.json()
+        except Exception:
+            continue
+        for (idx, row), answer in zip(chunk.iterrows(), answers, strict=False):
+            attempted += 1
+            chosen, resolution = _openfigi_pick(
+                answer.get("data") or [],
+                str(row.get("yahoo_ticker") or row.get("ticker_yahoo_final") or ""),
+                str(row.get("euronext_mic") or row.get("mic") or ""),
+            )
+            if not chosen:
+                _set_status(df, idx, "OPENFIGI_ETF", "NO_MATCH")
+                continue
+            matched += 1
+            _set_status(df, idx, "OPENFIGI_ETF", resolution, OPENFIGI_URL)
+            for field, value in {
+                "free_identity_figi": chosen.get("figi"),
+                "free_identity_composite_figi": chosen.get("compositeFIGI"),
+                "free_identity_share_class_figi": chosen.get("shareClassFIGI"),
+                "free_identity_ticker": chosen.get("ticker"),
+                "free_identity_exchange": chosen.get("exchCode"),
+                "free_identity_security_type": chosen.get("securityType2") or chosen.get("securityType"),
+            }.items():
+                _fill(df, idx, field, value, "OPENFIGI_V3", OPENFIGI_URL, audit)
+        time.sleep(0.3 if key else 2.5)
+    return {"status": "OK" if matched else "NO_MATCH", "attempted": attempted, "matched": matched, "requests": requests_used, "api_key_present": bool(key)}
+
+
+def _euronext(session: requests.Session, df: pd.DataFrame, audit: dict) -> dict:
+    attempted = matched = blocked = 0
+    mic_series = df.get("euronext_mic", df.get("mic", pd.Series("", index=df.index))).astype(str).str.upper()
+    for idx in df.index[mic_series.isin(EURONEXT_MICS)]:
+        row = df.loc[idx]
+        attempted += 1
+        isin = str(row.get("isin") or "").upper()
+        mic = str(row.get("euronext_mic") or row.get("mic") or "").upper()
+        url = _euronext_url(isin, mic, "ETF")
+        try:
+            response = _response(session, url, 20)
+            if response.status_code in {401, 403, 429}:
+                blocked += 1
+                _set_status(df, idx, "EURONEXT_LIVE_ETF", f"HTTP_{response.status_code}", url)
+                continue
+            html = response.text
+            if isin not in html.upper():
+                _set_status(df, idx, "EURONEXT_LIVE_ETF", "REJECTED_ISIN", url)
+                continue
+            soup = BeautifulSoup(html, "html.parser")
+            text = " ".join(soup.stripped_strings)
+            items = _euronext_json_candidates(soup)
+            last = _euronext_json_number(items, ("lastPrice", "last_price", "price")) or _euronext_label_number(text, ("Last price", "Dernier", "Last"))
+            free_float = _euronext_json_number(items, ("freeFloat", "free_float")) or _euronext_label_number(text, ("Free float", "Flottant"), percent=True)
+            bid = _euronext_json_number(items, ("bid",)) or _euronext_label_number(text, ("Bid", "Achat"))
+            ask = _euronext_json_number(items, ("ask",)) or _euronext_label_number(text, ("Ask", "Vente"))
+            spread = (ask - bid) / ((ask + bid) / 2) * 100 if bid is not None and ask is not None and ask >= bid and (ask + bid) > 0 else None
+            matched += 1
+            _set_status(df, idx, "EURONEXT_LIVE_ETF", "VALIDATED_ISIN", url)
+            for field, value in {
+                "euronext_live_last_price": last,
+                "free_float_pct": free_float,
+                "spread_pct": spread,
+                "euronext_live_bid": bid,
+                "euronext_live_ask": ask,
+                "free_identity_mic": mic,
+                "free_identity_exchange": "EURONEXT",
+            }.items():
+                _fill(df, idx, field, value, "EURONEXT_LIVE_PUBLIC", url, audit)
+        except Exception as exc:
+            _set_status(df, idx, "EURONEXT_LIVE_ETF", f"ERROR_{type(exc).__name__}", url)
+        time.sleep(0.35)
+    return {"status": "OK" if matched else "NO_MATCH", "attempted": attempted, "matched": matched, "blocked": blocked}
+
+
 def _boursorama(session: requests.Session, df: pd.DataFrame, audit: dict, max_pages: int = 8) -> dict:
     candidates: list[tuple[str, str]] = []
     errors: list[str] = []
     for base in BOURSORAMA_PEA_URLS:
         for page in range(1, max_pages + 1):
-            sep = "&" if "?" in base else "?"
-            url = f"{base}{sep}page={page}"
+            url = f"{base}&page={page}"
             try:
                 html = _response(session, url).text
                 soup = BeautifulSoup(html, "html.parser")
@@ -266,34 +352,31 @@ def _boursorama(session: requests.Session, df: pd.DataFrame, audit: dict, max_pa
                 errors.append(f"{type(exc).__name__}:{str(exc)[:100]}")
                 break
             time.sleep(0.15)
-    # Deduplicate link candidates.
-    seen = set()
-    candidates = [(n, u) for n, u in candidates if not (u in seen or seen.add(u))]
+    unique: dict[str, str] = {}
+    for name, url in candidates:
+        unique.setdefault(url, name)
+    candidates = [(name, url) for url, name in unique.items()]
     matched = applied = 0
-    for i, row in df.iterrows():
+    for idx, row in df.iterrows():
         target_name = _norm(row.get("name"))
-        if not target_name:
-            _set_source_status(df, i, "BOURSORAMA_ETF", "NO_NAME")
+        scored = sorted(((SequenceMatcher(None, target_name, _norm(name)).ratio(), url) for name, url in candidates), reverse=True)
+        if not target_name or not scored or scored[0][0] < 0.72:
+            _set_status(df, idx, "BOURSORAMA_ETF", "NOT_RESOLVED_IN_PEA_LIST")
             continue
-        scored = sorted(((SequenceMatcher(None, target_name, _norm(n)).ratio(), n, u) for n, u in candidates), reverse=True)
-        if not scored or scored[0][0] < 0.72:
-            _set_source_status(df, i, "BOURSORAMA_ETF", "NOT_RESOLVED_IN_PEA_LIST")
-            continue
-        score, _, url = scored[0]
+        score, url = scored[0]
         try:
             html = _response(session, url).text
             isin = str(row.get("isin") or "").upper()
             if isin not in html.upper():
-                _set_source_status(df, i, "BOURSORAMA_ETF", "NAME_MATCH_REJECTED_ISIN", url)
+                _set_status(df, idx, "BOURSORAMA_ETF", "NAME_MATCH_REJECTED_ISIN", url)
                 continue
             matched += 1
-            _set_source_status(df, i, "BOURSORAMA_ETF", "PEA_LIST_AND_ISIN_CONFIRMED", url)
-            _fill(df, i, "pea_eligibility_boursorama", True, "BOURSORAMA_ETF", url, audit)
-            _fill(df, i, "boursorama_name_match_score", round(score, 4), "BOURSORAMA_ETF", url, audit)
-            parsed = _issuer_page_fields(html, isin)
-            applied += _apply_fields(df, i, parsed, "BOURSORAMA_ETF", url, audit)
+            _set_status(df, idx, "BOURSORAMA_ETF", "PEA_LIST_AND_ISIN_CONFIRMED", url)
+            applied += int(_fill(df, idx, "pea_eligibility_boursorama", True, "BOURSORAMA_ETF", url, audit))
+            applied += int(_fill(df, idx, "boursorama_name_match_score", round(score, 4), "BOURSORAMA_ETF", url, audit))
+            applied += _apply_fields(df, idx, _issuer_page_fields(html, isin, url), "BOURSORAMA_ETF", url, audit)
         except Exception as exc:
-            _set_source_status(df, i, "BOURSORAMA_ETF", f"ERROR_{type(exc).__name__}", url)
+            _set_status(df, idx, "BOURSORAMA_ETF", f"ERROR_{type(exc).__name__}", url)
         time.sleep(0.25)
     return {"status": "OK" if matched else "NO_MATCH", "candidates": len(candidates), "matched": matched, "applied": applied, "errors": errors[:5]}
 
@@ -306,71 +389,71 @@ def _lesmeilleursfonds(session: requests.Session, df: pd.DataFrame, audit: dict)
         return {"status": "ERROR", "error": f"{type(exc).__name__}:{str(exc)[:180]}"}
     found: dict[str, dict] = {}
     for table in tables:
-        for _, r in table.iterrows():
-            joined = " | ".join(str(x) for x in r.tolist())
+        for _, row in table.iterrows():
+            joined = " | ".join(str(value) for value in row.tolist())
             match = ISIN_RE.search(joined.upper())
             if not match:
                 continue
-            isin = match.group(0)
-            payload = {"pea_eligibility_lesmeilleursfonds": True}
+            payload: dict[str, object] = {"pea_eligibility_lesmeilleursfonds": True}
             for col in table.columns:
                 label = str(col).lower()
-                value = r.get(col)
+                value = row.get(col)
                 if "frais" in label or "ter" in label:
                     n = _float(value)
                     if n is not None and 0 <= n <= 10:
                         payload["ter_pct"] = n
-                if "indice" in label or "benchmark" in label:
-                    if not _is_missing(value):
-                        payload["official_benchmark"] = str(value)
-            found[isin] = payload
+                if ("indice" in label or "benchmark" in label) and not _is_missing(value):
+                    payload["official_benchmark"] = str(value)
+            found[match.group(0)] = payload
     matched = 0
-    for i, row in df.iterrows():
+    for idx, row in df.iterrows():
         isin = str(row.get("isin") or "").upper()
         if isin not in found:
-            _set_source_status(df, i, "LESMEILLEURSFONDS_PEA", "NOT_LISTED", LESMEILLEURSFONDS_URL)
+            _set_status(df, idx, "LESMEILLEURSFONDS_PEA", "NOT_LISTED", LESMEILLEURSFONDS_URL)
             continue
         matched += 1
-        _set_source_status(df, i, "LESMEILLEURSFONDS_PEA", "PEA_LIST_CONFIRMED", LESMEILLEURSFONDS_URL)
-        _apply_fields(df, i, found[isin], "LESMEILLEURSFONDS_PEA", LESMEILLEURSFONDS_URL, audit)
+        _set_status(df, idx, "LESMEILLEURSFONDS_PEA", "PEA_LIST_CONFIRMED", LESMEILLEURSFONDS_URL)
+        _apply_fields(df, idx, found[isin], "LESMEILLEURSFONDS_PEA", LESMEILLEURSFONDS_URL, audit)
     return {"status": "OK", "tables": len(tables), "listed_isin": len(found), "matched": matched}
 
 
 def _amundi(session: requests.Session, df: pd.DataFrame, audit: dict) -> dict:
     try:
-        html = _response(session, AMUNDI_PEA_SEARCH).text
+        html = _response(session, AMUNDI_SEARCH).text
     except Exception as exc:
         return {"status": "ERROR", "error": f"{type(exc).__name__}:{str(exc)[:180]}"}
-    links = _links_by_isin(html, AMUNDI_PEA_SEARCH)
-    # The Amundi search page can expose rows in text even when a link label is abbreviated.
-    for isin in set(ISIN_RE.findall(html.upper())):
-        if isin not in links:
-            match = re.search(rf'href=["\']([^"\']*{re.escape(isin.lower())}[^"\']*)', html, flags=re.I)
-            if match:
-                links[isin] = urljoin(AMUNDI_PEA_SEARCH, match.group(1))
-    matched = applied = 0
-    for i, row in df.iterrows():
+    links = _links_by_isin(html, AMUNDI_SEARCH)
+    matched = applied = explicit_pea = 0
+    for idx, row in df.iterrows():
         isin = str(row.get("isin") or "").upper()
+        name = str(row.get("name") or "").upper()
         url = links.get(isin)
         if not url:
-            # Only Amundi-branded rows are treated as unresolved issuer candidates.
-            name = str(row.get("name") or "").upper()
-            _set_source_status(df, i, "AMUNDI_ETF", "NOT_AMUNDI_OR_NOT_RESOLVED" if "AMUNDI" not in name and "LYXOR" not in name else "AMUNDI_ISIN_NOT_RESOLVED", AMUNDI_PEA_SEARCH)
+            status = "AMUNDI_ISIN_NOT_RESOLVED" if "AMUNDI" in name or "LYXOR" in name else "NOT_AMUNDI"
+            _set_status(df, idx, "AMUNDI_ETF", status, AMUNDI_SEARCH)
             continue
         try:
             page = _response(session, url).text
-            parsed = _issuer_page_fields(page, isin)
+            parsed = _issuer_page_fields(page, isin, url)
             if parsed.get("identity") != "VALIDATED_ISIN":
-                _set_source_status(df, i, "AMUNDI_ETF", "REJECTED_ISIN", url)
+                _set_status(df, idx, "AMUNDI_ETF", "REJECTED_ISIN", url)
                 continue
             matched += 1
-            _set_source_status(df, i, "AMUNDI_ETF", "OFFICIAL_ISIN_VALIDATED", url)
-            _fill(df, i, "pea_eligibility_amundi_search", True, "AMUNDI_ETF", AMUNDI_PEA_SEARCH, audit)
-            applied += _apply_fields(df, i, parsed, "AMUNDI_ETF", url, audit)
+            if parsed.get("pea_issuer_status") == "CONFIRMED":
+                explicit_pea += 1
+            _set_status(df, idx, "AMUNDI_ETF", "OFFICIAL_ISIN_VALIDATED", url)
+            applied += _apply_fields(df, idx, parsed, "AMUNDI_ETF", url, audit)
         except Exception as exc:
-            _set_source_status(df, i, "AMUNDI_ETF", f"ERROR_{type(exc).__name__}", url)
+            _set_status(df, idx, "AMUNDI_ETF", f"ERROR_{type(exc).__name__}", url)
         time.sleep(0.2)
-    return {"status": "OK" if links else "NO_LINKS", "search_isin": len(links), "matched": matched, "applied": applied}
+    return {
+        "status": "OK" if links else "NO_LINKS",
+        "search_isin": len(links),
+        "matched": matched,
+        "explicit_pea_confirmed": explicit_pea,
+        "applied": applied,
+        "control": "Search URL is discovery only; PEA confirmation requires explicit product-page evidence",
+    }
 
 
 def _bnpp(session: requests.Session, df: pd.DataFrame, audit: dict) -> dict:
@@ -379,101 +462,86 @@ def _bnpp(session: requests.Session, df: pd.DataFrame, audit: dict) -> dict:
         soup = BeautifulSoup(html, "html.parser")
     except Exception as exc:
         return {"status": "ERROR", "error": f"{type(exc).__name__}:{str(exc)[:180]}"}
-    xls_urls = []
-    product_links = []
+    xls_urls: list[str] = []
+    product_links: list[tuple[str, str]] = []
     for link in soup.find_all("a", href=True):
         href = urljoin(BNPP_ETF_LIST, str(link["href"]))
         label = " ".join(link.stripped_strings)
-        low = (href + " " + label).lower()
-        if ".xls" in low or ".xlsx" in low or "gamme" in low and "xls" in low:
+        marker = (href + " " + label).lower()
+        if ".xls" in marker or ".xlsx" in marker:
             xls_urls.append(href)
         if "bnp paribas easy" in label.lower() or "/fund/" in href.lower() or "/fonds/" in href.lower():
             product_links.append((label, href))
-
     by_isin: dict[str, dict] = {}
     workbook_status = "NOT_FOUND"
     for url in xls_urls[:4]:
         try:
-            content = _response(session, url, timeout=40).content
+            content = _response(session, url, 40).content
             book = pd.ExcelFile(BytesIO(content))
             workbook_status = "READ"
             for sheet in book.sheet_names:
                 table = pd.read_excel(book, sheet_name=sheet, dtype=object)
-                for _, r in table.iterrows():
-                    joined = " | ".join(str(x) for x in r.tolist())
-                    match = ISIN_RE.search(joined.upper())
+                for _, row in table.iterrows():
+                    match = ISIN_RE.search(" | ".join(str(value) for value in row.tolist()).upper())
                     if not match:
                         continue
-                    isin = match.group(0)
-                    payload: dict[str, object] = {"pea_eligibility_bnpp_reference": "CHECKED_IN_OFFICIAL_RANGE"}
+                    payload: dict[str, object] = {}
                     for col in table.columns:
                         label = str(col).lower()
-                        value = r.get(col)
-                        if any(token in label for token in ["frais", "ongoing", "ter"]):
+                        value = row.get(col)
+                        if any(token in label for token in ("frais", "ongoing", "ter")):
                             n = _float(value)
                             if n is not None and 0 <= n <= 10:
                                 payload["ter_pct"] = n
-                        if "pea" in label and not _is_missing(value):
-                            flag = str(value).strip().lower()
-                            if flag in {"oui", "yes", "1", "true", "x"}:
-                                payload["pea_eligibility_bnpp_reference"] = True
-                        if "indice" in label or "benchmark" in label:
-                            if not _is_missing(value):
-                                payload["official_benchmark"] = str(value)
-                    by_isin[isin] = payload
+                        if "pea" in label and str(value).strip().lower() in {"oui", "yes", "1", "true", "x"}:
+                            payload["pea_eligibility_bnpp_reference"] = True
+                        if ("indice" in label or "benchmark" in label) and not _is_missing(value):
+                            payload["official_benchmark"] = str(value)
+                    by_isin[match.group(0)] = payload
         except Exception:
             continue
-
     matched = applied = 0
-    for i, row in df.iterrows():
+    for idx, row in df.iterrows():
         isin = str(row.get("isin") or "").upper()
-        payload = by_isin.get(isin)
-        official_url = BNPP_ETF_LIST
-        if payload:
+        if isin in by_isin:
             matched += 1
-            _set_source_status(df, i, "BNPP_ETF", "OFFICIAL_RANGE_ISIN_MATCH", official_url)
-            applied += _apply_fields(df, i, payload, "BNPP_ETF", official_url, audit)
+            _set_status(df, idx, "BNPP_ETF", "OFFICIAL_RANGE_ISIN_MATCH", BNPP_ETF_LIST)
+            applied += _apply_fields(df, idx, by_isin[isin], "BNPP_ETF", BNPP_ETF_LIST, audit)
             continue
-        # Fallback: only follow a strongly matching official product link, then validate ISIN.
         name = _norm(row.get("name"))
-        scored = sorted(((SequenceMatcher(None, name, _norm(n)).ratio(), u) for n, u in product_links if n), reverse=True)
-        if scored and scored[0][0] >= 0.78 and "BNP" in str(row.get("name") or "").upper():
+        scored = sorted(((SequenceMatcher(None, name, _norm(label)).ratio(), url) for label, url in product_links if label), reverse=True)
+        if "BNP" in str(row.get("name") or "").upper() and scored and scored[0][0] >= 0.78:
             url = scored[0][1]
             try:
                 page = _response(session, url).text
-                parsed = _issuer_page_fields(page, isin)
+                parsed = _issuer_page_fields(page, isin, url)
                 if parsed.get("identity") == "VALIDATED_ISIN":
                     matched += 1
-                    _set_source_status(df, i, "BNPP_ETF", "OFFICIAL_PRODUCT_ISIN_VALIDATED", url)
-                    applied += _apply_fields(df, i, parsed, "BNPP_ETF", url, audit)
+                    _set_status(df, idx, "BNPP_ETF", "OFFICIAL_PRODUCT_ISIN_VALIDATED", url)
+                    applied += _apply_fields(df, idx, parsed, "BNPP_ETF", url, audit)
                     continue
             except Exception:
                 pass
-        _set_source_status(df, i, "BNPP_ETF", "NOT_BNPP_OR_NOT_RESOLVED", BNPP_ETF_LIST)
-    return {"status": "OK", "workbook_status": workbook_status, "workbook_isin": len(by_isin), "product_links": len(product_links), "matched": matched, "applied": applied}
+        _set_status(df, idx, "BNPP_ETF", "NOT_BNPP_OR_NOT_RESOLVED", BNPP_ETF_LIST)
+    return {"status": "OK", "workbook_status": workbook_status, "workbook_isin": len(by_isin), "matched": matched, "applied": applied}
 
 
 def _discover_product_link(html: str, base: str, isin: str, path_token: str) -> str | None:
-    soup = BeautifulSoup(html, "html.parser")
-    candidates = []
-    for link in soup.find_all("a", href=True):
+    candidates: list[tuple[float, str]] = []
+    for link in BeautifulSoup(html, "html.parser").find_all("a", href=True):
         href = urljoin(base, str(link["href"]))
         text = " ".join(link.stripped_strings)
         if path_token in href.lower():
-            score = 1.0 if isin in (href + " " + text).upper() else 0.0
-            candidates.append((score, href))
-    if candidates:
-        candidates.sort(reverse=True)
-        return candidates[0][1]
-    return None
+            candidates.append((1.0 if isin in (href + " " + text).upper() else 0.0, href))
+    return max(candidates)[1] if candidates else None
 
 
 def _spdr(session: requests.Session, df: pd.DataFrame, audit: dict) -> dict:
     matched = applied = attempted = 0
-    for i, row in df.iterrows():
+    for idx, row in df.iterrows():
         name = str(row.get("name") or "")
         if "SPDR" not in name.upper() and "STATE STREET" not in name.upper():
-            _set_source_status(df, i, "SPDR_ETF", "NOT_SPDR")
+            _set_status(df, idx, "SPDR_ETF", "NOT_SPDR")
             continue
         attempted += 1
         isin = str(row.get("isin") or "").upper()
@@ -482,68 +550,57 @@ def _spdr(session: requests.Session, df: pd.DataFrame, audit: dict) -> dict:
             html = _response(session, search_url).text
             url = _discover_product_link(html, SPDR_FINDER, isin, "/etfs/")
             if not url:
-                _set_source_status(df, i, "SPDR_ETF", "FUND_FINDER_NO_PRODUCT_LINK", search_url)
+                _set_status(df, idx, "SPDR_ETF", "FUND_FINDER_NO_PRODUCT_LINK", search_url)
                 continue
-            page = _response(session, url).text
-            parsed = _issuer_page_fields(page, isin)
+            parsed = _issuer_page_fields(_response(session, url).text, isin, url)
             if parsed.get("identity") != "VALIDATED_ISIN":
-                _set_source_status(df, i, "SPDR_ETF", "REJECTED_ISIN", url)
+                _set_status(df, idx, "SPDR_ETF", "REJECTED_ISIN", url)
                 continue
             matched += 1
-            _set_source_status(df, i, "SPDR_ETF", "OFFICIAL_PRODUCT_ISIN_VALIDATED", url)
-            applied += _apply_fields(df, i, parsed, "SPDR_ETF", url, audit)
+            _set_status(df, idx, "SPDR_ETF", "OFFICIAL_PRODUCT_ISIN_VALIDATED", url)
+            applied += _apply_fields(df, idx, parsed, "SPDR_ETF", url, audit)
         except Exception as exc:
-            _set_source_status(df, i, "SPDR_ETF", f"ERROR_{type(exc).__name__}", search_url)
+            _set_status(df, idx, "SPDR_ETF", f"ERROR_{type(exc).__name__}", search_url)
         time.sleep(0.2)
     return {"status": "OK", "attempted": attempted, "matched": matched, "applied": applied}
 
 
 def _morningstar(session: requests.Session, df: pd.DataFrame, audit: dict) -> dict:
-    matched = applied = attempted = 0
-    for i, row in df.iterrows():
+    matched = applied = 0
+    for idx, row in df.iterrows():
         isin = str(row.get("isin") or "").upper()
-        # Morningstar's public Quickrank explicitly supports name/ISIN/ticker searches. The query
-        # parameter is best-effort; no Morningstar internal ID is invented if the public response
-        # does not expose an ISIN-resolvable link.
         url = MORNINGSTAR_QUICKRANK + "&search=" + quote(isin)
-        attempted += 1
         try:
             html = _response(session, url).text
             if isin not in html.upper():
-                _set_source_status(df, i, "MORNINGSTAR_FR", "PUBLIC_SEARCH_NOT_RESOLVED", url)
+                _set_status(df, idx, "MORNINGSTAR_FR", "PUBLIC_SEARCH_NOT_RESOLVED", url)
                 continue
-            soup = BeautifulSoup(html, "html.parser")
             page_url = _discover_product_link(html, url, isin, "morningstar") or url
             page = html if page_url == url else _response(session, page_url).text
             if isin not in page.upper():
-                _set_source_status(df, i, "MORNINGSTAR_FR", "REJECTED_ISIN", page_url)
+                _set_status(df, idx, "MORNINGSTAR_FR", "REJECTED_ISIN", page_url)
                 continue
             text = " ".join(BeautifulSoup(page, "html.parser").stripped_strings)
             matched += 1
-            _set_source_status(df, i, "MORNINGSTAR_FR", "PUBLIC_ISIN_VALIDATED", page_url)
+            _set_status(df, idx, "MORNINGSTAR_FR", "PUBLIC_ISIN_VALIDATED", page_url)
             star = None
-            for pattern in (
-                r"Morningstar(?:\s+Overall)?\s+Rating\D{0,30}([1-5])",
-                r"([1-5])\s*(?:étoiles|etoiles|stars)\b",
-            ):
-                m = re.search(pattern, text, flags=re.I)
-                if m:
-                    star = int(m.group(1))
-                    break
+            for pattern in (r"Morningstar(?:\s+Overall)?\s+Rating\D{0,30}([1-5])", r"([1-5])\s*(?:étoiles|etoiles|stars)\b"):
+                match = re.search(pattern, text, flags=re.I)
+                if match:
+                    star = int(match.group(1)); break
             if star is not None:
-                applied += int(_fill(df, i, "morningstar_rating", star, "MORNINGSTAR_FR", page_url, audit))
+                applied += int(_fill(df, idx, "morningstar_rating", star, "MORNINGSTAR_FR", page_url, audit))
             category = _parse_label_value(text, ("Catégorie Morningstar", "Morningstar Category", "Catégorie"), 120)
             if category:
-                applied += int(_fill(df, i, "morningstar_category", category, "MORNINGSTAR_FR", page_url, audit))
+                applied += int(_fill(df, idx, "morningstar_category", category, "MORNINGSTAR_FR", page_url, audit))
             for years in (1, 3, 5):
-                raw = _parse_label_value(text, (f"Rang catégorie {years} an", f"Category Rank {years} Year", f"{years} ans"), 50)
-                value = _float(raw)
-                if value is not None:
-                    applied += int(_fill(df, i, f"rank_cat_{years}y", value, "MORNINGSTAR_FR", page_url, audit))
+                rank = _float(_parse_label_value(text, (f"Rang catégorie {years} an", f"Category Rank {years} Year", f"{years} ans"), 50))
+                if rank is not None:
+                    applied += int(_fill(df, idx, f"rank_cat_{years}y", rank, "MORNINGSTAR_FR", page_url, audit))
         except Exception as exc:
-            _set_source_status(df, i, "MORNINGSTAR_FR", f"ERROR_{type(exc).__name__}", url)
+            _set_status(df, idx, "MORNINGSTAR_FR", f"ERROR_{type(exc).__name__}", url)
         time.sleep(0.12)
-    return {"status": "OK", "attempted": attempted, "matched": matched, "applied": applied, "note": "No internal Morningstar identifier is guessed"}
+    return {"status": "OK", "attempted": len(df), "matched": matched, "applied": applied, "control": "No Morningstar internal identifier is guessed"}
 
 
 def apply(target: Path, audit_path: Path = DEFAULT_AUDIT) -> dict:
@@ -558,18 +615,19 @@ def apply(target: Path, audit_path: Path = DEFAULT_AUDIT) -> dict:
         "version": "V21.1_ETF_PUBLIC_REFERENCE",
         "execution": "RESEARCH_ONLY",
         "rows": len(df),
-        "policy": "OFFICIAL_ISSUER_FIRST_MISSING_ONLY_NO_OVERWRITE",
+        "policy": "OFFICIAL_IDENTITY_ISSUER_FIRST_MISSING_ONLY_NO_OVERWRITE",
         "applied_cells": 0,
         "skipped_existing": 0,
         "field_applied": {},
         "source_applied": {},
         "sources": {},
-        "runtime_note": "This module is wired for a future workflow run; current repository audit did not execute network capture.",
+        "runtime_note": "Module is wired for a future manual workflow run; this repository audit did not execute network capture.",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
     }
     session = requests.Session()
 
-    # Eligibility cross-checks first, official issuer/fund metadata second, Morningstar last.
+    audit["sources"]["OPENFIGI_V3"] = _openfigi(session, df, audit)
+    audit["sources"]["EURONEXT_LIVE_PUBLIC"] = _euronext(session, df, audit)
     audit["sources"]["BOURSORAMA_ETF"] = _boursorama(session, df, audit)
     audit["sources"]["LESMEILLEURSFONDS_PEA"] = _lesmeilleursfonds(session, df, audit)
     audit["sources"]["AMUNDI_ETF"] = _amundi(session, df, audit)
@@ -593,11 +651,7 @@ def main() -> None:
     parser.add_argument("--audit", default=str(DEFAULT_AUDIT))
     args = parser.parse_args()
     result = apply(Path(args.target), Path(args.audit))
-    print("V21_1_ETF_PUBLIC_REFERENCE_OK", json.dumps({
-        "rows": result["rows"],
-        "applied_cells": result["applied_cells"],
-        "sources": result["sources"],
-    }, ensure_ascii=False))
+    print("V21_1_ETF_PUBLIC_REFERENCE_OK", json.dumps({"rows": result["rows"], "applied_cells": result["applied_cells"], "sources": result["sources"]}, ensure_ascii=False))
 
 
 if __name__ == "__main__":
