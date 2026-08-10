@@ -11,15 +11,28 @@ from .core import is_observed
 
 
 CANONICAL_FIELDS = [
-    "last_close", "volume", "high_52w", "low_52w", "perf_1m_pct", "perf_3m_pct",
-    "perf_6m_pct", "perf_1y_pct", "mm20", "mm50", "mm200", "rsi14",
-    "volatility_20d", "volatility_60d", "max_drawdown_1y", "rvol20",
-    "per_forward_v21", "pb_v21", "roe_v21_pct", "roa_v21_pct",
-    "operating_margin_v21_pct", "net_margin_v21_pct", "revenue_growth_v21_pct",
-    "earnings_growth_v21_pct", "debt_to_equity_v21", "debt_to_ebitda_v21",
+    "last_close", "volume", "volume_avg_20d", "high_52w", "low_52w",
+    "perf_1m_pct", "perf_3m_pct", "perf_6m_pct", "perf_1y_pct",
+    "mm20", "mm50", "mm100", "mm200", "rsi14", "stoch_k", "stoch_d",
+    "macd_line", "macd_signal", "macd_hist", "atr14", "bollinger_mid",
+    "bollinger_upper", "bollinger_lower", "bollinger_width_pct", "sharpe_1y_rf0",
+    "volatility_20d", "volatility_60d", "volatility_1y_pct", "max_drawdown_1y", "rvol20",
+    "per_forward_v21", "per_ttm_v21", "pb_v21", "roe_v21_pct", "roa_v21_pct",
+    "roic_v21_pct", "operating_margin_v21_pct", "net_margin_v21_pct",
+    "revenue_growth_v21_pct", "revenue_cagr_5y_v21_pct", "earnings_growth_v21_pct",
+    "ev_to_ebitda_v21", "debt_to_equity_v21", "debt_to_ebitda_v21",
     "current_ratio_v21", "interest_coverage_v21", "dividend_yield_v21_pct",
     "beta_v21", "fcf_yield_v21", "target_mean_v21", "target_low_v21",
-    "target_high_v21", "n_analysts_v21", "consensus_score_100_v21",
+    "target_high_v21", "target_median_v21", "n_analysts_v21", "consensus_score_100_v21",
+    "consensus_score_100_4w_ago_v21", "consensus_delta_4w", "upgrades_30d_v21",
+    "downgrades_30d_v21", "net_upgrades_30d_v21", "broker_weighted_revision_30d",
+]
+
+SUPPLEMENTAL_FIELDS = [
+    "euronext_live_last_price", "euronext_live_bid", "euronext_live_ask",
+    "free_float_pct", "spread_pct",
+    "amf_public_net_short_pct", "amf_public_net_short_max_holder_pct",
+    "amf_public_net_short_holders", "amf_public_net_short_latest_date",
 ]
 
 
@@ -43,6 +56,10 @@ def _context_values(context: dict) -> dict[str, object]:
     return {
         "v211_macro_vix": fred.get("macro_vix"),
         "v211_macro_curve_10y2y": fred.get("macro_curve_10y2y"),
+        "v211_macro_cpi_index": fred.get("macro_cpi_index"),
+        "v211_macro_inflation_yoy_pct": fred.get("macro_inflation_yoy_pct"),
+        "v211_macro_pmi": fred.get("macro_pmi"),
+        "v211_macro_pmi_status": fred.get("macro_pmi_status"),
         "v211_macro_as_of": fred.get("macro_as_of"),
         "v211_ecb_deposit_rate_pct": ecb.get("deposit_rate_pct"),
         "v211_ecb_recent_change_pp": ecb.get("recent_change_pp"),
@@ -61,6 +78,9 @@ def _context_values(context: dict) -> dict[str, object]:
         "v211_aaii_asof": aaii.get("asof"),
         "v211_sentiment_status": sentiment.get("status"),
         "v211_global_news_score": news.get("score"),
+        "v211_global_news_polarity": news.get("polarity"),
+        "v211_global_news_materiality_score": news.get("materiality_score"),
+        "v211_global_news_material_articles": news.get("material_articles"),
         "v211_global_news_articles": news.get("articles"),
         "v211_global_news_source_mode": news.get("source_mode"),
         "v211_context_generated_at_utc": context.get("generated_at_utc"),
@@ -80,7 +100,7 @@ def _fill_constant_missing(df: pd.DataFrame, field: str, value: object) -> int:
 
 def _apply_canonical_context_fallbacks(df: pd.DataFrame, context: dict) -> dict[str, int]:
     """Populate existing funnel fields only when absent; no scoring rule or weight is changed."""
-    _, _, _, sentiment, _, fear, aaii = _context_parts(context)
+    _, _, _, sentiment, news, fear, aaii = _context_parts(context)
     mapping = {
         "fear_greed_index": fear.get("score"),
         "fear_greed_rating": fear.get("rating"),
@@ -94,8 +114,112 @@ def _apply_canonical_context_fallbacks(df: pd.DataFrame, context: dict) -> dict[
         "aaii_source": aaii.get("source"),
         "sentiment_data_status": sentiment.get("status"),
         "sentiment_collected_at_utc": sentiment.get("collected_at_utc"),
+        "global_news_score_v211_fallback": news.get("score"),
+        "global_news_polarity_v211": news.get("polarity"),
+        "global_news_materiality_v211": news.get("materiality_score"),
     }
     return {field: count for field, value in mapping.items() if (count := _fill_constant_missing(df, field, value)) > 0}
+
+
+def _apply_from_merged(df: pd.DataFrame, src: pd.DataFrame, audit: dict) -> None:
+    if "isin" not in src.columns or src["isin"].astype(str).duplicated().any():
+        return
+    src = src.copy()
+    src["isin"] = src["isin"].astype(str)
+    df["isin"] = df["isin"].astype(str)
+    indexed = src.set_index("isin")
+    target_idx = df["isin"]
+    audit["source_rows_available"] = len(src)
+    for field in CANONICAL_FIELDS + SUPPLEMENTAL_FIELDS:
+        source_tag = f"v211_{field}_source"
+        if field not in src.columns or source_tag not in src.columns:
+            continue
+        if field not in df.columns:
+            df[field] = pd.NA
+        source_values = target_idx.map(indexed[field].to_dict())
+        source_tags = target_idx.map(indexed[source_tag].to_dict())
+        eligible = source_tags.map(is_observed)
+        missing = _missing(df[field])
+        apply_mask = eligible & missing & source_values.map(is_observed)
+        if not apply_mask.any():
+            continue
+        before = df.loc[apply_mask, field].copy()
+        df.loc[apply_mask, field] = source_values[apply_mask]
+        if before.map(is_observed).any():
+            audit["overwrites"] += int(before.map(is_observed).sum())
+        count = int(apply_mask.sum())
+        audit["free_cells_applied"] += count
+        audit["free_fields_applied"][field] = int(audit["free_fields_applied"].get(field, 0)) + count
+        if field in SUPPLEMENTAL_FIELDS:
+            audit["supplemental_cells_applied"] += count
+        for suffix in ("source", "as_of", "confidence", "freshness"):
+            col = f"v211_{field}_{suffix}"
+            if col in src.columns:
+                if col not in df.columns:
+                    df[col] = pd.NA
+                values = target_idx.map(indexed[col].to_dict())
+                df.loc[apply_mask, col] = values[apply_mask]
+
+
+def _apply_overlay_supplemental(df: pd.DataFrame, overlay: pd.DataFrame, audit: dict) -> None:
+    if "isin" not in overlay.columns or overlay["isin"].astype(str).duplicated().any():
+        return
+    overlay = overlay.copy()
+    overlay["isin"] = overlay["isin"].astype(str)
+    idx = overlay.set_index("isin")
+    target_idx = df["isin"].astype(str)
+
+    for col in [c for c in overlay.columns if c.startswith("free_identity_")]:
+        values = target_idx.map(idx[col].to_dict())
+        if col not in df.columns:
+            df[col] = values
+            audit["identity_fields_added"] += 1
+        else:
+            mask = _missing(df[col]) & values.map(is_observed)
+            df.loc[mask, col] = values[mask]
+
+    # Overlay contains every captured fact, including fields not yet present in a canonical
+    # reference. Carry approved supplemental fields so AMF/Euronext/Finnhub data cannot be
+    # silently lost merely because an older reference schema lacked a column.
+    for field in SUPPLEMENTAL_FIELDS + [
+        "roic_v21_pct", "revenue_cagr_5y_v21_pct", "ev_to_ebitda_v21",
+        "upgrades_30d_v21", "downgrades_30d_v21", "net_upgrades_30d_v21",
+        "broker_weighted_revision_30d", "mm100", "macd_line", "macd_signal", "macd_hist",
+        "atr14", "bollinger_mid", "bollinger_upper", "bollinger_lower", "bollinger_width_pct",
+        "sharpe_1y_rf0", "stoch_k", "stoch_d", "volatility_1y_pct",
+    ]:
+        value_col = f"free_{field}"
+        source_col = f"free_{field}_source"
+        asof_col = f"free_{field}_as_of"
+        if value_col not in overlay.columns:
+            continue
+        if field not in df.columns:
+            df[field] = pd.NA
+        values = target_idx.map(idx[value_col].to_dict())
+        sources = target_idx.map(idx[source_col].to_dict()) if source_col in overlay.columns else pd.Series(pd.NA, index=df.index)
+        mask = _missing(df[field]) & values.map(is_observed)
+        if source_col in overlay.columns:
+            mask &= sources.map(is_observed)
+        if not mask.any():
+            continue
+        before = df.loc[mask, field].copy()
+        df.loc[mask, field] = values[mask]
+        if before.map(is_observed).any():
+            audit["overwrites"] += int(before.map(is_observed).sum())
+        count = int(mask.sum())
+        audit["free_cells_applied"] += count
+        audit["supplemental_cells_applied"] += count
+        audit["free_fields_applied"][field] = int(audit["free_fields_applied"].get(field, 0)) + count
+        provenance = f"v211_{field}_source"
+        if provenance not in df.columns:
+            df[provenance] = pd.NA
+        df.loc[mask, provenance] = sources[mask]
+        if asof_col in overlay.columns:
+            asofs = target_idx.map(idx[asof_col].to_dict())
+            out_col = f"v211_{field}_as_of"
+            if out_col not in df.columns:
+                df[out_col] = pd.NA
+            df.loc[mask, out_col] = asofs[mask]
 
 
 def apply(target: Path, free_root: Path, expected_rows: int | None = None) -> dict:
@@ -110,6 +234,7 @@ def apply(target: Path, free_root: Path, expected_rows: int | None = None) -> di
         "target": str(target),
         "rows": len(df),
         "free_cells_applied": 0,
+        "supplemental_cells_applied": 0,
         "free_fields_applied": {},
         "identity_fields_added": 0,
         "context_fields_added": 0,
@@ -117,6 +242,7 @@ def apply(target: Path, free_root: Path, expected_rows: int | None = None) -> di
         "canonical_context_fallback_fields": {},
         "overwrites": 0,
         "source_rows_available": 0,
+        "policy": "MISSING_ONLY_ZERO_OVERWRITE_WITH_PROVENANCE",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -124,59 +250,18 @@ def apply(target: Path, free_root: Path, expected_rows: int | None = None) -> di
     overlay_path = free_root / "V21.1_FREE_CAPTURE_OVERLAY.csv"
     if merged_path.exists():
         src = pd.read_csv(merged_path, sep=";", dtype=object, encoding="utf-8-sig", low_memory=False)
-        if "isin" in src.columns and not src["isin"].astype(str).duplicated().any():
-            src["isin"] = src["isin"].astype(str)
-            df["isin"] = df["isin"].astype(str)
-            indexed = src.set_index("isin")
-            audit["source_rows_available"] = len(src)
-            target_idx = df["isin"]
-            for field in CANONICAL_FIELDS:
-                source_tag = f"v211_{field}_source"
-                if field not in df.columns or field not in src.columns or source_tag not in src.columns:
-                    continue
-                source_values = target_idx.map(indexed[field].to_dict())
-                source_tags = target_idx.map(indexed[source_tag].to_dict())
-                eligible = source_tags.map(is_observed)
-                missing = _missing(df[field])
-                apply_mask = eligible & missing & source_values.map(is_observed)
-                if not apply_mask.any():
-                    continue
-                before = df.loc[apply_mask, field].copy()
-                df.loc[apply_mask, field] = source_values[apply_mask]
-                if before.map(is_observed).any():
-                    audit["overwrites"] += int(before.map(is_observed).sum())
-                count = int(apply_mask.sum())
-                audit["free_cells_applied"] += count
-                audit["free_fields_applied"][field] = count
-                for suffix in ("source", "as_of", "confidence", "freshness"):
-                    col = f"v211_{field}_{suffix}"
-                    if col in src.columns:
-                        if col not in df.columns:
-                            df[col] = pd.NA
-                        values = target_idx.map(indexed[col].to_dict())
-                        df.loc[apply_mask, col] = values[apply_mask]
+        _apply_from_merged(df, src, audit)
 
     if overlay_path.exists():
         overlay = pd.read_csv(overlay_path, sep=";", dtype=object, encoding="utf-8-sig", low_memory=False)
-        if "isin" in overlay.columns and not overlay["isin"].astype(str).duplicated().any():
-            overlay["isin"] = overlay["isin"].astype(str)
-            idx = overlay.set_index("isin")
-            target_idx = df["isin"].astype(str)
-            for col in [c for c in overlay.columns if c.startswith("free_identity_")]:
-                values = target_idx.map(idx[col].to_dict())
-                if col not in df.columns:
-                    df[col] = values
-                    audit["identity_fields_added"] += 1
-                else:
-                    mask = _missing(df[col]) & values.map(is_observed)
-                    df.loc[mask, col] = values[mask]
+        _apply_overlay_supplemental(df, overlay, audit)
 
     context_path = free_root / "V21.1_COMPLEMENTARY_CONTEXT.json"
     if context_path.exists():
         context = json.loads(context_path.read_text(encoding="utf-8"))
         for field, value in _context_values(context).items():
-            if is_observed(value):
-                df[field] = value
+            count = _fill_constant_missing(df, field, value)
+            if count:
                 audit["context_fields_added"] += 1
         fallback = _apply_canonical_context_fallbacks(df, context)
         audit["canonical_context_fallback_fields"] = fallback
@@ -187,8 +272,9 @@ def apply(target: Path, free_root: Path, expected_rows: int | None = None) -> di
                 continue
             for suffix, source_field in (("yoy_pct", "hicp_yoy_pct"), ("inflation_score", "inflation_score"), ("period", "period")):
                 value = payload.get(source_field)
-                if is_observed(value):
-                    df[f"v211_hicp_{country.lower()}_{suffix}"] = value
+                field = f"v211_hicp_{country.lower()}_{suffix}"
+                count = _fill_constant_missing(df, field, value)
+                if count:
                     audit["context_fields_added"] += 1
 
     sector = df.get("sector_v21", df.get("sector_yf", df.get("category", pd.Series("", index=df.index))))
