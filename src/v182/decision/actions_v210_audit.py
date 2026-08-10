@@ -8,7 +8,7 @@ import numpy as np
 ROOT=Path(__file__).resolve().parents[3]
 CONFIG=ROOT/'data/reference/V21.0_ACTIONS_PEA_CONFIG.json'
 FUNNEL=ROOT/'data/reference/V21.0_ACTIONS_FUNNEL_CONFIG.json'
-TARGET=ROOT/'outputs/V21.0_ACTIONS_PEA_1429_PREPARED.csv'
+TARGET=ROOT/'outputs/V21.0_ACTIONS_PEA_1829_PREPARED.csv'
 AUDIT=ROOT/'outputs/audit/V21.0_ACTIONS_PRECOMMIT_AUDIT.json'
 
 
@@ -17,14 +17,14 @@ def run(root: Path|None=None)->dict:
     cfg=json.loads((root/CONFIG.relative_to(ROOT)).read_text(encoding='utf-8'))
     fun=json.loads((root/FUNNEL.relative_to(ROOT)).read_text(encoding='utf-8'))
     df=pd.read_csv(root/TARGET.relative_to(ROOT),sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
+    expected=int(cfg['canonical_universe_size'])
     errors=[]; warnings=[]
-    if len(df)!=1429 or df['isin'].astype(str).nunique()!=1429: errors.append('canonical_universe_not_1429')
+    if len(df)!=expected or df['isin'].astype(str).nunique()!=expected: errors.append(f'canonical_universe_not_{expected}')
     if not df['asset_class'].astype(str).str.upper().eq('ACTION').all(): errors.append('non_action_rows_present')
     if not df['execution'].astype(str).eq('RESEARCH_ONLY').all(): errors.append('execution_guard_failed')
     if df['isin'].duplicated().any(): errors.append('duplicate_isin')
 
-    weight_sums={}
-    all_weighted=set()
+    weight_sums={}; all_weighted=set()
     for hz,w in cfg['horizon_weights'].items():
         weight_sums[hz]=round(sum(float(x) for x in w.values()),10); all_weighted |= set(w)
         if abs(weight_sums[hz]-1)>1e-9: errors.append(f'{hz}_weights_not_100')
@@ -47,7 +47,6 @@ def run(root: Path|None=None)->dict:
     sparse={f:c for f,c in field_coverage.items() if c<0.10}
     if sparse: warnings.append('Sparse weighted fields are allowed only through observed-weight renormalization: '+','.join(sparse))
 
-    # Coverage by horizon, calculated directly on raw evidence; false booleans count as observed.
     row_cov={}
     for hz,w in {**cfg['horizon_weights'],'SHORT':cfg['short_weights']}.items():
         denom=pd.Series(0.0,index=df.index)
@@ -58,10 +57,12 @@ def run(root: Path|None=None)->dict:
             denom += obs.astype(float)*float(wt)
         row_cov[hz]=round(float(denom.mean()),4)
 
-    pea_high=df['pea_confidence'].astype(str).str.upper().str.startswith('HIGH')
+    raw_pea=df['pea_confidence'] if 'pea_confidence' in df.columns else pd.Series('',index=df.index)
+    pea_num=pd.to_numeric(raw_pea,errors='coerce')
+    pea_high=raw_pea.astype(str).str.upper().str.startswith('HIGH') | pea_num.ge(float(cfg['coverage'].get('pea_numeric_high_confidence_min',.90))) | pea_num.ge(90)
     identity=pd.to_numeric(df['v182_ticker_validation_confidence_pct'],errors='coerce')/100.0
     audit={
-      'passed':not errors,'version':cfg['version'],'rows':len(df),'unique_isin':int(df['isin'].nunique()),
+      'passed':not errors,'version':cfg['version'],'rows':len(df),'expected_rows':expected,'unique_isin':int(df['isin'].nunique()),
       'columns':len(df.columns),'weight_sums':weight_sums,'topdown_weight_sum':td_sum,
       'missing_data_policy':cfg['missing_data_policy'],'neutral_50_imputation_allowed':False,
       'weighted_field_coverage':field_coverage,'sparse_weighted_fields':sparse,'mean_weighted_input_coverage':row_cov,
@@ -73,7 +74,7 @@ def run(root: Path|None=None)->dict:
     }
     ap=root/AUDIT.relative_to(ROOT); ap.parent.mkdir(parents=True,exist_ok=True); ap.write_text(json.dumps(audit,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
     if errors: raise RuntimeError('V21 precommittee audit failed: '+str(errors))
-    print('V21_ACTIONS_PRECOMMIT_AUDIT_OK',{'coverage':row_cov,'sparse':len(sparse),'columns':len(df.columns)})
+    print('V21_ACTIONS_PRECOMMIT_AUDIT_1829_OK',{'coverage':row_cov,'sparse':len(sparse),'columns':len(df.columns)})
     return audit
 
 if __name__=='__main__': run()
