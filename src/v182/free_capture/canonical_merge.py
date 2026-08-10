@@ -28,7 +28,7 @@ MERGE_POLICIES = {
             "fcf_yield_v21",
         ],
     },
-    "ZONEBOURSE_PUBLIC_V1": {
+    "ZONEBOURSE_PUBLIC_V2": {
         "status": "OBSERVED_VALIDATED_ISIN_PRICE",
         "max_age_days": 14,
         "stale_warning_days": 7,
@@ -159,7 +159,7 @@ def merge(base: pd.DataFrame, store: CaptureStore, cfg: dict) -> tuple[pd.DataFr
     v = pd.concat(chunks, ignore_index=True)
     v["_asof"] = pd.to_datetime(v["as_of"], errors="coerce")
     v = v.dropna(subset=["_asof"])
-    source_priority = {"INTERNAL_FROM_ESEF": 1, "ZONEBOURSE_PUBLIC_V1": 2, "BOURSORAMA_PUBLIC_V2": 3}
+    source_priority = {"INTERNAL_FROM_ESEF": 1, "ZONEBOURSE_PUBLIC_V2": 2, "BOURSORAMA_PUBLIC_V2": 3}
     v["_p"] = v["_source_policy"].map(source_priority).fillna(9)
     v = v.sort_values(["isin", "field", "_asof", "_p"], ascending=[True, True, False, True])
     v = v.drop_duplicates(["isin", "field"], keep="first")
