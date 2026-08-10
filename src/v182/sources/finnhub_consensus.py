@@ -3,11 +3,13 @@ from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
 import csv
+import os
 import re
 import time
 
-FINNHUB_BASE = "https://finnhub.io/api/v1"
+FINNHUB_BASE = "https://api.finnhub.io/api/v1"
 _SCORE_WEIGHTS = {"strongBuy": 5, "buy": 4, "hold": 3, "sell": 2, "strongSell": 1}
+_LAST_REQUEST_MONOTONIC = 0.0
 
 
 def _label_from_score(score: float) -> str:
@@ -108,8 +110,20 @@ def _cache_fresh(row: dict, resolved_ttl_days: int, unresolved_ttl_days: int) ->
         return False
 
 
+def _pace_finnhub() -> None:
+    """Global free-tier guard shared by all Finnhub endpoints in this process."""
+    global _LAST_REQUEST_MONOTONIC
+    interval = max(0.0, float(os.getenv("FINNHUB_MIN_INTERVAL_SECONDS", os.getenv("V211_FINNHUB_DELAY_SECONDS", "1.05"))) or "1.05"))
+    now = time.monotonic()
+    wait = interval - (now - _LAST_REQUEST_MONOTONIC)
+    if _LAST_REQUEST_MONOTONIC > 0 and wait > 0:
+        time.sleep(wait)
+    _LAST_REQUEST_MONOTONIC = time.monotonic()
+
+
 def _get_json(session, path: str, params: dict, max_retries: int = 2, backoff_seconds: float = 2.0):
     for attempt in range(max_retries + 1):
+        _pace_finnhub()
         resp = session.get(f"{FINNHUB_BASE}{path}", params=params, timeout=15)
         if resp.status_code == 429 and attempt < max_retries:
             retry_after = resp.headers.get("Retry-After")
