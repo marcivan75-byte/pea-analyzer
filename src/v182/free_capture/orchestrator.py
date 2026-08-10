@@ -9,6 +9,7 @@ import pandas as pd
 
 from .core import CaptureStore, is_observed, load_config, load_universe, priority_frame, write_csv
 from .openfigi_v3 import capture as capture_openfigi
+from .euronext_live_public import capture as capture_euronext_live
 from .gleif_bulk import capture as capture_gleif_bulk
 from .gleif_lei import capture as capture_gleif
 from .esef_xbrl import capture as capture_esef
@@ -79,6 +80,7 @@ def _materialize(base: pd.DataFrame, store: CaptureStore, cfg: dict) -> tuple[pd
         "INTERNAL_FROM_ESEF": 1,
         "ESEF_XBRL_JSON": 2,
         "AMF_SHORT_POSITIONS": 2,
+        "EURONEXT_LIVE_PUBLIC": 2,
         "INTERNAL_FROM_FREE_OHLCV": 2,
         "ZONEBOURSE_PUBLIC_V3": 3,
         "BOURSORAMA_PUBLIC_V2": 3,
@@ -104,7 +106,7 @@ def _materialize(base: pd.DataFrame, store: CaptureStore, cfg: dict) -> tuple[pd
     identity = store.identity()
     if not identity.empty:
         idx = out["isin"].astype(str)
-        id_priority = {"GLEIF_ISIN_LEI_BULK": 1, "GLEIF_ISIN_LEI": 2, "OPENFIGI_V3": 3}
+        id_priority = {"GLEIF_ISIN_LEI_BULK": 1, "GLEIF_ISIN_LEI": 2, "EURONEXT_LIVE_PUBLIC": 2, "OPENFIGI_V3": 3}
         identity = identity.copy()
         identity["_p"] = identity["source"].map(id_priority).fillna(9)
         for f in ["figi", "composite_figi", "share_class_figi", "ticker", "exchange", "mic", "lei", "lei_source"]:
@@ -219,6 +221,7 @@ def main() -> None:
     results = {}
     results["complementary_context"] = capture_complementary_context(store)
     results["openfigi"] = capture_openfigi(base, store, int(os.getenv("V211_OPENFIGI_MAX_REQUESTS", "30")))
+    results["euronext_live"] = capture_euronext_live(base, store, int(os.getenv("V211_EURONEXT_LIVE_MAX_SYMBOLS", "150")))
     results["gleif_bulk"] = capture_gleif_bulk(base, store)
     results["gleif_api"] = capture_gleif(
         regulated, store,
