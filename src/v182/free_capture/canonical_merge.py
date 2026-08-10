@@ -11,19 +11,36 @@ import pandas as pd
 from .core import CaptureStore, is_observed, load_config, load_universe, write_csv
 
 
-MERGE_FIELDS = [
-    "roe_v21_pct",
-    "roa_v21_pct",
-    "operating_margin_v21_pct",
-    "revenue_growth_v21_pct",
-    "earnings_growth_v21_pct",
-    "debt_to_ebitda_v21",
-    "free_cash_flow_v21",
-    "pb_v21",
-    "fcf_yield_v21",
-]
-MAX_ANNUAL_AGE_DAYS = 730
-STALE_WARNING_DAYS = 450
+MERGE_POLICIES = {
+    "INTERNAL_FROM_ESEF": {
+        "status": "VALIDATED_DERIVED",
+        "max_age_days": 730,
+        "stale_warning_days": 450,
+        "fields": [
+            "roe_v21_pct",
+            "roa_v21_pct",
+            "operating_margin_v21_pct",
+            "revenue_growth_v21_pct",
+            "earnings_growth_v21_pct",
+            "debt_to_ebitda_v21",
+            "free_cash_flow_v21",
+            "pb_v21",
+            "fcf_yield_v21",
+        ],
+    },
+    "BOURSORAMA_PUBLIC": {
+        "status": "OBSERVED",
+        "max_age_days": 14,
+        "stale_warning_days": 7,
+        "fields": [
+            "per_forward_v21",
+            "n_analysts_v21",
+            "consensus_score_100_v21",
+            "consensus_delta_4w",
+            "next_earnings_date",
+        ],
+    },
+}
 
 
 def _coverage(df: pd.DataFrame, cfg: dict) -> dict[str, float]:
@@ -45,14 +62,52 @@ def _coverage(df: pd.DataFrame, cfg: dict) -> dict[str, float]:
     return out
 
 
+def _valid_value(field: str, value: object, value_text: object, now: pd.Timestamp) -> object | None:
+    if field == "next_earnings_date":
+        raw = str(value_text).strip() if is_observed(value_text) else str(value).strip()
+        d = pd.to_datetime(raw, errors="coerce")
+        if pd.isna(d):
+            return None
+        delta = (d - now).days
+        if delta < -3 or delta > 550:
+            return None
+        return d.date().isoformat()
+
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(x):
+        return None
+    bounds = {
+        "per_forward_v21": (0.0, 250.0),
+        "n_analysts_v21": (0.0, 100.0),
+        "consensus_score_100_v21": (0.0, 100.0),
+        "consensus_delta_4w": (-100.0, 100.0),
+        "roe_v21_pct": (-300.0, 300.0),
+        "roa_v21_pct": (-150.0, 150.0),
+        "operating_margin_v21_pct": (-150.0, 150.0),
+        "revenue_growth_v21_pct": (-100.0, 1000.0),
+        "earnings_growth_v21_pct": (-500.0, 1000.0),
+        "debt_to_ebitda_v21": (0.0, 50.0),
+        "pb_v21": (0.0, 100.0),
+        "fcf_yield_v21": (-100.0, 100.0),
+    }
+    if field in bounds:
+        lo, hi = bounds[field]
+        if not (lo <= x <= hi):
+            return None
+    return x
+
+
 def merge(base: pd.DataFrame, store: CaptureStore, cfg: dict) -> tuple[pd.DataFrame, dict]:
     out = base.copy()
     facts = store.facts()
     now = pd.Timestamp.now(tz="UTC").tz_localize(None)
     audit = {
         "passed": True,
-        "policy": "MISSING_ONLY_VALIDATED_ESEF_NO_OVERWRITE",
-        "fields_allowed": MERGE_FIELDS,
+        "policy": "MISSING_ONLY_VALIDATED_FREE_NO_OVERWRITE",
+        "sources_allowed": list(MERGE_POLICIES),
         "applied_cells": 0,
         "applied_rows": 0,
         "skipped_existing": 0,
@@ -60,6 +115,7 @@ def merge(base: pd.DataFrame, store: CaptureStore, cfg: dict) -> tuple[pd.DataFr
         "skipped_invalid": 0,
         "stale_warning_cells": 0,
         "field_applied": {},
+        "source_applied": {},
         "overwrites": 0,
     }
 
@@ -69,22 +125,28 @@ def merge(base: pd.DataFrame, store: CaptureStore, cfg: dict) -> tuple[pd.DataFr
         audit["coverage_after_merge"] = _coverage(out, cfg)
         return out, audit
 
-    v = facts[
-        facts["source"].astype(str).eq("INTERNAL_FROM_ESEF")
-        & facts["status"].astype(str).eq("VALIDATED_DERIVED")
-        & facts["field"].astype(str).isin(MERGE_FIELDS)
-    ].copy()
-    if v.empty:
+    chunks = []
+    for source, policy in MERGE_POLICIES.items():
+        x = facts[
+            facts["source"].astype(str).eq(source)
+            & facts["status"].astype(str).eq(policy["status"])
+            & facts["field"].astype(str).isin(policy["fields"])
+        ].copy()
+        if not x.empty:
+            x["_source_policy"] = source
+            chunks.append(x)
+    if not chunks:
         out["v211_free_merge_applied_count"] = 0
         out["v211_free_merge_status"] = "NO_VALIDATED_FREE_FACT"
         audit["coverage_after_merge"] = _coverage(out, cfg)
         return out, audit
 
+    v = pd.concat(chunks, ignore_index=True)
     v["_asof"] = pd.to_datetime(v["as_of"], errors="coerce")
-    v["_value"] = pd.to_numeric(v["value"], errors="coerce")
-    v = v.dropna(subset=["_asof", "_value"])
-    v = v[v["_value"].map(math.isfinite)]
-    v = v.sort_values(["isin", "field", "_asof"], ascending=[True, True, False])
+    v = v.dropna(subset=["_asof"])
+    source_priority = {"INTERNAL_FROM_ESEF": 1, "BOURSORAMA_PUBLIC": 2}
+    v["_p"] = v["_source_policy"].map(source_priority).fillna(9)
+    v = v.sort_values(["isin", "field", "_asof", "_p"], ascending=[True, True, False, True])
     v = v.drop_duplicates(["isin", "field"], keep="first")
 
     idx_by_isin = {str(x): i for i, x in enumerate(out["isin"].astype(str))}
@@ -93,6 +155,8 @@ def merge(base: pd.DataFrame, store: CaptureStore, cfg: dict) -> tuple[pd.DataFr
     for _, fact in v.iterrows():
         isin = str(fact["isin"])
         field = str(fact["field"])
+        source = str(fact["_source_policy"])
+        policy = MERGE_POLICIES[source]
         if isin not in idx_by_isin or field not in out:
             audit["skipped_invalid"] += 1
             continue
@@ -102,8 +166,13 @@ def merge(base: pd.DataFrame, store: CaptureStore, cfg: dict) -> tuple[pd.DataFr
             continue
 
         age_days = int((now - fact["_asof"]).days)
-        if age_days < -7 or age_days > MAX_ANNUAL_AGE_DAYS:
+        if age_days < -7 or age_days > int(policy["max_age_days"]):
             audit["skipped_stale"] += 1
+            continue
+
+        candidate = _valid_value(field, fact.get("value"), fact.get("value_text"), now)
+        if candidate is None:
+            audit["skipped_invalid"] += 1
             continue
 
         before = out.at[i, field]
@@ -111,17 +180,20 @@ def merge(base: pd.DataFrame, store: CaptureStore, cfg: dict) -> tuple[pd.DataFr
             audit["overwrites"] += 1
             continue
 
-        out.at[i, field] = fact["_value"]
-        out.at[i, f"v211_{field}_source"] = "INTERNAL_FROM_ESEF"
+        out.at[i, field] = candidate
+        out.at[i, f"v211_{field}_source"] = source
         out.at[i, f"v211_{field}_as_of"] = str(fact["as_of"])
-        out.at[i, f"v211_{field}_confidence"] = float(fact.get("confidence") or 0.90)
-        out.at[i, f"v211_{field}_freshness"] = "STALE_WARNING" if age_days > STALE_WARNING_DAYS else "CURRENT_ANNUAL"
-        if age_days > STALE_WARNING_DAYS:
+        out.at[i, f"v211_{field}_confidence"] = float(fact.get("confidence") or 0.80)
+        out.at[i, f"v211_{field}_freshness"] = (
+            "STALE_WARNING" if age_days > int(policy["stale_warning_days"]) else "CURRENT"
+        )
+        if age_days > int(policy["stale_warning_days"]):
             audit["stale_warning_cells"] += 1
 
         applied_per_row.at[i] += 1
         audit["applied_cells"] += 1
         audit["field_applied"][field] = int(audit["field_applied"].get(field, 0)) + 1
+        audit["source_applied"][source] = int(audit["source_applied"].get(source, 0)) + 1
 
     out["v211_free_merge_applied_count"] = applied_per_row
     out["v211_free_merge_status"] = "PRESERVED_BASE"
@@ -161,6 +233,7 @@ def main() -> None:
         "applied_rows": audit["applied_rows"],
         "overwrites": audit["overwrites"],
         "field_applied": audit["field_applied"],
+        "source_applied": audit["source_applied"],
         "coverage_after_merge": audit["coverage_after_merge"],
     }, ensure_ascii=False))
 
