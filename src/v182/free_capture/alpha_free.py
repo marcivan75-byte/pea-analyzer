@@ -9,6 +9,8 @@ import pandas as pd
 from v182.sources import alpha_vantage as av
 from .core import CaptureStore, clean_text, is_observed, number, utcnow
 
+RESOLVER_POLICY = "COUNTRY_MATCH_GE_0.70_WITH_CANDIDATE_PREVIEW_ON_REJECT"
+
 FIELD_MAP = {
     "MarketCapitalization": ("market_cap_v21", 1.0),
     "ForwardPE": ("per_forward_v21", 1.0),
@@ -68,7 +70,7 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 10, 
     key = os.getenv("ALPHA_VANTAGE_API_KEY", "").strip()
     if not key:
         store.add_health("ALPHA_VANTAGE_FREE", "SKIPPED_NO_KEY", message="ALPHA_VANTAGE_API_KEY absent")
-        return {"status": "SKIPPED_NO_KEY"}
+        return {"status": "SKIPPED_NO_KEY", "resolver_policy": RESOLVER_POLICY}
 
     cache_path = store.root / "cache" / "alpha_symbol_map.csv"
     facts = store.facts()
@@ -142,7 +144,7 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 10, 
     store.add_health(
         "ALPHA_VANTAGE_FREE", status, attempted, added, failed,
         calls, max(0, max_calls - calls),
-        f"OVERVIEW + cached SYMBOL_SEARCH; cached_negative_skipped={cached_negative_skipped}; resolved={resolved_count}; samples={samples}; hard daily guard",
+        f"{RESOLVER_POLICY}; OVERVIEW + cached SYMBOL_SEARCH; cached_negative_skipped={cached_negative_skipped}; resolved={resolved_count}; samples={samples}; hard daily guard",
     )
     return {
         "status": status,
@@ -152,5 +154,6 @@ def capture(universe: pd.DataFrame, store: CaptureStore, max_symbols: int = 10, 
         "failed": failed,
         "resolved": resolved_count,
         "cached_negative_skipped": cached_negative_skipped,
+        "resolver_policy": RESOLVER_POLICY,
         "samples": samples,
     }
