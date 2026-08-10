@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 import json
 import math
+import os
 
 import pandas as pd
 
-from .core import CaptureStore, is_observed, write_csv
+from .core import CaptureStore, is_observed, load_config, load_universe, write_csv
 
 
 MERGE_FIELDS = [
@@ -141,3 +143,27 @@ def write_merged(base: pd.DataFrame, store: CaptureStore, cfg: dict) -> dict:
         encoding="utf-8",
     )
     return audit
+
+
+ROOT = Path(__file__).resolve().parents[3]
+
+
+def main() -> None:
+    cfg = load_config()
+    input_path = Path(os.getenv("V211_INPUT", str(ROOT / "outputs/V21.0_ACTIONS_PEA_REFERENCE_MASTER.csv")))
+    store = CaptureStore(Path(os.getenv("V211_STORE", str(ROOT / cfg["cache"]["root"]))))
+    base = load_universe(input_path)
+    audit = write_merged(base, store, cfg)
+    if not audit.get("passed"):
+        raise RuntimeError(f"V21.1 canonical merge gate failed: {audit}")
+    print("V21_1_CANONICAL_MERGE_OK", json.dumps({
+        "applied_cells": audit["applied_cells"],
+        "applied_rows": audit["applied_rows"],
+        "overwrites": audit["overwrites"],
+        "field_applied": audit["field_applied"],
+        "coverage_after_merge": audit["coverage_after_merge"],
+    }, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()
