@@ -1,9 +1,12 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
 from pathlib import Path
 import csv
+import re
 import time
+import unicodedata
 
 BASE_URL = "https://www.alphavantage.co/query"
 CACHE_FIELDS = ["isin", "yahoo_ticker", "name", "country", "alpha_symbol", "region", "match_score", "status", "updated_at"]
@@ -14,6 +17,14 @@ COUNTRY_ALIASES = {
     "IE": {"ireland"}, "FI": {"finland"}, "SE": {"sweden"}, "DK": {"denmark"},
     "NO": {"norway"}, "LU": {"luxembourg"}, "CH": {"switzerland"}, "GB": {"united kingdom", "uk"},
 }
+EUROPEAN_PROXY_REGIONS = {
+    "frankfurt", "germany", "london", "united kingdom", "paris", "france", "amsterdam",
+    "netherlands", "milan", "italy", "madrid", "spain", "brussels", "belgium", "lisbon",
+    "portugal", "oslo", "norway", "stockholm", "sweden", "copenhagen", "denmark", "helsinki",
+    "finland", "vienna", "austria", "dublin", "ireland", "luxembourg",
+}
+PROXY_FORBIDDEN_NAME_TOKENS = {"cdr", "adr", "depositary", "hedged", "etf", "warrant", "certificate"}
+CORP_WORDS = {"sa", "se", "nv", "plc", "ag", "spa", "ab", "asa", "oyj", "group", "groupe", "holding", "holdings", "company"}
 
 
 @dataclass(frozen=True)
@@ -60,7 +71,6 @@ def _request(
     rate_retry_wait_seconds: float = 1.15,
     **params,
 ) -> dict:
-    """Call Alpha Vantage and retry only transient per-second throttling."""
     import requests
 
     if not api_key:
@@ -102,6 +112,60 @@ def _country_tokens(country: str | None, isin: str | None) -> set[str]:
     return COUNTRY_ALIASES.get(prefix, set())
 
 
+def _name_key(value: object) -> str:
+    s = unicodedata.normalize("NFKD", str(value or ""))
+    s = "".join(c for c in s if not unicodedata.combining(c)).lower()
+    tokens = [t for t in re.sub(r"[^a-z0-9]+", " ", s).split() if t not in CORP_WORDS]
+    return " ".join(tokens)
+
+
+def _name_similarity(a: object, b: object) -> float:
+    ka, kb = _name_key(a), _name_key(b)
+    if not ka or not kb:
+        return 0.0
+    if ka == kb:
+        return 1.0
+    if (ka in kb or kb in ka) and min(len(ka), len(kb)) >= 4:
+        return 0.93
+    return SequenceMatcher(None, ka, kb).ratio()
+
+
+def _pick_entity_proxy(matches: list[dict], name: str) -> tuple[dict | None, float]:
+    """Select only a EUR-denominated European secondary listing of the same issuer.
+
+    The proxy is never allowed to stand in for absolute per-share values. It only opens the door
+    to consolidated, dimensionless issuer metrics in the higher-level free-capture adapter.
+    """
+    candidates: list[tuple[float, float, str, dict]] = []
+    for row in matches:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("1. symbol") or "").strip()
+        row_name = str(row.get("2. name") or "").strip()
+        kind = str(row.get("3. type") or "").strip().lower()
+        region = str(row.get("4. region") or "").strip().lower()
+        currency = str(row.get("8. currency") or "").strip().upper()
+        if not symbol or (kind and not any(t in kind for t in ("equity", "stock"))):
+            continue
+        if currency != "EUR" or region not in EUROPEAN_PROXY_REGIONS:
+            continue
+        name_tokens = set(_name_key(row_name).split())
+        if name_tokens & PROXY_FORBIDDEN_NAME_TOKENS:
+            continue
+        similarity = _name_similarity(name, row_name)
+        if similarity < 0.88:
+            continue
+        try:
+            provider_score = float(row.get("9. matchScore") or 0)
+        except (TypeError, ValueError):
+            provider_score = 0.0
+        candidates.append((similarity, provider_score, symbol, row))
+    if not candidates:
+        return None, 0.0
+    candidates.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
+    return candidates[0][3], candidates[0][0]
+
+
 def _pick_search_match(matches: list[dict], name: str, country: str | None, isin: str | None,
                        min_match_score: float = 0.70) -> tuple[dict | None, str]:
     tokens = _country_tokens(country, isin)
@@ -134,7 +198,6 @@ def _pick_search_match(matches: list[dict], name: str, country: str | None, isin
 
 
 def _search_preview(matches: list[dict], limit: int = 4) -> str:
-    """Compact, non-secret audit preview of the candidates returned by SYMBOL_SEARCH."""
     items: list[str] = []
     for row in matches:
         if not isinstance(row, dict):
@@ -176,7 +239,8 @@ def _save_cache(path: str | Path | None, cache: dict[str, dict]) -> None:
 
 
 def _fresh(row: dict, positive_ttl_days: int, negative_ttl_days: int) -> bool:
-    ttl = positive_ttl_days if str(row.get("status") or "").upper() == "RESOLVED" else negative_ttl_days
+    status = str(row.get("status") or "").upper()
+    ttl = positive_ttl_days if status.startswith("RESOLVED") else negative_ttl_days
     try:
         stamp = datetime.fromisoformat(str(row.get("updated_at") or "").replace("Z", "+00:00"))
         if stamp.tzinfo is None:
@@ -204,9 +268,11 @@ def resolve_symbol(security: dict, api_key: str, cache_path: str | Path | None =
         and str(old.get("name") or "").strip().upper() == name.upper()
     )
     if same_identity and _fresh(old, positive_ttl_days, negative_ttl_days):
-        if str(old.get("status") or "").upper() == "RESOLVED" and old.get("alpha_symbol"):
-            return AlphaResolutionResult(str(old["alpha_symbol"]), "CACHE", str(old.get("region") or ""),
-                                         float(old.get("match_score") or 0), 0)
+        status = str(old.get("status") or "").upper()
+        if status.startswith("RESOLVED") and old.get("alpha_symbol"):
+            source = "CACHE_PROXY" if status == "RESOLVED_ENTITY_PROXY" else "CACHE"
+            return AlphaResolutionResult(str(old["alpha_symbol"]), source, str(old.get("region") or ""),
+                                         float(old.get("match_score") or 0), 0, reason=status)
         return AlphaResolutionResult(None, "CACHE", api_calls=0, reason=str(old.get("status") or "CACHED_NEGATIVE"))
 
     body = _request(api_key, "SYMBOL_SEARCH", keywords=name)
@@ -223,6 +289,16 @@ def resolve_symbol(security: dict, api_key: str, cache_path: str | Path | None =
         _save_cache(cache_path, cache)
         return AlphaResolutionResult(symbol, "API", region, score, 1)
 
+    proxy, similarity = _pick_entity_proxy(matches, name)
+    if proxy:
+        symbol = str(proxy.get("1. symbol") or "").strip()
+        region = str(proxy.get("4. region") or "").strip()
+        cache[isin] = {"isin": isin, "yahoo_ticker": yahoo_ticker, "name": name, "country": country,
+                       "alpha_symbol": symbol, "region": region, "match_score": str(similarity),
+                       "status": "RESOLVED_ENTITY_PROXY", "updated_at": now}
+        _save_cache(cache_path, cache)
+        return AlphaResolutionResult(symbol, "API_PROXY", region, similarity, 1, reason="EUR_ENTITY_PROXY")
+
     preview = _search_preview(matches)
     audited_reason = f"{reason}::{preview}" if preview else reason
     cache[isin] = {"isin": isin, "yahoo_ticker": yahoo_ticker, "name": name, "country": country,
@@ -234,7 +310,6 @@ def resolve_symbol(security: dict, api_key: str, cache_path: str | Path | None =
 
 def fetch_daily_history(symbol: str, api_key: str, canonical_ticker: str,
                         min_rows: int = 60, outputsize: str = "compact") -> AlphaHistoryResult:
-    """Fetch raw global daily OHLCV using the documented TIME_SERIES_DAILY API."""
     import pandas as pd
 
     try:
