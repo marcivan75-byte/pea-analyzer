@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[3]
-TARGET = ROOT / "outputs/V21.0_ACTIONS_PEA_1429_PREPARED.csv"
+CONFIG = ROOT / "data/reference/V21.0_ACTIONS_PEA_CONFIG.json"
+TARGET = ROOT / "outputs/V21.0_ACTIONS_PEA_1829_PREPARED.csv"
 
 TEXT_FIELDS = [
     "consensus_label_v21",
@@ -21,9 +23,11 @@ TEXT_FIELDS = [
 
 
 def main() -> None:
+    cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
+    expected = int(cfg["canonical_universe_size"])
     df = pd.read_csv(TARGET, sep=";", dtype=object, encoding="utf-8-sig", low_memory=False)
-    if len(df) != 1429 or df["isin"].astype(str).nunique() != 1429:
-        raise RuntimeError("V21 schema preparation requires canonical 1429")
+    if len(df) != expected or df["isin"].astype(str).nunique() != expected:
+        raise RuntimeError(f"V21 schema preparation requires canonical {expected}")
     for field in TEXT_FIELDS:
         if field not in df.columns:
             df[field] = ""
