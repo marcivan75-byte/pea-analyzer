@@ -17,9 +17,12 @@ from .manual_imports import capture as capture_manual
 from .twelvedata_free import capture as capture_twelve
 from .alpha_free import capture as capture_alpha
 from .marketstack_free import capture as capture_marketstack
+from .finnhub_free import capture as capture_finnhub
+from .complementary_context import capture as capture_complementary_context
 from .derive_market import capture as derive_market
 from .derive_fundamentals import capture as derive_fundamentals
 from .canonical_merge import write_merged
+from .augment_merge import apply as augment_merged
 
 ROOT = Path(__file__).resolve().parents[3]
 INPUT = Path(os.getenv("V211_INPUT", str(ROOT / "outputs/V21.0_ACTIONS_PEA_REFERENCE_MASTER.csv")))
@@ -73,10 +76,11 @@ def _materialize(base: pd.DataFrame, store: CaptureStore, cfg: dict) -> tuple[pd
         "INTERNAL_FROM_ESEF": 1,
         "ESEF_XBRL_JSON": 2,
         "INTERNAL_FROM_FREE_OHLCV": 2,
-        "ALPHA_VANTAGE_FREE_PROXY": 3,
-        "ALPHA_VANTAGE_FREE": 4,
-        "TWELVEDATA_FREE": 5,
-        "MARKETSTACK_FREE": 6,
+        "FINNHUB_FREE": 3,
+        "ALPHA_VANTAGE_FREE_PROXY": 4,
+        "ALPHA_VANTAGE_FREE": 5,
+        "TWELVEDATA_FREE": 6,
+        "MARKETSTACK_FREE": 7,
     }
     if not facts.empty:
         facts = facts.copy()
@@ -207,6 +211,7 @@ def main() -> None:
     store.root.mkdir(parents=True, exist_ok=True)
 
     results = {}
+    results["complementary_context"] = capture_complementary_context(store)
     results["openfigi"] = capture_openfigi(base, store, int(os.getenv("V211_OPENFIGI_MAX_REQUESTS", "30")))
     results["gleif_bulk"] = capture_gleif_bulk(base, store)
     results["gleif_api"] = capture_gleif(
@@ -223,6 +228,8 @@ def main() -> None:
     twelve_max = int(os.getenv("V211_TWELVE_MAX_SYMBOLS", "5"))
     alpha_max = int(os.getenv("V211_ALPHA_MAX_SYMBOLS", "3"))
     marketstack_max = int(os.getenv("V211_MARKETSTACK_MAX_SYMBOLS", "1"))
+    finnhub_max = int(os.getenv("V211_FINNHUB_MAX_SYMBOLS", "120"))
+    finnhub_metric_max = int(os.getenv("V211_FINNHUB_METRIC_MAX_SYMBOLS", "60"))
     results["twelvedata"] = capture_twelve(
         prioritized, store, max_symbols=twelve_max,
         credit_guard=int(os.getenv("V211_TWELVE_CREDIT_GUARD", "760")),
@@ -232,15 +239,19 @@ def main() -> None:
         prioritized, store, max_symbols=alpha_max,
         max_calls=int(os.getenv("V211_ALPHA_MAX_CALLS", "23")),
     ) if alpha_max > 0 else {"status": "DISABLED_THIS_WAVE"}
+    results["finnhub"] = capture_finnhub(
+        prioritized, store, max_symbols=finnhub_max, metric_max=finnhub_metric_max,
+    ) if finnhub_max > 0 else {"status": "DISABLED_THIS_WAVE"}
 
     results["derived_market"] = derive_market(store)
     results["final_canonical_merge"] = write_merged(base, store, cfg)
+    merged_path = store.root / "V21.1_ACTIONS_PEA_REFERENCE_MERGED.csv"
+    results["complementary_merge"] = augment_merged(merged_path, store)
 
     overlay, metrics = _materialize(base, store, cfg)
     _queues(prioritized, regulated, store)
     write_csv(overlay, store.root / "V21.1_FREE_CAPTURE_OVERLAY.csv", ["isin"])
 
-    merged_path = store.root / "V21.1_ACTIONS_PEA_REFERENCE_MERGED.csv"
     merged = pd.read_csv(merged_path, sep=";", dtype=object, encoding="utf-8-sig", low_memory=False)
     deep_coverage = _deep_audit(base, merged, store)
     (store.root / "V21.1_DEEP_FUNDAMENTAL_AUDIT.json").write_text(
@@ -256,7 +267,7 @@ def main() -> None:
     market = store.market()
     market_isins = set(market["isin"].astype(str)) if not market.empty else set()
     audit = {
-        "passed": True,
+        "passed": bool(results["complementary_merge"].get("passed", True)),
         "version": cfg["version"],
         "execution": cfg["execution_mode"],
         "free_only": True,
@@ -285,6 +296,7 @@ def main() -> None:
         "cache_market_rows": audit["cache_market_rows"],
         "cache_fact_rows": audit["cache_fact_rows"],
         "metrics_pct_base_plus_free": audit["metrics_pct_base_plus_free"],
+        "complementary_merge": results["complementary_merge"],
         "deep_fundamental_coverage": {
             "base_mean": deep_coverage["base_mean_field_coverage_pct"],
             "merged_mean": deep_coverage["merged_mean_field_coverage_pct"],
