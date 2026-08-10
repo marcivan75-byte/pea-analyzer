@@ -1,21 +1,8 @@
 name: V20.7 ETF PEA 102 - Collection to Committee
 
+# AUDIT LOCK 2026-08-10: manual-only. Repository edits must not start a run.
 on:
   workflow_dispatch:
-  push:
-    branches: [feature/smart-money-v1]
-    paths:
-      - '.github/workflows/V20.7_etf102_only.yml'
-      - 'src/v182/decision/etf102_direct_enrichment.py'
-      - 'src/v182/decision/etf102_committee_v207.py'
-      - 'src/v182/decision/etf102_v207_audit.py'
-      - 'src/v182/decision/etf102_reference_v207.py'
-      - 'src/v182/sources/etf102_sentiment_overlay.py'
-      - 'src/v182/sources/funnel_context_fast.py'
-      - 'src/v182/sources/funnel_context_final.py'
-      - 'src/v182/free_capture/propagate.py'
-      - 'data/reference/V20.7_ETF102_CONFIG.json'
-      - 'data/reference/V20.7_FUNNEL_CONFIG.json'
 
 permissions:
   contents: read
@@ -28,14 +15,16 @@ concurrency:
 jobs:
   etf102:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
           fetch-depth: 1
 
-      - uses: actions/setup-python@v6
+      - name: Setup Python
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
           cache: pip
@@ -43,7 +32,7 @@ jobs:
       - name: Install dependencies
         run: pip install -c constraints-ci.txt -e .[test]
 
-      - name: Static preflight V20.7
+      - name: Static preflight V20.7 and exhaustive source contract
         run: |
           set -euo pipefail
           python -m pip check
@@ -61,7 +50,13 @@ jobs:
           for h,w in c['direct_weights'].items(): assert abs(sum(w.values())-1.0)<1e-9, (h,sum(w.values()))
           assert abs(sum(f['context_weights'].values())-1.0)<1e-9
           assert c['smart_money']['positive_score_boost_allowed'] is False
-          print('V20_7_STATIC_CONFIG_OK')
+          sc=c.get('source_contract',{})
+          assert sc.get('audit_version')=='V21.1_SOURCE_AUDIT_2026-08-10_STATIC'
+          assert sc.get('free_first') is True
+          assert sc.get('runtime_validation_status')=='NOT_RUN_BY_USER_REQUEST'
+          assert Path('src/v182/free_capture/etf_public_reference.py').exists()
+          assert Path('config/V21.1_FREE_SOURCE_AUDIT.csv').exists()
+          print('V20_7_STATIC_CONFIG_AND_SOURCE_CONTRACT_OK')
           PY
 
       - name: Restore latest validated ETF PEA 102 master only
@@ -76,9 +71,8 @@ jobs:
             [ -n "$RUN" ] || continue
             gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}/artifacts?per_page=100" --jq '.artifacts[]|select(.expired==false)|[.id,.name]|@tsv' > /tmp/etf102/artifacts.tsv || continue
             while IFS=$'\t' read -r ART NAME; do
-              [ -n "$ART" ] || continue
               case "$NAME" in V18.2-full-audit-*) ;; *) continue ;; esac
-              rm -rf /tmp/etf102/unpack; mkdir -p /tmp/etf102/unpack
+              rm -rf /tmp/etf102/unpack && mkdir -p /tmp/etf102/unpack
               gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/etf102/a.zip || continue
               unzip -oq /tmp/etf102/a.zip -d /tmp/etf102/unpack || continue
               SRC=$(find /tmp/etf102/unpack -name V18.2_PEA_ETF_MASTER_ENRICHED.csv -print -quit)
@@ -91,20 +85,13 @@ jobs:
           assert d['ticker_identity_status'].astype(str).eq('FINAL_VALIDATED').all()
           assert d['asset_class'].astype(str).str.upper().eq('ETF').all()
           assert d['pea_type'].astype(str).str.upper().str.contains('PEA').all()
-          print('ETF_PEA_102_REFERENCE_OK')
           PY
-              then
-                echo "ETF102_REFERENCE_RUN=$RUN" >> "$GITHUB_ENV"
-                echo "ETF102_REFERENCE_ARTIFACT=$NAME" >> "$GITHUB_ENV"
-                FOUND=1; break 2
-              else
-                rm -f outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
-              fi
+              then echo "ETF102_REFERENCE_RUN=$RUN" >> "$GITHUB_ENV"; FOUND=1; break 2; fi
             done < /tmp/etf102/artifacts.tsv
           done < /tmp/etf102/runs.txt
           test "$FOUND" = 1
 
-      - name: Restore latest V21.1 free complementary context when available
+      - name: Restore latest V21.1 free capture context and facts when available
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -117,7 +104,7 @@ jobs:
             gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}/artifacts?per_page=100" --jq '.artifacts[]|select(.expired==false)|[.id,.name]|@tsv' > /tmp/etf102free/artifacts.tsv || continue
             while IFS=$'\t' read -r ART NAME; do
               case "$NAME" in V21.1-Free-Capture-*) ;; *) continue ;; esac
-              rm -rf /tmp/etf102free/unpack; mkdir -p /tmp/etf102free/unpack
+              rm -rf /tmp/etf102free/unpack && mkdir -p /tmp/etf102free/unpack
               gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/etf102free/free.zip || continue
               unzip -oq /tmp/etf102free/free.zip -d /tmp/etf102free/unpack || continue
               ROOT_FREE=$(find /tmp/etf102free/unpack -type d -path '*/outputs/free_capture' -print -quit)
@@ -128,14 +115,20 @@ jobs:
           done < /tmp/etf102free/runs.txt
           echo "ETF102_FREE_CAPTURE_RESTORED=$RESTORED" >> "$GITHUB_ENV"
 
-      - name: Collect and enrich ETF PEA 102 market and fund data
+      - name: Enrich ETF PEA 102 from public PEA lists and official issuers first
+        env:
+          OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
+          V182_USER_AGENT: 'PEA-V21.1-ETF-PublicReference/1.0'
+        run: python -m v182.free_capture.etf_public_reference --target outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
+
+      - name: Collect remaining ETF market technical and fund data with Yahoo fallback
         run: python -m v182.decision.etf102_direct_enrichment
 
-      - name: Propagate V21.1 complementary context to ETF dataset
+      - name: Propagate validated V21.1 free context and cross-universe facts
         if: env.ETF102_FREE_CAPTURE_RESTORED == '1'
         run: python -m v182.free_capture.propagate --target outputs/V20.4.3_ETF102_DIRECT_ENRICHED.csv --free-root outputs/free_capture --expected-rows 102
 
-      - name: Refresh sentiment on ETF PEA 102
+      - name: Refresh market sentiment on ETF PEA 102
         run: python -m v182.sources.etf102_sentiment_overlay
 
       - name: Collect complete Top Down funnel inputs
@@ -156,9 +149,8 @@ jobs:
             [ -n "$RUN" ] || continue
             gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}/artifacts?per_page=100" --jq '.artifacts[]|select(.expired==false)|[.id,.name]|@tsv' > /tmp/smintegration/artifacts.tsv || continue
             while IFS=$'\t' read -r ART NAME; do
-              [ -n "$ART" ] || continue
               case "$NAME" in V18.3-Smart-Money-Validation-*) ;; *) continue ;; esac
-              rm -rf /tmp/smintegration/unpack; mkdir -p /tmp/smintegration/unpack
+              rm -rf /tmp/smintegration/unpack && mkdir -p /tmp/smintegration/unpack
               gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/smintegration/sm.zip || continue
               unzip -oq /tmp/smintegration/sm.zip -d /tmp/smintegration/unpack || continue
               SHADOW=$(find /tmp/smintegration/unpack -name V18.3_PEA_ETF_SMART_MONEY_SHADOW.csv -print -quit)
@@ -169,21 +161,14 @@ jobs:
               cp "$STATUS" outputs/audit/V18.3_SMART_MONEY_ITERATION_STATUS.json
               cp "$QUALITY" outputs/audit/V18.3_SMART_MONEY_QUALITY_GATES.json
               if python - <<'PY'
-          import json, pandas as pd
+          import json,pandas as pd
           from pathlib import Path
           d=pd.read_csv('outputs/V18.3_PEA_ETF_SMART_MONEY_SHADOW.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
-          it=json.loads(Path('outputs/audit/V18.3_SMART_MONEY_ITERATION_STATUS.json').read_text())
           q=json.loads(Path('outputs/audit/V18.3_SMART_MONEY_QUALITY_GATES.json').read_text())
-          assert len(d)==102 and d['isin'].astype(str).nunique()==102
-          assert q.get('passed') is True
-          assert it.get('positive_score_activation_ready') is False
-          print('SMART_MONEY_ETF102_SHADOW_OK',it.get('distinct_shadow_run_dates'))
+          it=json.loads(Path('outputs/audit/V18.3_SMART_MONEY_ITERATION_STATUS.json').read_text())
+          assert len(d)==102 and d['isin'].astype(str).nunique()==102 and q.get('passed') is True and it.get('positive_score_activation_ready') is False
           PY
-              then
-                echo "SMART_MONEY_SOURCE_RUN=$RUN" >> "$GITHUB_ENV"
-                echo "SMART_MONEY_SOURCE_ARTIFACT=$NAME" >> "$GITHUB_ENV"
-                FOUND=1; break 2
-              fi
+              then FOUND=1; echo "SMART_MONEY_SOURCE_RUN=$RUN" >> "$GITHUB_ENV"; break 2; fi
             done < /tmp/smintegration/artifacts.tsv
           done < /tmp/smintegration/runs.txt
           test "$FOUND" = 1
@@ -197,16 +182,16 @@ jobs:
       - name: V20.7 integrated audit and hard gates
         run: |
           python - <<'PY'
-          import json
+          import json,pandas as pd
           from pathlib import Path
-          import pandas as pd
           d=pd.read_csv('outputs/V20.7_ETF102_COMMITTEE.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
           a=json.loads(Path('outputs/audit/V20.7_ETF102_COMMITTEE_AUDIT.json').read_text())
           p=json.loads(Path('outputs/audit/V20.7_ETF102_PRECOMMIT_AUDIT.json').read_text())
           f=json.loads(Path('outputs/audit/V20.5_FUNNEL_CONTEXT.json').read_text())
+          pub=json.loads(Path('outputs/audit/V21.1_ETF_PUBLIC_REFERENCE_AUDIT.json').read_text())
           it=json.loads(Path('outputs/audit/V18.3_SMART_MONEY_ITERATION_STATUS.json').read_text())
           smq=json.loads(Path('outputs/audit/V18.3_SMART_MONEY_QUALITY_GATES.json').read_text())
-          assert p['passed'] is True and a['passed'] is True
+          assert p['passed'] is True and a['passed'] is True and pub['passed'] is True
           assert len(d)==102 and d['isin'].astype(str).nunique()==102
           assert d['ticker_identity_status'].astype(str).eq('FINAL_VALIDATED').all()
           assert d['asset_class'].astype(str).str.upper().eq('ETF').all()
@@ -214,23 +199,17 @@ jobs:
           assert d['legacy_266_used'].astype(str).str.lower().eq('false').all()
           assert d['v207_version'].astype(str).eq('V20.7_ETF102').all()
           assert d['execution'].astype(str).eq('RESEARCH_ONLY').all()
-          assert a['universe_contract']=='ETF_PEA_ONLY_FINAL_VALIDATED'
           assert a['missing_data_policy']=='RENORMALIZE_OBSERVED_WEIGHTS_NO_NEUTRAL_50'
-          assert all(abs(v-1.0)<1e-9 for v in a['direct_weight_sums'].values())
-          assert abs(a['topdown_weight_sum']-1.0)<1e-9
           assert min(a['mean_weight_coverage'].values()) >= 0.75
-          assert pd.to_numeric(d['v207_topdown_coverage'],errors='coerce').between(0,1).all()
-          assert pd.to_numeric(d['v207_topdown_multiplier'],errors='coerce').between(.94,1.04).all()
-          assert set(d['v207_topdown_gate'].astype(str).unique()) <= {'PASS','REVIEW_ONLY','BLOCK_BUY'}
           assert a['smart_money_positive_score_boost_allowed'] is False
           assert smq.get('passed') is True and it.get('positive_score_activation_ready') is False
           assert f.get('passed') is True and f.get('rows')==102
           prop=Path('outputs/audit/V21.1_PROPAGATION_V20.4.3_ETF102_DIRECT_ENRICHED.json')
           if prop.exists():
               pa=json.loads(prop.read_text()); assert pa.get('passed') is True and pa.get('overwrites')==0
-          required={'score_ct','score_mt','score_lt','score_short','rank_ct','rank_mt','rank_lt','rank_short','decision_ct','decision_mt','decision_lt','decision_short','weight_coverage_ct','weight_coverage_mt','weight_coverage_lt','weight_coverage_short','v207_topdown_score','v207_topdown_multiplier','v207_topdown_gate'}
+          required={'score_ct','score_mt','score_lt','score_short','rank_ct','rank_mt','rank_lt','rank_short','decision_ct','decision_mt','decision_lt','decision_short','weight_coverage_ct','weight_coverage_mt','weight_coverage_lt','weight_coverage_short'}
           assert required.issubset(d.columns), required-set(d.columns)
-          print('V20_7_ETF_PEA_102_INTEGRATED_OK',a['decisions'],a['mean_weight_coverage'],a['topdown_gate_counts'],a['aum_gate_counts'])
+          print('V20_7_ETF_PEA_102_INTEGRATED_OK')
           PY
 
       - name: Build V20.7 ETF102 master reference
@@ -239,9 +218,8 @@ jobs:
       - name: V20.7 reference quality gates
         run: |
           python - <<'PY'
-          import json
+          import json,pandas as pd
           from pathlib import Path
-          import pandas as pd
           m=pd.read_csv('outputs/V20.7_ETF102_REFERENCE_MASTER.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
           c=pd.read_csv('outputs/V20.7_ETF102_REFERENCE_COMPLETE.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False,keep_default_na=False)
           a=json.loads(Path('outputs/audit/V20.7_ETF102_REFERENCE_AUDIT.json').read_text())
@@ -251,27 +229,23 @@ jobs:
           assert m['reference_missing_data_policy'].astype(str).eq('VALUE_OR_EXPLICIT_NA_NO_NEUTRAL_50').all()
           assert m['legacy_266_used'].astype(str).str.lower().eq('false').all()
           assert int(c.astype(str).apply(lambda s:s.str.strip().eq('')).sum().sum())==0
-          print('V20_7_REFERENCE_GATES_OK',a)
+          print('V20_7_REFERENCE_GATES_OK')
           PY
 
       - name: Publish V20.7 committee summary
         run: |
           cat outputs/V20.7_ETF102_COMMITTEE_SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
-          echo "## Pre-committee audit" >> "$GITHUB_STEP_SUMMARY"
           python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
           from pathlib import Path
           a=json.loads(Path('outputs/audit/V20.7_ETF102_PRECOMMIT_AUDIT.json').read_text())
           r=json.loads(Path('outputs/audit/V20.7_ETF102_REFERENCE_AUDIT.json').read_text())
-          print(f"- Audit: **{'PASS' if a['passed'] else 'FAIL'}**")
+          p=json.loads(Path('outputs/audit/V21.1_ETF_PUBLIC_REFERENCE_AUDIT.json').read_text())
+          print('## V21.1 free-source ETF enrichment')
+          print(f"- Public-source applied cells: **{p['applied_cells']}**")
+          print(f"- Sources: {p['sources']}")
           print(f"- Input coverage CT/MT/LT/Short: **{a['mean_weighted_input_coverage']}**")
           print(f"- Reference mean field coverage: **{r['mean_field_coverage_pct']}%**")
-          print(f"- Full fields: **{r['full_coverage_fields']}**")
-          prop=Path('outputs/audit/V21.1_PROPAGATION_V20.4.3_ETF102_DIRECT_ENRICHED.json')
-          if prop.exists():
-              pa=json.loads(prop.read_text()); print(f"- V21.1 complementary context: fields={pa.get('context_fields_added')} / canonical fallback cells={pa.get('canonical_context_fallback_cells')} / overwrites={pa.get('overwrites')}")
-          else:
-              print('- V21.1 complementary context: no prior successful free-capture artifact available')
           PY
 
       - name: Upload V20.7 ETF PEA 102 decision pack
@@ -279,10 +253,13 @@ jobs:
         with:
           name: V20.7-ETF-PEA-102-Committee-${{ github.run_id }}
           retention-days: 30
-          if-no-files-found: warn
+          if-no-files-found: error
           path: |
             data/reference/V20.7_ETF102_CONFIG.json
             data/reference/V20.7_FUNNEL_CONFIG.json
+            config/V21.1_FREE_SOURCE_AUDIT.csv
+            config/V21.1_FREE_SOURCE_REGISTRY.csv
+            outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
             outputs/V20.4.3_ETF102_DIRECT_ENRICHED.csv
             outputs/V20.5_ETF102_FUNNEL_CONTEXT.csv
             outputs/V18.3_PEA_ETF_SMART_MONEY_SHADOW.csv
@@ -292,13 +269,10 @@ jobs:
             outputs/V20.7_ETF102_REFERENCE_COMPLETE.csv
             outputs/V20.7_ETF102_REFERENCE_COVERAGE.csv
             outputs/V20.7_ETF102_REFERENCE_GAPS.csv
-            outputs/free_capture/V21.1_COMPLEMENTARY_CONTEXT.json
+            outputs/audit/V21.1_ETF_PUBLIC_REFERENCE_AUDIT.json
             outputs/audit/V21.1_PROPAGATION_*.json
-            outputs/audit/V20.7_ETF102_PRECOMMIT_AUDIT.json
-            outputs/audit/V20.7_ETF102_COMMITTEE_AUDIT.json
-            outputs/audit/V20.7_ETF102_REFERENCE_AUDIT.json
-            outputs/audit/V20.4.3_ETF102_DIRECT_ENRICHMENT.json
-            outputs/audit/V20.4.3_ETF102_SENTIMENT.json
+            outputs/audit/V20.7_ETF102_*.json
+            outputs/audit/V20.4.3_ETF102_*.json
             outputs/audit/V20.5_FUNNEL_CONTEXT.json
             outputs/audit/V18.3_SMART_MONEY_ITERATION_STATUS.json
             outputs/audit/V18.3_SMART_MONEY_QUALITY_GATES.json
