@@ -12,7 +12,7 @@ on:
       alpha_symbols:
         description: 'Maximum Alpha Vantage fallback symbols for this wave'
         required: false
-        default: '0'
+        default: '3'
       finnhub_symbols:
         description: 'Maximum Finnhub free complementary symbols for this wave'
         required: false
@@ -21,10 +21,18 @@ on:
         description: 'Maximum Finnhub metric calls after validated symbol resolution'
         required: false
         default: '60'
+      boursorama_symbols:
+        description: 'Maximum Boursorama public action pages for this wave'
+        required: false
+        default: '40'
       zonebourse_symbols:
         description: 'Maximum Zonebourse public consensus pages for this wave'
         required: false
-        default: '0'
+        default: '40'
+      euronext_live_symbols:
+        description: 'Maximum Euronext Live public product pages for this wave'
+        required: false
+        default: '150'
       gleif_symbols:
         description: 'Maximum GLEIF API fallback ISINs after bulk mapping'
         required: false
@@ -45,7 +53,7 @@ concurrency:
 jobs:
   capture:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 105
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -62,7 +70,7 @@ jobs:
       - name: Install dependencies
         run: pip install -c constraints-ci.txt -e .[test]
 
-      - name: Static FREE_ONLY preflight
+      - name: Static FREE_ONLY and exhaustive-source preflight
         run: |
           set -euo pipefail
           python -m pip check
@@ -71,16 +79,27 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
+          import pandas as pd
           c=json.loads(Path('data/reference/V21.1_FREE_CAPTURE_CONFIG.json').read_text())
           assert c['version']=='V21.1_FREE_CAPTURE'
           assert c['free_only'] is True
           assert c['execution_mode']=='RESEARCH_ONLY'
           assert c['canonical_universe_size']==1429
           assert c['source_reference_scope']['documented_total_instruments']==1931
+          assert c['source_audit_version']=='V21.1_SOURCE_AUDIT_2026-08-10_STATIC'
+          assert c['runtime_validation_status']=='NOT_RUN_BY_USER_REQUEST'
+          assert c['workflow_trigger_policy']=='MANUAL_ONLY_UNTIL_EXPLICIT_REACTIVATION'
           assert c['principles']['no_paid_source'] is True
-          assert c['principles']['yfinance_role']=='LAST_RESORT_FALLBACK_ONLY'
+          assert c['principles']['no_overwrite_with_lower_quality'] is True
           assert c['principles']['propagate_validated_free_facts_before_downstream_scoring'] is True
-          print('V21_1_FREE_ONLY_CONFIG_OK')
+          assert c['principles']['methodology_reference_never_live_observation'] is True
+          audit=pd.read_csv('config/V21.1_FREE_SOURCE_AUDIT.csv',sep=';',dtype=str,keep_default_na=False)
+          required=audit[audit['required_from_1931_file'].str.lower().eq('true')]
+          assert len(required)>=24
+          assert required['implementation'].str.strip().ne('').all()
+          assert not required['static_status'].str.contains('UNMAPPED|MISSING_CONNECTOR',case=False,regex=True).any()
+          assert Path('config/V21.1_METHODOLOGY_REFERENCES.csv').exists()
+          print('V21_1_FREE_ONLY_SOURCE_AUDIT_PREFLIGHT_OK',len(required))
           PY
 
       - name: Restore latest successful V21.0 Actions reference
@@ -145,18 +164,20 @@ jobs:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
           V211_TWELVE_MAX_SYMBOLS: ${{ inputs.twelve_symbols || '5' }}
-          V211_ALPHA_MAX_SYMBOLS: ${{ inputs.alpha_symbols || '0' }}
+          V211_ALPHA_MAX_SYMBOLS: ${{ inputs.alpha_symbols || '3' }}
           V211_FINNHUB_MAX_SYMBOLS: ${{ inputs.finnhub_symbols || '120' }}
           V211_FINNHUB_METRIC_MAX_SYMBOLS: ${{ inputs.finnhub_metric_symbols || '60' }}
-          V211_ZONEBOURSE_MAX_SYMBOLS: ${{ inputs.zonebourse_symbols || '0' }}
-          V211_BOURSORAMA_MAX_SYMBOLS: '40'
+          V211_BOURSORAMA_MAX_SYMBOLS: ${{ inputs.boursorama_symbols || '40' }}
+          V211_ZONEBOURSE_MAX_SYMBOLS: ${{ inputs.zonebourse_symbols || '40' }}
+          V211_EURONEXT_LIVE_MAX_SYMBOLS: ${{ inputs.euronext_live_symbols || '150' }}
           V211_GLEIF_MAX_SYMBOLS: ${{ inputs.gleif_symbols || '50' }}
           V211_ESEF_MAX_SYMBOLS: ${{ inputs.esef_symbols || '250' }}
           V211_GLEIF_WORKERS: '3'
           V211_ALPHA_MAX_CALLS: '23'
           V211_MARKETSTACK_MAX_SYMBOLS: '1'
           V211_OPENFIGI_MAX_REQUESTS: '30'
-          V182_USER_AGENT: 'PEA-V21.1-FreeCapture/1.1'
+          V211_FINNHUB_DELAY_SECONDS: '1.05'
+          V182_USER_AGENT: 'PEA-V21.1-FreeCapture/1.2'
         run: python -m v182.free_capture.orchestrator
 
       - name: FREE_ONLY hard audit
@@ -175,7 +196,10 @@ jobs:
           assert cm['passed'] is True and cm['overwrites']==0
           assert Path('outputs/free_capture/V21.1_SOURCE_HEALTH.csv').exists()
           assert Path('outputs/free_capture/V21.1_COMPLEMENTARY_CONTEXT.json').exists()
-          print('V21_1_FREE_CAPTURE_GATES_OK',a['cache_identity_isin'],a['cache_lei_isin'],a['cache_market_isin'],a['cache_fact_rows'],cm['applied_cells'],a['metrics_pct_base_plus_free'])
+          expected={'complementary_context','openfigi','euronext_live','gleif_bulk','gleif_api','esef','amf_short_positions','official_delayed','manual_imports','twelvedata','marketstack','alpha_vantage','finnhub','boursorama_public','zonebourse_public','derived_market','final_canonical_merge','complementary_merge'}
+          missing=expected-set(a.get('results',{}))
+          assert not missing, missing
+          print('V21_1_FREE_CAPTURE_GATES_OK',a['cache_identity_isin'],a['cache_lei_isin'],a['cache_market_isin'],a['cache_fact_rows'],cm['applied_cells'])
           PY
 
       - name: Publish capture summary
@@ -186,8 +210,8 @@ jobs:
           a=json.loads(Path('outputs/free_capture/V21.1_FREE_CAPTURE_AUDIT.json').read_text())
           cm=json.loads(Path('outputs/free_capture/V21.1_COMPLEMENTARY_MERGE_AUDIT.json').read_text())
           print('# V21.1 FREE_ONLY capture')
-          print(f"- Base run: {a['rows']} Actions / {a['unique_isin']} ISIN")
-          print('- Documented source reference: 1931 instruments = 1829 Actions + 102 ETF; active Action gate remains 1429 validated ISIN')
+          print(f"- Base: {a['rows']} Actions / {a['unique_isin']} ISIN")
+          print('- Documented source reference: 1931 instruments = 1829 Actions + 102 ETF; Action decision universe remains 1429 validated ISIN')
           print(f"- Identity cache: {a['cache_identity_isin']} / LEI: {a['cache_lei_isin']}")
           print(f"- Market cache: {a['cache_market_isin']} instruments / {a['cache_market_rows']} rows")
           print(f"- Fact cache: {a['cache_fact_rows']} rows")
@@ -195,7 +219,7 @@ jobs:
           print(f"- Coverage base + free: {a['metrics_pct_base_plus_free']}")
           print(f"- Source status: {a['source_status']}")
           print('- Paid source calls: 0')
-          print('- yfinance calls in V21.1: 0')
+          print('- yfinance calls inside V21.1: 0; Yahoo is handled downstream as market/technical fallback')
           PY
 
       - name: Upload cumulative V21.1 free capture cache
@@ -207,4 +231,6 @@ jobs:
           path: |
             data/reference/V21.1_FREE_CAPTURE_CONFIG.json
             config/V21.1_FREE_SOURCE_REGISTRY.csv
+            config/V21.1_FREE_SOURCE_AUDIT.csv
+            config/V21.1_METHODOLOGY_REFERENCES.csv
             outputs/free_capture/
