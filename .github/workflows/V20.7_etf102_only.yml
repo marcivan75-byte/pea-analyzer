@@ -9,6 +9,7 @@ on:
       - 'src/v182/decision/etf102_committee_v207.py'
       - 'src/v182/decision/etf102_v207_audit.py'
       - 'src/v182/decision/etf102_reference_v207.py'
+      - 'src/v182/free_capture/propagate.py'
       - 'data/reference/V20.7_ETF102_CONFIG.json'
       - 'data/reference/V20.7_FUNNEL_CONFIG.json'
 
@@ -99,8 +100,36 @@ jobs:
           done < /tmp/etf102/runs.txt
           test "$FOUND" = 1
 
+      - name: Restore latest V21.1 free complementary context when available
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p outputs/free_capture /tmp/etf102free
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/V21.1_free_capture.yml/runs?status=success&branch=feature%2Fsmart-money-v1&per_page=30" --jq '.workflow_runs[].id' > /tmp/etf102free/runs.txt || true
+          RESTORED=0
+          while read -r RUN; do
+            [ -n "$RUN" ] || continue
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}/artifacts?per_page=100" --jq '.artifacts[]|select(.expired==false)|[.id,.name]|@tsv' > /tmp/etf102free/artifacts.tsv || continue
+            while IFS=$'\t' read -r ART NAME; do
+              case "$NAME" in V21.1-Free-Capture-*) ;; *) continue ;; esac
+              rm -rf /tmp/etf102free/unpack; mkdir -p /tmp/etf102free/unpack
+              gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/etf102free/free.zip || continue
+              unzip -oq /tmp/etf102free/free.zip -d /tmp/etf102free/unpack || continue
+              ROOT_FREE=$(find /tmp/etf102free/unpack -type d -path '*/outputs/free_capture' -print -quit)
+              [ -n "$ROOT_FREE" ] || continue
+              cp -a "$ROOT_FREE/." outputs/free_capture/
+              RESTORED=1; echo "ETF102_FREE_CAPTURE_RUN=$RUN" >> "$GITHUB_ENV"; break 2
+            done < /tmp/etf102free/artifacts.tsv
+          done < /tmp/etf102free/runs.txt
+          echo "ETF102_FREE_CAPTURE_RESTORED=$RESTORED" >> "$GITHUB_ENV"
+
       - name: Collect and enrich ETF PEA 102 market and fund data
         run: python -m v182.decision.etf102_direct_enrichment
+
+      - name: Propagate V21.1 complementary context to ETF dataset
+        if: env.ETF102_FREE_CAPTURE_RESTORED == '1'
+        run: python -m v182.free_capture.propagate --target outputs/V20.4.3_ETF102_DIRECT_ENRICHED.csv --free-root outputs/free_capture --expected-rows 102
 
       - name: Refresh sentiment on ETF PEA 102
         run: python -m v182.sources.etf102_sentiment_overlay
@@ -108,6 +137,7 @@ jobs:
       - name: Collect complete Top Down funnel inputs
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
         run: python -m v182.sources.funnel_context_final
 
       - name: Restore latest validated Smart Money ETF102 shadow
@@ -191,6 +221,9 @@ jobs:
           assert a['smart_money_positive_score_boost_allowed'] is False
           assert smq.get('passed') is True and it.get('positive_score_activation_ready') is False
           assert f.get('passed') is True and f.get('rows')==102
+          prop=Path('outputs/audit/V21.1_PROPAGATION_V20.4.3_ETF102_DIRECT_ENRICHED.json')
+          if prop.exists():
+              pa=json.loads(prop.read_text()); assert pa.get('passed') is True and pa.get('overwrites')==0
           required={'score_ct','score_mt','score_lt','score_short','rank_ct','rank_mt','rank_lt','rank_short','decision_ct','decision_mt','decision_lt','decision_short','weight_coverage_ct','weight_coverage_mt','weight_coverage_lt','weight_coverage_short','v207_topdown_score','v207_topdown_multiplier','v207_topdown_gate'}
           assert required.issubset(d.columns), required-set(d.columns)
           print('V20_7_ETF_PEA_102_INTEGRATED_OK',a['decisions'],a['mean_weight_coverage'],a['topdown_gate_counts'],a['aum_gate_counts'])
@@ -230,14 +263,19 @@ jobs:
           print(f"- Input coverage CT/MT/LT/Short: **{a['mean_weighted_input_coverage']}**")
           print(f"- Reference mean field coverage: **{r['mean_field_coverage_pct']}%**")
           print(f"- Full fields: **{r['full_coverage_fields']}**")
+          prop=Path('outputs/audit/V21.1_PROPAGATION_V20.4.3_ETF102_DIRECT_ENRICHED.json')
+          if prop.exists():
+              pa=json.loads(prop.read_text()); print(f"- V21.1 complementary context: fields={pa.get('context_fields_added')} / overwrites={pa.get('overwrites')}")
+          else:
+              print('- V21.1 complementary context: no prior successful free-capture artifact available')
           PY
 
       - name: Upload V20.7 ETF PEA 102 decision pack
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: V20.7-ETF-PEA-102-Committee-${{ github.run_id }}
           retention-days: 30
-          if-no-files-found: error
+          if-no-files-found: warn
           path: |
             data/reference/V20.7_ETF102_CONFIG.json
             data/reference/V20.7_FUNNEL_CONFIG.json
@@ -250,6 +288,8 @@ jobs:
             outputs/V20.7_ETF102_REFERENCE_COMPLETE.csv
             outputs/V20.7_ETF102_REFERENCE_COVERAGE.csv
             outputs/V20.7_ETF102_REFERENCE_GAPS.csv
+            outputs/free_capture/V21.1_COMPLEMENTARY_CONTEXT.json
+            outputs/audit/V21.1_PROPAGATION_*.json
             outputs/audit/V20.7_ETF102_PRECOMMIT_AUDIT.json
             outputs/audit/V20.7_ETF102_COMMITTEE_AUDIT.json
             outputs/audit/V20.7_ETF102_REFERENCE_AUDIT.json
