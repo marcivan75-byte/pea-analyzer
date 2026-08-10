@@ -1,0 +1,31 @@
+{
+  "publication_version": "V21.1_PEA_REFERENCES_STATIC",
+  "published_at_utc": "2026-08-10T12:09:00Z",
+  "status": "STATIC_PUBLISHED_NOT_EXECUTED",
+  "branch": "feature/smart-money-v1",
+  "references": {
+    "ACTIONS_PEA": {
+      "published_reference": "data/reference/V21.1_ACTIONS_PEA_REFERENCE_PUBLISHED.json",
+      "active_engine_config": "data/reference/V21.0_ACTIONS_PEA_CONFIG.json",
+      "documented_universe": 1829,
+      "active_validated_universe": 1429,
+      "workflow": ".github/workflows/V21.0_actions1429_only.yml",
+      "runtime_status": "NOT_RUN_BY_USER_REQUEST"
+    },
+    "ETF_PEA": {
+      "published_reference": "data/reference/V21.1_ETF102_REFERENCE_PUBLISHED.json",
+      "active_engine_config": "data/reference/V20.7_ETF102_CONFIG.json",
+      "documented_universe": 102,
+      "active_validated_universe": 102,
+      "workflow": ".github/workflows/V20.7_etf102_only.yml",
+      "runtime_status": "NOT_RUN_BY_USER_REQUEST"
+    }
+  },
+  "common_source_audit": "config/V21.1_FREE_SOURCE_AUDIT.csv",
+  "common_source_registry": "config/V21.1_FREE_SOURCE_REGISTRY.csv",
+  "common_methodology_registry": "config/V21.1_METHODOLOGY_REFERENCES.csv",
+  "free_capture_config": "data/reference/V21.1_FREE_CAPTURE_CONFIG.json",
+  "workflow_trigger_policy": "MANUAL_ONLY_UNTIL_EXPLICIT_REACTIVATION",
+  "weights_policy": "UNCHANGED_NO_NEW_WEIGHT_WITHOUT_BACKTEST",
+  "note": "The V21.1 publications define the updated references after the exhaustive static source audit. They are published without running GitHub Actions and therefore do not replace runtime-generated master CSVs until an explicitly authorized future manual run."
+}
