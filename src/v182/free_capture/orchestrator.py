@@ -19,6 +19,7 @@ from .alpha_free import capture as capture_alpha
 from .marketstack_free import capture as capture_marketstack
 from .derive_market import capture as derive_market
 from .derive_fundamentals import capture as derive_fundamentals
+from .canonical_merge import write_merged
 
 ROOT = Path(__file__).resolve().parents[3]
 INPUT = Path(os.getenv("V211_INPUT", str(ROOT / "outputs/V21.0_ACTIONS_PEA_REFERENCE_MASTER.csv")))
@@ -26,6 +27,24 @@ IMPORT_ROOT = Path(os.getenv("V211_MANUAL_IMPORT_ROOT", str(ROOT / "data/import/
 
 REGULATED_MICS = {"XPAR", "XAMS", "XBRU", "XLIS", "MTAA", "XOSL", "XMAD", "XSTO", "XHEL", "XCSE"}
 REGULATED_COUNTRIES = {"FRANCE", "NETHERLANDS", "BELGIUM", "PORTUGAL", "ITALY", "NORWAY", "SPAIN", "SWEDEN", "FINLAND", "DENMARK"}
+DEEP_FUNDAMENTAL_FIELDS = [
+    "roe_v21_pct",
+    "roa_v21_pct",
+    "operating_margin_v21_pct",
+    "net_margin_v21_pct",
+    "gross_margin_v21_pct",
+    "current_ratio_v21",
+    "interest_coverage_v21",
+    "revenue_growth_v21_pct",
+    "earnings_growth_v21_pct",
+    "ebitda_v21",
+    "total_debt_v21",
+    "debt_to_equity_v21",
+    "debt_to_ebitda_v21",
+    "free_cash_flow_v21",
+    "pb_v21",
+    "fcf_yield_v21",
+]
 
 
 def _observed_series(s: pd.Series) -> pd.Series:
@@ -54,6 +73,7 @@ def _materialize(base: pd.DataFrame, store: CaptureStore, cfg: dict) -> tuple[pd
         "INTERNAL_FROM_ESEF": 1,
         "ESEF_XBRL_JSON": 2,
         "INTERNAL_FROM_FREE_OHLCV": 2,
+        "ALPHA_VANTAGE_FREE_PROXY": 3,
         "ALPHA_VANTAGE_FREE": 4,
         "TWELVEDATA_FREE": 5,
         "MARKETSTACK_FREE": 6,
@@ -111,6 +131,55 @@ def _materialize(base: pd.DataFrame, store: CaptureStore, cfg: dict) -> tuple[pd
     return out, metrics
 
 
+def _deep_audit(base: pd.DataFrame, merged: pd.DataFrame, store: CaptureStore) -> dict:
+    per_field: dict[str, dict[str, float]] = {}
+    base_total = 0.0
+    merged_total = 0.0
+    for field in DEEP_FUNDAMENTAL_FIELDS:
+        base_ok = base[field].map(is_observed) if field in base else pd.Series(False, index=base.index)
+        merged_ok = merged[field].map(is_observed) if field in merged else pd.Series(False, index=merged.index)
+        b = float(base_ok.mean() * 100.0)
+        m = float(merged_ok.mean() * 100.0)
+        per_field[field] = {
+            "base_pct": round(b, 2),
+            "merged_pct": round(m, 2),
+            "gain_points": round(m - b, 2),
+            "new_cells": int(((~base_ok) & merged_ok).sum()),
+        }
+        base_total += b
+        merged_total += m
+
+    facts = store.facts()
+    if facts.empty:
+        schema_v2 = positives = negatives = set()
+    else:
+        schema_v2 = set(facts.loc[
+            facts["source"].astype(str).eq("ESEF_SCHEMA")
+            & facts["field"].astype(str).eq("esef_capture_schema")
+            & facts["status"].astype(str).eq("SCHEMA_V2_COMPLETE"),
+            "isin",
+        ].astype(str))
+        positives = set(facts.loc[facts["source"].astype(str).eq("ESEF_XBRL_JSON"), "isin"].astype(str))
+        negatives = set(facts.loc[
+            facts["source"].astype(str).eq("ESEF_DISCOVERY")
+            & facts["status"].astype(str).isin({"NO_FILING", "NO_CANONICAL_CONCEPTS"}),
+            "isin",
+        ].astype(str))
+
+    return {
+        "fields": DEEP_FUNDAMENTAL_FIELDS,
+        "base_mean_field_coverage_pct": round(base_total / len(DEEP_FUNDAMENTAL_FIELDS), 2),
+        "merged_mean_field_coverage_pct": round(merged_total / len(DEEP_FUNDAMENTAL_FIELDS), 2),
+        "gain_points": round((merged_total - base_total) / len(DEEP_FUNDAMENTAL_FIELDS), 2),
+        "per_field": per_field,
+        "esef_positive_isin": len(positives),
+        "esef_negative_isin": len(negatives),
+        "esef_classified_isin": len(positives | negatives),
+        "esef_schema_v2_completed_isin": len(schema_v2),
+        "esef_schema_v2_remaining_positive_isin": max(0, len(positives) - len(schema_v2)),
+    }
+
+
 def _queues(prioritized: pd.DataFrame, regulated: pd.DataFrame, store: CaptureStore) -> None:
     qroot = store.root / "queues"
     qroot.mkdir(parents=True, exist_ok=True)
@@ -144,11 +213,9 @@ def main() -> None:
     results["esef"] = capture_esef(regulated, store, int(os.getenv("V211_ESEF_MAX_SYMBOLS", "50")))
     results["derived_fundamentals"] = derive_fundamentals(base, store)
 
-    # Official and user-exported free market history are the preferred history lanes.
     results["official_delayed"] = capture_official(store)
     results["manual_imports"] = capture_manual(base, store, IMPORT_ROOT)
 
-    # Scarce commercial free tiers remain small targeted fallbacks.
     twelve_max = int(os.getenv("V211_TWELVE_MAX_SYMBOLS", "5"))
     alpha_max = int(os.getenv("V211_ALPHA_MAX_SYMBOLS", "3"))
     marketstack_max = int(os.getenv("V211_MARKETSTACK_MAX_SYMBOLS", "1"))
@@ -162,12 +229,20 @@ def main() -> None:
         max_calls=int(os.getenv("V211_ALPHA_MAX_CALLS", "23")),
     ) if alpha_max > 0 else {"status": "DISABLED_THIS_WAVE"}
 
-    # Compute technicals only after every free history lane has had a chance to add rows.
     results["derived_market"] = derive_market(store)
+    results["final_canonical_merge"] = write_merged(base, store, cfg)
 
     overlay, metrics = _materialize(base, store, cfg)
     _queues(prioritized, regulated, store)
     write_csv(overlay, store.root / "V21.1_FREE_CAPTURE_OVERLAY.csv", ["isin"])
+
+    merged_path = store.root / "V21.1_ACTIONS_PEA_REFERENCE_MERGED.csv"
+    merged = pd.read_csv(merged_path, sep=";", dtype=object, encoding="utf-8-sig", low_memory=False)
+    deep_coverage = _deep_audit(base, merged, store)
+    (store.root / "V21.1_DEEP_FUNDAMENTAL_AUDIT.json").write_text(
+        json.dumps(deep_coverage, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
 
     health = store.health()
     source_status = health.groupby("source").tail(1).set_index("source")["status"].to_dict() if not health.empty else {}
@@ -189,6 +264,7 @@ def main() -> None:
         "cache_market_rows": len(market),
         "cache_fact_rows": len(store.facts()),
         "metrics_pct_base_plus_free": metrics,
+        "deep_fundamental_coverage": deep_coverage,
         "source_status": source_status,
         "results": results,
         "manual_import_root": str(IMPORT_ROOT),
@@ -197,7 +273,22 @@ def main() -> None:
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
     }
     (store.root / "V21.1_FREE_CAPTURE_AUDIT.json").write_text(json.dumps(audit, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-    print("V21_1_FREE_CAPTURE_OK", json.dumps({k: audit[k] for k in ["rows", "cache_identity_isin", "cache_lei_isin", "cache_market_isin", "cache_market_rows", "cache_fact_rows", "metrics_pct_base_plus_free"]}))
+    print("V21_1_FREE_CAPTURE_OK", json.dumps({
+        "rows": audit["rows"],
+        "cache_identity_isin": audit["cache_identity_isin"],
+        "cache_lei_isin": audit["cache_lei_isin"],
+        "cache_market_isin": audit["cache_market_isin"],
+        "cache_market_rows": audit["cache_market_rows"],
+        "cache_fact_rows": audit["cache_fact_rows"],
+        "metrics_pct_base_plus_free": audit["metrics_pct_base_plus_free"],
+        "deep_fundamental_coverage": {
+            "base_mean": deep_coverage["base_mean_field_coverage_pct"],
+            "merged_mean": deep_coverage["merged_mean_field_coverage_pct"],
+            "gain_points": deep_coverage["gain_points"],
+            "schema_v2_completed": deep_coverage["esef_schema_v2_completed_isin"],
+            "schema_v2_remaining": deep_coverage["esef_schema_v2_remaining_positive_isin"],
+        },
+    }))
 
 
 if __name__ == "__main__":
