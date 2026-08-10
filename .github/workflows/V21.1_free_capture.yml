@@ -1,5 +1,7 @@
 name: V21.1 FREE ONLY - Incremental Data Capture
 
+# AUDIT LOCK 2026-08-10: manual-only. No push/schedule trigger may be restored
+# until an explicit activation decision after static source audit and runtime validation.
 on:
   workflow_dispatch:
     inputs:
@@ -31,15 +33,6 @@ on:
         description: 'Maximum regulated issuers to query in filings.xbrl.org'
         required: false
         default: '250'
-  schedule:
-    - cron: '0 16 * * 1-5'
-  push:
-    branches: [feature/smart-money-v1]
-    paths:
-      - '.github/workflows/V21.1_free_capture.yml'
-      - 'src/v182/free_capture/**'
-      - 'data/reference/V21.1_FREE_CAPTURE_CONFIG.json'
-      - 'config/V21.1_FREE_SOURCE_REGISTRY.csv'
 
 permissions:
   contents: read
