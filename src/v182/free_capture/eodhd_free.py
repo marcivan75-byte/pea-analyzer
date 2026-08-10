@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from pathlib import Path
+import json
 import os
 import time
 
 import pandas as pd
 import requests
 
-from .core import CaptureStore, is_observed, number, utcnow
+from .core import CaptureStore, is_observed, load_config, load_universe, number, priority_frame, utcnow
 
 
 SOURCE = "EODHD_FREE_EOD"
 BASE = "https://eodhd.com/api/eod"
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def _ticker(row: pd.Series) -> str:
@@ -44,7 +47,7 @@ def capture(prioritized: pd.DataFrame, store: CaptureStore, max_symbols: int = 1
         store.add_health(SOURCE, "SKIPPED_NO_KEY", message="EODHD_API_KEY missing")
         return {"status": "SKIPPED_NO_KEY", "attempted": 0, "market_rows_added": 0}
 
-    # Official free plan is 20 calls/day. Keep a safety reserve for diagnostics/manual tests.
+    # Official free plan: 20 calls/day. Reserve two calls for manual diagnostics.
     hard_guard = min(18, max(0, int(max_symbols)))
     existing = store.market()
     existing_isin = set(existing["isin"].astype(str)) if not existing.empty else set()
@@ -102,8 +105,8 @@ def capture(prioritized: pd.DataFrame, store: CaptureStore, max_symbols: int = 1
             if not clean:
                 failed += 1
                 continue
-            latest = clean[-1]["close"]
-            if not _price_match(row, float(latest)):
+            latest = float(clean[-1]["close"])
+            if not _price_match(row, latest):
                 rejected_identity += 1
                 continue
             isin = str(row.get("isin") or "")
@@ -152,3 +155,17 @@ def capture(prioritized: pd.DataFrame, store: CaptureStore, max_symbols: int = 1
         "free_plan_documented_calls_per_day": 20,
         "history_window": "PAST_YEAR",
     }
+
+
+def main() -> None:
+    cfg = load_config()
+    input_path = Path(os.getenv("V211_INPUT", str(ROOT / "outputs/V21.0_ACTIONS_PEA_REFERENCE_MASTER.csv")))
+    store = CaptureStore(Path(os.getenv("V211_STORE", str(ROOT / cfg["cache"]["root"]))))
+    base = load_universe(input_path)
+    prioritized = priority_frame(base, cfg)
+    result = capture(prioritized, store, int(os.getenv("V211_EODHD_FREE_MAX_SYMBOLS", "18")))
+    print("V21_1_EODHD_FREE_EOD", json.dumps(result, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()
