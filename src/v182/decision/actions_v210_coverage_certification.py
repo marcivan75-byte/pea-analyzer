@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[3]
-TARGET = ROOT / "outputs/V21.0_ACTIONS_PEA_1429_PREPARED.csv"
+TARGET = ROOT / "outputs/V21.0_ACTIONS_PEA_1829_PREPARED.csv"
 CONFIG = ROOT / "data/reference/V21.0_ACTIONS_PEA_CONFIG.json"
 AUDIT = ROOT / "outputs/audit/V21.0_ACTIONS_COVERAGE_CERTIFICATION.json"
 SUMMARY = ROOT / "outputs/V21.0_ACTIONS_COVERAGE_CERTIFICATION.csv"
@@ -67,9 +67,10 @@ def _weighted_coverage(df: pd.DataFrame, weights: dict[str, float]) -> pd.Series
 
 def main() -> None:
     cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
+    expected = int(cfg["canonical_universe_size"])
     df = pd.read_csv(TARGET, sep=";", dtype=object, encoding="utf-8-sig", low_memory=False)
-    if len(df) != 1429 or df["isin"].astype(str).nunique() != 1429:
-        raise RuntimeError("Coverage certification requires canonical 1429 Actions universe")
+    if len(df) != expected or df["isin"].astype(str).nunique() != expected:
+        raise RuntimeError(f"Coverage certification requires canonical {expected} Actions universe")
 
     fund_frac, fund_count = _row_fraction(df, FUNDAMENTAL_FIELDS)
     val_frac, val_count = _row_fraction(df, VALUATION_FIELDS)
@@ -80,11 +81,9 @@ def main() -> None:
     analyst_no_coverage_confirmed = analyst_status.str.startswith("NO_ANALYST_COVERAGE_CONFIRMED")
     analyst_checked = analyst_observed | analyst_no_coverage_confirmed
 
-    # Adequacy is intentionally demanding. A company can be checked as having no analyst coverage,
-    # but this does not fabricate consensus or prospective values.
-    fundamental_adequate = fund_count.ge(7)  # >= 7 of 10 core fundamentals
-    valuation_adequate = val_count.ge(2)     # >= 2 of 3 valuation measures
-    prospective_adequate = pro_count.ge(4)   # >= 4 of 9 genuinely forward-looking inputs
+    fundamental_adequate = fund_count.ge(7)
+    valuation_adequate = val_count.ge(2)
+    prospective_adequate = pro_count.ge(4)
 
     mt_cov = _weighted_coverage(df, cfg["horizon_weights"]["MT"])
     lt_cov = _weighted_coverage(df, cfg["horizon_weights"]["LT"])
@@ -120,32 +119,18 @@ def main() -> None:
     df["process_validation_generated_at_utc"] = datetime.now(timezone.utc).isoformat()
     df.to_csv(TARGET, sep=";", index=False, encoding="utf-8-sig")
 
-    field_coverage = {}
-    for field in sorted(set(FUNDAMENTAL_FIELDS + VALUATION_FIELDS + PROSPECTIVE_FIELDS)):
-        field_coverage[field] = round(float(_observed(df, field).mean() * 100.0), 2)
-
+    field_coverage = {field: round(float(_observed(df, field).mean() * 100.0), 2) for field in sorted(set(FUNDAMENTAL_FIELDS + VALUATION_FIELDS + PROSPECTIVE_FIELDS))}
     rows = []
     for name, target in THRESHOLDS.items():
-        rows.append({
-            "metric": name,
-            "actual_pct": metrics[name],
-            "required_pct": target,
-            "gate": "PASS" if gates[name] else "FAIL",
-        })
+        rows.append({"metric": name, "actual_pct": metrics[name], "required_pct": target, "gate": "PASS" if gates[name] else "FAIL"})
     for field, actual in field_coverage.items():
         rows.append({"metric": f"field:{field}", "actual_pct": actual, "required_pct": "", "gate": "INFO"})
     pd.DataFrame(rows).to_csv(SUMMARY, sep=";", index=False, encoding="utf-8-sig")
 
     audit = {
-        "passed": True,
-        "certified": certified,
-        "process_validation_status": status,
-        "version": cfg["version"],
-        "rows": len(df),
-        "thresholds_pct": THRESHOLDS,
-        "metrics_pct": metrics,
-        "gates": gates,
-        "field_coverage_pct": field_coverage,
+        "passed": True, "certified": certified, "process_validation_status": status,
+        "version": cfg["version"], "rows": len(df), "expected_rows": expected,
+        "thresholds_pct": THRESHOLDS, "metrics_pct": metrics, "gates": gates, "field_coverage_pct": field_coverage,
         "adequacy_contract": {
             "fundamentals": {"required_observed": 7, "total": len(FUNDAMENTAL_FIELDS), "fields": FUNDAMENTAL_FIELDS},
             "valuation": {"required_observed": 2, "total": len(VALUATION_FIELDS), "fields": VALUATION_FIELDS},
@@ -153,14 +138,13 @@ def main() -> None:
             "analyst_process": "consensus observed OR explicit source-confirmed absence of analyst coverage",
             "decision_ready": "all three adequacy blocks + analyst process checked + row MT/LT weighted coverage >=70%",
         },
-        "no_neutral_imputation": True,
-        "research_outputs_allowed_when_not_validated": True,
+        "no_neutral_imputation": True, "research_outputs_allowed_when_not_validated": True,
         "validation_claim_forbidden_when_not_validated": True,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
     }
     AUDIT.parent.mkdir(parents=True, exist_ok=True)
     AUDIT.write_text(json.dumps(audit, ensure_ascii=False, indent=2), encoding="utf-8")
-    print("V21_ACTIONS_COVERAGE_CERTIFICATION", json.dumps({"status": status, **metrics}, ensure_ascii=False))
+    print("V21_ACTIONS_COVERAGE_CERTIFICATION_1829", json.dumps({"status": status, **metrics}, ensure_ascii=False))
 
 
 if __name__ == "__main__":
