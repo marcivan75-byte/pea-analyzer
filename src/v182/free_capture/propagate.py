@@ -27,7 +27,7 @@ def _missing(series: pd.Series) -> pd.Series:
     return ~series.map(is_observed)
 
 
-def _context_values(context: dict) -> dict[str, object]:
+def _context_parts(context: dict) -> tuple[dict, dict, dict, dict, dict, dict, dict]:
     fred = context.get("fred", {}) if isinstance(context.get("fred"), dict) else {}
     eia = context.get("eia", {}) if isinstance(context.get("eia"), dict) else {}
     ecb = context.get("ecb", {}) if isinstance(context.get("ecb"), dict) else {}
@@ -35,23 +35,67 @@ def _context_values(context: dict) -> dict[str, object]:
     news = context.get("global_news", {}) if isinstance(context.get("global_news"), dict) else {}
     fear = sentiment.get("fear_greed", {}) if isinstance(sentiment.get("fear_greed"), dict) else {}
     aaii = sentiment.get("aaii", {}) if isinstance(sentiment.get("aaii"), dict) else {}
+    return fred, eia, ecb, sentiment, news, fear, aaii
+
+
+def _context_values(context: dict) -> dict[str, object]:
+    fred, eia, ecb, sentiment, news, fear, aaii = _context_parts(context)
     return {
         "v211_macro_vix": fred.get("macro_vix"),
         "v211_macro_curve_10y2y": fred.get("macro_curve_10y2y"),
         "v211_macro_as_of": fred.get("macro_as_of"),
         "v211_ecb_deposit_rate_pct": ecb.get("deposit_rate_pct"),
         "v211_ecb_recent_change_pp": ecb.get("recent_change_pp"),
+        "v211_ecb_direction_score": ecb.get("direction_score"),
         "v211_wti_spot_usd_bbl": eia.get("wti_spot_usd_bbl"),
         "v211_brent_spot_usd_bbl": eia.get("brent_spot_usd_bbl"),
         "v211_brent_wti_spread_usd_bbl": eia.get("brent_wti_spread_usd_bbl"),
         "v211_energy_as_of": eia.get("energy_as_of"),
         "v211_fear_greed_index": fear.get("score"),
         "v211_fear_greed_rating": fear.get("rating"),
+        "v211_fear_greed_asof": fear.get("asof"),
+        "v211_aaii_bullish_pct": aaii.get("bullish_pct"),
+        "v211_aaii_neutral_pct": aaii.get("neutral_pct"),
+        "v211_aaii_bearish_pct": aaii.get("bearish_pct"),
         "v211_aaii_bull_bear_spread": aaii.get("bull_bear_spread"),
+        "v211_aaii_asof": aaii.get("asof"),
+        "v211_sentiment_status": sentiment.get("status"),
         "v211_global_news_score": news.get("score"),
         "v211_global_news_articles": news.get("articles"),
+        "v211_global_news_source_mode": news.get("source_mode"),
         "v211_context_generated_at_utc": context.get("generated_at_utc"),
     }
+
+
+def _fill_constant_missing(df: pd.DataFrame, field: str, value: object) -> int:
+    if not is_observed(value):
+        return 0
+    if field not in df.columns:
+        df[field] = pd.NA
+    mask = _missing(df[field])
+    if mask.any():
+        df.loc[mask, field] = value
+    return int(mask.sum())
+
+
+def _apply_canonical_context_fallbacks(df: pd.DataFrame, context: dict) -> dict[str, int]:
+    """Populate existing funnel fields only when absent; no scoring rule or weight is changed."""
+    _, _, _, sentiment, _, fear, aaii = _context_parts(context)
+    mapping = {
+        "fear_greed_index": fear.get("score"),
+        "fear_greed_rating": fear.get("rating"),
+        "fear_greed_asof": fear.get("asof"),
+        "fear_greed_source": fear.get("source"),
+        "aaii_bullish_pct": aaii.get("bullish_pct"),
+        "aaii_neutral_pct": aaii.get("neutral_pct"),
+        "aaii_bearish_pct": aaii.get("bearish_pct"),
+        "aaii_bull_bear_spread": aaii.get("bull_bear_spread"),
+        "aaii_asof": aaii.get("asof"),
+        "aaii_source": aaii.get("source"),
+        "sentiment_data_status": sentiment.get("status"),
+        "sentiment_collected_at_utc": sentiment.get("collected_at_utc"),
+    }
+    return {field: count for field, value in mapping.items() if (count := _fill_constant_missing(df, field, value)) > 0}
 
 
 def apply(target: Path, free_root: Path, expected_rows: int | None = None) -> dict:
@@ -69,6 +113,8 @@ def apply(target: Path, free_root: Path, expected_rows: int | None = None) -> di
         "free_fields_applied": {},
         "identity_fields_added": 0,
         "context_fields_added": 0,
+        "canonical_context_fallback_cells": 0,
+        "canonical_context_fallback_fields": {},
         "overwrites": 0,
         "source_rows_available": 0,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -132,14 +178,18 @@ def apply(target: Path, free_root: Path, expected_rows: int | None = None) -> di
             if is_observed(value):
                 df[field] = value
                 audit["context_fields_added"] += 1
+        fallback = _apply_canonical_context_fallbacks(df, context)
+        audit["canonical_context_fallback_fields"] = fallback
+        audit["canonical_context_fallback_cells"] = int(sum(fallback.values()))
         hicp = context.get("eurostat_hicp", {}) if isinstance(context.get("eurostat_hicp"), dict) else {}
         for country, payload in sorted(hicp.items()):
             if not isinstance(payload, dict):
                 continue
-            value = payload.get("hicp_yoy_pct")
-            if is_observed(value):
-                df[f"v211_hicp_{country.lower()}_yoy_pct"] = value
-                audit["context_fields_added"] += 1
+            for suffix, source_field in (("yoy_pct", "hicp_yoy_pct"), ("inflation_score", "inflation_score"), ("period", "period")):
+                value = payload.get(source_field)
+                if is_observed(value):
+                    df[f"v211_hicp_{country.lower()}_{suffix}"] = value
+                    audit["context_fields_added"] += 1
 
     sector = df.get("sector_v21", df.get("sector_yf", df.get("category", pd.Series("", index=df.index))))
     sector = sector.astype(str).str.lower()
