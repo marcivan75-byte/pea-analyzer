@@ -1,0 +1,118 @@
+{
+  "reference_publication_version": "V21.1_ETF102_PEA_REFERENCE_STATIC",
+  "published_at_utc": "2026-08-10T12:09:00Z",
+  "publication_status": "STATIC_PUBLISHED_NOT_EXECUTED",
+  "runtime_validation_status": "NOT_RUN_BY_USER_REQUEST",
+  "execution_mode": "RESEARCH_ONLY",
+  "universe": {
+    "documented_reference_etf": 102,
+    "active_validated_etf": 102,
+    "decision_universe": 102,
+    "legacy_266_allowed": false
+  },
+  "engine": {
+    "active_scoring_config": "data/reference/V20.7_ETF102_CONFIG.json",
+    "free_capture_config": "data/reference/V21.1_FREE_CAPTURE_CONFIG.json",
+    "workflow": ".github/workflows/V20.7_etf102_only.yml",
+    "reference_generator": "src/v182/decision/etf102_reference_v207.py",
+    "future_materialized_master": "outputs/V20.7_ETF102_REFERENCE_MASTER.csv",
+    "future_materialized_complete": "outputs/V20.7_ETF102_REFERENCE_COMPLETE.csv"
+  },
+  "source_audit": {
+    "version": "V21.1_SOURCE_AUDIT_2026-08-10_STATIC",
+    "audit_file": "config/V21.1_FREE_SOURCE_AUDIT.csv",
+    "registry_file": "config/V21.1_FREE_SOURCE_REGISTRY.csv",
+    "methodology_registry": "config/V21.1_METHODOLOGY_REFERENCES.csv",
+    "audited_sources_and_references": 36
+  },
+  "source_priority": {
+    "identity": [
+      "CANONICAL_FINAL_VALIDATED_ISIN",
+      "EURONEXT_LIVE_PUBLIC",
+      "OPENFIGI_V3"
+    ],
+    "eligibility_crosschecks": [
+      "CANONICAL_PEA_VALIDATION",
+      "BOURSORAMA_ETF",
+      "LESMEILLEURSFONDS_PEA",
+      "OFFICIAL_ISSUER_EXPLICIT_PEA_WHEN_EXPOSED"
+    ],
+    "issuer_reference": [
+      "AMUNDI_ETF",
+      "BNPP_ETF",
+      "SPDR_ETF",
+      "EURONEXT_LIVE_PUBLIC",
+      "BOURSORAMA_ETF",
+      "LESMEILLEURSFONDS_PEA",
+      "MORNINGSTAR_FR",
+      "YFINANCE_FALLBACK"
+    ],
+    "market_and_technical": [
+      "OFFICIAL_EXCHANGE_OR_EURONEXT_LIVE",
+      "YFINANCE_MARKET_TECHNICAL",
+      "V21.1_FREE_OHLCV_CONTEXT_WHERE_MATCHING_ISIN"
+    ],
+    "macro_news_sentiment": [
+      "FRED",
+      "ECB",
+      "EUROSTAT",
+      "EIA",
+      "GDELT",
+      "GOOGLE_NEWS_RSS",
+      "CNN_FEAR_GREED",
+      "AAII"
+    ]
+  },
+  "official_reference_fields": [
+    "PEA_ELIGIBILITY",
+    "TER",
+    "AUM",
+    "HOLDINGS",
+    "DISTRIBUTION",
+    "REPLICATION",
+    "BENCHMARK",
+    "KID",
+    "FACTSHEET",
+    "PROSPECTUS",
+    "MORNINGSTAR_RATING",
+    "MORNINGSTAR_CATEGORY",
+    "CATEGORY_RANK_1Y",
+    "CATEGORY_RANK_3Y",
+    "CATEGORY_RANK_5Y"
+  ],
+  "new_data_families": [
+    "OPENFIGI_ETF_IDENTITY",
+    "EURONEXT_LIVE_ETF_MARKET",
+    "BOURSORAMA_PEA_ELIGIBILITY_AND_MORNINGSTAR",
+    "LESMEILLEURSFONDS_PEA_CROSSCHECK",
+    "AMUNDI_OFFICIAL_REFERENCE",
+    "BNPP_OFFICIAL_REFERENCE",
+    "SPDR_OFFICIAL_REFERENCE",
+    "MORNINGSTAR_PUBLIC_REFERENCE",
+    "FULL_FREE_OHLCV_TECHNICALS",
+    "MACRO_NEWS_SENTIMENT_CONTEXT",
+    "FREE_CELL_PROVENANCE"
+  ],
+  "data_policy": {
+    "merge_mode": "MISSING_ONLY",
+    "issuer_before_aggregator_before_yahoo": true,
+    "exact_isin_preferred": true,
+    "no_internal_morningstar_id_guessing": true,
+    "no_neutral_50_imputation": true,
+    "no_lower_quality_overwrite": true,
+    "unknown_or_unentitled_data_remains_missing": true
+  },
+  "weights": {
+    "status": "UNCHANGED_FROM_ACTIVE_V20.7_SCORING",
+    "morningstar_bonus_policy": "EXISTING_POLICY_RETAINED",
+    "new_source_weight_activation": false,
+    "policy": "NO_NEW_WEIGHT_WITHOUT_BACKTEST"
+  },
+  "methodology_only_sources": [
+    "AMF_ETF_GUIDE",
+    "NBER_W30917",
+    "NBER_W16601"
+  ],
+  "workflow_trigger_policy": "MANUAL_ONLY_UNTIL_EXPLICIT_REACTIVATION",
+  "publication_note": "This file publishes the V21.1 static definition of the 102 ETF PEA reference. It does not claim that a new 102-row master has been recalculated; materialization requires a future explicitly authorized manual run."
+}
