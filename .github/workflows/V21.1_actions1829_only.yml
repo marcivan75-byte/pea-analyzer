@@ -51,6 +51,7 @@ jobs:
           assert c['source_contract']['decision_universe_actions']==1829
           assert f['canonical_universe_size']==1829
           assert f['source_reference_scope']['active_actions_canonical']==1829
+          assert Path('data/reference/PEA_ACTIONS_400_VALIDATED_ADDITIONS.csv.gz.b64').exists()
           assert c['execution_mode']=='RESEARCH_ONLY'
           print('V21_1_ACTIONS_1829_STATIC_CONTRACT_OK')
           PY
@@ -87,43 +88,19 @@ jobs:
           print('SOURCE_1486_OK')
           PY
 
-      - name: Restore persistent validated 400 additions
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Materialize persistent validated 400 additions
         run: |
           set -euo pipefail
-          mkdir -p /tmp/add400 outputs
-          FOUND=0
-          # Prefer a previous successful 1829 artifact: after first success this is self-sustaining.
-          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/V21.1_actions1829_only.yml/runs?status=success&branch=feature%2Fsmart-money-v1&per_page=20" --jq '.workflow_runs[].id' > /tmp/add400/runs.txt || true
-          while read -r RUN; do
-            [ -n "$RUN" ] || continue
-            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN}/artifacts?per_page=100" --jq '.artifacts[]|select(.expired==false)|[.id,.name]|@tsv' > /tmp/add400/arts.tsv || continue
-            while IFS=$'\t' read -r ART NAME; do
-              case "$NAME" in V21.1-Actions-PEA-1829-Reference-*) ;; *) continue ;; esac
-              gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" > /tmp/add400/a.zip || continue
-              rm -rf /tmp/add400/unpack && mkdir -p /tmp/add400/unpack
-              unzip -oq /tmp/add400/a.zip -d /tmp/add400/unpack || continue
-              SRC=$(find /tmp/add400/unpack -name V20.4_ACTIONS_506_CANDIDATES_TO_INTEGRATE.csv -print -quit)
-              if [ -n "$SRC" ]; then cp "$SRC" outputs/V20.4_ACTIONS_506_CANDIDATES_TO_INTEGRATE.csv; FOUND=1; echo "ADDITIONS_SOURCE_RUN=$RUN" >> "$GITHUB_ENV"; break 2; fi
-            done < /tmp/add400/arts.tsv
-          done < /tmp/add400/runs.txt
-          # Bootstrap only: historic certification artifact containing exactly the validated 400.
-          if [ "$FOUND" = 0 ]; then
-            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/9031856219/zip" > /tmp/add400/bootstrap.zip
-            rm -rf /tmp/add400/bootstrap && mkdir -p /tmp/add400/bootstrap
-            unzip -oq /tmp/add400/bootstrap.zip -d /tmp/add400/bootstrap
-            SRC=$(find /tmp/add400/bootstrap -name V20.4_ACTIONS_506_CANDIDATES_TO_INTEGRATE.csv -print -quit)
-            test -n "$SRC"
-            cp "$SRC" outputs/V20.4_ACTIONS_506_CANDIDATES_TO_INTEGRATE.csv
-            echo "ADDITIONS_SOURCE_RUN=31292369240" >> "$GITHUB_ENV"
-          fi
+          mkdir -p outputs
+          base64 -d data/reference/PEA_ACTIONS_400_VALIDATED_ADDITIONS.csv.gz.b64 | gzip -dc > outputs/V20.4_ACTIONS_506_CANDIDATES_TO_INTEGRATE.csv
           python - <<'PY'
           import pandas as pd
           d=pd.read_csv('outputs/V20.4_ACTIONS_506_CANDIDATES_TO_INTEGRATE.csv',sep=';',dtype=object,encoding='utf-8-sig',low_memory=False)
           assert len(d)==400 and d['isin'].astype(str).nunique()==400
           assert d['status'].astype(str).eq('INTEGRER').all()
-          print('VALIDATED_ADDITIONS_400_OK')
+          assert pd.to_numeric(d['identity_confidence'],errors='coerce').ge(.95).all()
+          assert pd.to_numeric(d['pea_confidence'],errors='coerce').ge(.90).all()
+          print('PERSISTENT_VALIDATED_ADDITIONS_400_OK')
           PY
 
       - name: Restore Smart Money shadow when available
@@ -234,7 +211,7 @@ jobs:
         run: |
           echo '# V21.1 PEA Actions 1829' >> "$GITHUB_STEP_SUMMARY"
           echo '- Active Actions PEA universe: **1829 / 1829**' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Composition: 1429 canonical validated + 400 previously validated additions' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Composition: 1429 canonical validated + 400 persistent previously validated additions' >> "$GITHUB_STEP_SUMMARY"
           echo '- Scoring weights: unchanged' >> "$GITHUB_STEP_SUMMARY"
           echo '- Smart Money: shadow / negative gate only where data exists; no positive imputation for the added 400' >> "$GITHUB_STEP_SUMMARY"
           echo '- Execution: RESEARCH_ONLY' >> "$GITHUB_STEP_SUMMARY"
@@ -248,6 +225,7 @@ jobs:
           path: |
             data/reference/V21.0_ACTIONS_PEA_CONFIG.json
             data/reference/V21.1_ACTIONS_PEA_REFERENCE_PUBLISHED.json
+            data/reference/PEA_ACTIONS_400_VALIDATED_ADDITIONS.csv.gz.b64
             outputs/V20.4_ACTIONS_506_CANDIDATES_TO_INTEGRATE.csv
             outputs/V21.0_ACTIONS_PEA_1829_PREPARED.csv
             outputs/V21.0_ACTIONS_PEA_1829_COMMITTEE.csv
