@@ -28,6 +28,19 @@ MERGE_POLICIES = {
             "fcf_yield_v21",
         ],
     },
+    "ALPHA_VANTAGE_FREE_PROXY": {
+        "status": "OBSERVED_ENTITY_PROXY",
+        "max_age_days": 45,
+        "stale_warning_days": 30,
+        "fields": [
+            "roe_v21_pct",
+            "roa_v21_pct",
+            "operating_margin_v21_pct",
+            "net_margin_v21_pct",
+            "revenue_growth_v21_pct",
+            "earnings_growth_v21_pct",
+        ],
+    },
     "ZONEBOURSE_PUBLIC_V3": {
         "status": "OBSERVED_VALIDATED_ISIN_PRICE",
         "max_age_days": 14,
@@ -102,6 +115,7 @@ def _valid_value(field: str, value: object, value_text: object, now: pd.Timestam
         "roe_v21_pct": (-300.0, 300.0),
         "roa_v21_pct": (-150.0, 150.0),
         "operating_margin_v21_pct": (-150.0, 150.0),
+        "net_margin_v21_pct": (-150.0, 150.0),
         "revenue_growth_v21_pct": (-100.0, 1000.0),
         "earnings_growth_v21_pct": (-500.0, 1000.0),
         "debt_to_ebitda_v21": (0.0, 50.0),
@@ -159,7 +173,12 @@ def merge(base: pd.DataFrame, store: CaptureStore, cfg: dict) -> tuple[pd.DataFr
     v = pd.concat(chunks, ignore_index=True)
     v["_asof"] = pd.to_datetime(v["as_of"], errors="coerce")
     v = v.dropna(subset=["_asof"])
-    source_priority = {"INTERNAL_FROM_ESEF": 1, "ZONEBOURSE_PUBLIC_V3": 2, "BOURSORAMA_PUBLIC_V2": 3}
+    source_priority = {
+        "INTERNAL_FROM_ESEF": 1,
+        "ALPHA_VANTAGE_FREE_PROXY": 2,
+        "ZONEBOURSE_PUBLIC_V3": 3,
+        "BOURSORAMA_PUBLIC_V2": 4,
+    }
     v["_p"] = v["_source_policy"].map(source_priority).fillna(9)
     v = v.sort_values(["isin", "field", "_asof", "_p"], ascending=[True, True, False, True])
     v = v.drop_duplicates(["isin", "field"], keep="first")
