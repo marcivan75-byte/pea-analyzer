@@ -1,0 +1,239 @@
+{
+  "version": "GOLD_V1.0_BASELINE_102",
+  "status": "SHADOW_RESEARCH_ONLY_PENDING_BACKTEST",
+  "asset": "GOLD",
+  "currency_views": [
+    "XAUUSD",
+    "XAUEUR"
+  ],
+  "criteria_count": 102,
+  "mt_priority": true,
+  "entry_score_formula": {
+    "mt": 0.75,
+    "ct": 0.25
+  },
+  "score_range": [
+    0,
+    100
+  ],
+  "missing_data_policy": "NO_NEUTRAL_IMPUTATION; SCORE_OBSERVED_WITH_COVERAGE; HARD_QDS_GATE",
+  "qds_gate": {
+    "normal_decision_min": 85,
+    "reduced_confidence_min": 75,
+    "no_decision_below": 75
+  },
+  "weight_policy": "BASELINE_ONLY_NO_AUTOMATIC_EXECUTION_BEFORE_PIT_WALK_FORWARD_VALIDATION",
+  "t1_t2_policy": "EXCLUDED_GOLD; RESERVED_ACTIONS_TCT_ONLY",
+  "families": {
+    "A": {
+      "name": "REAL_RATES_MONETARY",
+      "weight_mt_pct": 20.0,
+      "weight_ct_pct": 12.0,
+      "criteria": [
+        {"id":"A1","name":"US 10Y real yield level","weight_mt_pct":2.5,"weight_ct_pct":0.8},
+        {"id":"A2","name":"US 10Y real yield 5d change","weight_mt_pct":2.0,"weight_ct_pct":1.5},
+        {"id":"A3","name":"US 10Y real yield 20d change","weight_mt_pct":2.0,"weight_ct_pct":1.5},
+        {"id":"A4","name":"US 5Y real yield","weight_mt_pct":1.5,"weight_ct_pct":0.7},
+        {"id":"A5","name":"US 30Y real yield","weight_mt_pct":1.0,"weight_ct_pct":0.2},
+        {"id":"A6","name":"US 5Y breakeven inflation","weight_mt_pct":1.0,"weight_ct_pct":0.5},
+        {"id":"A7","name":"US 10Y breakeven inflation","weight_mt_pct":1.0,"weight_ct_pct":0.5},
+        {"id":"A8","name":"Effective fed funds rate","weight_mt_pct":1.0,"weight_ct_pct":0.4},
+        {"id":"A9","name":"Fed hike/cut expectations","weight_mt_pct":2.0,"weight_ct_pct":1.5},
+        {"id":"A10","name":"US 2Y-10Y curve","weight_mt_pct":1.0,"weight_ct_pct":0.6},
+        {"id":"A11","name":"US nominal 10Y yield","weight_mt_pct":1.0,"weight_ct_pct":0.8},
+        {"id":"A12","name":"Rates volatility MOVE/CME proxy","weight_mt_pct":1.0,"weight_ct_pct":0.8},
+        {"id":"A13","name":"Developed markets real yields","weight_mt_pct":1.0,"weight_ct_pct":0.7},
+        {"id":"A14","name":"Composite real monetary impulse","weight_mt_pct":2.0,"weight_ct_pct":1.5}
+      ]
+    },
+    "B": {
+      "name": "USD_FX",
+      "weight_mt_pct": 10.0,
+      "weight_ct_pct": 9.0,
+      "criteria": [
+        {"id":"B1","name":"Broad USD/DXY relative level","weight_mt_pct":1.8,"weight_ct_pct":1.5},
+        {"id":"B2","name":"USD momentum 5d","weight_mt_pct":1.4,"weight_ct_pct":1.4},
+        {"id":"B3","name":"USD momentum 20d","weight_mt_pct":1.4,"weight_ct_pct":1.2},
+        {"id":"B4","name":"EURUSD","weight_mt_pct":1.2,"weight_ct_pct":1.0},
+        {"id":"B5","name":"USDCNH","weight_mt_pct":1.2,"weight_ct_pct":1.0},
+        {"id":"B6","name":"USDJPY","weight_mt_pct":0.8,"weight_ct_pct":0.7},
+        {"id":"B7","name":"XAUUSD versus XAUEUR divergence","weight_mt_pct":1.2,"weight_ct_pct":1.2},
+        {"id":"B8","name":"USD breadth G10 and EM","weight_mt_pct":1.0,"weight_ct_pct":1.0}
+      ]
+    },
+    "C": {
+      "name": "MACRO_INFLATION_LIQUIDITY",
+      "weight_mt_pct": 8.0,
+      "weight_ct_pct": 6.0,
+      "criteria": [
+        {"id":"C1","name":"CPI surprise","weight_mt_pct":1.0,"weight_ct_pct":0.9},
+        {"id":"C2","name":"Core CPI surprise","weight_mt_pct":0.8,"weight_ct_pct":0.7},
+        {"id":"C3","name":"Core PCE surprise","weight_mt_pct":0.9,"weight_ct_pct":0.7},
+        {"id":"C4","name":"NFP surprise","weight_mt_pct":0.7,"weight_ct_pct":0.6},
+        {"id":"C5","name":"Unemployment impulse","weight_mt_pct":0.7,"weight_ct_pct":0.5},
+        {"id":"C6","name":"ISM manufacturing","weight_mt_pct":0.7,"weight_ct_pct":0.5},
+        {"id":"C7","name":"ISM services","weight_mt_pct":0.6,"weight_ct_pct":0.4},
+        {"id":"C8","name":"GDP surprise or nowcast","weight_mt_pct":0.7,"weight_ct_pct":0.4},
+        {"id":"C9","name":"Liquidity M2 plus Fed balance sheet","weight_mt_pct":1.0,"weight_ct_pct":0.7},
+        {"id":"C10","name":"Composite financial stress","weight_mt_pct":0.9,"weight_ct_pct":0.6}
+      ]
+    },
+    "D": {
+      "name": "GOLD_ETF_FLOWS",
+      "weight_mt_pct": 12.0,
+      "weight_ct_pct": 10.0,
+      "criteria": [
+        {"id":"D1","name":"Global gold ETF flows 1w","weight_mt_pct":2.0,"weight_ct_pct":2.0},
+        {"id":"D2","name":"Global gold ETF flows 1m","weight_mt_pct":2.0,"weight_ct_pct":1.5},
+        {"id":"D3","name":"Global gold ETF flows 3m","weight_mt_pct":1.5,"weight_ct_pct":1.0},
+        {"id":"D4","name":"Gold ETF physical holdings tonnes","weight_mt_pct":1.5,"weight_ct_pct":1.0},
+        {"id":"D5","name":"Gold ETF flow acceleration","weight_mt_pct":1.5,"weight_ct_pct":1.5},
+        {"id":"D6","name":"North America gold ETF flows","weight_mt_pct":1.0,"weight_ct_pct":1.0},
+        {"id":"D7","name":"Europe gold ETF flows","weight_mt_pct":1.0,"weight_ct_pct":1.0},
+        {"id":"D8","name":"Asia gold ETF flows","weight_mt_pct":1.5,"weight_ct_pct":1.0}
+      ]
+    },
+    "E": {
+      "name": "CFTC_FUTURES_OPTIONS",
+      "weight_mt_pct": 10.0,
+      "weight_ct_pct": 14.0,
+      "criteria": [
+        {"id":"E1","name":"CFTC Managed Money net","weight_mt_pct":1.3,"weight_ct_pct":1.8},
+        {"id":"E2","name":"CFTC Managed Money weekly change","weight_mt_pct":1.2,"weight_ct_pct":1.8},
+        {"id":"E3","name":"CFTC Managed Money historical percentile","weight_mt_pct":1.0,"weight_ct_pct":1.4},
+        {"id":"E4","name":"CFTC Producer Merchant net","weight_mt_pct":0.9,"weight_ct_pct":1.0},
+        {"id":"E5","name":"CFTC Swap Dealers net","weight_mt_pct":0.7,"weight_ct_pct":0.8},
+        {"id":"E6","name":"COMEX open interest level","weight_mt_pct":0.9,"weight_ct_pct":1.3},
+        {"id":"E7","name":"COMEX open interest change","weight_mt_pct":1.0,"weight_ct_pct":1.4},
+        {"id":"E8","name":"Gold futures volume","weight_mt_pct":0.8,"weight_ct_pct":1.2},
+        {"id":"E9","name":"Gold CVOL or 30d implied volatility","weight_mt_pct":1.0,"weight_ct_pct":1.5},
+        {"id":"E10","name":"Options skew put-call asymmetry","weight_mt_pct":1.2,"weight_ct_pct":1.8}
+      ]
+    },
+    "F": {
+      "name": "CENTRAL_BANKS",
+      "weight_mt_pct": 8.0,
+      "weight_ct_pct": 2.0,
+      "criteria": [
+        {"id":"F1","name":"Central bank net purchases 1m","weight_mt_pct":2.0,"weight_ct_pct":0.5},
+        {"id":"F2","name":"Central bank net purchases 3m","weight_mt_pct":1.5,"weight_ct_pct":0.4},
+        {"id":"F3","name":"Central bank net purchases 12m","weight_mt_pct":1.2,"weight_ct_pct":0.3},
+        {"id":"F4","name":"Central bank buyer seller breadth","weight_mt_pct":1.0,"weight_ct_pct":0.2},
+        {"id":"F5","name":"China and key EM central bank buying","weight_mt_pct":1.2,"weight_ct_pct":0.3},
+        {"id":"F6","name":"Central bank survey intentions","weight_mt_pct":1.1,"weight_ct_pct":0.3}
+      ]
+    },
+    "G": {
+      "name": "GEOPOLITICAL_SYSTEMIC_RISK",
+      "weight_mt_pct": 8.0,
+      "weight_ct_pct": 10.0,
+      "criteria": [
+        {"id":"G1","name":"Monthly GPR z-score","weight_mt_pct":1.2,"weight_ct_pct":0.8},
+        {"id":"G2","name":"Daily GPR change","weight_mt_pct":1.0,"weight_ct_pct":1.3},
+        {"id":"G3","name":"Daily AI-GPR","weight_mt_pct":1.0,"weight_ct_pct":1.4},
+        {"id":"G4","name":"GDELT conflict intensity","weight_mt_pct":1.2,"weight_ct_pct":1.7},
+        {"id":"G5","name":"GDELT sanctions escalation nuclear risk","weight_mt_pct":1.0,"weight_ct_pct":1.4},
+        {"id":"G6","name":"Geographic breadth of crises","weight_mt_pct":0.8,"weight_ct_pct":1.0},
+        {"id":"G7","name":"Systemic banking sovereign stress","weight_mt_pct":0.9,"weight_ct_pct":1.2},
+        {"id":"G8","name":"Market confirmation of geopolitical shock","weight_mt_pct":0.9,"weight_ct_pct":1.2}
+      ]
+    },
+    "H": {
+      "name": "PHYSICAL_DEMAND_SUPPLY",
+      "weight_mt_pct": 5.0,
+      "weight_ct_pct": 1.0,
+      "criteria": [
+        {"id":"H1","name":"Global jewellery demand","weight_mt_pct":0.6,"weight_ct_pct":0.1},
+        {"id":"H2","name":"Bars and coins demand","weight_mt_pct":0.9,"weight_ct_pct":0.2},
+        {"id":"H3","name":"China physical demand","weight_mt_pct":0.8,"weight_ct_pct":0.2},
+        {"id":"H4","name":"India physical demand","weight_mt_pct":0.7,"weight_ct_pct":0.1},
+        {"id":"H5","name":"China local gold premium discount","weight_mt_pct":0.7,"weight_ct_pct":0.1},
+        {"id":"H6","name":"India local gold premium discount","weight_mt_pct":0.5,"weight_ct_pct":0.1},
+        {"id":"H7","name":"Mine production plus recycling","weight_mt_pct":0.4,"weight_ct_pct":0.1},
+        {"id":"H8","name":"Estimated OTC demand","weight_mt_pct":0.4,"weight_ct_pct":0.1}
+      ]
+    },
+    "I": {
+      "name": "TECHNICAL_MOMENTUM",
+      "weight_mt_pct": 10.0,
+      "weight_ct_pct": 20.0,
+      "criteria": [
+        {"id":"I1","name":"Price above MA20","weight_mt_pct":0.7,"weight_ct_pct":1.6},
+        {"id":"I2","name":"Price above MA50","weight_mt_pct":0.8,"weight_ct_pct":1.4},
+        {"id":"I3","name":"Price above MA100","weight_mt_pct":0.6,"weight_ct_pct":0.8},
+        {"id":"I4","name":"Price above MA200","weight_mt_pct":0.7,"weight_ct_pct":0.8},
+        {"id":"I5","name":"MA20 slope","weight_mt_pct":0.7,"weight_ct_pct":1.6},
+        {"id":"I6","name":"MA50 slope","weight_mt_pct":0.6,"weight_ct_pct":1.0},
+        {"id":"I7","name":"RSI14","weight_mt_pct":0.7,"weight_ct_pct":1.8},
+        {"id":"I8","name":"MACD signal histogram","weight_mt_pct":0.8,"weight_ct_pct":2.1},
+        {"id":"I9","name":"ADX trend strength","weight_mt_pct":0.6,"weight_ct_pct":1.2},
+        {"id":"I10","name":"Bollinger position squeeze","weight_mt_pct":0.5,"weight_ct_pct":1.0},
+        {"id":"I11","name":"ATR volatility regime","weight_mt_pct":0.6,"weight_ct_pct":1.0},
+        {"id":"I12","name":"20d or 55d breakout","weight_mt_pct":1.0,"weight_ct_pct":2.5},
+        {"id":"I13","name":"Momentum 5d 20d 60d","weight_mt_pct":1.1,"weight_ct_pct":2.5},
+        {"id":"I14","name":"Distance from 52w high or ATH","weight_mt_pct":0.6,"weight_ct_pct":0.7}
+      ]
+    },
+    "J": {
+      "name": "NEWS_SENTIMENT_CONSENSUS",
+      "weight_mt_pct": 4.0,
+      "weight_ct_pct": 8.0,
+      "criteria": [
+        {"id":"J1","name":"Gold-specific news sentiment","weight_mt_pct":0.6,"weight_ct_pct":1.2},
+        {"id":"J2","name":"Abnormal gold news volume","weight_mt_pct":0.4,"weight_ct_pct":1.0},
+        {"id":"J3","name":"LBMA median consensus","weight_mt_pct":0.6,"weight_ct_pct":0.6},
+        {"id":"J4","name":"Consensus upside versus spot","weight_mt_pct":0.5,"weight_ct_pct":0.6},
+        {"id":"J5","name":"Consensus revisions","weight_mt_pct":0.5,"weight_ct_pct":0.8},
+        {"id":"J6","name":"Consensus dispersion","weight_mt_pct":0.4,"weight_ct_pct":0.5},
+        {"id":"J7","name":"Contrarian retail sentiment","weight_mt_pct":0.5,"weight_ct_pct":1.5},
+        {"id":"J8","name":"Search and social attention","weight_mt_pct":0.5,"weight_ct_pct":1.8}
+      ]
+    },
+    "K": {
+      "name": "INTERMARKET_RELATIVE_VALUE",
+      "weight_mt_pct": 5.0,
+      "weight_ct_pct": 8.0,
+      "criteria": [
+        {"id":"K1","name":"Gold versus S&P 500 relative strength","weight_mt_pct":0.8,"weight_ct_pct":1.3},
+        {"id":"K2","name":"Gold TIPS correlation regime","weight_mt_pct":0.7,"weight_ct_pct":1.0},
+        {"id":"K3","name":"Gold USD correlation regime","weight_mt_pct":0.7,"weight_ct_pct":1.0},
+        {"id":"K4","name":"Gold Silver ratio","weight_mt_pct":0.6,"weight_ct_pct":1.0},
+        {"id":"K5","name":"Gold Copper ratio","weight_mt_pct":0.5,"weight_ct_pct":0.8},
+        {"id":"K6","name":"Gold Oil ratio","weight_mt_pct":0.5,"weight_ct_pct":0.8},
+        {"id":"K7","name":"VIX risk-off confirmation","weight_mt_pct":0.6,"weight_ct_pct":1.2},
+        {"id":"K8","name":"Bitcoin Gold substitution divergence","weight_mt_pct":0.6,"weight_ct_pct":0.9}
+      ]
+    }
+  },
+  "regimes": {
+    "GOLD_MONETARY_BULL": {"A":1.20,"B":1.15,"D":1.10,"I":1.05},
+    "GOLD_RISK_OFF": {"G":1.25,"E":1.15,"D":1.10,"K":1.15},
+    "GOLD_FLOW_BULL": {"D":1.25,"E":1.15,"F":1.10},
+    "GOLD_MOMENTUM": {"I":1.25,"E":1.15,"J":1.10},
+    "GOLD_INFLATION_STRESS": {"A":1.15,"C":1.20},
+    "GOLD_ADVERSE": {"A":1.15,"B":1.15,"D":1.10,"I":1.10}
+  },
+  "regime_multiplier_cap_pct": 25,
+  "decision_thresholds_mt": [
+    {"min":90,"label":"CONVICTION_EXCEPTIONAL"},
+    {"min":82,"label":"BUY_OR_REINFORCE_HIGH_CONVICTION"},
+    {"min":75,"label":"SELECTIVE_BUY"},
+    {"min":68,"label":"ACTIVE_WATCH"},
+    {"min":55,"label":"NEUTRAL_POSITIVE"},
+    {"min":45,"label":"NEUTRAL"},
+    {"min":35,"label":"LIGHTEN"},
+    {"min":0,"label":"AVOID_ADVERSE"}
+  ],
+  "hard_gates": [
+    "DATA_QUALITY",
+    "ANTI_LOOK_AHEAD",
+    "CROWDING",
+    "GEOPOLITICAL_CONFIRMATION",
+    "CORRELATION_DOUBLE_COUNTING",
+    "MACRO_CONFLICT"
+  ],
+  "source_priority": {
+    "tier_a": ["FRED","FED","US_TREASURY","CFTC","CME","WORLD_GOLD_COUNCIL","LBMA","BLS","BEA","GPR","GDELT"],
+    "tier_b": ["ALPHA_VANTAGE","YFINANCE","MARKETSTACK","FINNHUB","BOURSORAMA"]
+  }
+}
