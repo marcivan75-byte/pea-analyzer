@@ -1,0 +1,77 @@
+{
+  "publication_version": "V21.1_GLOBAL_PROCESS_REFERENCES_STATIC",
+  "published_at_utc": "2026-08-11T21:25:00Z",
+  "branch": "agent/gold-v1-global-integration",
+  "status": "STATIC_INTEGRATED_MANUAL_ONLY",
+  "scope": "GLOBAL_MARKET_PROCESS",
+  "modules": {
+    "ACTIONS_PEA": {
+      "published_reference": "data/reference/V21.1_ACTIONS_PEA_REFERENCE_PUBLISHED.json",
+      "active_engine_config": "data/reference/V21.0_ACTIONS_PEA_CONFIG.json",
+      "workflow": ".github/workflows/V21.1_actions1829_only.yml",
+      "active_validated_universe": 1829,
+      "execution_policy": "EXISTING_UNCHANGED"
+    },
+    "ETF_PEA": {
+      "published_reference": "data/reference/V21.1_ETF102_REFERENCE_PUBLISHED.json",
+      "active_engine_config": "data/reference/V20.7_ETF102_CONFIG.json",
+      "workflow": ".github/workflows/V20.7_etf102_only.yml",
+      "active_validated_universe": 102,
+      "execution_policy": "EXISTING_UNCHANGED"
+    },
+    "GOLD": {
+      "published_reference": "data/reference/V21.1_GOLD_V1_REFERENCE_PUBLISHED.json",
+      "active_engine_config": "data/reference/V21.1_GOLD_V1_CONFIG.json",
+      "source_registry": "config/V21.1_GOLD_SOURCE_REGISTRY.csv",
+      "workflow": ".github/workflows/V21.1_gold_v1_shadow.yml",
+      "criteria_count": 102,
+      "families_count": 11,
+      "currency_views": ["XAUUSD", "XAUEUR"],
+      "execution_policy": "SHADOW_RESEARCH_ONLY_PENDING_BACKTEST"
+    }
+  },
+  "pea_universe": {
+    "total_active_instruments": 1931,
+    "composition": "1829_ACTIONS_PLUS_102_ETF",
+    "gold_in_pea_instrument_count": false
+  },
+  "global_committee_order": [
+    "PIT_DATA_ACQUISITION_AND_PROVENANCE",
+    "MODULE_SPECIFIC_FEATURE_BUILD",
+    "MODULE_SPECIFIC_SCORING",
+    "MODULE_SPECIFIC_HARD_GATES",
+    "MODULE_COMMITTEE_OUTPUT",
+    "GLOBAL_SYNTHESIS_WITHOUT_CROSS_MODULE_WEIGHT_REUSE"
+  ],
+  "gold_committee_contract": {
+    "mt_priority": true,
+    "entry_score_formula": "0.75*GOLD_SCORE_MT + 0.25*GOLD_SCORE_CT",
+    "qds_normal_min": 85,
+    "qds_reduced_confidence_min": 75,
+    "qds_no_decision_below": 75,
+    "dynamic_regime_reweighting": true,
+    "regime_multiplier_cap_pct": 25,
+    "automatic_execution_allowed": false,
+    "backtest_validation_required": true
+  },
+  "governance": {
+    "workflow_trigger_policy": "MANUAL_ONLY_UNTIL_EXPLICIT_REACTIVATION",
+    "cross_module_weight_contamination_allowed": false,
+    "actions_weights_changed_by_gold_integration": false,
+    "etf_weights_changed_by_gold_integration": false,
+    "gold_weights_status": "BASELINE_PENDING_PIT_WALK_FORWARD_OOS_VALIDATION",
+    "gold_automatic_execution_allowed": false,
+    "gold_t1_t2_allowed": false,
+    "actions_tct_t1_t2_policy": "UNCHANGED_TCT_ONLY",
+    "holdout_final_policy": "LOCKED_DURING_CALIBRATION",
+    "activation_condition": "EXPLICIT_APPROVAL_AFTER_BACKTEST_AND_OOS_VALIDATION"
+  },
+  "shared_infrastructure": {
+    "free_capture_reference": "data/reference/V21.1_FREE_CAPTURE_CONFIG.json",
+    "pea_common_source_registry": "config/V21.1_FREE_SOURCE_REGISTRY.csv",
+    "gold_source_registry": "config/V21.1_GOLD_SOURCE_REGISTRY.csv",
+    "common_methodology_registry": "config/V21.1_METHODOLOGY_REFERENCES.csv",
+    "provenance_rule": "AVAILABLE_AT_MUST_BE_LE_DECISION_TIMESTAMP"
+  },
+  "integration_note": "Gold V1 is a parallel autonomous module in the global market process. It contributes a research-only committee output while its weights remain unvalidated. It does not alter the 1931-instrument PEA contract, Actions weights, ETF weights, or the Actions-TCT-only T1/T2 policy."
+}
