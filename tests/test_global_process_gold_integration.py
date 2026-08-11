@@ -22,14 +22,26 @@ def test_global_process_keeps_pea_contract_and_adds_gold_parallel():
     assert governance["cross_module_weight_contamination_allowed"] is False
     assert governance["actions_weights_changed_by_gold_integration"] is False
     assert governance["etf_weights_changed_by_gold_integration"] is False
-    assert governance["gold_automatic_execution_allowed"] is False
+    assert governance["gold_shadow_decision_allowed"] is True
+    assert governance["gold_automatic_real_execution_allowed"] is False
+    assert governance["gold_backtest_blocks_shadow_decision"] is False
     assert governance["gold_t1_t2_allowed"] is False
     assert governance["actions_tct_t1_t2_policy"] == "UNCHANGED_TCT_ONLY"
 
+    assert global_ref["modules"]["GOLD"]["decision_policy"] == "ACTIVE_SHADOW_RESEARCH_ONLY"
+    assert global_ref["modules"]["GOLD"]["execution_policy"] == "NO_REAL_EXECUTION"
     assert gold_ref["execution_mode"] == "RESEARCH_ONLY"
-    assert gold_ref["governance"]["automatic_execution_allowed"] is False
+    assert gold_ref["decision_mode"] == "ACTIVE_SHADOW"
+    assert gold_ref["decision_allowed"] is True
+    assert gold_ref["real_execution_allowed"] is False
+    assert gold_ref["governance"]["shadow_decision_allowed"] is True
+    assert gold_ref["governance"]["automatic_real_execution_allowed"] is False
+    assert gold_ref["governance"]["backtest_blocks_shadow_decision"] is False
     assert gold_cfg["criteria_count"] == 102
     assert len(gold_cfg["families"]) == 11
+    assert gold_cfg["decision_policy"] == "ACTIVE_SHADOW"
+    assert gold_cfg["shadow_decision_allowed"] is True
+    assert gold_cfg["real_execution_allowed"] is False
     assert gold_cfg["t1_t2_policy"] == "EXCLUDED_GOLD; RESERVED_ACTIONS_TCT_ONLY"
 
 
