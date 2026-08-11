@@ -1,0 +1,13 @@
+source;cost_model;capture_mode;gold_scope;criteria;refresh;priority;status;pit_rule;notes
+FRED;FREE_API_KEY;AUTOMATED;REAL_RATES_USD_MACRO;A1-A14|B1-B3|C1-C10|K2-K3|K7;daily_and_release;1;READY_EXISTING_CONNECTOR;available_at_required;Use official series only and preserve vintage/release timing where applicable
+FED_US_TREASURY;FREE_PUBLIC;AUTOMATED_OR_REFERENCE;RATES_MONETARY;A1-A14;daily_and_event;1;PLANNED_GOLD_ADAPTER;available_at_required;Official confirmation for yields and policy data
+ALPHA_VANTAGE;FREE_API_KEY;AUTOMATED_TARGETED;GOLD_SPOT_HISTORY;I1-I14|B7|K1-K6|K8;daily;2;PLANNED_GOLD_ADAPTER;timestamp_required;Gold spot/history secondary to exchange benchmark when available
+YFINANCE;FREE_UNOFFICIAL;AUTOMATED_FALLBACK;MARKET_TECHNICAL_INTERMARKET;I1-I14|K1-K8|B4-B6;daily;4;READY_FALLBACK;timestamp_required;Fallback only; never override official source without anomaly check
+CFTC;FREE_PUBLIC_REGULATORY;AUTOMATED_WEEKLY;COT_POSITIONING;E1-E5;weekly;1;PLANNED_GOLD_ADAPTER;publication_timestamp_required;Use disaggregated historical reports and actual publication timing
+CME;FREE_PUBLIC_MARKET_DATA;AUTOMATED_BEST_EFFORT;FUTURES_OPTIONS;E6-E10|I11;daily_or_intraday;1;PLANNED_GOLD_ADAPTER;timestamp_required;COMEX gold volume open interest and volatility/options where publicly accessible
+WORLD_GOLD_COUNCIL;FREE_PUBLIC_RESEARCH_DATA;AUTOMATED_BEST_EFFORT;ETF_CENTRAL_BANKS_PHYSICAL;D1-D8|F1-F6|H1-H8;daily_monthly_quarterly;1;PLANNED_GOLD_ADAPTER;publication_date_not_period_date;Respect publication lag; never backfill a value before it became public
+GPR_CALDARA_IACOVIELLO;FREE_PUBLIC_RESEARCH_DATA;AUTOMATED;GEOPOLITICAL_RISK;G1-G3;daily_monthly;1;PLANNED_GOLD_ADAPTER;publication_timestamp_required;Store series observation and publication timestamps separately
+GDELT;FREE_PUBLIC_API;AUTOMATED;GEOPOLITICAL_NEWS;G4-G6|J1-J2;15min_to_daily;1;READY_EXISTING_CONTEXT;ingestion_timestamp_required;Deduplicate syndicated stories and compute source diversity
+LBMA;FREE_PUBLIC_RESEARCH;AUTOMATED_BEST_EFFORT;CONSENSUS;J3-J6;ad_hoc;1;PLANNED_GOLD_ADAPTER;publication_date_required;Consensus is confirmatory and limited to 4 percent MT family total
+BLS_BEA;FREE_PUBLIC_OFFICIAL;AUTOMATED;MACRO_RELEASES;C1-C8;on_release;1;PLANNED_GOLD_ADAPTER;release_timestamp_required;Score surprises only with consensus data known before the release
+MARKET_SENTIMENT_PUBLIC;FREE_PUBLIC;AUTOMATED_BEST_EFFORT;SENTIMENT;J7-J8;daily_weekly;3;PLANNED_GOLD_ADAPTER;timestamp_required;Contrarian/attention inputs must be reproducible for backtest or excluded
