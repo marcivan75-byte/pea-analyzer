@@ -48,8 +48,14 @@ def validate_config(config: Mapping[str, Any]) -> None:
 
     if config.get("t1_t2_policy") != "EXCLUDED_GOLD; RESERVED_ACTIONS_TCT_ONLY":
         raise ValueError("Gold T1/T2 exclusion contract missing")
-    if config.get("status") != "SHADOW_RESEARCH_ONLY_PENDING_BACKTEST":
-        raise ValueError("Gold V1 must remain shadow until backtest validation")
+    if config.get("status") != "DECISIONAL_SHADOW_RESEARCH_ONLY_PENDING_BACKTEST":
+        raise ValueError("Gold V1 must be active for research decisions and remain shadow")
+    if config.get("decision_policy") != "ACTIVE_SHADOW":
+        raise ValueError("Gold V1 shadow decision policy must be active")
+    if config.get("shadow_decision_allowed") is not True:
+        raise ValueError("Gold V1 shadow decisions must be allowed")
+    if config.get("real_execution_allowed") is not False:
+        raise ValueError("Gold V1 real execution must remain disabled")
 
 
 def _criterion_weights(
@@ -202,8 +208,11 @@ def evaluate_snapshot(
         "module": "GOLD_V1",
         "version": config["version"],
         "status": config["status"],
+        "decision_mode": "ACTIVE_SHADOW",
+        "shadow_decision_allowed": True,
         "execution": "RESEARCH_ONLY",
         "execution_allowed": False,
+        "real_execution_allowed": False,
         "regime": regime or "UNCLASSIFIED",
         "gold_score_mt": mt.score,
         "gold_score_ct": ct.score,
@@ -218,4 +227,6 @@ def evaluate_snapshot(
         "active_gates": active_gates,
         "t1_t2_used": False,
         "backtest_validation_required": True,
+        "backtest_required_for_weight_validation": True,
+        "backtest_blocks_shadow_decision": False,
     }
