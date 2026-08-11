@@ -46,10 +46,12 @@ def run(input_path: Path, output_path: Path, summary_path: Path, allow_empty: bo
     output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     lines = [
-        "# Gold V1 – Comité shadow",
+        "# Gold V1 – Comité décisionnel shadow",
         "",
         f"- Version: **{result['version']}**",
         f"- Statut: **{result['status']}**",
+        f"- Mode décisionnel: **{result['decision_mode']}**",
+        f"- Décisions shadow autorisées: **{'OUI' if result['shadow_decision_allowed'] else 'NON'}**",
         f"- Entrée données: **{input_status}**",
         f"- Régime: **{result['regime']}**",
         f"- GOLD_SCORE_MT: **{result['gold_score_mt']}**",
@@ -58,9 +60,10 @@ def run(input_path: Path, output_path: Path, summary_path: Path, allow_empty: bo
         f"- QDS_OR: **{result['qds_or']}**",
         f"- Décision MT: **{result['decision_mt']}**",
         f"- Confiance: **{result['confidence']}**",
-        "- Exécution autorisée: **NON – RESEARCH_ONLY**",
+        "- Exécution réelle autorisée: **NON – RESEARCH_ONLY**",
+        f"- Backtest bloque la décision shadow: **{'OUI' if result['backtest_blocks_shadow_decision'] else 'NON'}**",
         "",
-        "La V1 reste en shadow tant que la calibration PIT/walk-forward et le holdout final ne sont pas validés.",
+        "La V1 est active pour les décisions de recherche shadow. Le backtest PIT/walk-forward reste requis pour valider les pondérations et toute promotion future hors shadow.",
         "T1/T2 sont exclus du module OR.",
     ]
     summary_path.parent.mkdir(parents=True, exist_ok=True)
@@ -69,7 +72,7 @@ def run(input_path: Path, output_path: Path, summary_path: Path, allow_empty: bo
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Gold V1 shadow committee scoring")
+    parser = argparse.ArgumentParser(description="Run Gold V1 decisional shadow committee scoring")
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--summary", type=Path, default=DEFAULT_SUMMARY)
