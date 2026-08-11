@@ -1,6 +1,6 @@
-name: V21.1 Gold V1 - Shadow Committee
+name: V21.1 Gold V1 - Decisional Shadow Committee
 
-# Gold V1 baseline is not backtest validated. Manual-only until explicit activation.
+# Gold V1 is decision-active in SHADOW/RESEARCH_ONLY. Real execution remains disabled.
 on:
   workflow_dispatch:
 
@@ -47,7 +47,10 @@ jobs:
           c = json.loads(p.read_text(encoding='utf-8'))
           validate_config(c)
           assert c['criteria_count'] == 102
-          assert c['status'] == 'SHADOW_RESEARCH_ONLY_PENDING_BACKTEST'
+          assert c['status'] == 'DECISIONAL_SHADOW_RESEARCH_ONLY_PENDING_BACKTEST'
+          assert c['decision_policy'] == 'ACTIVE_SHADOW'
+          assert c['shadow_decision_allowed'] is True
+          assert c['real_execution_allowed'] is False
           assert c['mt_priority'] is True
           assert c['entry_score_formula'] == {'mt': 0.75, 'ct': 0.25}
           assert c['t1_t2_policy'] == 'EXCLUDED_GOLD; RESERVED_ACTIONS_TCT_ONLY'
@@ -62,14 +65,17 @@ jobs:
           assert g['governance']['cross_module_weight_contamination_allowed'] is False
           assert g['governance']['actions_weights_changed_by_gold_integration'] is False
           assert g['governance']['etf_weights_changed_by_gold_integration'] is False
+          assert g['governance']['gold_shadow_decision_allowed'] is True
+          assert g['governance']['gold_automatic_real_execution_allowed'] is False
+          assert g['governance']['gold_backtest_blocks_shadow_decision'] is False
           assert g['governance']['gold_t1_t2_allowed'] is False
-          print('GOLD_V1_GLOBAL_STATIC_CONTRACT_OK')
+          print('GOLD_V1_GLOBAL_DECISIONAL_SHADOW_CONTRACT_OK')
           PY
 
       - name: Gold V1 focused and global integration tests
         run: pytest -q tests/test_gold_v1.py tests/test_global_process_gold_integration.py
 
-      - name: Run shadow committee without fabricating missing live data
+      - name: Run decisional shadow committee without fabricating missing live data
         run: python -m v182.gold.runner --allow-empty
 
       - name: Gold V1 output hard gates
@@ -81,16 +87,20 @@ jobs:
           d = json.loads(p.read_text(encoding='utf-8'))
           assert d['module'] == 'GOLD_V1'
           assert d['version'] == 'GOLD_V1.0_BASELINE_102'
+          assert d['decision_mode'] == 'ACTIVE_SHADOW'
+          assert d['shadow_decision_allowed'] is True
           assert d['execution'] == 'RESEARCH_ONLY'
           assert d['execution_allowed'] is False
+          assert d['real_execution_allowed'] is False
           assert d['backtest_validation_required'] is True
+          assert d['backtest_blocks_shadow_decision'] is False
           assert d['t1_t2_used'] is False
           if d['input_status'] == 'EMPTY_SHADOW_NO_LIVE_INPUT':
               assert d['gold_score_mt'] is None
               assert d['gold_score_ct'] is None
               assert d['decision_mt'] == 'NO_DECISION_DATA_QUALITY'
               assert d['qds_or'] == 0
-          print('GOLD_V1_OUTPUT_GATES_OK')
+          print('GOLD_V1_DECISIONAL_SHADOW_OUTPUT_GATES_OK')
           PY
 
       - name: Publish Gold V1 shadow summary
@@ -99,7 +109,7 @@ jobs:
       - name: Upload Gold V1 shadow artifact
         uses: actions/upload-artifact@v7
         with:
-          name: V21.1-Gold-V1-Shadow-${{ github.run_id }}
+          name: V21.1-Gold-V1-Decisional-Shadow-${{ github.run_id }}
           path: |
             outputs/gold/V21.1_GOLD_COMMITTEE.json
             outputs/gold/V21.1_GOLD_COMMITTEE_SUMMARY.md
