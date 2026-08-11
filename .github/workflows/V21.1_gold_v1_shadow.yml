@@ -32,7 +32,7 @@ jobs:
       - name: Install dependencies
         run: pip install -c constraints-ci.txt -e .[test]
 
-      - name: Static Gold V1 contract preflight
+      - name: Static Gold V1 and global process contract preflight
         run: |
           set -euo pipefail
           python -m pip check
@@ -53,11 +53,21 @@ jobs:
           assert c['t1_t2_policy'] == 'EXCLUDED_GOLD; RESERVED_ACTIONS_TCT_ONLY'
           assert Path('config/V21.1_GOLD_SOURCE_REGISTRY.csv').exists()
           assert Path('data/reference/V21.1_GOLD_V1_REFERENCE_PUBLISHED.json').exists()
-          print('GOLD_V1_STATIC_CONTRACT_OK')
+
+          g = json.loads(Path('data/reference/V21.1_GLOBAL_PROCESS_REFERENCES_PUBLISHED.json').read_text(encoding='utf-8'))
+          assert g['pea_universe']['total_active_instruments'] == 1931
+          assert g['modules']['ACTIONS_PEA']['active_validated_universe'] == 1829
+          assert g['modules']['ETF_PEA']['active_validated_universe'] == 102
+          assert g['pea_universe']['gold_in_pea_instrument_count'] is False
+          assert g['governance']['cross_module_weight_contamination_allowed'] is False
+          assert g['governance']['actions_weights_changed_by_gold_integration'] is False
+          assert g['governance']['etf_weights_changed_by_gold_integration'] is False
+          assert g['governance']['gold_t1_t2_allowed'] is False
+          print('GOLD_V1_GLOBAL_STATIC_CONTRACT_OK')
           PY
 
-      - name: Gold V1 focused tests
-        run: pytest -q tests/test_gold_v1.py
+      - name: Gold V1 focused and global integration tests
+        run: pytest -q tests/test_gold_v1.py tests/test_global_process_gold_integration.py
 
       - name: Run shadow committee without fabricating missing live data
         run: python -m v182.gold.runner --allow-empty
@@ -95,6 +105,7 @@ jobs:
             outputs/gold/V21.1_GOLD_COMMITTEE_SUMMARY.md
             data/reference/V21.1_GOLD_V1_CONFIG.json
             data/reference/V21.1_GOLD_V1_REFERENCE_PUBLISHED.json
+            data/reference/V21.1_GLOBAL_PROCESS_REFERENCES_PUBLISHED.json
             config/V21.1_GOLD_SOURCE_REGISTRY.csv
           if-no-files-found: error
           retention-days: 30
