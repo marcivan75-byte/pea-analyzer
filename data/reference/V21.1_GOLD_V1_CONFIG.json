@@ -1,6 +1,9 @@
 {
   "version": "GOLD_V1.0_BASELINE_102",
-  "status": "SHADOW_RESEARCH_ONLY_PENDING_BACKTEST",
+  "status": "DECISIONAL_SHADOW_RESEARCH_ONLY_PENDING_BACKTEST",
+  "decision_policy": "ACTIVE_SHADOW",
+  "shadow_decision_allowed": true,
+  "real_execution_allowed": false,
   "asset": "GOLD",
   "currency_views": [
     "XAUUSD",
@@ -22,7 +25,7 @@
     "reduced_confidence_min": 75,
     "no_decision_below": 75
   },
-  "weight_policy": "BASELINE_ONLY_NO_AUTOMATIC_EXECUTION_BEFORE_PIT_WALK_FORWARD_VALIDATION",
+  "weight_policy": "BASELINE_DECISIONAL_SHADOW; BACKTEST_REQUIRED_FOR_WEIGHT_VALIDATION_NOT_FOR_RESEARCH_DECISIONS",
   "t1_t2_policy": "EXCLUDED_GOLD; RESERVED_ACTIONS_TCT_ONLY",
   "families": {
     "A": {
