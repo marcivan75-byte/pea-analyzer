@@ -1,0 +1,63 @@
+{
+  "reference_publication_version": "V21.1_GOLD_V1_REFERENCE_STATIC",
+  "published_at_utc": "2026-08-11T21:25:00Z",
+  "publication_status": "STATIC_INTEGRATED_SHADOW_NOT_BACKTEST_VALIDATED",
+  "runtime_validation_status": "STATIC_TESTS_REQUIRED_BEFORE_MERGE",
+  "execution_mode": "RESEARCH_ONLY",
+  "asset": "GOLD",
+  "currency_views": ["XAUUSD", "XAUEUR"],
+  "engine": {
+    "active_scoring_config": "data/reference/V21.1_GOLD_V1_CONFIG.json",
+    "source_registry": "config/V21.1_GOLD_SOURCE_REGISTRY.csv",
+    "scoring_engine": "src/v182/gold/scoring.py",
+    "committee_runner": "src/v182/gold/runner.py",
+    "workflow": ".github/workflows/V21.1_gold_v1_shadow.yml",
+    "future_committee_output": "outputs/gold/V21.1_GOLD_COMMITTEE.json",
+    "future_committee_summary": "outputs/gold/V21.1_GOLD_COMMITTEE_SUMMARY.md"
+  },
+  "model": {
+    "criteria_count": 102,
+    "families_count": 11,
+    "mt_priority": true,
+    "entry_score_formula": "0.75*GOLD_SCORE_MT + 0.25*GOLD_SCORE_CT",
+    "regime_dynamic_reweighting": true,
+    "regime_multiplier_cap_pct": 25,
+    "qds_gate": {
+      "normal_decision_min": 85,
+      "reduced_confidence_min": 75,
+      "no_decision_below": 75
+    },
+    "missing_data_policy": "NO_NEUTRAL_50_IMPUTATION",
+    "hard_gates": [
+      "DATA_QUALITY",
+      "ANTI_LOOK_AHEAD",
+      "CROWDING",
+      "GEOPOLITICAL_CONFIRMATION",
+      "CORRELATION_DOUBLE_COUNTING",
+      "MACRO_CONFLICT"
+    ]
+  },
+  "families": {
+    "REAL_RATES_MONETARY": {"mt_pct":20,"ct_pct":12},
+    "USD_FX": {"mt_pct":10,"ct_pct":9},
+    "MACRO_INFLATION_LIQUIDITY": {"mt_pct":8,"ct_pct":6},
+    "GOLD_ETF_FLOWS": {"mt_pct":12,"ct_pct":10},
+    "CFTC_FUTURES_OPTIONS": {"mt_pct":10,"ct_pct":14},
+    "CENTRAL_BANKS": {"mt_pct":8,"ct_pct":2},
+    "GEOPOLITICAL_SYSTEMIC_RISK": {"mt_pct":8,"ct_pct":10},
+    "PHYSICAL_DEMAND_SUPPLY": {"mt_pct":5,"ct_pct":1},
+    "TECHNICAL_MOMENTUM": {"mt_pct":10,"ct_pct":20},
+    "NEWS_SENTIMENT_CONSENSUS": {"mt_pct":4,"ct_pct":8},
+    "INTERMARKET_RELATIVE_VALUE": {"mt_pct":5,"ct_pct":8}
+  },
+  "governance": {
+    "weights_status": "BASELINE_PENDING_PIT_WALK_FORWARD_BACKTEST",
+    "automatic_execution_allowed": false,
+    "shadow_committee_allowed": true,
+    "t1_t2_policy": "EXCLUDED_GOLD_RESERVED_ACTIONS_TCT_ONLY",
+    "anti_look_ahead_required": true,
+    "holdout_final_must_remain_locked_during_calibration": true,
+    "activation_condition": "ONLY_AFTER_BACKTEST_AND_OOS_VALIDATION"
+  },
+  "integration_note": "Gold V1 is integrated as an autonomous global-process module. It must not change Action or ETF scoring weights and cannot issue an executable order before backtest validation."
+}
