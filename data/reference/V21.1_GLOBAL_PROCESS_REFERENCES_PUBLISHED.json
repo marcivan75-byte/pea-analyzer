@@ -27,7 +27,8 @@
       "criteria_count": 102,
       "families_count": 11,
       "currency_views": ["XAUUSD", "XAUEUR"],
-      "execution_policy": "SHADOW_RESEARCH_ONLY_PENDING_BACKTEST"
+      "decision_policy": "ACTIVE_SHADOW_RESEARCH_ONLY",
+      "execution_policy": "NO_REAL_EXECUTION"
     }
   },
   "pea_universe": {
@@ -51,8 +52,10 @@
     "qds_no_decision_below": 75,
     "dynamic_regime_reweighting": true,
     "regime_multiplier_cap_pct": 25,
-    "automatic_execution_allowed": false,
-    "backtest_validation_required": true
+    "shadow_decision_allowed": true,
+    "automatic_real_execution_allowed": false,
+    "backtest_blocks_shadow_decision": false,
+    "backtest_validation_required_for_weights": true
   },
   "governance": {
     "workflow_trigger_policy": "MANUAL_ONLY_UNTIL_EXPLICIT_REACTIVATION",
@@ -60,11 +63,13 @@
     "actions_weights_changed_by_gold_integration": false,
     "etf_weights_changed_by_gold_integration": false,
     "gold_weights_status": "BASELINE_PENDING_PIT_WALK_FORWARD_OOS_VALIDATION",
-    "gold_automatic_execution_allowed": false,
+    "gold_shadow_decision_allowed": true,
+    "gold_automatic_real_execution_allowed": false,
+    "gold_backtest_blocks_shadow_decision": false,
     "gold_t1_t2_allowed": false,
     "actions_tct_t1_t2_policy": "UNCHANGED_TCT_ONLY",
     "holdout_final_policy": "LOCKED_DURING_CALIBRATION",
-    "activation_condition": "EXPLICIT_APPROVAL_AFTER_BACKTEST_AND_OOS_VALIDATION"
+    "promotion_out_of_shadow_condition": "EXPLICIT_APPROVAL_AFTER_BACKTEST_AND_OOS_VALIDATION"
   },
   "shared_infrastructure": {
     "free_capture_reference": "data/reference/V21.1_FREE_CAPTURE_CONFIG.json",
@@ -73,5 +78,5 @@
     "common_methodology_registry": "config/V21.1_METHODOLOGY_REFERENCES.csv",
     "provenance_rule": "AVAILABLE_AT_MUST_BE_LE_DECISION_TIMESTAMP"
   },
-  "integration_note": "Gold V1 is a parallel autonomous module in the global market process. It contributes a research-only committee output while its weights remain unvalidated. It does not alter the 1931-instrument PEA contract, Actions weights, ETF weights, or the Actions-TCT-only T1/T2 policy."
+  "integration_note": "Gold V1 is an autonomous decisional shadow module in the global market process. It can publish research decisions immediately when operational gates pass. Backtest validation remains mandatory for validating weights and any promotion outside shadow, but does not block research decisions."
 }
