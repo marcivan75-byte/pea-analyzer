@@ -1,0 +1,55 @@
+name: ETF MT V20.8.1 daily scoring
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 17 * * 1-5'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: etf-mt-v20-8-daily
+  cancel-in-progress: false
+
+jobs:
+  score-etf-mt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Validate V20.8.1 configuration
+        run: python -m json.tool config/V20.8_ETF_MT_HIGH_PRECISION.json >/dev/null
+
+      - name: Run ETF MT V20.8.1 operational scoring
+        env:
+          V2081_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: python -m v182.reporting.etf_mt_v2081_run
+
+      - name: Display decision summary
+        if: always()
+        run: |
+          if [ -f outputs/etf_mt_v2081/V20.8.1_ETF_MT_SUMMARY.json ]; then
+            cat outputs/etf_mt_v2081/V20.8.1_ETF_MT_SUMMARY.json
+          fi
+
+      - name: Publish ETF MT artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ETF_MT_V20_8_1_${{ github.run_id }}
+          path: outputs/etf_mt_v2081/
+          if-no-files-found: warn
+          retention-days: 30
