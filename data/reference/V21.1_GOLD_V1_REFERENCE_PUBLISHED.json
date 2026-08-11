@@ -1,9 +1,12 @@
 {
   "reference_publication_version": "V21.1_GOLD_V1_REFERENCE_STATIC",
   "published_at_utc": "2026-08-11T21:25:00Z",
-  "publication_status": "STATIC_INTEGRATED_SHADOW_NOT_BACKTEST_VALIDATED",
+  "publication_status": "STATIC_INTEGRATED_DECISIONAL_SHADOW",
   "runtime_validation_status": "STATIC_TESTS_REQUIRED_BEFORE_MERGE",
   "execution_mode": "RESEARCH_ONLY",
+  "decision_mode": "ACTIVE_SHADOW",
+  "decision_allowed": true,
+  "real_execution_allowed": false,
   "asset": "GOLD",
   "currency_views": ["XAUUSD", "XAUEUR"],
   "engine": {
@@ -52,12 +55,16 @@
   },
   "governance": {
     "weights_status": "BASELINE_PENDING_PIT_WALK_FORWARD_BACKTEST",
-    "automatic_execution_allowed": false,
     "shadow_committee_allowed": true,
+    "shadow_decision_allowed": true,
+    "automatic_real_execution_allowed": false,
+    "backtest_blocks_shadow_decision": false,
+    "backtest_required_for_weight_validation": true,
+    "backtest_required_for_promotion_out_of_shadow": true,
     "t1_t2_policy": "EXCLUDED_GOLD_RESERVED_ACTIONS_TCT_ONLY",
     "anti_look_ahead_required": true,
     "holdout_final_must_remain_locked_during_calibration": true,
-    "activation_condition": "ONLY_AFTER_BACKTEST_AND_OOS_VALIDATION"
+    "promotion_condition": "ONLY_AFTER_BACKTEST_AND_OOS_VALIDATION"
   },
-  "integration_note": "Gold V1 is integrated as an autonomous global-process module. It must not change Action or ETF scoring weights and cannot issue an executable order before backtest validation."
+  "integration_note": "Gold V1 is integrated as an autonomous decisional shadow module. It can issue research decisions immediately when operational hard gates pass. Backtest validation is required for weight validation and any future promotion outside shadow, not for shadow decision production."
 }
