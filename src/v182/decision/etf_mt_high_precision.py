@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Sequence
+from typing import Iterable, Mapping, Sequence
 
 
 @dataclass(frozen=True)
@@ -46,6 +46,34 @@ MAX_SIMILAR_ACTIVE_EXPOSURES = 2
 TARGET_RETURN = 0.04
 HARD_STOP_RETURN = -0.18
 MAX_HOLDING_SESSIONS = 168
+
+
+def weighted_raw_score(
+    criterion_scores: Mapping[str, float],
+    backtested_weights: Mapping[str, float],
+) -> float:
+    """Aggregate the 0-100 PIT criterion scores with the backtested MT weights.
+
+    This function deliberately does not invent feature normalisation. The caller
+    must provide the already-normalised 0-100 criterion scores used by the MT
+    engine. All configured backtested criteria are mandatory: precision is
+    prioritised over coverage and missing criteria block scoring.
+    """
+    missing = set(backtested_weights) - set(criterion_scores)
+    if missing:
+        raise ValueError(f"missing required MT criteria: {sorted(missing)}")
+
+    total_weight = sum(float(weight) for weight in backtested_weights.values())
+    if total_weight <= 0:
+        raise ValueError("backtested weight total must be positive")
+
+    weighted = 0.0
+    for name, weight in backtested_weights.items():
+        score = float(criterion_scores[name])
+        if not 0.0 <= score <= 100.0:
+            raise ValueError(f"criterion score out of 0-100 range: {name}={score}")
+        weighted += score * float(weight)
+    return weighted / total_weight
 
 
 def final_score(score_raw: float, score_rank_pct: float) -> float:
