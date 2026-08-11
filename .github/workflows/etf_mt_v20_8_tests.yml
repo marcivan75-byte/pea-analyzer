@@ -1,0 +1,45 @@
+name: ETF MT V20.8.1 validation
+
+on:
+  pull_request:
+    paths:
+      - 'config/V20.8_ETF_MT_HIGH_PRECISION.json'
+      - 'src/v182/decision/**'
+      - 'tests/test_etf_mt_high_precision.py'
+      - '.github/workflows/etf_mt_v20_8_tests.yml'
+  push:
+    branches:
+      - 'agent/etf-mt-high-precision-v20-8'
+    paths:
+      - 'config/V20.8_ETF_MT_HIGH_PRECISION.json'
+      - 'src/v182/decision/**'
+      - 'tests/test_etf_mt_high_precision.py'
+      - '.github/workflows/etf_mt_v20_8_tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-etf-mt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install package and test runner
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pytest
+
+      - name: Validate configuration JSON
+        run: python -m json.tool config/V20.8_ETF_MT_HIGH_PRECISION.json >/dev/null
+
+      - name: Run ETF MT high-precision regression tests
+        run: pytest -q tests/test_etf_mt_high_precision.py
