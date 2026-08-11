@@ -1,0 +1,100 @@
+name: V21.1 Gold V1 - Shadow Committee
+
+# Gold V1 baseline is not backtest validated. Manual-only until explicit activation.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v211-gold-v1-shadow
+  cancel-in-progress: true
+
+jobs:
+  gold-v1-shadow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -c constraints-ci.txt -e .[test]
+
+      - name: Static Gold V1 contract preflight
+        run: |
+          set -euo pipefail
+          python -m pip check
+          python -m compileall -q src tests
+          ruff check --select E9,F63,F7,F82 src tests
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from v182.gold.scoring import validate_config
+
+          p = Path('data/reference/V21.1_GOLD_V1_CONFIG.json')
+          c = json.loads(p.read_text(encoding='utf-8'))
+          validate_config(c)
+          assert c['criteria_count'] == 102
+          assert c['status'] == 'SHADOW_RESEARCH_ONLY_PENDING_BACKTEST'
+          assert c['mt_priority'] is True
+          assert c['entry_score_formula'] == {'mt': 0.75, 'ct': 0.25}
+          assert c['t1_t2_policy'] == 'EXCLUDED_GOLD; RESERVED_ACTIONS_TCT_ONLY'
+          assert Path('config/V21.1_GOLD_SOURCE_REGISTRY.csv').exists()
+          assert Path('data/reference/V21.1_GOLD_V1_REFERENCE_PUBLISHED.json').exists()
+          print('GOLD_V1_STATIC_CONTRACT_OK')
+          PY
+
+      - name: Gold V1 focused tests
+        run: pytest -q tests/test_gold_v1.py
+
+      - name: Run shadow committee without fabricating missing live data
+        run: python -m v182.gold.runner --allow-empty
+
+      - name: Gold V1 output hard gates
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('outputs/gold/V21.1_GOLD_COMMITTEE.json')
+          d = json.loads(p.read_text(encoding='utf-8'))
+          assert d['module'] == 'GOLD_V1'
+          assert d['version'] == 'GOLD_V1.0_BASELINE_102'
+          assert d['execution'] == 'RESEARCH_ONLY'
+          assert d['execution_allowed'] is False
+          assert d['backtest_validation_required'] is True
+          assert d['t1_t2_used'] is False
+          if d['input_status'] == 'EMPTY_SHADOW_NO_LIVE_INPUT':
+              assert d['gold_score_mt'] is None
+              assert d['gold_score_ct'] is None
+              assert d['decision_mt'] == 'NO_DECISION_DATA_QUALITY'
+              assert d['qds_or'] == 0
+          print('GOLD_V1_OUTPUT_GATES_OK')
+          PY
+
+      - name: Publish Gold V1 shadow summary
+        run: cat outputs/gold/V21.1_GOLD_COMMITTEE_SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Gold V1 shadow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: V21.1-Gold-V1-Shadow-${{ github.run_id }}
+          path: |
+            outputs/gold/V21.1_GOLD_COMMITTEE.json
+            outputs/gold/V21.1_GOLD_COMMITTEE_SUMMARY.md
+            data/reference/V21.1_GOLD_V1_CONFIG.json
+            data/reference/V21.1_GOLD_V1_REFERENCE_PUBLISHED.json
+            config/V21.1_GOLD_SOURCE_REGISTRY.csv
+          if-no-files-found: error
+          retention-days: 30
