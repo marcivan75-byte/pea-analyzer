@@ -8,6 +8,9 @@ on:
       - "config/COMMITTEE_MASTER_V21.json"
       - "config/V21_ACTIONS_CRITERIA_REGISTRY.json"
       - "config/V20_7_1_ETF_CRITERIA_REGISTRY.json"
+      - "config/FULL_REFERENTIAL_INTEGRITY.json"
+      - "src/v182/audit/quality.py"
+      - "src/v182/reporting/run.py"
       - "src/v182/decision/committee_master.py"
       - "src/v182/reporting/committee_master_run.py"
       - ".github/workflows/committee_master_daily.yml"
@@ -20,7 +23,7 @@ permissions:
 jobs:
   committee-master:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       PYTHONUNBUFFERED: "1"
       FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
@@ -41,11 +44,15 @@ jobs:
           from pathlib import Path
           a=json.loads(Path("config/V21_ACTIONS_CRITERIA_REGISTRY.json").read_text())
           e=json.loads(Path("config/V20_7_1_ETF_CRITERIA_REGISTRY.json").read_text())
-          assert a["criteria_count"] == 633
-          assert e["criteria_count"] == 268
+          integrity=json.loads(Path("config/FULL_REFERENTIAL_INTEGRITY.json").read_text())
+          assert a["criteria_count"] == 633 == integrity["actions"]["criteria_count"]
+          assert e["criteria_count"] == 268 == integrity["etf"]["criteria_count"]
           assert e["governance"]["t1_t2_forbidden"] is True
           assert a["governance"]["t1_t2_scope"] == "ACTION_TCT_ONLY"
-          print("Registry integrity OK")
+          assert integrity["t1_t2"]["scope"] == "ACTION_TCT_ONLY"
+          assert len(integrity["actions"]["ordered_criteria_names_sha256"]) == 64
+          assert len(integrity["etf"]["ordered_criteria_names_sha256"]) == 64
+          print("Exhaustive referential integrity OK: Actions=633, ETF=268")
           PY
       - name: Refresh Actions and ETF data
         id: enrich
