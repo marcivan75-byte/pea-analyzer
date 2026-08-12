@@ -20,11 +20,12 @@ def _decision(score, status: str, cfg: dict, horizon: str) -> str:
 def apply_action_52w_overlay(decisions: pd.DataFrame, actions: pd.DataFrame, registry: dict) -> pd.DataFrame:
     """Apply explicit 52-week-high bonus/malus to Action CT/MT/LT only.
 
-    The ETF structural `base_score` column, when present, is never overwritten.
-    Action pre-overlay score is stored separately as `action_pre_52w_score`.
+    ETF structural base_score values are preserved. Action pre-overlay scores are
+    stored in both action_pre_52w_score and base_score for a uniform audit field.
     """
     if decisions.empty or actions.empty or "isin" not in actions.columns: return decisions
     out=decisions.copy(); master=actions.set_index("isin",drop=False)
+    if "base_score" not in out.columns: out["base_score"]=np.nan
     if "action_pre_52w_score" not in out.columns: out["action_pre_52w_score"]=np.nan
     if "high_52w_bonus_malus_points" not in out.columns: out["high_52w_bonus_malus_points"]=0.0
     for col in ("distance_high_52w_pct","sector_rotation_score","action_catchup_score","market_high_regime_score"):
@@ -33,7 +34,9 @@ def apply_action_52w_overlay(decisions: pd.DataFrame, actions: pd.DataFrame, reg
         if str(row.get("asset_class"))!="ACTION" or str(row.get("horizon")) not in {"CT","MT","LT"}: continue
         isin=str(row.get("isin","") or "")
         if isin not in master.index: continue
-        pre=pd.to_numeric(pd.Series([row.get("score")]),errors="coerce").iloc[0]; out.at[idx,"action_pre_52w_score"]=pre
+        pre=pd.to_numeric(pd.Series([row.get("score")]),errors="coerce").iloc[0]
+        out.at[idx,"action_pre_52w_score"]=pre
+        out.at[idx,"base_score"]=pre
         m=master.loc[isin]
         if isinstance(m,pd.DataFrame): m=m.iloc[0]
         bonus=pd.to_numeric(pd.Series([m.get("high_52w_bonus_malus_points")]),errors="coerce").iloc[0]
