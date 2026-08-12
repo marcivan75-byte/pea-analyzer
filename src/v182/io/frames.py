@@ -6,62 +6,66 @@ MISSING_TOKEN = "NON_OBSERVE"
 
 
 def load_master(path: str | Path) -> pd.DataFrame:
-    """Charge un référentiel maître (Actions ou ETF). Les CSV du projet sont
-    séparés par ';', encodés en UTF-8 avec BOM, valeurs vides = NaN."""
+    """Charge un référentiel maître CSV ';' UTF-8 BOM, valeurs vides = NaN."""
     return pd.read_csv(path, sep=";", encoding="utf-8-sig", dtype=str, keep_default_na=True)
 
 
 def save_master(frame: pd.DataFrame, path: str | Path) -> None:
-    """Réécrit un référentiel maître dans le même format que l'entrée
-    (';' + BOM), pour rester compatible avec le reste de la chaîne V18.2."""
-    out = Path(path)
-    out.parent.mkdir(parents=True, exist_ok=True)
+    out = Path(path); out.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(out, sep=";", encoding="utf-8-sig", index=False)
 
 
 def is_missing(value) -> bool:
-    if value is None:
-        return True
+    if value is None: return True
     try:
-        if pd.isna(value):
-            return True
+        if pd.isna(value): return True
     except (TypeError, ValueError):
-        pass
+        return False
     text = str(value).strip().upper()
     return text in {"", "MISSING", "UNKNOWN", MISSING_TOKEN, "NOT_LOADED", "NAN", "<NA>", "N/A", "NA", "NULL"}
 
 
 def apply_observations(frame: pd.DataFrame, observations: list[dict]) -> tuple[pd.DataFrame, list[dict]]:
-    """Applique une liste d'observations {isin, field, value, ...} sur le
-    DataFrame en respectant la politique 'never_replace_observed_with_missing'.
-    Retourne le frame mis à jour et la liste des conflits mis en quarantaine.
+    """Merge observations using per-field provenance when available.
+
+    Provenance is persisted outside the master so the 633/268-column referentials
+    are not polluted with source metadata columns. It also prevents evidence for
+    one field from incorrectly controlling another field's merge decision.
     """
+    from v182.audit.provenance import append_records, load_latest
     from v182.core.merge import decide
 
     frame = frame.set_index("isin", drop=False)
     quarantined: list[dict] = []
+    provenance=load_latest()
+    provenance_records=[]
 
     for obs in observations:
-        isin = obs.get("isin")
-        field = obs.get("field")
+        isin = obs.get("isin"); field = obs.get("field")
         if isin is None or field is None or isin not in frame.index:
+            provenance_records.append({**obs,"merge_action":"SKIP","merge_reason":"ISIN_OR_FIELD_NOT_IN_MASTER"})
             continue
-        if field not in frame.columns:
-            frame[field] = pd.NA
+        if field not in frame.columns: frame[field] = pd.NA
 
         current_value = frame.at[isin, field]
-        existing = None if is_missing(current_value) else {
-            "value": current_value,
-            "evidence_level": frame.at[isin, "evidence_level"] if "evidence_level" in frame.columns else "D",
-            "as_of": frame.at[isin, "as_of_date"] if "as_of_date" in frame.columns else "",
-        }
-        decision = decide(existing, obs)
+        meta=provenance.get((str(isin),str(field)))
+        if is_missing(current_value):
+            existing=None
+        elif meta:
+            existing={"value":current_value,"evidence_level":meta.get("evidence_level","D"),"as_of":meta.get("as_of","")}
+        else:
+            existing={
+                "value":current_value,
+                "evidence_level":frame.at[isin,"evidence_level"] if "evidence_level" in frame.columns else "D",
+                "as_of":frame.at[isin,"as_of_date"] if "as_of_date" in frame.columns else "",
+            }
+        decision=decide(existing,obs)
+        if decision.action in {"INSERT","REPLACE"}:
+            value=obs.get("value"); frame.at[isin,field]="" if value is None else str(value)
+            provenance[(str(isin),str(field))]={**obs,"merge_action":decision.action,"merge_reason":decision.reason}
+        elif decision.action=="QUARANTINE":
+            quarantined.append({**obs,"reason":decision.reason})
+        provenance_records.append({**obs,"merge_action":decision.action,"merge_reason":decision.reason})
 
-        if decision.action in {"INSERT", "REPLACE"}:
-            value = obs.get("value")
-            frame.at[isin, field] = "" if value is None else str(value)
-        elif decision.action == "QUARANTINE":
-            quarantined.append({**obs, "reason": decision.reason})
-        # KEEP -> rien à faire
-
+    append_records(provenance_records)
     return frame.reset_index(drop=True), quarantined
