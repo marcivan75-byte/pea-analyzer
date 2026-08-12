@@ -43,16 +43,17 @@ def sector_hhi(sector_weightings) -> float | None:
     return round(sum(w*w for w in norm),8)
 
 
-def diversification_score(top_concentration_pct: float | None, sector_hhi_value: float | None) -> float | None:
-    """Exact ETF referential formula: 60% holdings breadth + 40% sector breadth."""
-    numer=0.0; denom=0.0
-    if top_concentration_pct is not None:
-        component=max(0.0,min(100.0,100.0-float(top_concentration_pct)))
-        numer += 0.60*component; denom += 0.60
-    if sector_hhi_value is not None:
-        component=max(0.0,min(100.0,(1.0-float(sector_hhi_value))*100.0))
-        numer += 0.40*component; denom += 0.40
-    return round(numer/denom,6) if denom else None
+def diversification_score(sector_hhi_value: float | None) -> float | None:
+    """Canonical direct diversification score retained by the ETF process.
+
+    Existing Committee outputs show `diversification_direct_score` as exactly
+    100 * (1 - direct_sector_hhi). Top-holdings concentration remains a separate
+    structural criterion and is not blended into this canonical score, avoiding
+    an undocumented double-counting formula.
+    """
+    if sector_hhi_value is None:
+        return None
+    return round(max(0.0,min(100.0,(1.0-float(sector_hhi_value))*100.0)),6)
 
 
 def collect_fund_structure(tickers: list[str], delay_seconds: float = 0.2) -> tuple[list[dict], list[dict]]:
@@ -70,15 +71,24 @@ def collect_fund_structure(tickers: list[str], delay_seconds: float = 0.2) -> tu
             sectors=getattr(funds,"sector_weightings",None)
             concentration=top_holdings_concentration_pct(top)
             hhi=sector_hhi(sectors)
-            score=diversification_score(concentration,hhi)
+            score=diversification_score(hhi)
             if concentration is not None:
-                observations.append({"ticker":ticker,"field":"top_holdings_concentration_pct","value":concentration,"source":"yfinance.funds_data"})
+                observations.extend([
+                    {"ticker":ticker,"field":"direct_top_holdings_concentration_pct","value":concentration,"source":"yfinance.funds_data"},
+                    {"ticker":ticker,"field":"top_holdings_concentration_pct","value":concentration,"source":"yfinance.funds_data"},
+                ])
             if hhi is not None:
                 observations.append({"ticker":ticker,"field":"direct_sector_hhi","value":hhi,"source":"yfinance.funds_data"})
             if score is not None:
-                observations.append({"ticker":ticker,"field":"diversification_direct_score","value":score,"source":"yfinance.funds_data"})
+                observations.extend([
+                    {"ticker":ticker,"field":"direct_diversification_score","value":score,"source":"yfinance.funds_data"},
+                    {"ticker":ticker,"field":"diversification_direct_score","value":score,"source":"yfinance.funds_data"},
+                ])
             if isinstance(top,pd.DataFrame) and not top.empty:
-                observations.append({"ticker":ticker,"field":"top_holdings_observed_count","value":int(len(top)),"source":"yfinance.funds_data"})
+                observations.extend([
+                    {"ticker":ticker,"field":"direct_holdings_count","value":int(len(top)),"source":"yfinance.funds_data"},
+                    {"ticker":ticker,"field":"top_holdings_observed_count","value":int(len(top)),"source":"yfinance.funds_data"},
+                ])
             if concentration is None and hhi is None:
                 failures.append({"ticker":ticker,"reason":"NO_FUND_STRUCTURE_DATA"})
         except Exception as exc:
