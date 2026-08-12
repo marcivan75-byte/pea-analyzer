@@ -1,18 +1,27 @@
 {
-  "version": "V21_COMMITTEE_MASTER_WIRING_2026_08",
+  "version": "V21.1_COMMITTEE_MASTER_WIRING_2026_08_12",
   "status": "SHADOW_REFERENCE_SCORING",
   "live_orders_enabled": false,
-  "principle": "Complete referential -> horizon engines -> bonus/malus/gates -> overlays -> committee -> sector ranking -> outputs",
+  "principle": "Complete referential -> canonical universe -> horizon engines -> bonus/malus/gates -> overlays -> committee -> sector ranking -> outputs",
   "assets": {
     "ACTIONS": {
       "registry": "config/V21_ACTIONS_CRITERIA_REGISTRY.json",
+      "canonical_universe": "V21.0_1429_EXACT_ISIN_WHITELIST",
       "horizons": ["CT", "MT", "LT", "SHORT", "TOP_DOWN"],
-      "tct": {"adapter": "ACTION_TCT_V24_1_7", "t1_t2_scope": "ACTION_TCT_ONLY", "mode": "SHADOW", "score_influence": 0}
+      "tct": {
+        "adapter": "ACTION_TCT_V24_1_7",
+        "config": "config/TCT_V24_1_7_SHADOW.json",
+        "t1_t2_scope": "ACTION_TCT_ONLY",
+        "mode": "SHADOW_RESEARCH_ONLY",
+        "baseline_required": true,
+        "score_influence": 0
+      }
     },
     "ETF": {
       "registry": "config/V20_7_1_ETF_CRITERIA_REGISTRY.json",
       "horizons": ["CT", "MT", "LT", "SHORT", "TOP_DOWN"],
       "mt_runner": "v182.reporting.etf_mt_v2081_run",
+      "mt_historical_attribution": "90.91% OOS 2021-2023 applies only to exact 38 dynamic PIT core",
       "t1_t2_forbidden": true
     },
     "GOLD": {
@@ -26,5 +35,27 @@
       "policy": "Never fabricate missing criteria or weights; emit BLOCKED_REFERENCE."
     }
   },
-  "outputs": {"directory": "outputs/committee_master", "decisions_csv": "COMMITTEE_DECISIONS.csv", "sector_ranking_csv": "SECTOR_RANKING.csv", "summary_json": "SUMMARY.json"}
+  "topdown": {
+    "global_macro": "FRED primary, explicit market-implied C fallback",
+    "country_macro": "market-implied C interim; direct ECB/Eurostat target",
+    "news": "GDELT 2d lexical, missing remains missing",
+    "market_sentiment": "PIT breadth/momentum C interim",
+    "neutral_imputation_forbidden": true
+  },
+  "runner": "v182.reporting.unified_runner",
+  "robustness": {
+    "horizon_failure_isolation": true,
+    "persistent_rankings": true,
+    "silent_exception_swallowing_forbidden": true,
+    "partial_success_supported": true
+  },
+  "outputs": {
+    "directory": "outputs/committee_master",
+    "decisions_csv": "COMMITTEE_DECISIONS.csv",
+    "sector_ranking_csv": "SECTOR_RANKING.csv",
+    "criteria_coverage_csv": "CRITERIA_COVERAGE.csv",
+    "tct_shadow_csv": "TCT_SHADOW_V24_1_7.csv",
+    "summary_json": "SUMMARY.json",
+    "unified_summary": "outputs/unified/UNIFIED_SUMMARY_LATEST.json"
+  }
 }

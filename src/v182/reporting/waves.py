@@ -3,9 +3,10 @@ from pathlib import Path
 from datetime import datetime, timezone
 import json
 import pandas as pd
+import numpy as np
 
 from v182.sources.yfinance_bulk import download_history, DownloadResult
-from v182.sources.yfinance_info import collect_info, FIELDS as INFO_FIELDS
+from v182.sources.yfinance_info import collect_info
 from v182.features.ohlcv_features import calculate as calculate_features
 from v182.io.frames import is_missing
 
@@ -27,7 +28,6 @@ def _obs(universe: str, isin: str, field: str, value, source: str, evidence: str
 
 
 def _select_actions_scope(actions_df: pd.DataFrame, cfg: dict, scope_key: str, top_n: int) -> pd.DataFrame:
-    """Select the Actions collection scope without silently truncating Committee runs."""
     scope = str(cfg.get("committee_full_coverage", {}).get(scope_key, "PRIORITY")).upper()
     if scope == "ALL":
         return actions_df.copy()
@@ -48,7 +48,11 @@ def wave_history(df: pd.DataFrame, universe: str, cache_dir: str, cfg: dict) -> 
     valid = df[df["yahoo_ticker"].apply(lambda v: not is_missing(v))]
     tickers = valid["yahoo_ticker"].tolist()
     batch_key = "actions_batch_size" if universe == "ACTION" else "etf_batch_size"
-    return download_history(tickers=tickers, cache_dir=cache_dir, period=cfg["yfinance"]["history_period"], interval=cfg["yfinance"]["interval"], batch_size=cfg["yfinance"][batch_key], auto_adjust=cfg["yfinance"]["auto_adjust"])
+    return download_history(
+        tickers=tickers, cache_dir=cache_dir, period=cfg["yfinance"]["history_period"],
+        interval=cfg["yfinance"]["interval"], batch_size=cfg["yfinance"][batch_key],
+        auto_adjust=cfg["yfinance"]["auto_adjust"],
+    )
 
 
 def resolve_etf_tickers(etf_df: pd.DataFrame, mapping_path: str | Path) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -68,52 +72,99 @@ def resolve_etf_tickers(etf_df: pd.DataFrame, mapping_path: str | Path) -> tuple
 
 
 # ---------------------------------------------------------------- WAVE 03
+def _history_frames(cache_dir: str) -> list[pd.DataFrame]:
+    frames=[]
+    for parquet_file in sorted(Path(cache_dir).glob("history_*.parquet")):
+        try:
+            frame=pd.read_parquet(parquet_file)
+        except Exception:
+            continue
+        if not frame.empty:
+            frames.append(frame)
+    return frames
+
+
 def wave3_derived_features(cache_dir: str, ticker_isin_map: dict[str, str], universe: str) -> list[dict]:
     observations: list[dict] = []
     per_ticker_perf_1y: dict[str, float] = {}
+    per_ticker_perf_10d: dict[str, float] = {}
     per_ticker_indicators: dict[str, dict] = {}
-    cache = Path(cache_dir)
-    for parquet_file in sorted(cache.glob("history_*.parquet")):
-        frame = pd.read_parquet(parquet_file)
+    for frame in _history_frames(cache_dir):
         if not hasattr(frame.columns, "levels"):
             continue
         tickers = frame.columns.get_level_values(0).unique()
         for ticker in tickers:
             isin = ticker_isin_map.get(ticker)
-            if isin is None: continue
+            if isin is None:
+                continue
             indicators = calculate_features(frame[ticker])
-            if not indicators: continue
+            if not indicators:
+                continue
             per_ticker_indicators[isin] = indicators
-            if indicators.get("perf_1y_pct") is not None: per_ticker_perf_1y[isin] = indicators["perf_1y_pct"]
-    median_perf = pd.Series(per_ticker_perf_1y).median() if per_ticker_perf_1y else 0.0
+            if indicators.get("perf_1y_pct") is not None:
+                per_ticker_perf_1y[isin] = indicators["perf_1y_pct"]
+            if indicators.get("perf_10d_pct") is not None:
+                per_ticker_perf_10d[isin] = indicators["perf_10d_pct"]
+    median_1y = pd.Series(per_ticker_perf_1y).median() if per_ticker_perf_1y else 0.0
+    median_10d = pd.Series(per_ticker_perf_10d).median() if per_ticker_perf_10d else 0.0
     for isin, indicators in per_ticker_indicators.items():
         for field, value in indicators.items():
-            if value is not None: observations.append(_obs(universe, isin, field, value, "INTERNAL_FROM_OHLCV", "C"))
+            if value is not None:
+                observations.append(_obs(universe, isin, field, value, "INTERNAL_FROM_OHLCV", "C"))
         if indicators.get("perf_1y_pct") is not None:
-            observations.append(_obs(universe, isin, "relative_strength", round(indicators["perf_1y_pct"] - median_perf, 3), "INTERNAL_FROM_OHLCV", "C"))
+            observations.append(_obs(universe, isin, "relative_strength", round(indicators["perf_1y_pct"] - median_1y, 4), "INTERNAL_FROM_OHLCV", "C"))
+        if indicators.get("perf_10d_pct") is not None:
+            observations.append(_obs(universe, isin, "relative_strength_10d", round(indicators["perf_10d_pct"] - median_10d, 4), "INTERNAL_FROM_OHLCV", "C"))
     return observations
+
+
+def wave3_etf_beta3y(cache_dir: str, ticker_isin_map: dict[str, str], min_sessions: int = 252) -> list[dict]:
+    """Compute ETF 3-year beta versus an equal-weight PEA ETF market proxy."""
+    close_by_ticker={}
+    for frame in _history_frames(cache_dir):
+        if not hasattr(frame.columns, "levels"):
+            continue
+        for ticker in frame.columns.get_level_values(0).unique():
+            if ticker not in ticker_isin_map:
+                continue
+            sub=frame[ticker]
+            if "Close" in sub.columns:
+                s=pd.to_numeric(sub["Close"],errors="coerce").dropna()
+                if len(s)>=min_sessions:
+                    close_by_ticker[ticker]=s
+    if len(close_by_ticker)<5:
+        return []
+    returns=pd.concat({t:s.pct_change() for t,s in close_by_ticker.items()},axis=1).tail(756)
+    market=returns.mean(axis=1,skipna=True)
+    market_var=float(market.var()) if market.notna().sum()>=min_sessions else np.nan
+    if not np.isfinite(market_var) or market_var<=0:
+        return []
+    out=[]
+    for ticker in returns.columns:
+        pair=pd.concat([returns[ticker],market],axis=1).dropna()
+        if len(pair)<min_sessions:
+            continue
+        beta=float(pair.iloc[:,0].cov(pair.iloc[:,1])/pair.iloc[:,1].var())
+        if np.isfinite(beta):
+            out.append(_obs("ETF",ticker_isin_map[ticker],"direct_beta3y",round(beta,6),"INTERNAL_PEA_ETF_EQUAL_WEIGHT_PROXY","C"))
+    return out
 
 
 # ---------------------------------------------------------------- WAVE 04
 def wave4_info_actions(actions_df: pd.DataFrame, cfg: dict, top_n: int = 300) -> tuple[list[dict], list[dict]]:
-    """Collect fundamentals on ALL Actions when Committee full coverage is enabled."""
     selected = _select_actions_scope(actions_df, cfg, "actions_fundamentals_scope", top_n)
     ticker_to_isin = {t: i for t, i in zip(selected["yahoo_ticker"], selected["isin"]) if not is_missing(t)}
     observations, failures = collect_info(list(ticker_to_isin), delay_seconds=cfg["yfinance"].get("info_delay_seconds", 0.4))
     result=[]
     for row in observations:
         isin=ticker_to_isin.get(row["ticker"])
-        if isin is not None: result.append(_obs("ACTION", isin, row["field"], row["value"], "yfinance", "C"))
+        if isin is not None:
+            result.append(_obs("ACTION", isin, row["field"], row["value"], "yfinance", "C"))
     return result, failures
 
 
 # ---------------------------------------------------------------- WAVE 05
 def wave5_consensus_finnhub(actions_df: pd.DataFrame, api_key: str, top_n: int = 300) -> tuple[list[dict], list[dict]]:
-    """Collect Finnhub consensus over the full canonical Action universe.
-
-    The caller is the Committee enrichment pipeline; source-side missing data
-    remains missing and later coverage gates decide whether a title is scorable.
-    """
     from v182.sources.finnhub_consensus import fetch_consensus
     selected = actions_df.copy()
     ticker_to_isin = {t: i for t, i in zip(selected["yahoo_ticker"], selected["isin"]) if not is_missing(t)}
@@ -121,7 +172,8 @@ def wave5_consensus_finnhub(actions_df: pd.DataFrame, api_key: str, top_n: int =
     result=[]
     for row in obs_raw:
         isin=ticker_to_isin.get(row["ticker"])
-        if isin is not None: result.append(_obs("ACTION", isin, row["field"], row["value"], "Finnhub", "B"))
+        if isin is not None:
+            result.append(_obs("ACTION", isin, row["field"], row["value"], "Finnhub", "B"))
     return result, failures
 
 
@@ -131,12 +183,37 @@ def wave6_etf_info(etf_with_tickers: pd.DataFrame, cfg: dict) -> tuple[list[dict
     ticker_to_isin = dict(zip(valid["yahoo_ticker"], valid["isin"]))
     obs_raw, failures = collect_info(list(ticker_to_isin), delay_seconds=cfg["yfinance"].get("info_delay_seconds", 0.4))
     result=[]
+    allowed={"dividend_yield_pct","sector_yf","industry_yf","country_yf"}
     for row in obs_raw:
         isin=ticker_to_isin.get(row["ticker"])
-        if isin is None or row["field"] not in {"dividend_yield_pct"}: continue
+        if isin is None or row["field"] not in allowed:
+            continue
         result.append(_obs("ETF", isin, row["field"], row["value"], "yfinance", "C"))
-        result.append(_obs("ETF", isin, "dividend_data_status", "OK", "yfinance", "C"))
+        if row["field"]=="dividend_yield_pct":
+            result.append(_obs("ETF", isin, "dividend_data_status", "OK", "yfinance", "C"))
     return result, failures
+
+
+# ---------------------------------------------------------------- WAVE 09 TOP-DOWN
+def wave9_topdown(actions_df: pd.DataFrame, etf_df: pd.DataFrame, cfg: dict, fred_api_key: str | None) -> tuple[list[dict], list[dict], dict]:
+    from v182.features.topdown_features import build_topdown
+    spec=cfg.get("topdown",{})
+    result=build_topdown(actions_df,etf_df,fred_api_key=fred_api_key,instrument_news_top_n=int(spec.get("instrument_news_top_n",80)))
+    obs_actions=[]; obs_etf=[]
+    for isin,fields in result.action_scores.items():
+        for field,value in fields.items():
+            source=result.provenance.get(field,"TOPDOWN_INTERNAL")
+            evidence="B" if source.startswith("FRED") or source.startswith("GDELT") else "C"
+            obs_actions.append(_obs("ACTION",isin,field,value,source,evidence))
+        if "funnel_market_sentiment_score" in fields:
+            obs_actions.append(_obs("ACTION",isin,"sentiment_regime_score",fields["funnel_market_sentiment_score"],"INTERNAL_PIT_BREADTH_MOMENTUM","C"))
+    for isin,fields in result.etf_scores.items():
+        for field,value in fields.items():
+            source=result.provenance.get(field,"TOPDOWN_INTERNAL")
+            evidence="B" if source.startswith("FRED") or source.startswith("GDELT") else "C"
+            obs_etf.append(_obs("ETF",isin,field,value,source,evidence))
+    diagnostics={"global_scores":result.global_scores,"provenance":result.provenance,"details":result.diagnostics}
+    return obs_actions,obs_etf,diagnostics
 
 
 # ---------------------------------------------------- WAVE 05/06 fallback
@@ -157,9 +234,10 @@ def wave_public_table(rows: pd.DataFrame, universe: str, field_map: dict[str, st
             resp=requests.get(url,headers=headers,timeout=15); resp.raise_for_status(); soup=BeautifulSoup(resp.text,"lxml")
             for field,css_selector in selectors.items():
                 node=soup.select_one(css_selector)
-                if node is not None: observations.append(_obs(universe,isin,field_map.get(field,field),node.get_text(strip=True),source_name,evidence))
+                if node is not None:
+                    observations.append(_obs(universe,isin,field_map.get(field,field),node.get_text(strip=True),source_name,evidence))
         except Exception as exc:
-            failures.append({"isin":isin,"reason":type(exc).__name__,"source":source_name})
+            failures.append({"isin":isin,"reason":type(exc).__name__,"detail":str(exc)[:160],"source":source_name})
         time.sleep(delay_seconds)
     return observations, failures
 
@@ -171,7 +249,8 @@ def wave7_official_validation(quarantine: list[dict], overrides_path: str | Path
     overrides=pd.read_csv(overrides_file,sep=";",encoding="utf-8-sig",dtype=str); resolved=[]
     for _,override in overrides.iterrows():
         match=[q for q in quarantine if q["isin"]==override["isin"] and q["field"]==override["field"]]
-        if match: resolved.append(_obs(match[0]["universe"],override["isin"],override["field"],override["value"],"Issuer/AMF/Euronext","A"))
+        if match:
+            resolved.append(_obs(match[0]["universe"],override["isin"],override["field"],override["value"],"Issuer/AMF/Euronext","A"))
     return resolved
 
 

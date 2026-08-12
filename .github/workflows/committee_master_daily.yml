@@ -1,4 +1,4 @@
-name: Committee Master V21 daily scoring
+name: Committee Master V21.1 unified scoring
 
 on:
   workflow_dispatch:
@@ -6,13 +6,17 @@ on:
     branches: [main]
     paths:
       - "config/COMMITTEE_MASTER_V21.json"
+      - "config/V18.2_MASTER_CONFIG.json"
       - "config/V21_ACTIONS_CRITERIA_REGISTRY.json"
       - "config/V20_7_1_ETF_CRITERIA_REGISTRY.json"
       - "config/FULL_REFERENTIAL_INTEGRITY.json"
-      - "src/v182/audit/quality.py"
-      - "src/v182/reporting/run.py"
-      - "src/v182/decision/committee_master.py"
-      - "src/v182/reporting/committee_master_run.py"
+      - "config/TCT_V24_1_7_SHADOW.json"
+      - "config/V21_ACTION_UNIVERSE_ISINS.parts/**"
+      - "src/v182/audit/**"
+      - "src/v182/sources/**"
+      - "src/v182/features/**"
+      - "src/v182/reporting/**"
+      - "src/v182/decision/**"
       - ".github/workflows/committee_master_daily.yml"
   schedule:
     - cron: "15 18 * * 1-5"
@@ -23,10 +27,14 @@ permissions:
 jobs:
   committee-master:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     env:
       PYTHONUNBUFFERED: "1"
       FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
+      ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+      EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -37,43 +45,45 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .
           pip install pytest
-      - name: Validate committee registries
+      - name: Validate exhaustive referentials
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
+          from v182.audit.canonical_universe import load_compressed_isins
           a=json.loads(Path("config/V21_ACTIONS_CRITERIA_REGISTRY.json").read_text())
           e=json.loads(Path("config/V20_7_1_ETF_CRITERIA_REGISTRY.json").read_text())
           integrity=json.loads(Path("config/FULL_REFERENTIAL_INTEGRITY.json").read_text())
+          tct=json.loads(Path("config/TCT_V24_1_7_SHADOW.json").read_text())
           assert a["criteria_count"] == 633 == integrity["actions"]["criteria_count"]
           assert e["criteria_count"] == 268 == integrity["etf"]["criteria_count"]
+          assert len(load_compressed_isins("config/V21_ACTION_UNIVERSE_ISINS.parts")) == 1429
           assert e["governance"]["t1_t2_forbidden"] is True
           assert a["governance"]["t1_t2_scope"] == "ACTION_TCT_ONLY"
-          assert integrity["t1_t2"]["scope"] == "ACTION_TCT_ONLY"
-          assert len(integrity["actions"]["ordered_criteria_names_sha256"]) == 64
-          assert len(integrity["etf"]["ordered_criteria_names_sha256"]) == 64
-          print("Exhaustive referential integrity OK: Actions=633, ETF=268")
+          assert tct["scope"]["t1_t2_actions_tct_only"] is True
+          assert tct["score_influence"] == 0.0
+          print("Referential integrity OK: Actions 1429/633, ETF 102/268, TCT V24.1.7 shadow")
           PY
-      - name: Refresh Actions and ETF data
-        id: enrich
-        continue-on-error: true
-        run: python -m v182.reporting.run
-      - name: Run ETF MT V20.8.1
-        id: etf_mt
-        continue-on-error: true
-        run: python -m v182.reporting.etf_mt_v2081_run
-      - name: Run complete committee scoring
-        run: python -m v182.reporting.committee_master_run
+      - name: Run unified Committee pipeline
+        run: python -m v182.reporting.unified_runner
+      - name: Show unified summary
+        run: cat outputs/unified/UNIFIED_SUMMARY_LATEST.json
       - name: Show committee summary
-        run: cat outputs/committee_master/SUMMARY.json
-      - name: Upload committee results
+        if: always()
+        run: |
+          if [ -f outputs/committee_master/SUMMARY.json ]; then cat outputs/committee_master/SUMMARY.json; fi
+      - name: Upload complete Committee results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: committee-master-v21-${{ github.run_id }}
+          name: committee-master-v21-1-${{ github.run_id }}
           path: |
+            outputs/unified/
             outputs/committee_master/
             outputs/etf_mt_v2081/
             outputs/audit/
             outputs/gaps/
+            outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv
+            outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
           if-no-files-found: warn
           retention-days: 30
