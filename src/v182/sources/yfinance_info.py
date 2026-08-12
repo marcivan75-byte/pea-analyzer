@@ -2,6 +2,8 @@ from __future__ import annotations
 from typing import Any
 import time
 
+# Raw yfinance fields are kept under stable V18.2 names. The Committee Master
+# resolves them to canonical V21 criteria through explicit semantic aliases.
 FIELDS = {
     "marketCap":"market_cap",
     "trailingPE":"per_ttm_yf",
@@ -10,17 +12,23 @@ FIELDS = {
     "returnOnEquity":"roe_api",
     "returnOnAssets":"roa",
     "debtToEquity":"debt_to_equity",
+    "totalDebt":"total_debt_yf",
+    "ebitda":"ebitda_yf",
     "freeCashflow":"free_cash_flow",
     "operatingMargins":"marge_ebit",
     "profitMargins":"marge_nette",
+    "revenueGrowth":"revenue_growth_yf",
+    "earningsGrowth":"earnings_growth_yf",
     "targetMeanPrice":"target_mean_yf",
     "targetHighPrice":"target_high_yf",
     "targetLowPrice":"target_low_yf",
+    "currentPrice":"current_price_yf",
     "numberOfAnalystOpinions":"n_analysts_yf",
     "recommendationMean":"recommendation_mean_yf",
     "recommendationKey":"recommendation_key_yf",
     "beta":"beta",
     "dividendYield":"dividend_yield_pct",
+    "payoutRatio":"payout_ratio",
 }
 
 def collect_info(tickers: list[str], delay_seconds: float = 0.4) -> tuple[list[dict], list[dict]]:
