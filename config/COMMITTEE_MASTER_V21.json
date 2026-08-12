@@ -49,14 +49,24 @@
       "t1_t2_forbidden": true
     },
     "GOLD": {
-      "status": "BLOCKED_REFERENCE_UNTIL_102_CRITERIA_REGISTRY_PRESENT",
-      "required_registry": "config/GOLD_V1_102_CRITERIA.json",
+      "status": "SHADOW_RESEARCH_ONLY",
+      "required_registry": "config/GOLD_V1_1_102_CRITERIA.json",
+      "runner": "v182.decision.gold_v1_1",
+      "committee_bridge": "v182.reporting.committee_master_gold_v1_1",
+      "outside_pea": true,
+      "t1_t2_forbidden": true,
+      "live_orders_enabled": false,
+      "criteria_count": 102,
+      "contribution_blocks": 11,
       "minimum_coverage": 0.7,
+      "primary_price": "XAU_EUR",
+      "secondary_price": "XAU_USD",
       "horizons": {
         "TACTICAL_2_12W": {"technical": 0.45, "macro": 0.25, "flows": 0.20, "positioning": 0.10},
         "STRATEGIC_6_24M": {"real_rates_usd": 0.25, "central_banks": 0.20, "gold_etf_flows": 0.20, "cftc": 0.15, "stress_geopolitics": 0.10, "technical": 0.10}
       },
-      "policy": "Never fabricate missing criteria or weights; emit BLOCKED_REFERENCE."
+      "quality": {"qds_or_required_for_buy_reinforce": 70, "data_trust_required_for_committee": 70},
+      "policy": "Preserve source-backed top-level family weights. Missing observations remain MISSING. Reconstructed intra-block weights are provisional until dedicated PIT backtest. No performance claim and no real order."
     }
   },
   "topdown": {
@@ -81,6 +91,10 @@
     "tct_baseline_csv": "TCT_BASELINE_V24_1_7.csv",
     "tct_shadow_csv": "TCT_SHADOW_V24_1_7.csv",
     "tct_state_json": "state/TCT_V24_1_7_T1_STATE.json",
+    "gold_decision_json": "outputs/gold_v1_1/GOLD_V1_1_DECISION.json",
+    "gold_criteria_csv": "outputs/gold_v1_1/GOLD_V1_1_CRITERIA.csv",
+    "gold_sources_csv": "outputs/gold_v1_1/GOLD_V1_1_SOURCE_STATUS.csv",
+    "gold_history_csv": "state/GOLD_V1_1_SHADOW_HISTORY.csv",
     "summary_json": "SUMMARY.json",
     "unified_summary": "outputs/unified/UNIFIED_SUMMARY_LATEST.json"
   }
