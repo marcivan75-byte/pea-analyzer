@@ -29,31 +29,30 @@
     "actions_consensus_scope": "ALL",
     "policy": "Collect the full canonical Actions universe for Committee scoring; missing source data remains missing and is never imputed."
   },
+  "canonical_universe": {
+    "actions_reference_version": "V21.0",
+    "actions_expected_count": 1429,
+    "actions_whitelist_path": "config/V21_ACTION_UNIVERSE_ISINS.txt",
+    "strict_when_whitelist_present": true,
+    "do_not_filter_by_count_only": true
+  },
+  "topdown": {
+    "enabled": true,
+    "instrument_news_top_n": 80,
+    "news_window": "2d",
+    "neutral_imputation_forbidden": true,
+    "global_macro_primary": "FRED",
+    "country_macro_direct_target": "ECB_EUROSTAT",
+    "country_macro_interim": "MARKET_IMPLIED_COUNTRY_REGIME_C",
+    "news_primary": "GDELT",
+    "market_sentiment_interim": "INTERNAL_PIT_BREADTH_MOMENTUM_C"
+  },
   "derived_features": [
-    "perf_1m_pct",
-    "perf_3m_pct",
-    "perf_6m_pct",
-    "perf_1y_pct",
-    "perf_3y_pct",
-    "perf_5y_pct",
-    "mm20",
-    "mm50",
-    "mm100",
-    "mm200",
-    "rsi14",
-    "macd",
-    "macd_signal",
-    "macd_hist",
-    "atr14",
-    "bb_mid",
-    "bb_upper",
-    "bb_lower",
-    "rvol20",
-    "volatility_20d",
-    "volatility_60d",
-    "max_drawdown_1y",
-    "relative_strength",
-    "positive_reversal_flag"
+    "perf_10d_pct","perf_1m_pct","perf_3m_pct","perf_6m_pct","perf_1y_pct","perf_3y_pct","perf_5y_pct",
+    "mm20","mm50","mm100","mm200","rsi14","macd","macd_signal","macd_hist","macd_hist_3d_ago","macd_hist_change_3d",
+    "atr14","atr14_pct","opening_gap_pct","bb_mid","bb_upper","bb_lower","bb_bandwidth","bb_breakout_cross_flag","bb_breakout_hold_flag",
+    "bb_squeeze_fraction_8","bb_bandwidth_expansion_ratio","stoch_k","stoch_d","stoch_bull_cross_flag","rvol20","rvol20_3d_avg",
+    "volatility_20d","volatility_60d","volatility_1y_pct","max_drawdown_1y","relative_strength","relative_strength_10d","positive_reversal_flag"
   ],
   "fallback_policy": [
     ["OHLCV","yfinance","Marketstack","Alpha Vantage","Issuer/Euronext"],
@@ -62,7 +61,7 @@
     ["ETF_COSTS_AUM","ABC Bourse","Issuer/KID","Boursorama",""],
     ["ETF_MORNINGSTAR","Boursorama","Morningstar-authorized source","",""],
     ["NEWS_EVENTS","AMF/Issuer","Finnhub","GDELT","Boursorama/Zonebourse"],
-    ["MACRO","FRED","","",""],
+    ["MACRO","FRED","ECB/Eurostat","market-implied C fallback",""],
     ["ENERGY","EIA","","",""]
   ],
   "merge_policy": {
@@ -74,7 +73,7 @@
   },
   "execution_gate": "SHADOW_BLOCKED",
   "quality_gates": {
-    "actions_min_rows": 1486,
+    "actions_min_rows": 1429,
     "etf_min_rows": 102,
     "ticker_coverage_min_pct": 100.0,
     "ohlcv_success_min_pct": 90.0,
