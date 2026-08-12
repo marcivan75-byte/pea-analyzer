@@ -1,4 +1,4 @@
-name: Committee Master V21.4 audited unified scoring
+name: Committee Master V21.5 hardened unified scoring
 
 on:
   workflow_dispatch:
@@ -47,8 +47,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: state/provenance/
-          key: provenance-v214-${{ github.run_id }}
+          key: provenance-v215-${{ github.run_id }}
           restore-keys: |
+            provenance-v215-
             provenance-v214-
       - name: Restore V21.4 virtual performance state
         uses: actions/cache/restore@v4
@@ -68,12 +69,13 @@ jobs:
         run: |
           python -m compileall -q src
           python -m v182.audit.static_code_audit --root . --output outputs/audit/PYTHON_STATIC_AUDIT.json --fail-high
-      - name: Validate exhaustive referentials
+      - name: Validate exhaustive referentials and real Action input
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          from v182.audit.canonical_universe import load_compressed_isins
+          import pandas as pd
+          from v182.audit.canonical_universe import load_compressed_isins, filter_actions
           from v182.decision.tct_baseline_v24_1_8 import NORMALIZATION_POLICY
           from v182.decision.tct_timing_exact_v24_1_7 import FORMULA_VERSION, T1_WEIGHTS, T2_WEIGHTS
           a=json.loads(Path("config/V21_ACTIONS_CRITERIA_REGISTRY.json").read_text())
@@ -87,6 +89,10 @@ jobs:
           assert integrity["actions"]["universe_count"] == 1829
           assert e["criteria_count"] == 268 == integrity["etf"]["criteria_count"]
           assert len(load_compressed_isins("config/V21_3_ACTION_UNIVERSE_1829_ISINS.parts")) == 1829
+          legacy=pd.read_csv("inputs/V18.2_PEA_ACTIONS_MASTER.csv",sep=";",encoding="utf-8-sig",dtype=str,low_memory=False)
+          materialized=filter_actions(legacy,"config/V21_3_ACTION_UNIVERSE_1829_ISINS.parts")
+          assert len(materialized.included)==1829
+          assert materialized.included["isin"].nunique()==1829
           for h in ("CT","MT","LT","SHORT","TOP_DOWN"):
               assert abs(sum(a["weights"][h].values())-1.0) < 1e-6
           assert a["governance"]["positive_unvalidated_overlay_can_create_buy"] is False
@@ -105,12 +111,14 @@ jobs:
           assert g["governance"]["contribution_blocks"] == 11
           assert mm["entry_execution_rule"] == "NEXT_RUN_OBSERVED_PRICE_AFTER_SIGNAL_DATE"
           assert mm["single_position_per_isin"] is True
-          print("V21.4 integrity OK: Actions 1829/633, ETF 102/268, TCT, Gold, bias-safe virtual book")
+          print(f"V21.5 integrity OK: Actions 1829/633 (materialized identity-only={materialized.materialized_missing_count}), ETF 102/268, TCT, Gold, bias-safe virtual book")
           PY
       - name: Run unified Committee pipeline
         run: python -m v182.reporting.unified_runner
       - name: Show unified summary
-        run: cat outputs/unified/UNIFIED_SUMMARY_LATEST.json
+        if: always()
+        run: |
+          if [ -f outputs/unified/UNIFIED_SUMMARY_LATEST.json ]; then cat outputs/unified/UNIFIED_SUMMARY_LATEST.json; fi
       - name: Show committee summary
         if: always()
         run: |
@@ -136,18 +144,18 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: state/provenance/
-          key: provenance-v214-${{ github.run_id }}
+          key: provenance-v215-${{ github.run_id }}
       - name: Save V21.4 virtual performance state
         if: ${{ always() && hashFiles('state/committee_performance_v21_4/**') != '' }}
         uses: actions/cache/save@v4
         with:
           path: state/committee_performance_v21_4/
           key: committee-performance-v214-${{ github.run_id }}
-      - name: Upload complete Committee V21.4 results
+      - name: Upload complete Committee V21.5 results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: committee-master-v21-4-${{ github.run_id }}
+          name: committee-master-v21-5-${{ github.run_id }}
           path: |
             outputs/unified/
             outputs/committee_master/
