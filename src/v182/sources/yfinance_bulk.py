@@ -6,6 +6,7 @@ import logging
 import time
 
 logger = logging.getLogger(__name__)
+PRICE_FIELDS={"open","high","low","close","adj close"}
 
 
 @dataclass(frozen=True)
@@ -16,12 +17,53 @@ class DownloadResult:
     cache_file: str | None
 
 
+def _has_observed_price(frame) -> bool:
+    if frame is None or frame.empty:
+        return False
+    columns=list(frame.columns)
+    price_columns=[c for c in columns if str(c).strip().lower() in PRICE_FIELDS]
+    if not price_columns:
+        return False
+    return bool(frame[price_columns].notna().to_numpy().any())
+
+
 def _contains_ticker(frame, ticker: str) -> bool:
+    """A ticker is successful only when at least one real OHLC price is present.
+
+    yfinance may return a MultiIndex column block for a failed/delisted symbol
+    with every value equal to NaN. Presence of the ticker label alone is therefore
+    not evidence of a successful download.
+    """
     if frame is None or frame.empty:
         return False
     if hasattr(frame.columns, "levels"):
-        return ticker in frame.columns.get_level_values(0)
-    return True
+        for level in range(frame.columns.nlevels):
+            if ticker in frame.columns.get_level_values(level):
+                try:
+                    sub=frame.xs(ticker,axis=1,level=level,drop_level=True)
+                except (KeyError,ValueError):
+                    return False
+                return _has_observed_price(sub)
+        return False
+    return _has_observed_price(frame)
+
+
+def _clear_history_cache(cache:Path)->None:
+    """Remove prior-run OHLCV payloads before a fresh full-history download.
+
+    Current callers request the complete 5y window on every run. Keeping old
+    retry parquet files can therefore reintroduce stale observations when the
+    same ticker fails in the current run. Cleanup failure is fatal rather than
+    silently mixing vintages.
+    """
+    targets=list(cache.glob("history_*.parquet"))
+    manifest=cache/"history_manifest.json"
+    if manifest.exists(): targets.append(manifest)
+    for path in targets:
+        try:
+            path.unlink()
+        except OSError as exc:
+            raise RuntimeError(f"YFINANCE_CACHE_CLEANUP_FAILED:{path.name}:{type(exc).__name__}") from exc
 
 
 def _resolve_actions_requested(cache_dir: str, include_actions: bool | None) -> bool:
@@ -54,6 +96,7 @@ def download_history(
     failure_details: list[dict] = []
     cache = Path(cache_dir)
     cache.mkdir(parents=True, exist_ok=True)
+    _clear_history_cache(cache)
     actions_requested=_resolve_actions_requested(cache_dir,include_actions)
 
     for start in range(0, len(clean), batch_size):
@@ -107,7 +150,7 @@ def _retry_individual(yf, tickers, cache: Path, batch_start: int, period: str, i
                     failure_details.append({"scope":"retry_cache","ticker":ticker,"error":type(exc).__name__,"detail":str(exc)[:180]})
             else:
                 failed.append(ticker)
-                failure_details.append({"scope":"ticker","ticker":ticker,"error":"EMPTY_OR_PARTIAL"})
+                failure_details.append({"scope":"ticker","ticker":ticker,"error":"EMPTY_OR_NO_PRICE_DATA"})
         except Exception as exc:
             failed.append(ticker)
             logger.debug("yfinance ticker retry failed for %s: %s: %s",ticker,type(exc).__name__,exc)
