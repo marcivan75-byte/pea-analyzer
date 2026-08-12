@@ -32,10 +32,11 @@ def download_history(
     batch_size: int = 100,
     auto_adjust: bool = True,
 ) -> DownloadResult:
-    """Download OHLCV in batches with observable non-blocking failures.
+    """Download OHLCV plus observed corporate actions in batches.
 
-    A failed batch is retried ticker-by-ticker once. Failures are logged with
-    their exception type; no `except: pass` hides cache/network problems.
+    Dividends/splits are requested with `actions=True` so dividend continuity and
+    3-year CAGR can be derived from the same PIT history. A failed batch is
+    retried ticker-by-ticker once. Cache/network failures are observable.
     """
     import yfinance as yf
 
@@ -51,7 +52,7 @@ def download_history(
         try:
             frame = yf.download(
                 tickers=batch, period=period, interval=interval, group_by="ticker",
-                auto_adjust=auto_adjust, threads=True, progress=False, timeout=30,
+                auto_adjust=auto_adjust, actions=True, threads=True, progress=False, timeout=30,
             )
             output = cache / f"history_{start:05d}.parquet"
             try:
@@ -75,7 +76,7 @@ def download_history(
     successful=sorted(set(successful))
     failed=sorted(set(failed)-set(successful))
     manifest = cache / "history_manifest.json"
-    payload={"requested":len(clean),"successful":successful,"failed":failed,"failure_details":failure_details}
+    payload={"requested":len(clean),"successful":successful,"failed":failed,"failure_details":failure_details,"actions_requested":True}
     try:
         manifest.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception as exc:
@@ -87,7 +88,7 @@ def download_history(
 def _retry_individual(yf, tickers, cache: Path, batch_start: int, period: str, interval: str, auto_adjust: bool, successful: list[str], failed: list[str], failure_details: list[dict]) -> None:
     for offset,ticker in enumerate(tickers):
         try:
-            frame=yf.download(tickers=[ticker],period=period,interval=interval,group_by="ticker",auto_adjust=auto_adjust,threads=False,progress=False,timeout=30)
+            frame=yf.download(tickers=[ticker],period=period,interval=interval,group_by="ticker",auto_adjust=auto_adjust,actions=True,threads=False,progress=False,timeout=30)
             if _contains_ticker(frame,ticker):
                 successful.append(ticker)
                 try:

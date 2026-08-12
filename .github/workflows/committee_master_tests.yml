@@ -21,6 +21,7 @@ on:
       - "tests/test_tct_v24_1_7.py"
       - "tests/test_canonical_universe_v21.py"
       - "tests/test_etf_structural_overlay.py"
+      - "tests/test_enrichment_dividends_funds.py"
       - ".github/workflows/committee_master_*.yml"
   workflow_dispatch:
 
@@ -46,6 +47,7 @@ jobs:
           python -m py_compile src/v182/audit/canonical_universe.py
           python -m py_compile src/v182/sources/yfinance_bulk.py
           python -m py_compile src/v182/sources/yfinance_info.py
+          python -m py_compile src/v182/sources/yfinance_funds.py
           python -m py_compile src/v182/sources/finnhub_consensus.py
           python -m py_compile src/v182/sources/gdelt_news.py
           python -m py_compile src/v182/sources/fred_macro.py
@@ -56,6 +58,7 @@ jobs:
           python -m py_compile src/v182/decision/etf_structural_overlay.py
           python -m py_compile src/v182/reporting/waves.py
           python -m py_compile src/v182/reporting/run.py
+          python -m py_compile src/v182/reporting/etf_structure_refresh.py
           python -m py_compile src/v182/reporting/committee_master_run.py
           python -m py_compile src/v182/reporting/unified_runner.py
       - name: Referential integrity
@@ -72,9 +75,14 @@ jobs:
           assert len(load_compressed_isins("config/V21_ACTION_UNIVERSE_ISINS.parts")) == 1429
           assert e["governance"]["t1_t2_forbidden"] is True
           assert a["governance"]["t1_t2_scope"] == "ACTION_TCT_ONLY"
+          assert e["bonus_malus"]["morningstar_bonus"]["5"] == 0.0
+          assert e["bonus_malus"]["morningstar_bonus"]["4"] == 3.0
+          assert e["bonus_malus"]["morningstar_bonus"]["3"] == 1.0
+          assert e["bonus_malus"]["risk_malus"]["6"] == -3.0
+          assert e["bonus_malus"]["risk_malus"]["7"] == -3.0
           assert e["bonus_malus"]["positive_bonus_cannot_create_buy"] is True
           assert e["bonus_malus"]["mt_core_selection_unchanged"] is True
-          print("Integrity OK: Actions=1429/633 criteria, ETF=102/268 fields, T1/T2 Action TCT only, ETF structural overlay governed")
+          print("Integrity OK: Actions=1429/633, ETF=102/268, T1/T2 Action TCT only, GitOK Morningstar/SRI rules")
           PY
       - name: Unit tests
         run: |
@@ -84,4 +92,5 @@ jobs:
             tests/test_topdown_v21.py \
             tests/test_tct_v24_1_7.py \
             tests/test_canonical_universe_v21.py \
-            tests/test_etf_structural_overlay.py
+            tests/test_etf_structural_overlay.py \
+            tests/test_enrichment_dividends_funds.py

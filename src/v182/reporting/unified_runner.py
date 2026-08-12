@@ -6,6 +6,7 @@ import json
 import logging
 
 from v182.reporting import run as enrichment_run
+from v182.reporting import etf_structure_refresh
 from v182.reporting import etf_mt_v2081_run
 from v182.reporting import committee_master_run
 
@@ -23,18 +24,20 @@ def _safe_step(name: str, func) -> dict:
 
 
 def run(root: Path=ROOT) -> dict:
-    """Recommended robust entrypoint for the current repository.
+    """Recommended robust entrypoint for V21.1.
 
-    Unlike the audited older unified runner, no ranking DataFrame is discarded:
-    ETF MT and Committee runners persist their full CSV outputs, and this summary
-    records their paths. A failed refresh or horizon does not erase results from
-    independent modules. Real orders remain disabled.
+    Refreshes the canonical data, enriches ETF structural coverage, runs the
+    unchanged V20.8.1 MT engine, then the Committee. Each step is isolated and
+    full rankings are persisted. Real orders remain disabled.
     """
     outdir=root/"outputs"/"unified"; outdir.mkdir(parents=True,exist_ok=True)
     run_id=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
 
     steps={}
     steps["refresh"]=_safe_step("refresh", enrichment_run.run)
+    # Independent observed structure enrichment. If it fails, the Committee can
+    # still run on the refreshed/static structural fields; no neutral imputation.
+    steps["etf_structure"]=_safe_step("etf_structure", lambda: etf_structure_refresh.run(root))
     steps["etf_mt"]=_safe_step("etf_mt", etf_mt_v2081_run.run)
     steps["committee"]=_safe_step("committee", lambda: committee_master_run.run(root))
 
@@ -48,7 +51,15 @@ def run(root: Path=ROOT) -> dict:
         "ranking":"outputs/etf_mt_v2081/V20.8.1_ETF_MT_RANKING.csv",
         "summary":"outputs/etf_mt_v2081/V20.8.1_ETF_MT_SUMMARY.json",
     }
-    existing={k:v for k,v in {**committee_outputs,**{f"etf_mt_{k}":v for k,v in etf_mt_outputs.items()}}.items() if (root/v).exists()}
+    structural_outputs={
+        "audit":"outputs/audit/V21_ETF_FUND_STRUCTURE.json",
+        "failures":"outputs/gaps/V21_ETF_FUND_STRUCTURE_FAILURES.csv",
+    }
+    existing={k:v for k,v in {
+        **committee_outputs,
+        **{f"etf_mt_{k}":v for k,v in etf_mt_outputs.items()},
+        **{f"etf_structure_{k}":v for k,v in structural_outputs.items()},
+    }.items() if (root/v).exists()}
 
     overall="SUCCESS" if all(step["status"]=="SUCCESS" for step in steps.values()) else "PARTIAL_SUCCESS"
     payload={
@@ -66,6 +77,7 @@ def run(root: Path=ROOT) -> dict:
         "governance":[
             "One module failure must not discard independent Committee results.",
             "Full rankings are persisted as CSV and never thrown away after aggregation.",
+            "ETF structural enrichment is observed-only; missing holdings/sector data are not imputed.",
             "T1/T2 are ACTION TCT only.",
             "ETF MT 90.91% historical OOS attribution belongs only to the 38 PIT dynamic core.",
             "No real orders are emitted."

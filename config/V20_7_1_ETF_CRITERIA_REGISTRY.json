@@ -27,8 +27,10 @@
   },
   "bonus_malus": {
     "application_layer":"COMMITTEE_AFTER_BASE_SCORE",
-    "morningstar_bonus":{"5":5.0,"4":3.0,"3":1.0,"2":0.0,"1":0.0,"unrated":0.0},
-    "risk_malus":{"1":0.0,"2":0.0,"3":0.0,"4":-1.0,"5":-3.0,"6":-5.0,"7":-7.0},
+    "morningstar_bonus":{"5":0.0,"4":3.0,"3":1.0,"2":0.0,"1":0.0,"unrated":0.0},
+    "risk_malus":{"1":0.0,"2":0.0,"3":0.0,"4":0.0,"5":0.0,"6":-3.0,"7":-3.0},
+    "morningstar_rule_reference":"V20.4 GitOK: 4★ +3, 3★ +1, all others neutral including 5★",
+    "risk_rule_reference":"V20.6 audited ETF referential: observed SRI >=6 => -3 points",
     "positive_bonus_cannot_create_buy":true,
     "risk_malus_can_downgrade":true,
     "mt_core_selection_unchanged":true,
