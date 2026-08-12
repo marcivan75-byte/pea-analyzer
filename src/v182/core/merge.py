@@ -19,13 +19,15 @@ def is_missing_value(value) -> bool:
     if value is None: return True
     try:
         marker=pd.isna(value)
-        if isinstance(marker,bool) and marker: return True
+    except (TypeError,ValueError):
+        marker=False
+    if isinstance(marker,bool):
+        if marker: return True
+    else:
         try:
             if bool(marker): return True
         except (TypeError,ValueError):
-            pass
-    except (TypeError,ValueError):
-        pass
+            marker=False
     return str(value).strip().upper() in MISSING_TOKENS
 
 
@@ -34,7 +36,7 @@ def _normalized_value(value):
     if isinstance(value,bool): return ("BOOL",value)
     if isinstance(value,numbers.Number):
         try: return ("NUMBER",Decimal(str(value)).normalize())
-        except InvalidOperation: pass
+        except InvalidOperation: return ("TEXT",str(value).strip().casefold())
     text=str(value).strip()
     try: return ("NUMBER",Decimal(text).normalize())
     except InvalidOperation: return ("TEXT",text.casefold())
