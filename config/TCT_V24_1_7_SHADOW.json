@@ -1,6 +1,8 @@
 {
   "version": "V24.1.7_T1_T2_V2_SHADOW",
   "formula_version": "T1T2_V2_2026_08",
+  "formula_source": "KIT_TCT_V24_1_7_T1_T2_V2_SHADOW_PROCESS_REFERENTIAL/src/signals/t1_t2.py",
+  "indicator_source": "KIT_TCT_V24_1_7_T1_T2_V2_SHADOW_PROCESS_REFERENTIAL/src/data/features.py",
   "asset_class": "ACTION",
   "horizon": "TCT",
   "status": "SHADOW_RESEARCH_ONLY",
@@ -57,11 +59,15 @@
       "risk_control": "t1_component_risk_control"
     },
     "gates": [
-      "compression_fraction_ge_0_80",
-      "rvol_ge_1_20",
-      "bb_upper_cross_and_non_extension",
-      "macd_hist_negative_accelerating_ge_50pct",
-      "stoch_k_gt_d_rsi_and_k_lt_70_above_sar_or_mm50",
+      "compression_fraction_ge_0_80_on_prior_8_sessions",
+      "rvol_ge_1_20_vs_prior_20_sessions",
+      "bb_upper_cross",
+      "bandwidth_expanding_current_vs_previous",
+      "non_extension_le_10pct_and_1_5atr",
+      "macd_hist_negative_and_rising_share_ge_0_50_over_3",
+      "stoch_k_gt_d_rsi_lt_70_k_lt_70_close_gt_sar_and_close_gt_mm50",
+      "quality_coverage_ge_0_80",
+      "quality_ge_70",
       "baseline_top20"
     ]
   },
@@ -92,15 +98,24 @@
     },
     "gates": [
       "exact_linked_t1_eligible",
-      "ttl_le_10_sessions",
+      "ttl_le_10_business_sessions",
       "bandwidth_current_over_t1_ge_1_15",
       "macd_hist_positive",
       "rvol_ge_1_20",
       "close_ge_max_bb_0_995_t1_0_98",
-      "relative_strength_not_degraded",
+      "relative_strength_continuation_is_quality_component_not_binary_gate",
       "non_extension_le_10pct_and_1_5atr",
-      "baseline_top20"
+      "quality_coverage_ge_0_80",
+      "quality_ge_75",
+      "baseline_top20_revalidated"
     ]
+  },
+  "state": {
+    "path": "state/TCT_V24_1_7_T1_STATE.json",
+    "persist_only_after_baseline_eligibility": true,
+    "exact_source_event_id_required_for_t2": true,
+    "ttl_sessions": 10,
+    "t2_consumes_state_only_if_current_baseline_revalidated": true
   },
   "research_entry_variant": {
     "reference": "T1_25_T2_75",
