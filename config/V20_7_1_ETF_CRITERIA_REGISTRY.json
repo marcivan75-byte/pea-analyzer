@@ -25,6 +25,17 @@
     "TOP_DOWN":{"funnel_global_macro_score":"HIGH","funnel_country_macro_score":"HIGH","funnel_global_news_score":"HIGH","funnel_country_news_score":"HIGH","funnel_sector_news_score":"HIGH","funnel_instrument_news_score":"HIGH","funnel_market_sentiment_score":"HIGH"},
     "MT_BASELINE_V20_7":{"dividend_yield_pct":"HIGH","perf_1y_pct":"HIGH","perf_3y_pct":"HIGH","ter_pct":"LOW","volatility_1y_pct":"LOW","fund_total_assets_eur_m":"HIGH","volatility_60d":"LOW","max_drawdown_1y":"HIGH","perf_3m_pct":"HIGH","perf_6m_pct":"HIGH","volume":"HIGH","relative_strength":"HIGH","direct_beta3y":"LOW","diversification_direct_score":"HIGH"}
   },
+  "bonus_malus": {
+    "application_layer":"COMMITTEE_AFTER_BASE_SCORE",
+    "morningstar_bonus":{"5":5.0,"4":3.0,"3":1.0,"2":0.0,"1":0.0,"unrated":0.0},
+    "risk_malus":{"1":0.0,"2":0.0,"3":0.0,"4":-1.0,"5":-3.0,"6":-5.0,"7":-7.0},
+    "positive_bonus_cannot_create_buy":true,
+    "risk_malus_can_downgrade":true,
+    "mt_core_selection_unchanged":true,
+    "short_risk_score_inverts_quality_bonus_and_risk_malus":true,
+    "top_down_unchanged":true,
+    "missing_value_adjustment":0.0
+  },
   "mt_dynamic_38_weights":{"perf_1m":0.024649690492993807,"perf_2m":0.025230780504615608,"perf_3m":0.05157318103146362,"momentum_accel":0.021557640431152807,"positive_days_63":0.018679950373599007,"perf_6m":0.05893735117874702,"perf_9m":0.04674313093486261,"perf_1y":0.05268237105364742,"perf_3y":0.04387442087748841,"relative_strength_6m":0.03543723070874461,"relative_strength_1y":0.038574160771483214,"dist_sma50":0.018648110372962205,"dist_sma100":0.025566400511328007,"dist_sma200":0.031289880625797614,"slope_sma50":0.03881701077634021,"slope_sma200":0.035755350715107014,"trend_alignment":0.017999680359993605,"efficiency_63":0.02610056052201121,"rsi_quality":0.02255428045108561,"macd_norm":0.021395490427909808,"macd_hist_norm":0.03107056062141121,"vol20":0.015195960303919205,"vol60":0.011756520235130402,"vol_1y":0.011306310226126203,"downside_vol60":0.013202340264046803,"maxdd_6m":0.015951800319036005,"maxdd_1y":0.01769948035398961,"current_dd_1y":0.056005191120103825,"tail_loss_126":0.011321440226428805,"sharpe_126":0.018233960364679207,"sortino_126":0.018218940364378804,"calmar_252":0.02549240050984801,"gain_to_pain_126":0.015939910318798205,"notional_volume20":0.018001750360035006,"rvol20":0.009317930186358602,"volume_trend":0.015021020300420405,"beta252":0.02754486055089721,"corr_market252":0.012652950253059006},
-  "decision_relevant_fields":["morningstar_rating","dividend_yield_pct","ter_pct","fund_total_assets_eur_m","diversification_direct_score","tracking_diff_1y_pct","spread_est_bps","direct_beta3y","distribution_policy","replication_hint"]
+  "decision_relevant_fields":["morningstar_rating","risk_indicator","dividend_yield_pct","ter_pct","fund_total_assets_eur_m","diversification_direct_score","tracking_diff_1y_pct","spread_est_bps","direct_beta3y","distribution_policy","replication_hint"]
 }

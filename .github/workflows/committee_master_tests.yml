@@ -20,6 +20,7 @@ on:
       - "tests/test_topdown_v21.py"
       - "tests/test_tct_v24_1_7.py"
       - "tests/test_canonical_universe_v21.py"
+      - "tests/test_etf_structural_overlay.py"
       - ".github/workflows/committee_master_*.yml"
   workflow_dispatch:
 
@@ -52,6 +53,7 @@ jobs:
           python -m py_compile src/v182/features/topdown_features.py
           python -m py_compile src/v182/decision/committee_master.py
           python -m py_compile src/v182/decision/tct_v24_1_7.py
+          python -m py_compile src/v182/decision/etf_structural_overlay.py
           python -m py_compile src/v182/reporting/waves.py
           python -m py_compile src/v182/reporting/run.py
           python -m py_compile src/v182/reporting/committee_master_run.py
@@ -70,7 +72,9 @@ jobs:
           assert len(load_compressed_isins("config/V21_ACTION_UNIVERSE_ISINS.parts")) == 1429
           assert e["governance"]["t1_t2_forbidden"] is True
           assert a["governance"]["t1_t2_scope"] == "ACTION_TCT_ONLY"
-          print("Integrity OK: Actions=1429/633 criteria, ETF=102/268 fields, T1/T2 Action TCT only")
+          assert e["bonus_malus"]["positive_bonus_cannot_create_buy"] is True
+          assert e["bonus_malus"]["mt_core_selection_unchanged"] is True
+          print("Integrity OK: Actions=1429/633 criteria, ETF=102/268 fields, T1/T2 Action TCT only, ETF structural overlay governed")
           PY
       - name: Unit tests
         run: |
@@ -79,4 +83,5 @@ jobs:
             tests/test_committee_v21_enrichment.py \
             tests/test_topdown_v21.py \
             tests/test_tct_v24_1_7.py \
-            tests/test_canonical_universe_v21.py
+            tests/test_canonical_universe_v21.py \
+            tests/test_etf_structural_overlay.py

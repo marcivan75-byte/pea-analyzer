@@ -11,6 +11,7 @@ from v182.decision.committee_master import (
     sector_ranking, criterion_coverage_report,
 )
 from v182.decision.tct_v24_1_7 import load_tct_config, tct_shadow_snapshot
+from v182.decision.etf_structural_overlay import apply_etf_structural_overlay
 from v182.audit.canonical_universe import filter_actions
 
 logger=logging.getLogger(__name__)
@@ -38,21 +39,12 @@ def _first_existing(paths:list[Path]) -> Path|None:
 
 
 def _enforce_canonical_actions(actions: pd.DataFrame, root: Path) -> tuple[pd.DataFrame, dict]:
-    """Committee-level hard lock on the exact V21.0 1,429-action universe.
-
-    This is intentionally repeated after enrichment. If refresh fails and the
-    unified runner falls back to the legacy 1,486-row input, the Committee still
-    cannot score out-of-universe rows. Missing canonical ISINs fail closed.
-    """
     if actions.empty:
         return actions,{"status":"EMPTY","canonical_rows":0,"excluded_rows":0}
     result=filter_actions(actions,root/"config"/"V21_ACTION_UNIVERSE_ISINS.parts")
     audit={
-        "status":"PASS",
-        "input_rows":int(len(actions)),
-        "canonical_rows":int(len(result.included)),
-        "excluded_rows":int(len(result.excluded)),
-        "whitelist_count":int(result.whitelist_count),
+        "status":"PASS","input_rows":int(len(actions)),"canonical_rows":int(len(result.included)),
+        "excluded_rows":int(len(result.excluded)),"whitelist_count":int(result.whitelist_count),
         "whitelist_sha256":result.whitelist_sha256,
     }
     return result.included.reset_index(drop=True),audit
@@ -131,6 +123,9 @@ def run(root: Path=ROOT) -> dict:
         parts.append(_failed_horizon("GOLD","TACTICAL/STRATEGIC","GOLD_V1_CONTRACT",exc)); horizon_failures.append({"asset_class":"GOLD","horizon":"ALL","error":type(exc).__name__,"detail":str(exc)[:240]})
 
     decisions=pd.concat([p for p in parts if p is not None and not p.empty],ignore_index=True,sort=False)
+    # Explicit Committee layer: Morningstar/risk does not alter the base engine,
+    # and MT Top2 selection remains the exact 38-PIT core selection.
+    decisions=apply_etf_structural_overlay(decisions,etfs,etf_reg)
     criterion_coverage=pd.concat([p for p in coverage_parts if p is not None and not p.empty],ignore_index=True,sort=False) if coverage_parts else pd.DataFrame()
     generated=datetime.now(timezone.utc).isoformat(); decisions["generated_at_utc"]=generated; decisions["live_orders_enabled"]=False
     ranks=sector_ranking(decisions)
@@ -147,14 +142,23 @@ def run(root: Path=ROOT) -> dict:
         missing_by_horizon=(criterion_coverage[criterion_coverage["criterion_status"]=="MISSING"]
                             .groupby(["asset_class","horizon"])["criterion"].apply(list).reset_index(name="missing_criteria").to_dict("records"))
     tct_status=decisions[decisions["horizon"]=="TCT"]["status"].value_counts().to_dict() if "horizon" in decisions else {}
+    etf_overlay=decisions[(decisions["asset_class"]=="ETF") & decisions["base_score"].notna()] if "base_score" in decisions else pd.DataFrame()
+    overlay_summary={
+        "rows_with_base_score":int(len(etf_overlay)),
+        "rows_with_morningstar_bonus":int((pd.to_numeric(etf_overlay.get("morningstar_bonus"),errors="coerce")>0).sum()) if not etf_overlay.empty else 0,
+        "rows_with_risk_malus":int((pd.to_numeric(etf_overlay.get("risk_malus"),errors="coerce")<0).sum()) if not etf_overlay.empty else 0,
+        "mt_core_selection_unchanged":True,
+        "positive_bonus_cannot_create_buy":True,
+    }
     summary={
         "version":master_cfg["version"],"status":master_cfg["status"],"generated_at_utc":generated,"live_orders_enabled":False,
         "input_files":{"actions":str(actions_path.relative_to(root)) if actions_path else None,"etf":str(etf_path.relative_to(root)) if etf_path else None,"etf_mt":str(mt_path.relative_to(root)) if mt_path else None},
         "canonical_actions":canonical_audit,
         "registry_integrity":{"actions_criteria_expected":633,"actions_criteria_loaded":int(actions_reg.get("criteria_count",0)),"etf_fields_expected":268,"etf_fields_loaded":int(etf_reg.get("criteria_count",0)),"t1_t2_scope":"ACTION_TCT_ONLY","tct_formula_version":tct_cfg.get("formula_version"),"gold_reference_present":(root/gold_required).exists()},
+        "etf_structural_overlay":overlay_summary,
         "status_counts":status_counts.to_dict("records"),"decision_counts":decision_counts.to_dict("records"),"missing_active_criteria_by_horizon":missing_by_horizon,"tct_shadow_status":tct_status,"horizon_failures":horizon_failures,
         "outputs":{"decisions":"outputs/committee_master/COMMITTEE_DECISIONS.csv","sector_ranking":"outputs/committee_master/SECTOR_RANKING.csv","criteria_coverage":"outputs/committee_master/CRITERIA_COVERAGE.csv","tct_shadow":"outputs/committee_master/TCT_SHADOW_V24_1_7.csv"},
-        "notes":["Committee enforces the exact V21 1429-Action whitelist even if enrichment falls back to the legacy input.","No criterion is deleted because its weight is zero.","Each Action/ETF horizon is isolated: one failure no longer aborts the other horizons.","ETF MT historical 90.91% attribution applies only to its 38 PIT dynamic core.","Gold remains blocked until its exact 102-criterion registry is present.","T1/T2 are ACTION TCT timing-only SHADOW overlays and have zero base-score influence."]
+        "notes":["Committee enforces the exact V21 1429-Action whitelist even if enrichment falls back to the legacy input.","ETF Morningstar quality bonus and risk malus are applied after the base score; positive bonus cannot create a BUY and MT 38-PIT selection is unchanged.","No criterion is deleted because its weight is zero.","Each Action/ETF horizon is isolated: one failure no longer aborts the other horizons.","ETF MT historical 90.91% attribution applies only to its 38 PIT dynamic core.","Gold remains blocked until its exact 102-criterion registry is present.","T1/T2 are ACTION TCT timing-only SHADOW overlays and have zero base-score influence."]
     }
     (outdir/"SUMMARY.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding="utf-8")
     print(json.dumps(summary,ensure_ascii=False,indent=2)); return summary
