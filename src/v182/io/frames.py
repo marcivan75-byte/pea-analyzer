@@ -77,7 +77,8 @@ def _legacy_field_metadata(frame:pd.DataFrame,isin,field:str,incoming:dict)->dic
     We only reclassify source semantics that are objectively identifiable. A row
     explicitly graded A remains A, and unrelated legacy B fields remain B.
     """
-    row_evidence=str(_cell(frame,isin,"evidence_level") or "D").strip().upper()
+    raw_evidence=_cell(frame,isin,"evidence_level")
+    row_evidence="D" if is_missing(raw_evidence) else str(raw_evidence).strip().upper()
     if row_evidence not in {"A","B","C","D"}: row_evidence="D"
     row_as_of=_latest_as_of(frame,isin,("as_of_date",))
     if row_evidence=="A": return {"evidence_level":"A","as_of":row_as_of,"bootstrap":"ROW_A"}
