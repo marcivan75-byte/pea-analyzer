@@ -6,6 +6,9 @@ on:
       - "config/COMMITTEE_MASTER_V21.json"
       - "config/V21_ACTIONS_CRITERIA_REGISTRY.json"
       - "config/V20_7_1_ETF_CRITERIA_REGISTRY.json"
+      - "config/FULL_REFERENTIAL_INTEGRITY.json"
+      - "src/v182/audit/quality.py"
+      - "src/v182/reporting/run.py"
       - "src/v182/decision/committee_master.py"
       - "src/v182/reporting/committee_master_run.py"
       - "tests/test_committee_master.py"
@@ -30,6 +33,8 @@ jobs:
           pip install pytest
       - name: Compile
         run: |
+          python -m py_compile src/v182/audit/quality.py
+          python -m py_compile src/v182/reporting/run.py
           python -m py_compile src/v182/decision/committee_master.py
           python -m py_compile src/v182/reporting/committee_master_run.py
       - name: Unit tests
