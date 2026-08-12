@@ -11,5 +11,5 @@ Finnhub;Consensus recommendations revisions price targets;ACTIVE_AUTOMATED;src/v
 FRED;Macro regime;ACTIVE_AUTOMATED;src/v182/sources/fred_macro.py | src/v182/decision/gold_v1_1.py;Top-down+Gold;Official API wired
 EIA;Energy transmission;DECLARED_NOT_WIRED;;None in current runtime;EIA_API_KEY environment declaration is not equivalent to an implemented collector
 GDELT;News discovery and sentiment inputs;ACTIVE_AUTOMATED;src/v182/sources/gdelt_news.py | src/v182/decision/gold_v1_1.py;Top-down+Gold;Public API wired
-OpenFIGI;ISIN to ticker/exchange mapping;ACTIVE_AUTOMATED;src/v182/mapping/etf_isin_resolver.py;ETF mapping;Active for ETF ticker resolution only; must not invent Action tickers
+OpenFIGI;ISIN to ticker/exchange mapping;ACTIVE_AUTOMATED;src/v182/mapping/etf_isin_resolver.py;ETF mapping;Active for ETF ticker resolution only, must not invent Action tickers
 Morningstar authorized/attributed snapshot;Action stock rating snapshot;ACTIVE_MANUAL_SNAPSHOT_LOADER;src/v182/sources/morningstar_actions.py;Actions;Loader is active but data acquisition remains an authorized attributed snapshot, not automated scraping
