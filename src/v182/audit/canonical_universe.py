@@ -18,9 +18,23 @@ class CanonicalUniverseResult:
     whitelist_sha256: str
 
 
+def _read_encoded(path: Path) -> str:
+    if path.is_dir():
+        parts=sorted(path.glob("*.part"))
+        if not parts:
+            raise RuntimeError("V21_ACTION_UNIVERSE_PARTS_EMPTY")
+        return "".join(p.read_text(encoding="utf-8").strip() for p in parts)
+    return path.read_text(encoding="utf-8").strip()
+
+
 def load_compressed_isins(path: str | Path) -> list[str]:
-    encoded=Path(path).read_text(encoding="utf-8").strip()
-    raw=zlib.decompress(base64.b64decode(encoded)).decode("utf-8")
+    encoded=_read_encoded(Path(path))
+    if len(encoded) % 4:
+        raise RuntimeError(f"V21_ACTION_UNIVERSE_BASE64_LENGTH:{len(encoded)}")
+    try:
+        raw=zlib.decompress(base64.b64decode(encoded,validate=True)).decode("utf-8")
+    except Exception as exc:
+        raise RuntimeError(f"V21_ACTION_UNIVERSE_DECODE_ERROR:{type(exc).__name__}:{exc}") from exc
     digest=hashlib.sha256(raw.encode("utf-8")).hexdigest()
     if digest != EXPECTED_SHA256:
         raise RuntimeError(f"V21_ACTION_UNIVERSE_DIGEST_MISMATCH:{digest}")
