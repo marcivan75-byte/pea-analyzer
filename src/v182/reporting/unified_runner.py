@@ -27,15 +27,23 @@ def _skip_dependency(reason:str)->dict:
     return {"status":"SKIPPED_DEPENDENCY","reason":reason}
 
 
+def _exit_code(payload:dict)->int:
+    """Scheduled/CLI runs must fail visibly when the full process is not complete."""
+    return 0 if payload.get("status")=="SUCCESS" else 1
+
+
 def run(root:Path=ROOT)->dict:
-    """V21.4 audited entrypoint with reference/challenger and dependencies."""
+    """V21.5 hardened entrypoint with strict dependency and CI semantics."""
     outdir=root/"outputs"/"unified"; outdir.mkdir(parents=True,exist_ok=True); run_id=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
     steps={}
     steps["refresh"]=_safe_step("refresh",enrichment_run.run)
     steps["etf_structure"]=_safe_step("etf_structure",lambda:etf_structure_refresh.run(root))
     steps["etf_mt"]=_safe_step("etf_mt",etf_mt_v2081_run.run)
     steps["gold"]=_safe_step("gold",lambda:gold_v1_1.run(root,os.environ.get("FRED_API_KEY")))
-    steps["committee"]=_safe_step("committee",lambda:committee_master_v21_4.run(root))
+    if steps["refresh"]["status"]=="SUCCESS":
+        steps["committee"]=_safe_step("committee",lambda:committee_master_v21_4.run(root))
+    else:
+        steps["committee"]=_skip_dependency("Requires SUCCESS current refresh; stale or legacy Action masters are forbidden for Committee decisions.")
     if steps["refresh"]["status"]=="SUCCESS" and steps["committee"]["status"]=="SUCCESS":
         steps["performance"]=_safe_step("performance",lambda:committee_performance_v21_4.run(root))
     else:
@@ -45,16 +53,17 @@ def run(root:Path=ROOT)->dict:
     }
     existing={k:v for k,v in outputs.items() if (root/v).exists()}; failed=[k for k,v in steps.items() if v["status"]=="FAILED"]; skipped=[k for k,v in steps.items() if v["status"].startswith("SKIPPED")]; overall="SUCCESS" if not failed and not skipped else "PARTIAL_SUCCESS"
     payload={
-        "version":"UNIFIED_V21_4_OPTIMAL_ARCHITECTURE","run_id":run_id,"generated_at_utc":datetime.now(timezone.utc).isoformat(),"status":overall,"live_orders_enabled":False,"steps":steps,"persisted_outputs":existing,
+        "version":"UNIFIED_V21_5_PROCESS_HARDENING","run_id":run_id,"generated_at_utc":datetime.now(timezone.utc).isoformat(),"status":overall,"live_orders_enabled":False,"steps":steps,"persisted_outputs":existing,
         "decision_tracks":{"actions_final":"V21.0 frozen-weight reference on current 1829 universe","actions_challenger":"V21.4 enriched shadow challenger","etf_mt_reference":"V20.8.1 exact 38-PIT core","etf_mt_challenger":"V20.8.2 missing-data dynamic shadow","tct":"V24.1.8 baseline + exact V24.1.7 T1/T2 shadow","gold":"V1.1 shadow"},
         "governance":[
-            "New/unvalidated Action factors are challenger-only until dedicated PIT/OOS validation.",
-            "Every collection publishes actual source provenance plus missing/partial/available data.",
-            "Per-field provenance governs evidence/freshness merge decisions and persists across runs.",
+            "Missing canonical Action ISINs are materialized as identity-only rows; no ticker/name/market data are invented.",
+            "New/unvalidated Action factors, including 52-week overlays, remain challenger-only until dedicated PIT/OOS validation.",
+            "Every collection publishes retained-value provenance plus missing/partial/available data.",
+            "Per-field retained provenance governs evidence/freshness merge decisions and persists across runs.",
             "Dynamic available-criterion weights renormalize to 100% while minimum coverage gates remain active.",
-            "Positive unvalidated overlays cannot create a final BUY; negative risk overlays may downgrade.",
             "Virtual BUYs execute no earlier than the next observed run and one consolidated position is allowed per ISIN.",
             "Virtual performance is model-version cohorted and never consumes stale Committee decisions.",
+            "A partial unified run returns a non-zero CLI exit code so GitHub cannot display false green success.",
             "T1/T2 are ACTION TCT only.",
             "ETF MT 90.91% historical OOS attribution belongs only to exact V20.8.1 38-PIT core.",
             "No real orders are emitted."
@@ -64,7 +73,7 @@ def run(root:Path=ROOT)->dict:
 
 
 def main():
-    parser=argparse.ArgumentParser(); parser.add_argument("--root",default=str(ROOT)); args=parser.parse_args(); run(Path(args.root))
+    parser=argparse.ArgumentParser(); parser.add_argument("--root",default=str(ROOT)); args=parser.parse_args(); payload=run(Path(args.root)); raise SystemExit(_exit_code(payload))
 
 
 if __name__=="__main__": main()
