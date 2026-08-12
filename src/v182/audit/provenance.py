@@ -12,6 +12,7 @@ COLUMNS = [
     "evidence_level","as_of","validation_status","merge_action","merge_reason",
     "value_sha256",
 ]
+RETAINED_ACTIONS={"INSERT","REPLACE"}
 
 
 def provenance_path() -> Path:
@@ -23,14 +24,24 @@ def _value_hash(value) -> str:
     return hashlib.sha256(str(value).encode("utf-8",errors="replace")).hexdigest()
 
 
+def _read_ledger(path:Path)->pd.DataFrame:
+    if not path.exists(): return pd.DataFrame(columns=COLUMNS)
+    try: return pd.read_csv(path,sep=";",encoding="utf-8-sig",dtype=str,low_memory=False)
+    except (OSError,ValueError,pd.errors.ParserError): return pd.DataFrame(columns=COLUMNS)
+
+
 def load_latest(path: str | Path | None = None) -> dict[tuple[str,str],dict]:
-    p=Path(path) if path is not None else provenance_path()
-    if not p.exists(): return {}
-    try: df=pd.read_csv(p,sep=";",encoding="utf-8-sig",dtype=str,low_memory=False)
-    except (OSError,ValueError,pd.errors.ParserError): return {}
-    if df.empty or not {"isin","field"}.issubset(df.columns): return {}
-    if "recorded_at_utc" in df.columns: df=df.sort_values("recorded_at_utc")
-    latest=df.drop_duplicates(["isin","field"],keep="last")
+    """Return metadata for the value actually retained in the master.
+
+    KEEP/QUARANTINE/SKIP events remain in the append-only observation ledger but
+    must never supersede the provenance of the currently retained field value.
+    """
+    p=Path(path) if path is not None else provenance_path(); df=_read_ledger(p)
+    if df.empty or not {"isin","field","merge_action"}.issubset(df.columns): return {}
+    retained=df[df["merge_action"].astype(str).isin(RETAINED_ACTIONS)].copy()
+    if retained.empty: return {}
+    if "recorded_at_utc" in retained.columns: retained=retained.sort_values("recorded_at_utc")
+    latest=retained.drop_duplicates(["isin","field"],keep="last")
     return {(str(r["isin"]),str(r["field"])):r.to_dict() for _,r in latest.iterrows()}
 
 
@@ -43,13 +54,12 @@ def append_records(records:list[dict],path:str|Path|None=None)->None:
 
 
 def actual_sources_by_field(path:str|Path|None=None)->pd.DataFrame:
-    p=Path(path) if path is not None else provenance_path()
-    if not p.exists(): return pd.DataFrame(columns=["field","sources_reelles","source_urls","evidence_levels","last_as_of"])
-    try: df=pd.read_csv(p,sep=";",encoding="utf-8-sig",dtype=str,low_memory=False)
-    except (OSError,ValueError,pd.errors.ParserError): return pd.DataFrame(columns=["field","sources_reelles","source_urls","evidence_levels","last_as_of"])
-    if df.empty: return pd.DataFrame(columns=["field","sources_reelles","source_urls","evidence_levels","last_as_of"])
-    accepted=df[df.get("merge_action",pd.Series(index=df.index,dtype=str)).isin(["INSERT","REPLACE","KEEP"])].copy()
-    if accepted.empty: accepted=df.copy()
+    """Aggregate sources that actually supplied retained values, per universe+field."""
+    p=Path(path) if path is not None else provenance_path(); df=_read_ledger(p)
+    columns=["universe","field","sources_reelles","source_urls","evidence_levels","last_as_of"]
+    if df.empty or not {"universe","field","merge_action"}.issubset(df.columns): return pd.DataFrame(columns=columns)
+    retained=df[df["merge_action"].astype(str).isin(RETAINED_ACTIONS)].copy()
+    if retained.empty: return pd.DataFrame(columns=columns)
     def join_unique(s:pd.Series)->str:
         return " | ".join(sorted({str(x).strip() for x in s.dropna() if str(x).strip() and str(x).lower()!="nan"}))
-    return accepted.groupby("field",dropna=False).agg(sources_reelles=("source",join_unique),source_urls=("source_url",join_unique),evidence_levels=("evidence_level",join_unique),last_as_of=("as_of","max")).reset_index()
+    return retained.groupby(["universe","field"],dropna=False).agg(sources_reelles=("source",join_unique),source_urls=("source_url",join_unique),evidence_levels=("evidence_level",join_unique),last_as_of=("as_of","max")).reset_index()

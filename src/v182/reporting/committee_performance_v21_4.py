@@ -55,6 +55,16 @@ def _current_value(positions:pd.DataFrame,prices:dict[str,dict])->float:
     return total
 
 
+def _daily_turnover(tx:pd.DataFrame,book_id:str,today:str)->float:
+    """Gross two-sided turnover already consumed by BUY and SELL transactions."""
+    if tx.empty: return 0.0
+    book=tx.get("book_id",pd.Series(index=tx.index,dtype=str)).astype(str)
+    day=tx.get("date",pd.Series(index=tx.index,dtype=str)).astype(str)
+    kind=tx.get("type",pd.Series(index=tx.index,dtype=str)).astype(str).str.upper()
+    gross=pd.to_numeric(tx.get("gross_eur",pd.Series(index=tx.index,dtype=float)),errors="coerce").fillna(0.0).abs()
+    return float(gross[(book==book_id)&(day==today)&kind.isin(["BUY","SELL"])].sum())
+
+
 def _eligible_signal_rows(decisions:pd.DataFrame,cfg:dict)->pd.DataFrame:
     buy=set(cfg["buy_decisions"]); min_score=float(cfg["minimum_buy_score"]); min_cov=float(cfg.get("minimum_signal_coverage_pct",70.0))
     d=decisions[decisions["decision"].astype(str).isin(buy)].copy()
@@ -96,6 +106,7 @@ def run(root:Path)->dict:
     cash=float(cfg["initial_capital_eur"])
     book_nav=nav[nav.get("book_id",pd.Series(index=nav.index,dtype=str)).astype(str)==book_id] if not nav.empty else pd.DataFrame()
     if not book_nav.empty: cash=_num(book_nav.iloc[-1].get("cash_eur")) or cash
+    daily_turnover=_daily_turnover(tx,book_id,today)
     for idx,pos in positions[(positions["book_id"].astype(str)==book_id)&(positions["status"].astype(str)=="OPEN")].iterrows():
         isin=str(pos.get("isin","") or ""); p=prices.get(isin,{}).get("price"); entry=_num(pos.get("entry_price")); qty=_num(pos.get("quantity")); stop=_num(pos.get("stop_pct"))
         if p is None or entry is None or qty is None: continue
@@ -104,15 +115,15 @@ def run(root:Path)->dict:
         data_only_failure=bool(decisions_now) and decisions_now.issubset({"BLOCK_DATA","FAILED","BLOCKED_INPUT","BLOCKED_CONFIG"})
         hold=bool(decisions_now.intersection(set(cfg.get("hold_decisions",[])))); decision_exit=bool(decisions_now) and not hold and not data_only_failure
         if stop_hit or decision_exit:
-            proceeds=qty*p*(1.0-fee); cash+=proceeds; reason="STOP" if stop_hit else "NO_ACTIVE_HOLD_DECISION"
+            gross=qty*p; proceeds=gross*(1.0-fee); cash+=proceeds; daily_turnover+=gross; reason="STOP" if stop_hit else "NO_ACTIVE_HOLD_DECISION"
             positions.at[idx,"status"]="CLOSED"; positions.at[idx,"close_date"]=today; positions.at[idx,"close_price"]=p; positions.at[idx,"exit_reason"]=reason
-            tx=pd.concat([tx,pd.DataFrame([{"book_id":book_id,"model_version":model,"date":today,"type":"SELL","position_id":pos.get("position_id"),"isin":isin,"price":p,"quantity":qty,"gross_eur":qty*p,"cost_eur":qty*p*fee,"reason":reason}])],ignore_index=True)
+            tx=pd.concat([tx,pd.DataFrame([{"book_id":book_id,"model_version":model,"date":today,"type":"SELL","position_id":pos.get("position_id"),"isin":isin,"price":p,"quantity":qty,"gross_eur":gross,"cost_eur":gross*fee,"reason":reason}])],ignore_index=True)
             mask=(signals.get("book_id",pd.Series(index=signals.index,dtype=str)).astype(str)==book_id)&(signals.get("isin",pd.Series(index=signals.index,dtype=str)).astype(str)==isin)&(signals.get("status",pd.Series(index=signals.index,dtype=str)).astype(str)=="OPEN")
             for sidx in signals[mask].index:
                 ep=_num(signals.at[sidx,"filled_price"]); signals.at[sidx,"status"]="CLOSED"; signals.at[sidx,"closed_date"]=today; signals.at[sidx,"closed_price"]=p; signals.at[sidx,"close_reason"]=reason; signals.at[sidx,"realized_return_pct"]=(p/ep-1.0)*100.0 if ep else None
 
     open_pos=positions[(positions["book_id"].astype(str)==book_id)&(positions["status"].astype(str)=="OPEN")].copy(); market_value=_current_value(open_pos,prices); equity=max(0.0,cash+market_value)
-    throttle,drawdown=_drawdown_multiplier(book_nav,cfg); daily_turnover=0.0
+    throttle,drawdown=_drawdown_multiplier(book_nav,cfg)
     open_isins=set(open_pos["isin"].astype(str)); pending=signals[(signals["book_id"].astype(str)==book_id)&(signals["status"].astype(str)=="PENDING_ENTRY")].copy()
 
     for sidx,s in pending.sort_values("signal_date").iterrows():
@@ -162,9 +173,9 @@ def run(root:Path)->dict:
     for df,path in ((signals,state/"signals.csv"),(positions,state/"positions.csv"),(tx,state/"transactions.csv"),(nav,state/"nav.csv"),(marks,state/"daily_marks.csv")): _save(df,path)
 
     closed=positions[(positions.get("book_id",pd.Series(index=positions.index,dtype=str)).astype(str)==book_id)&(positions.get("status",pd.Series(index=positions.index,dtype=str)).astype(str)=="CLOSED")].copy(); pending_now=signals[(signals["book_id"].astype(str)==book_id)&(signals["status"].astype(str)=="PENDING_ENTRY")].copy()
-    dashboard=pd.DataFrame([{"as_of":today,"book_id":book_id,"model_version":model,"initial_capital_eur":initial,"nav_eur":current_nav,"cumulative_performance_pct":cumulative,"cash_eur":cash,"exposure_pct":nav_row["exposure_pct"],"open_positions":len(open_pos),"pending_signals":len(pending_now),"closed_positions":len(closed),"drawdown_pct_at_start":drawdown,"new_position_multiplier":throttle,"entry_rule":cfg["entry_execution_rule"],"live_orders_enabled":False}])
+    dashboard=pd.DataFrame([{"as_of":today,"book_id":book_id,"model_version":model,"initial_capital_eur":initial,"nav_eur":current_nav,"cumulative_performance_pct":cumulative,"cash_eur":cash,"exposure_pct":nav_row["exposure_pct"],"open_positions":len(open_pos),"pending_signals":len(pending_now),"closed_positions":len(closed),"drawdown_pct_at_start":drawdown,"new_position_multiplier":throttle,"daily_turnover_eur":daily_turnover,"entry_rule":cfg["entry_execution_rule"],"live_orders_enabled":False}])
     assumptions=pd.DataFrame([{"parameter":k,"value":json.dumps(v,ensure_ascii=False) if isinstance(v,(dict,list)) else v} for k,v in cfg.items()]); xlsx=outdir/"COMMITTEE_BUY_PERFORMANCE.xlsx"
     with pd.ExcelWriter(xlsx,engine="openpyxl") as writer:
         dashboard.to_excel(writer,sheet_name="Dashboard",index=False); nav[nav["book_id"].astype(str)==book_id].to_excel(writer,sheet_name="NAV_Quotidienne",index=False); open_pos.to_excel(writer,sheet_name="Positions_Ouvertes",index=False); pending_now.to_excel(writer,sheet_name="Entrees_En_Attente",index=False); closed.to_excel(writer,sheet_name="Positions_Cloturees",index=False); signals[signals["book_id"].astype(str)==book_id].to_excel(writer,sheet_name="Signaux_BUY",index=False); marks[marks.get("book_id",pd.Series(index=marks.index,dtype=str)).astype(str)==book_id].to_excel(writer,sheet_name="Suivi_Journalier",index=False); tx[tx.get("book_id",pd.Series(index=tx.index,dtype=str)).astype(str)==book_id].to_excel(writer,sheet_name="Transactions_Virtuelles",index=False); assumptions.to_excel(writer,sheet_name="Money_Management",index=False)
     _style_xlsx(xlsx)
-    return {"status":"SUCCESS","as_of":today,"book_id":book_id,"model_version":model,"xlsx":str(xlsx.relative_to(root)),"nav_eur":round(current_nav,2),"cumulative_performance_pct":round(cumulative,4),"open_positions":int(len(open_pos)),"pending_signals":int(len(pending_now)),"entry_rule":cfg["entry_execution_rule"],"live_orders_enabled":False}
+    return {"status":"SUCCESS","as_of":today,"book_id":book_id,"model_version":model,"xlsx":str(xlsx.relative_to(root)),"nav_eur":round(current_nav,2),"cumulative_performance_pct":round(cumulative,4),"open_positions":int(len(open_pos)),"pending_signals":int(len(pending_now)),"daily_turnover_eur":round(daily_turnover,2),"entry_rule":cfg["entry_execution_rule"],"live_orders_enabled":False}

@@ -60,19 +60,21 @@ def write_collection_audit(
     actions: pd.DataFrame, etfs: pd.DataFrame, wave_id: str, output_root: str | Path,
     *, failures: list[dict] | None = None, source_context: str = "",
 ) -> str:
-    """Write post-collection Excel with observed and missing data plus provenance.
+    """Write post-collection Excel with retained-source provenance.
 
-    `source_reelle` comes from the append-only observation ledger. A theoretical
-    fallback/source hint is kept separately so the workbook never presents an
-    intended source as if it had actually supplied the current observation.
+    Actual sources are joined by ``asset_class + field`` so identically named
+    Action and ETF fields cannot contaminate each other's lineage.
     """
     root=Path(output_root); root.mkdir(parents=True,exist_ok=True)
     inventory=pd.concat([_field_status(actions,"ACTION",wave_id),_field_status(etfs,"ETF",wave_id)],ignore_index=True)
     provenance=actual_sources_by_field()
     if not provenance.empty:
-        inventory=inventory.merge(provenance,on="field",how="left")
+        provenance=provenance.rename(columns={"universe":"asset_class"})
+        inventory=inventory.merge(provenance,on=["asset_class","field"],how="left")
     else:
         for col in ("sources_reelles","source_urls","evidence_levels","last_as_of"): inventory[col]=""
+    for col in ("sources_reelles","source_urls","evidence_levels","last_as_of"):
+        if col not in inventory.columns: inventory[col]=""
     inventory["source_reelle_absente"]=(inventory["sources_reelles"].fillna("").astype(str).str.strip()=="")
     missing=inventory[inventory["status"]=="MISSING"].copy(); partial=inventory[inventory["status"]=="PARTIAL"].copy(); available=inventory[inventory["status"]=="AVAILABLE"].copy()
     summary=pd.DataFrame([
