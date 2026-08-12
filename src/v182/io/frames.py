@@ -41,11 +41,11 @@ def _ensure_text_assignable(frame: pd.DataFrame, field: str) -> None:
 def apply_observations(frame: pd.DataFrame, observations: list[dict]) -> tuple[pd.DataFrame, list[dict]]:
     """Merge observations using per-field provenance when available.
 
-    Provenance is persisted outside the master so the 633/268-column referentials
-    are not polluted with source metadata columns. It also prevents evidence for
-    one field from incorrectly controlling another field's merge decision.
+    Persisted evidence metadata is authoritative only when its stored value hash
+    matches the value currently present in the master. This prevents a value that
+    changed between runs from inheriting the evidence/source of an older value.
     """
-    from v182.audit.provenance import append_records, load_latest
+    from v182.audit.provenance import append_records, load_latest, retained_meta_matches_value, value_hash
     from v182.core.merge import decide
 
     frame = frame.set_index("isin", drop=False)
@@ -61,10 +61,10 @@ def apply_observations(frame: pd.DataFrame, observations: list[dict]) -> tuple[p
         if field not in frame.columns: frame[field] = pd.NA
 
         current_value = frame.at[isin, field]
-        meta=provenance.get((str(isin),str(field)))
+        key=(str(isin),str(field)); meta=provenance.get(key)
         if is_missing(current_value):
             existing=None
-        elif meta:
+        elif meta and retained_meta_matches_value(meta,current_value):
             existing={"value":current_value,"evidence_level":meta.get("evidence_level","D"),"as_of":meta.get("as_of","")}
         else:
             existing={
@@ -76,7 +76,7 @@ def apply_observations(frame: pd.DataFrame, observations: list[dict]) -> tuple[p
         if decision.action in {"INSERT","REPLACE"}:
             _ensure_text_assignable(frame,field)
             value=obs.get("value"); frame.at[isin,field]="" if value is None else str(value)
-            provenance[(str(isin),str(field))]={**obs,"merge_action":decision.action,"merge_reason":decision.reason}
+            provenance[key]={**obs,"merge_action":decision.action,"merge_reason":decision.reason,"value_sha256":value_hash(value)}
         elif decision.action=="QUARANTINE":
             quarantined.append({**obs,"reason":decision.reason})
         provenance_records.append({**obs,"merge_action":decision.action,"merge_reason":decision.reason})
