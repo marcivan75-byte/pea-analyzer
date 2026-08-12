@@ -1,0 +1,23 @@
+{
+  "version": "2026-08-11",
+  "purpose": "Prevent silent reduction of the complete Actions/ETF decision referentials while horizon weights are optimized separately.",
+  "actions": {
+    "source": "MATRICE_MAITRE_REPONDERATION_PEA_ACTIONS_ETF_TOUS_CRITERES_2026-08-11.xlsx / 02_Actions_633",
+    "criteria_count": 633,
+    "ordered_criteria_names_sha256": "9af1a1339d9d16a1e843c3b7788944d1de7878bcf920fc4e2d696053d9265b15",
+    "full_19_column_table_sha256": "05e58552d231c636dd333545e7fcf18023ae38f8937696ecaaa1ce1da91b746a",
+    "rule": "All 633 rows remain part of the master referential. Zero weight is not deletion."
+  },
+  "etf": {
+    "source": "MATRICE_MAITRE_REPONDERATION_PEA_ACTIONS_ETF_TOUS_CRITERES_2026-08-11.xlsx / 03_ETF_268",
+    "criteria_count": 268,
+    "ordered_criteria_names_sha256": "40eabc1c49ac790835e7faa3676d2c0a266a47f4e677bee7e84c3ff4282db42f",
+    "full_19_column_table_sha256": "03b37c02f3852d132b09584e85924818f729c7d60d49160f0293272950c30ea9",
+    "rule": "All 268 rows remain part of the master referential, including Morningstar, yield, TER, AUM, risk, tracking/replication and diversification."
+  },
+  "t1_t2": {
+    "scope": "ACTION_TCT_ONLY",
+    "etf_forbidden": true,
+    "actions_non_tct_forbidden": true
+  }
+}
