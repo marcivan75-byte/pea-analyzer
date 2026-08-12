@@ -14,6 +14,13 @@
         "t1_t2_scope": "ACTION_TCT_ONLY",
         "mode": "SHADOW_RESEARCH_ONLY",
         "baseline_required": true,
+        "baseline_engine": "v182.decision.tct_baseline_v24_1_7",
+        "baseline_top_n": 20,
+        "baseline_min_coverage": 0.60,
+        "baseline_missing_weight_policy": "ZERO_FIXED_WEIGHT_NO_REDISTRIBUTION",
+        "setup_component_active": false,
+        "baseline_max_score": 84.0,
+        "baseline_max_coverage": 0.84,
         "score_influence": 0
       }
     },
@@ -63,6 +70,7 @@
     "decisions_csv": "COMMITTEE_DECISIONS.csv",
     "sector_ranking_csv": "SECTOR_RANKING.csv",
     "criteria_coverage_csv": "CRITERIA_COVERAGE.csv",
+    "tct_baseline_csv": "TCT_BASELINE_V24_1_7.csv",
     "tct_shadow_csv": "TCT_SHADOW_V24_1_7.csv",
     "summary_json": "SUMMARY.json",
     "unified_summary": "outputs/unified/UNIFIED_SUMMARY_LATEST.json"
