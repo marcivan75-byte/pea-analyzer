@@ -65,6 +65,19 @@ def _daily_turnover(tx:pd.DataFrame,book_id:str,today:str)->float:
     return float(gross[(book==book_id)&(day==today)&kind.isin(["BUY","SELL"])].sum())
 
 
+def _cash_investment_room(cash:float,equity:float,buffer_pct:float,fee:float)->float:
+    """Maximum gross BUY value that preserves the cash buffer after fees.
+
+    With gross investment V, cash becomes C-V*(1+f) while NAV becomes E-f*V.
+    Requiring post-trade cash >= b*post-trade NAV gives:
+    V <= (C-bE)/(1+f*(1-b)).
+    """
+    b=min(1.0,max(0.0,float(buffer_pct)/100.0)); f=max(0.0,float(fee))
+    numerator=max(0.0,float(cash)-b*max(0.0,float(equity)))
+    denominator=1.0+f*(1.0-b)
+    return numerator/denominator if denominator>0 else 0.0
+
+
 def _eligible_signal_rows(decisions:pd.DataFrame,cfg:dict)->pd.DataFrame:
     buy=set(cfg["buy_decisions"]); min_score=float(cfg["minimum_buy_score"]); min_cov=float(cfg.get("minimum_signal_coverage_pct",70.0))
     d=decisions[decisions["decision"].astype(str).isin(buy)].copy()
@@ -143,7 +156,7 @@ def run(root:Path)->dict:
         stop=float(cfg["stops_pct"].get(horizon,12.0)); exposure=_current_value(open_pos,prices); sector=str(s.get("sector") or prices.get(isin,{}).get("sector") or "NON CLASSE")
         sector_value=sum((_num(r.get("quantity")) or 0)*(prices.get(str(r.get("isin")),{}).get("price") or (_num(r.get("entry_price")) or 0)) for _,r in open_pos.iterrows() if str(r.get("sector"))==sector)
         max_pos=equity*min(float(cfg["max_position_pct"]),float(cfg.get("max_instrument_exposure_pct",cfg["max_position_pct"])))/100.0
-        risk_pos=equity*(float(cfg["risk_budget_per_position_pct"])/100.0)/(stop/100.0); exposure_room=max(0.0,equity*float(cfg["max_total_exposure_pct"])/100.0-exposure); sector_room=max(0.0,equity*float(cfg["max_sector_exposure_pct"])/100.0-sector_value); cash_room=max(0.0,cash-equity*float(cfg["cash_buffer_min_pct"])/100.0); turnover_room=max(0.0,equity*float(cfg.get("max_daily_turnover_pct",100.0))/100.0-daily_turnover); conviction=min(1.0,max(0.70,score/100.0))*throttle
+        risk_pos=equity*(float(cfg["risk_budget_per_position_pct"])/100.0)/(stop/100.0); exposure_room=max(0.0,equity*float(cfg["max_total_exposure_pct"])/100.0-exposure); sector_room=max(0.0,equity*float(cfg["max_sector_exposure_pct"])/100.0-sector_value); cash_room=_cash_investment_room(cash,equity,float(cfg["cash_buffer_min_pct"]),fee); turnover_room=max(0.0,equity*float(cfg.get("max_daily_turnover_pct",100.0))/100.0-daily_turnover); conviction=min(1.0,max(0.70,score/100.0))*throttle
         value=min(max_pos,risk_pos,exposure_room,sector_room,cash_room,turnover_room)*conviction
         if value<=0: continue
         qty=value/p; cost=value*(1.0+fee)
