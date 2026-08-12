@@ -2,14 +2,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 RANK={"A":4,"B":3,"C":2,"D":1}
+ACCEPTED_VALIDATION_STATUSES={"VALIDATED","ISIN_MATCHED","AUTO_MATCH","ATTRIBUTED"}
+
 
 @dataclass(frozen=True)
 class MergeDecision:
     action: str
     reason: str
 
+
 def decide(existing: dict | None, incoming: dict) -> MergeDecision:
-    if incoming.get("validation_status") not in {"VALIDATED","ISIN_MATCHED","AUTO_MATCH"}:
+    if incoming.get("validation_status") not in ACCEPTED_VALIDATION_STATUSES:
         return MergeDecision("QUARANTINE","IDENTITY_NOT_VALIDATED")
     if existing is None:
         return MergeDecision("INSERT","FIRST_OBSERVATION")
