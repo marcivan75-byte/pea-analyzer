@@ -33,6 +33,29 @@ def _write_failures(name: str, failures: list[dict]) -> None:
         pd.DataFrame(failures).to_csv(OUTPUTS / "gaps" / f"{name}_FAILURES.csv", sep=";", index=False, encoding="utf-8-sig")
 
 
+def _apply_canonical_actions(actions_df: pd.DataFrame, cfg: dict) -> tuple[pd.DataFrame, dict]:
+    spec=cfg.get("canonical_universe",{})
+    path=spec.get("actions_whitelist_path")
+    if not path:
+        raise RuntimeError("V21_CANONICAL_UNIVERSE_PATH_MISSING")
+    from v182.audit.canonical_universe import filter_actions
+    result=filter_actions(actions_df, ROOT/path)
+    if not result.excluded.empty:
+        excluded=result.excluded.copy()
+        excluded["status"]="EXCLUDED_OUTSIDE_V21_CANONICAL_UNIVERSE"
+        excluded.to_csv(OUTPUTS/"gaps"/"V21_ACTIONS_EXCLUDED_FROM_LEGACY_MASTER.csv",sep=";",index=False,encoding="utf-8-sig")
+    audit={
+        "input_rows":int(len(actions_df)),
+        "canonical_rows":int(len(result.included)),
+        "excluded_rows":int(len(result.excluded)),
+        "whitelist_count":int(result.whitelist_count),
+        "whitelist_sha256":result.whitelist_sha256,
+        "reference_version":spec.get("actions_reference_version","V21.0"),
+    }
+    (OUTPUTS/"audit"/"V21_CANONICAL_UNIVERSE.json").write_text(json.dumps(audit,ensure_ascii=False,indent=2),encoding="utf-8")
+    return result.included.reset_index(drop=True),audit
+
+
 def run() -> dict:
     cfg = _load_cfg()
     run_id = os.environ.get("V182_RUN_ID") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -41,7 +64,8 @@ def run() -> dict:
     (OUTPUTS / "gaps").mkdir(parents=True, exist_ok=True)
     (OUTPUTS / "audit").mkdir(parents=True, exist_ok=True)
 
-    actions_df = load_master(INPUTS / "V18.2_PEA_ACTIONS_MASTER.csv")
+    actions_legacy = load_master(INPUTS / "V18.2_PEA_ACTIONS_MASTER.csv")
+    actions_df,canonical_audit=_apply_canonical_actions(actions_legacy,cfg)
     etf_df = load_master(INPUTS / "V18.2_PEA_ETF_MASTER.csv")
     expected_rows = {"ACTION": len(actions_df), "ETF": len(etf_df)}
 
@@ -49,13 +73,12 @@ def run() -> dict:
         "ACTION": completeness(actions_df.to_dict("records"), _fields(actions_df)),
         "ETF": completeness(etf_df.to_dict("records"), _fields(etf_df)),
     }
-    print(f"Univers d'entrée gelé au début du run — Actions: {expected_rows['ACTION']} | ETF: {expected_rows['ETF']}")
+    print(f"Univers canonique V21 — Actions: {expected_rows['ACTION']} (exclus legacy: {canonical_audit['excluded_rows']}) | ETF: {expected_rows['ETF']}")
     print(f"Couverture avant run — Actions: {before['ACTION']['coverage_pct']}% | ETF: {before['ETF']['coverage_pct']}%")
 
     quarantine_log: list[dict] = []
     wave_metrics: dict[str, dict] = {}
 
-    # WAVE 00 — ETF ticker mapping
     if not checkpoint.done("WAVE_00_ETF_TICKERS"):
         map_path = CONFIG / "V18.2_ETF_TICKER_MAP.csv"
         existing_map = pd.read_csv(map_path, sep=";", encoding="utf-8-sig", dtype=str) if map_path.exists() else pd.DataFrame()
@@ -76,7 +99,6 @@ def run() -> dict:
         checkpoint.mark("WAVE_00_ETF_TICKERS", "DONE", **summary)
         print(f"WAVE_00 — {summary['resolved']}/{summary['requested']} tickers ETF résolus")
 
-    # WAVE 01 — OHLCV Actions
     if not checkpoint.done("WAVE_01"):
         result = waves.wave_history(actions_df, "ACTION", str(CACHE / "actions"), cfg)
         checkpoint.mark("WAVE_01", "DONE", requested=result.requested, successful=len(result.successful), failed=len(result.failed))
@@ -85,7 +107,6 @@ def run() -> dict:
     else:
         wave_metrics["WAVE_01"]=checkpoint.wave("WAVE_01")
 
-    # WAVE 02 — OHLCV ETF
     etf_with_tickers, etf_gaps = waves.resolve_etf_tickers(etf_df, CONFIG / "V18.2_ETF_TICKER_MAP.csv")
     if not etf_gaps.empty:
         etf_gaps.to_csv(OUTPUTS / "gaps" / "V18.2_ETF_TICKER_GAPS.csv", sep=";", index=False, encoding="utf-8-sig")
@@ -97,7 +118,6 @@ def run() -> dict:
     else:
         wave_metrics["WAVE_02"]=checkpoint.wave("WAVE_02")
 
-    # WAVE 03 — local PIT OHLCV features + ETF beta3y proxy
     actions_map = dict(zip(actions_df["yahoo_ticker"], actions_df["isin"]))
     etf_map = dict(zip(etf_with_tickers["yahoo_ticker"], etf_with_tickers["isin"]))
     if not checkpoint.done("WAVE_03"):
@@ -110,7 +130,6 @@ def run() -> dict:
         checkpoint.mark("WAVE_03", "DONE", actions_fields=len(obs_actions), etf_fields=len(obs_etf), etf_beta3y=len(obs_beta))
         print(f"WAVE_03 — {len(obs_actions)} valeurs Actions + {len(obs_etf)} ETF + {len(obs_beta)} bêta3y")
 
-    # WAVE 04 — fundamentals, sector, industry, earnings calendar on full Actions scope
     if not checkpoint.done("WAVE_04"):
         obs4, failures4 = waves.wave4_info_actions(actions_df, cfg)
         actions_df, q3 = apply_and_track(actions_df, obs4)
@@ -119,7 +138,6 @@ def run() -> dict:
         checkpoint.mark("WAVE_04", "DONE", observed=len(obs4), failed=len(failures4))
         print(f"WAVE_04 — {len(obs4)} champs fondamentaux/métadonnées Actions, {len(failures4)} échecs")
 
-    # WAVE 05 — Finnhub current consensus + historical revisions
     finnhub_key = os.environ.get("FINNHUB_API_KEY")
     if not checkpoint.done("WAVE_05") and finnhub_key:
         obs5, failures5 = waves.wave5_consensus_finnhub(actions_df, finnhub_key)
@@ -131,7 +149,6 @@ def run() -> dict:
     elif not finnhub_key:
         print("WAVE_05 — FINNHUB_API_KEY absent : critères concernés restent N/A")
 
-    # WAVE 06 — ETF metadata/dividend enrichment
     if not checkpoint.done("WAVE_06"):
         obs6, failures6 = waves.wave6_etf_info(etf_with_tickers, cfg)
         etf_df, q6 = apply_and_track(etf_df, obs6)
@@ -140,7 +157,6 @@ def run() -> dict:
         checkpoint.mark("WAVE_06", "DONE", observed=len(obs6), failed=len(failures6))
         print(f"WAVE_06 — {len(obs6)} champs ETF, {len(failures6)} échecs")
 
-    # Optional public scraping fallback (only validated selectors)
     selectors_path = CONFIG / "V18.2_SCRAPE_SELECTORS.json"
     raw_selectors = json.loads(selectors_path.read_text(encoding="utf-8")) if selectors_path.exists() else {}
     selectors_cfg = {k: v for k, v in raw_selectors.items() if not k.startswith("_")}
@@ -157,7 +173,6 @@ def run() -> dict:
             _write_failures(f"{wave_id}_{spec['source_name']}", failures)
         checkpoint.mark("WAVE_05_06_SCRAPING_FALLBACK", "DONE")
 
-    # WAVE 07 — official conflict resolution
     resolved = waves.wave7_official_validation(quarantine_log, CONFIG / "V18.2_MANUAL_OVERRIDES.csv")
     if resolved:
         actions_iso = {o["isin"] for o in resolved} & set(actions_df["isin"])
@@ -168,12 +183,10 @@ def run() -> dict:
     still_open = [q for q in quarantine_log if q not in resolved]
     write_worklist(still_open, actions_df, OUTPUTS / "gaps" / "V18.2_WAVE07_WORKLIST.csv")
 
-    # WAVE 08 — internal scenarios
     shortlist = set(actions_df.loc[actions_df.get("comite_status", "").isin(["COMMITTEE", "WATCH"]), "isin"]) if "comite_status" in actions_df.columns else set()
     obs8 = waves.wave8_scenarios(actions_df, shortlist)
     actions_df, q8 = apply_and_track(actions_df, obs8); quarantine_log += q8
 
-    # WAVE 09 — Top-Down macro/news/sentiment, with explicit provenance/fallbacks
     topdown_diagnostics={}
     if not checkpoint.done("WAVE_09_TOPDOWN"):
         obs9a, obs9e, topdown_diagnostics = waves.wave9_topdown(actions_df, etf_df, cfg, os.environ.get("FRED_API_KEY"))
@@ -184,7 +197,6 @@ def run() -> dict:
         print(f"WAVE_09 — Top-Down: {len(obs9a)} valeurs Actions + {len(obs9e)} ETF")
     (OUTPUTS / "audit" / "V21_TOPDOWN_DIAGNOSTICS.json").write_text(json.dumps(topdown_diagnostics,ensure_ascii=False,indent=2,default=str),encoding="utf-8")
 
-    # Persist enriched masters
     save_master(actions_df, OUTPUTS / "V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv")
     save_master(etf_df, OUTPUTS / "V18.2_PEA_ETF_MASTER_ENRICHED.csv")
     if quarantine_log:
@@ -195,12 +207,12 @@ def run() -> dict:
         "ETF": completeness(etf_df.to_dict("records"), _fields(etf_df)),
     }
     (OUTPUTS / "audit" / "V18.2_COVERAGE_BEFORE_AFTER.json").write_text(
-        json.dumps({"expected_rows": expected_rows, "before": before, "after": after}, ensure_ascii=False, indent=2), encoding="utf-8")
+        json.dumps({"canonical_universe":canonical_audit,"expected_rows": expected_rows, "before": before, "after": after}, ensure_ascii=False, indent=2), encoding="utf-8")
 
     from v182.audit.quality import run_quality_gates
     from v182.reporting.exports import export_master_excel, export_run_report
     quality=run_quality_gates(actions_df, etf_df, before, after, cfg, wave_metrics, expected_rows=expected_rows)
-    quality_payload={"passed":quality.passed,"expected_rows":expected_rows,"checks":quality.checks}
+    quality_payload={"passed":quality.passed,"canonical_universe":canonical_audit,"expected_rows":expected_rows,"checks":quality.checks}
     (OUTPUTS / "audit" / "V18.2_QUALITY_GATES.json").write_text(json.dumps(quality_payload,ensure_ascii=False,indent=2),encoding="utf-8")
     export_master_excel(actions_df, OUTPUTS / "V18.2_PEA_ACTIONS_ACTUALISE.xlsx", "V18.2 Actions PEA actualisées")
     export_master_excel(etf_df, OUTPUTS / "V18.2_PEA_ETF_ACTUALISE.xlsx", "V18.2 ETF PEA actualisés")
@@ -208,7 +220,7 @@ def run() -> dict:
     if not quality.passed:
         failed=[c["check"] for c in quality.checks if not c["passed"]]
         raise RuntimeError(f"QUALITY_GATE_BLOCK: {failed}")
-    return {"status":"SUCCESS","run_id":run_id,"expected_rows":expected_rows,"before":before,"after":after,"quality":quality_payload}
+    return {"status":"SUCCESS","run_id":run_id,"canonical_universe":canonical_audit,"expected_rows":expected_rows,"before":before,"after":after,"quality":quality_payload}
 
 
 def apply_and_track(frame, observations):
