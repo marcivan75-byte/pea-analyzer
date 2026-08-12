@@ -1,5 +1,4 @@
 from __future__ import annotations
-from typing import Any
 import time
 
 # Raw yfinance fields are kept under stable V18.2 names. The Committee Master
@@ -28,8 +27,17 @@ FIELDS = {
     "recommendationKey":"recommendation_key_yf",
     "beta":"beta",
     "dividendYield":"dividend_yield_pct",
+    "dividendRate":"dividend_rate_yf",
     "payoutRatio":"payout_ratio",
+    "sector":"sector_yf",
+    "industry":"industry_yf",
+    "country":"country_yf",
+    "quoteType":"quote_type_yf",
+    "earningsTimestamp":"earnings_timestamp_yf",
+    "earningsTimestampStart":"earnings_timestamp_start_yf",
+    "earningsTimestampEnd":"earnings_timestamp_end_yf",
 }
+
 
 def collect_info(tickers: list[str], delay_seconds: float = 0.4) -> tuple[list[dict], list[dict]]:
     import yfinance as yf  # import différé : yfinance n'est requis qu'au moment de l'appel réseau
@@ -47,6 +55,6 @@ def collect_info(tickers: list[str], delay_seconds: float = 0.4) -> tuple[list[d
                         "source": "yfinance",
                     })
         except Exception as exc:
-            failures.append({"ticker": ticker, "error": type(exc).__name__})
+            failures.append({"ticker": ticker, "error": type(exc).__name__, "detail": str(exc)[:160]})
         time.sleep(delay_seconds)
     return observations, failures
