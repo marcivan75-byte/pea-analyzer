@@ -71,12 +71,20 @@ def test_source_scenario_detects_t1_and_linked_t2():
     assert t2["source_event_id"]=="T1_TEST"
 
 
+def test_string_false_state_cannot_authorize_t2():
+    t1=detect_exact(_history(),{},_cfg())
+    state={**t1["state_update"],"event_id":"T1_TEST","baseline_eligible_at_t1":"false","age_sessions":5}
+    t2=detect_exact(_history((-0.05,0.01,0.08),10.45,10.35,0.024,rs=0.04),state,_cfg())
+    assert t2["setup"] is None
+    assert t2["reason"]=="SOURCE_T1_NOT_BASELINE_ELIGIBLE"
+
+
 def test_t1_technical_gate_requires_both_sar_and_mm50_and_bandwidth_expansion():
     hist=_history(); hist.loc[hist.index[-1],"sar"]=10.40
     assert detect_exact(hist,{},_cfg())["setup"] is None
     hist=_history(); hist.loc[hist.index[-1],"mm50"]=10.40
     assert detect_exact(hist,{},_cfg())["setup"] is None
-    hist=_history(current_bw=0.009)  # previous squeeze bandwidth is 0.01
+    hist=_history(current_bw=0.009)
     assert detect_exact(hist,{},_cfg())["setup"] is None
 
 
@@ -93,11 +101,13 @@ def test_t1_is_persisted_only_after_current_baseline_top20(monkeypatch,tmp_path)
     cache=tmp_path/"cache"; state_path=tmp_path/"state.json"; _write_history(cache,_history())
     blocked,audit=build_exact_timing_snapshot(_actions(top20=False),cache,state_path,_cfg())
     assert blocked.iloc[0]["status"]=="BLOCKED_BASELINE"
+    assert blocked.iloc[0]["available_criteria"]<=6
     assert audit.t1_detected_raw==1 and audit.t1_baseline_eligible==0
     assert json.loads(state_path.read_text())=={}
 
     eligible,audit=build_exact_timing_snapshot(_actions(top20=True),cache,state_path,_cfg())
     assert eligible.iloc[0]["status"]=="T1_STARTER_25_SHADOW"
+    assert eligible.iloc[0]["available_criteria"]<=6
     assert audit.t1_baseline_eligible==1
     saved=json.loads(state_path.read_text())
     assert saved["FR0000000001"]["baseline_eligible_at_t1"] is True
@@ -112,13 +122,30 @@ def test_t2_requires_persisted_eligible_t1_and_consumes_only_when_current_baseli
     _write_history(cache,_history((-0.05,0.01,0.08),10.45,10.35,0.024))
     blocked,audit=build_exact_timing_snapshot(_actions(top20=False),cache,state_path,_cfg())
     assert blocked.iloc[0]["status"]=="BLOCKED_BASELINE"
+    assert blocked.iloc[0]["available_criteria"]<=6
     assert audit.t2_confirmed==0
     assert "FR0000000001" in json.loads(state_path.read_text())
 
     confirmed,audit=build_exact_timing_snapshot(_actions(top20=True),cache,state_path,_cfg())
     assert confirmed.iloc[0]["status"]=="T2_CONFIRM_75_SHADOW"
+    assert confirmed.iloc[0]["available_criteria"]<=6
     assert audit.t2_confirmed==1
     assert json.loads(state_path.read_text())=={}
+
+
+def test_snapshot_ttl_is_anchored_to_pit_market_date_not_wall_clock(monkeypatch,tmp_path):
+    monkeypatch.setattr(exact,"compute_technical_indicators",lambda frame: frame)
+    cache=tmp_path/"cache"; state_path=tmp_path/"state.json"; hist=_history(); _write_history(cache,hist)
+    signal_date=pd.Timestamp(hist.index[-1]).date()
+    state_path.write_text(json.dumps({"FR0000000001":{
+        "bandwidth":0.02,"detected_at":signal_date.isoformat(),"event_id":"T1_PIT",
+        "breakout_price":10.30,"atr_at_t1":0.40,"rs_10d_at_t1":0.04,
+        "t1_quality_score":85.0,"baseline_eligible_at_t1":True,"formula_version":FORMULA_VERSION,
+    }}))
+    _write_history(cache,_history((-0.05,0.01,0.08),10.45,10.35,0.024))
+    out,audit=build_exact_timing_snapshot(_actions(top20=True),cache,state_path,_cfg())
+    assert audit.expired_state_records==0
+    assert out.iloc[0]["status"]=="T2_CONFIRM_75_SHADOW"
 
 
 def test_state_ttl_prunes_old_records(tmp_path):
