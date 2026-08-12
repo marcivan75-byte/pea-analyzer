@@ -1,6 +1,5 @@
 from pathlib import Path
 import json
-import os
 import pandas as pd
 
 from v182.core.merge import decide
@@ -20,7 +19,6 @@ def test_per_field_provenance_controls_evidence_not_row_level_metadata(tmp_path:
     frame=pd.DataFrame([{"isin":"A1","x":pd.NA,"evidence_level":"A","as_of_date":"2026-01-01"}])
     first={"universe":"ACTION","isin":"A1","field":"x","value":10,"source":"C_SOURCE","evidence_level":"C","as_of":"2026-08-01","validation_status":"AUTO_MATCH"}
     frame,q=apply_observations(frame,[first]); assert not q; assert float(frame.loc[0,"x"])==10
-    # Row metadata still says A, but field x provenance is C; incoming B must win.
     second={"universe":"ACTION","isin":"A1","field":"x","value":20,"source":"B_SOURCE","evidence_level":"B","as_of":"2026-08-02","validation_status":"AUTO_MATCH"}
     frame,q=apply_observations(frame,[second]); assert not q; assert float(frame.loc[0,"x"])==20
     prov=pd.read_csv(ledger,sep=";"); assert set(prov["source"])=={"C_SOURCE","B_SOURCE"}; assert prov.iloc[-1]["merge_action"]=="REPLACE"
@@ -59,3 +57,15 @@ def test_v21_4_registry_has_no_active_total_return_composite():
     for h in ("CT","MT","LT"):
         assert "total_return_potential_score" not in cfg["weights"][h]
         assert "target_upside_gt4_score" in cfg["weights"][h]
+
+
+def test_action_reference_and_challenger_are_separate_and_normalized():
+    root=Path(__file__).resolve().parents[1]
+    ref=json.loads((root/"config"/"V21_ACTIONS_REFERENCE_V21_0.json").read_text())
+    challenger=json.loads((root/"config"/"V21_ACTIONS_CRITERIA_REGISTRY.json").read_text())
+    integrity=json.loads((root/"config"/"FULL_REFERENTIAL_INTEGRITY.json").read_text())
+    for h in ("CT","MT","LT","SHORT","TOP_DOWN"):
+        assert abs(sum(ref["weights"][h].values())-1.0)<1e-9
+        assert abs(sum(challenger["weights"][h].values())-1.0)<1e-6
+    assert integrity["actions"]["reference_weights"]["role"]=="FINAL_REFERENCE_UNTIL_CHALLENGER_VALIDATION"
+    assert integrity["actions"]["challenger_weights"]["role"]=="SHADOW_CHALLENGER_NO_PERFORMANCE_ATTRIBUTION"
