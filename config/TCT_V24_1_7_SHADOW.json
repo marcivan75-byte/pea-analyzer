@@ -1,0 +1,88 @@
+{
+  "version": "V24.1.7_T1_T2_V2_SHADOW",
+  "asset_class": "ACTION",
+  "horizon": "TCT",
+  "status": "SHADOW_RESEARCH_ONLY",
+  "live_orders_enabled": false,
+  "score_influence": 0.0,
+  "scope": {
+    "t1_t2_actions_tct_only": true,
+    "etf_forbidden": true,
+    "non_tct_forbidden": true,
+    "baseline_top_n": 20,
+    "baseline_min_coverage": 0.60
+  },
+  "baseline_pillar_weights_v24_1_6": {
+    "squeeze": 0.18,
+    "setup": 0.16,
+    "earnings": 0.14,
+    "t1_tech": 0.14,
+    "bayes": 0.10,
+    "cata": 0.08,
+    "regime": 0.07,
+    "rs": 0.05,
+    "news": 0.04,
+    "valo": 0.04
+  },
+  "t1": {
+    "quality_threshold": 70.0,
+    "starter_threshold": 80.0,
+    "quality_component_min_coverage": 0.80,
+    "ttl_sessions": 10,
+    "rvol_min": 1.20,
+    "components": {
+      "compression": 0.25,
+      "volume_acceleration": 0.20,
+      "breakout_quality": 0.20,
+      "momentum_acceleration": 0.15,
+      "relative_strength": 0.10,
+      "risk_control": 0.10
+    },
+    "gates": [
+      "compression",
+      "rvol_ge_1_20",
+      "breakout_cross_or_expansion",
+      "macd_negative_accelerating",
+      "technical_k_gt_d_rsi_k_lt_70_above_sar_or_mm50",
+      "baseline_top20"
+    ]
+  },
+  "t2": {
+    "quality_threshold": 75.0,
+    "quality_component_min_coverage": 0.80,
+    "bandwidth_expansion_ratio_min": 1.15,
+    "max_extension_atr": 1.5,
+    "max_extension_pct": 10.0,
+    "components": {
+      "bandwidth_expansion": 0.25,
+      "macd_confirmation": 0.20,
+      "volume_persistence": 0.20,
+      "breakout_hold_retest": 0.15,
+      "relative_strength_continuity": 0.10,
+      "non_extension": 0.10
+    },
+    "gates": [
+      "exact_linked_t1",
+      "ttl_le_10_sessions",
+      "bandwidth_expansion_ge_1_15",
+      "macd_positive",
+      "breakout_hold_or_retest",
+      "baseline_top20"
+    ]
+  },
+  "research_entry_variant": {
+    "t1_fraction": 0.25,
+    "t2_fraction": 0.75,
+    "target_pct": 15.0,
+    "stop_pct": -10.0,
+    "roundtrip_cost_pct": 0.5
+  },
+  "promotion_governance": {
+    "v2_backtest_status": "NOT_YET_BACKTESTED",
+    "prior_t1_t2_oos_promotion": "FAILED_GATES",
+    "holdout_locked": true,
+    "bonus_points": 0.0,
+    "score_multiplier": 1.0,
+    "setup_component_active": false
+  }
+}
