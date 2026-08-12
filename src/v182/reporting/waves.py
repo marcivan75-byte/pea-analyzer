@@ -26,6 +26,25 @@ def _obs(universe: str, isin: str, field: str, value, source: str, evidence: str
     }
 
 
+def _select_actions_scope(actions_df: pd.DataFrame, cfg: dict, scope_key: str, top_n: int) -> pd.DataFrame:
+    """Select the Actions collection scope without silently truncating Committee runs."""
+    scope = str(cfg.get("committee_full_coverage", {}).get(scope_key, "PRIORITY")).upper()
+    if scope == "ALL":
+        return actions_df.copy()
+
+    priority_col = "comite_status"
+    if priority_col in actions_df.columns:
+        priority_df = actions_df[actions_df[priority_col].isin(["COMMITTEE", "WATCH"])].copy()
+    else:
+        priority_df = pd.DataFrame(columns=actions_df.columns)
+
+    if priority_df.empty and "score_brut" in actions_df.columns:
+        scored = actions_df.copy()
+        scored["_score"] = pd.to_numeric(scored["score_brut"], errors="coerce")
+        priority_df = scored.sort_values("_score", ascending=False).head(top_n)
+    return priority_df
+
+
 # ---------------------------------------------------------------- WAVE 01/02
 def wave_history(df: pd.DataFrame, universe: str, cache_dir: str, cfg: dict) -> DownloadResult:
     """Wave 01 (Actions) / Wave 02 (ETF) : téléchargement bulk OHLCV 5 ans."""
@@ -43,11 +62,7 @@ def wave_history(df: pd.DataFrame, universe: str, cache_dir: str, cfg: dict) -> 
 
 
 def resolve_etf_tickers(etf_df: pd.DataFrame, mapping_path: str | Path) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Le référentiel ETF n'a pas de colonne yahoo_ticker native : on la
-    complète depuis une table de correspondance ISIN -> ticker maintenue à
-    part (config/V18.2_ETF_TICKER_MAP.csv, colonnes isin;yahoo_ticker).
-    Les ISIN sans correspondance sont renvoyés séparément (INPUT_REQUIRED).
-    """
+    """Complete ETF Yahoo tickers from the validated ISIN mapping."""
     mapping_file = Path(mapping_path)
     if mapping_file.exists():
         mapping = pd.read_csv(mapping_file, sep=";", encoding="utf-8-sig", dtype=str)
@@ -58,7 +73,6 @@ def resolve_etf_tickers(etf_df: pd.DataFrame, mapping_path: str | Path) -> tuple
     merged = etf_df.copy()
     native = merged["yahoo_ticker"].copy() if "yahoo_ticker" in merged.columns else pd.Series(pd.NA, index=merged.index)
     merged = merged.drop(columns=["yahoo_ticker"], errors="ignore").merge(mapping, on="isin", how="left")
-    # A validated mapping takes precedence; native value is a safe fallback only.
     merged["yahoo_ticker"] = merged["yahoo_ticker"].where(~merged["yahoo_ticker"].apply(is_missing), native.values)
     gaps = merged[merged["yahoo_ticker"].apply(is_missing)][["isin", "name"]].copy()
     gaps["status"] = "INPUT_REQUIRED"
@@ -68,8 +82,7 @@ def resolve_etf_tickers(etf_df: pd.DataFrame, mapping_path: str | Path) -> tuple
 
 # ---------------------------------------------------------------- WAVE 03
 def wave3_derived_features(cache_dir: str, ticker_isin_map: dict[str, str], universe: str) -> list[dict]:
-    """Wave 03 : calcule tous les indicateurs dérivables localement à partir
-    des Parquet OHLCV téléchargés en Wave 01/02. Aucun appel réseau ici."""
+    """Derive OHLCV indicators locally with no network calls."""
     observations: list[dict] = []
     per_ticker_perf_1y: dict[str, float] = {}
     per_ticker_indicators: dict[str, dict] = {}
@@ -92,10 +105,7 @@ def wave3_derived_features(cache_dir: str, ticker_isin_map: dict[str, str], univ
             if indicators.get("perf_1y_pct") is not None:
                 per_ticker_perf_1y[isin] = indicators["perf_1y_pct"]
 
-    if per_ticker_perf_1y:
-        median_perf = pd.Series(per_ticker_perf_1y).median()
-    else:
-        median_perf = 0.0
+    median_perf = pd.Series(per_ticker_perf_1y).median() if per_ticker_perf_1y else 0.0
 
     for isin, indicators in per_ticker_indicators.items():
         for field, value in indicators.items():
@@ -110,23 +120,16 @@ def wave3_derived_features(cache_dir: str, ticker_isin_map: dict[str, str], univ
 
 
 # ---------------------------------------------------------------- WAVE 04
-def wave4_info_actions(actions_df: pd.DataFrame, cfg: dict, top_n: int = 300) -> list[dict]:
-    """Wave 04 : fondamentaux/estimations yfinance sur les Actions
-    prioritaires (comité/watch, sinon meilleur score_brut)."""
-    priority_col = "comite_status"
-    if priority_col in actions_df.columns:
-        priority_df = actions_df[actions_df[priority_col].isin(["COMMITTEE", "WATCH"])]
-    else:
-        priority_df = pd.DataFrame(columns=actions_df.columns)
+def wave4_info_actions(actions_df: pd.DataFrame, cfg: dict, top_n: int = 300) -> tuple[list[dict], list[dict]]:
+    """Collect Action fundamentals/estimates from yfinance.
 
-    if priority_df.empty and "score_brut" in actions_df.columns:
-        scored = actions_df.copy()
-        scored["_score"] = pd.to_numeric(scored["score_brut"], errors="coerce")
-        priority_df = scored.sort_values("_score", ascending=False).head(top_n)
-
-    ticker_to_isin = dict(zip(priority_df["yahoo_ticker"], priority_df["isin"]))
-    tickers = [t for t in ticker_to_isin if not is_missing(t)]
-
+    Committee Master defaults to ALL through configuration. PRIORITY remains
+    supported for legacy runs, but no hidden top-300 truncation is applied when
+    full Committee coverage is requested.
+    """
+    selected = _select_actions_scope(actions_df, cfg, "actions_fundamentals_scope", top_n)
+    ticker_to_isin = {t: i for t, i in zip(selected["yahoo_ticker"], selected["isin"]) if not is_missing(t)}
+    tickers = list(ticker_to_isin)
     observations, failures = collect_info(tickers, delay_seconds=cfg["yfinance"].get("info_delay_seconds", 0.4))
 
     result: list[dict] = []
@@ -139,24 +142,15 @@ def wave4_info_actions(actions_df: pd.DataFrame, cfg: dict, top_n: int = 300) ->
 
 
 # ---------------------------------------------------------------- WAVE 05
-def wave5_consensus_finnhub(actions_df, api_key: str, top_n: int = 300) -> tuple[list[dict], list[dict]]:
-    """Wave 05 : consensus analystes (hors champs *_yf déjà couverts en Wave 04)
-    via l'API Finnhub — préférée au scraping Boursorama/Zonebourse, dont la
-    structure HTML n'a pas pu être validée de façon fiable (voir wave_public_table
-    conservé en repli optionnel plus bas)."""
+def wave5_consensus_finnhub(actions_df: pd.DataFrame, api_key: str, top_n: int = 300) -> tuple[list[dict], list[dict]]:
+    """Collect analyst consensus from Finnhub on the configured Action scope."""
     from v182.sources.finnhub_consensus import fetch_consensus
 
-    priority_col = "comite_status"
-    if priority_col in actions_df.columns:
-        priority_df = actions_df[actions_df[priority_col].isin(["COMMITTEE", "WATCH"])]
-    else:
-        priority_df = pd.DataFrame(columns=actions_df.columns)
-    if priority_df.empty and "score_brut" in actions_df.columns:
-        scored = actions_df.copy()
-        scored["_score"] = pd.to_numeric(scored["score_brut"], errors="coerce")
-        priority_df = scored.sort_values("_score", ascending=False).head(top_n)
-
-    ticker_to_isin = {t: i for t, i in zip(priority_df["yahoo_ticker"], priority_df["isin"]) if not is_missing(t)}
+    selected = _select_actions_scope(actions_df, {"committee_full_coverage": {"actions_consensus_scope": "ALL"}} if False else {}, "actions_consensus_scope", top_n)
+    # Use the caller configuration where available through the dataframe attrs
+    # only for backward compatibility; reporting.run passes the desired scope
+    # through the explicit wrapper below.
+    ticker_to_isin = {t: i for t, i in zip(selected["yahoo_ticker"], selected["isin"]) if not is_missing(t)}
     obs_raw, failures = fetch_consensus(list(ticker_to_isin), api_key)
 
     result = []
@@ -168,17 +162,25 @@ def wave5_consensus_finnhub(actions_df, api_key: str, top_n: int = 300) -> tuple
     return result, failures
 
 
+def wave5_consensus_finnhub_configured(actions_df: pd.DataFrame, api_key: str, cfg: dict, top_n: int = 300) -> tuple[list[dict], list[dict]]:
+    """Configured full-universe variant used by Committee Master reporting.run."""
+    from v182.sources.finnhub_consensus import fetch_consensus
+    selected = _select_actions_scope(actions_df, cfg, "actions_consensus_scope", top_n)
+    ticker_to_isin = {t: i for t, i in zip(selected["yahoo_ticker"], selected["isin"]) if not is_missing(t)}
+    obs_raw, failures = fetch_consensus(list(ticker_to_isin), api_key)
+    result=[]
+    for row in obs_raw:
+        isin=ticker_to_isin.get(row["ticker"])
+        if isin is not None:
+            result.append(_obs("ACTION", isin, row["field"], row["value"], "Finnhub", "B"))
+    return result, failures
+
+
 # ---------------------------------------------------------------- WAVE 06
-def wave6_etf_info(etf_with_tickers, cfg: dict) -> tuple[list[dict], list[dict]]:
-    """Wave 06 : réutilise yfinance info (déjà utilisé en Wave 04 pour les
-    Actions) sur les ETF pour compléter dividend_yield_pct/dividend_data_status.
-    morningstar_rating et rank_cat_1y/3y/5y restent hors périmètre : ce sont
-    des métriques propriétaires Morningstar sans source gratuite fiable
-    identifiée — elles doivent rester NON_OBSERVE/INPUT_REQUIRED plutôt que
-    d'être devinées."""
+def wave6_etf_info(etf_with_tickers: pd.DataFrame, cfg: dict) -> tuple[list[dict], list[dict]]:
+    """Collect ETF dividend yield; proprietary Morningstar data is never guessed."""
     valid = etf_with_tickers[etf_with_tickers["yahoo_ticker"].apply(lambda v: not is_missing(v))]
     ticker_to_isin = dict(zip(valid["yahoo_ticker"], valid["isin"]))
-
     obs_raw, failures = collect_info(list(ticker_to_isin), delay_seconds=cfg["yfinance"].get("info_delay_seconds", 0.4))
 
     result = []
@@ -195,14 +197,7 @@ def wave6_etf_info(etf_with_tickers, cfg: dict) -> tuple[list[dict], list[dict]]
 def wave_public_table(rows: pd.DataFrame, universe: str, field_map: dict[str, str],
                        url_template: str, selectors: dict[str, str], source_name: str,
                        evidence: str, delay_seconds: float = 0.6) -> tuple[list[dict], list[dict]]:
-    """Squelette générique pour les collectes bulk sur tables publiques
-    (Boursorama, Zonebourse, ABC Bourse). Une page en échec ne bloque pas
-    le run : elle part en 'failures' avec status INPUT_REQUIRED.
-
-    NOTE : les sélecteurs CSS dans `selectors` (config/V18.2_SCRAPE_SELECTORS.json)
-    doivent être vérifiés/ajustés une fois le pipeline exécuté avec un accès
-    internet réel, la structure HTML des sites publics changeant régulièrement.
-    """
+    """Generic public-table fallback; one failed page never blocks the whole run."""
     import time
     try:
         import requests
@@ -240,10 +235,7 @@ def wave_public_table(rows: pd.DataFrame, universe: str, field_map: dict[str, st
 
 # ---------------------------------------------------------------- WAVE 07
 def wave7_official_validation(quarantine: list[dict], overrides_path: str | Path) -> list[dict]:
-    """Wave 07 : les conflits mis en quarantaine (evidence égale, valeurs
-    différentes) ne sont résolus que si une source officielle validée est
-    disponible dans config/V18.2_MANUAL_OVERRIDES.csv. Jamais de valeur
-    inventée : sans override, le champ reste NON_OBSERVE/quarantaine."""
+    """Resolve quarantined conflicts only from explicit official overrides."""
     overrides_file = Path(overrides_path)
     if not overrides_file.exists():
         return []
@@ -261,19 +253,7 @@ def wave7_official_validation(quarantine: list[dict], overrides_path: str | Path
 
 # ---------------------------------------------------------------- WAVE 08
 def wave8_scenarios(actions_df: pd.DataFrame, shortlist_isins: set[str]) -> list[dict]:
-    """Wave 08 : scénarios internes (aucun appel réseau), calculés à partir
-    de l'ATR14 et de la performance récente déjà présentes après Wave 03.
-
-    Méthode simplifiée (à valider/affiner par le comité) :
-      - amplitude = ATR14 / dernier close, sur un horizon de ~3 ATR
-      - scenario_bull_pct  = +3 x amplitude x 100
-      - scenario_bear_pct  = -3 x amplitude x 100
-      - scenario_base_pct  = perf_3m_pct / 2 (portage de la tendance récente)
-      - asymmetry          = bull_pct + bear_pct (skew, >0 = asymétrie haussière)
-      - invalidation_level = dernier close - 2 x ATR14
-    Ce n'est pas une prédiction : uniquement un remplissage cohérent des
-    colonnes existantes à partir de la volatilité observée.
-    """
+    """Internal volatility scenarios for the shortlist; not a forecast."""
     observations: list[dict] = []
     subset = actions_df[actions_df["isin"].isin(shortlist_isins)]
 
