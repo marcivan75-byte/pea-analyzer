@@ -4,7 +4,7 @@ import pandas as pd
 from v182.audit.canonical_universe import load_compressed_isins, filter_actions, EXPECTED_ACTIONS, EXPECTED_SHA256
 
 ROOT=Path(__file__).resolve().parents[1]
-WHITELIST=ROOT/"config"/"V21_ACTION_UNIVERSE_ISINS.zlib.b64"
+WHITELIST=ROOT/"config"/"V21_ACTION_UNIVERSE_ISINS.parts"
 
 
 def test_exact_v21_whitelist_count_and_digest():
