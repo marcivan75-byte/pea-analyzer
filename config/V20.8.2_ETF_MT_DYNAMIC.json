@@ -1,0 +1,14 @@
+{
+  "version": "V20.8.2_ETF_MT_DYNAMIC_MISSING_2026_08_12",
+  "base_reference": "V20.8.1_ETF_MT_HIGH_PRECISION",
+  "status": "SHADOW_ACTIVE_CHALLENGER",
+  "minimum_weighted_coverage": 0.70,
+  "missing_policy": "AVAILABLE_CRITERIA_RENORMALIZED_TO_100_PERCENT",
+  "neutral_imputation_forbidden": true,
+  "selection_threshold": 82.0,
+  "top_n": 2,
+  "regime_gate": "UNCHANGED_FROM_V20.8.1",
+  "historical_performance_attribution": "NONE_UNTIL_DEDICATED_PIT_BACKTEST",
+  "reference_core_attribution": "V20.8.1 exact complete-38 core keeps its 90.91% OOS 2021-2023 attribution only",
+  "live_orders_enabled": false
+}
