@@ -1,4 +1,4 @@
-name: Committee Master V21.6.1 hardened unified scoring
+name: Committee Master V21.6.2 hardened unified scoring
 
 on:
   workflow_dispatch:
@@ -11,6 +11,10 @@ on:
       - ".github/workflows/committee_master_daily.yml"
   schedule:
     - cron: "15 18 * * 1-5"
+
+concurrency:
+  group: committee-master-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -113,7 +117,7 @@ jobs:
           assert g["governance"]["contribution_blocks"] == 11
           assert mm["entry_execution_rule"] == "NEXT_RUN_OBSERVED_PRICE_AFTER_SIGNAL_DATE"
           assert mm["single_position_per_isin"] is True
-          print(f"V21.6.1 integrity OK: Actions 1829/633 (materialized identity-only={materialized.materialized_missing_count}), ETF 102/268, TCT, Gold, bias-safe virtual book")
+          print(f"V21.6.2 integrity OK: Actions 1829/633 (materialized identity-only={materialized.materialized_missing_count}), ETF 102/268, TCT, Gold, bias-safe virtual book")
           PY
       - name: Run unified Committee pipeline
         run: python -m v182.reporting.unified_runner
@@ -153,11 +157,11 @@ jobs:
         with:
           path: state/committee_performance_v21_4/
           key: committee-performance-v214-${{ github.run_id }}
-      - name: Upload complete Committee V21.6.1 results
+      - name: Upload complete Committee V21.6.2 results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: committee-master-v21-6-1-${{ github.run_id }}
+          name: committee-master-v21-6-2-${{ github.run_id }}
           path: |
             outputs/unified/
             outputs/committee_master/
