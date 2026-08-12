@@ -1,5 +1,6 @@
 {
   "version": "V24.1.7_T1_T2_V2_SHADOW",
+  "formula_version": "T1T2_V2_2026_08",
   "asset_class": "ACTION",
   "horizon": "TCT",
   "status": "SHADOW_RESEARCH_ONLY",
@@ -24,12 +25,21 @@
     "news": 0.04,
     "valo": 0.04
   },
+  "squeeze": {
+    "percentile": 0.15,
+    "lookback_sessions": 100,
+    "window_sessions": 8,
+    "minimum_fraction_below_threshold": 0.80
+  },
   "t1": {
     "quality_threshold": 70.0,
     "starter_threshold": 80.0,
     "quality_component_min_coverage": 0.80,
     "ttl_sessions": 10,
     "rvol_min": 1.20,
+    "macd_hist_acceleration_min": 0.50,
+    "max_extension_atr": 1.5,
+    "max_extension_pct": 0.10,
     "components": {
       "compression": 0.25,
       "volume_acceleration": 0.20,
@@ -38,12 +48,20 @@
       "relative_strength": 0.10,
       "risk_control": 0.10
     },
+    "component_fields": {
+      "compression": "t1_component_compression",
+      "volume_acceleration": "t1_component_volume_acceleration",
+      "breakout_quality": "t1_component_breakout_quality",
+      "momentum_acceleration": "t1_component_momentum_acceleration",
+      "relative_strength": "t1_component_relative_strength",
+      "risk_control": "t1_component_risk_control"
+    },
     "gates": [
-      "compression",
+      "compression_fraction_ge_0_80",
       "rvol_ge_1_20",
-      "breakout_cross_or_expansion",
-      "macd_negative_accelerating",
-      "technical_k_gt_d_rsi_k_lt_70_above_sar_or_mm50",
+      "bb_upper_cross_and_non_extension",
+      "macd_hist_negative_accelerating_ge_50pct",
+      "stoch_k_gt_d_rsi_and_k_lt_70_above_sar_or_mm50",
       "baseline_top20"
     ]
   },
@@ -51,8 +69,11 @@
     "quality_threshold": 75.0,
     "quality_component_min_coverage": 0.80,
     "bandwidth_expansion_ratio_min": 1.15,
+    "rvol_min": 1.20,
     "max_extension_atr": 1.5,
-    "max_extension_pct": 10.0,
+    "max_extension_pct": 0.10,
+    "hold_floor_bb_factor": 0.995,
+    "hold_floor_t1_factor": 0.98,
     "components": {
       "bandwidth_expansion": 0.25,
       "macd_confirmation": 0.20,
@@ -61,28 +82,46 @@
       "relative_strength_continuity": 0.10,
       "non_extension": 0.10
     },
+    "component_fields": {
+      "bandwidth_expansion": "t2_component_bandwidth_expansion",
+      "macd_confirmation": "t2_component_macd_confirmation",
+      "volume_persistence": "t2_component_volume_persistence",
+      "breakout_hold_retest": "t2_component_breakout_hold",
+      "relative_strength_continuity": "t2_component_relative_strength_continuation",
+      "non_extension": "t2_component_non_extension"
+    },
     "gates": [
-      "exact_linked_t1",
+      "exact_linked_t1_eligible",
       "ttl_le_10_sessions",
-      "bandwidth_expansion_ge_1_15",
-      "macd_positive",
-      "breakout_hold_or_retest",
+      "bandwidth_current_over_t1_ge_1_15",
+      "macd_hist_positive",
+      "rvol_ge_1_20",
+      "close_ge_max_bb_0_995_t1_0_98",
+      "relative_strength_not_degraded",
+      "non_extension_le_10pct_and_1_5atr",
       "baseline_top20"
     ]
   },
   "research_entry_variant": {
+    "reference": "T1_25_T2_75",
     "t1_fraction": 0.25,
     "t2_fraction": 0.75,
     "target_pct": 15.0,
     "stop_pct": -10.0,
-    "roundtrip_cost_pct": 0.5
+    "roundtrip_cost_pct": 0.5,
+    "collision": "STOP_FIRST"
   },
   "promotion_governance": {
     "v2_backtest_status": "NOT_YET_BACKTESTED",
     "prior_t1_t2_oos_promotion": "FAILED_GATES",
     "holdout_locked": true,
-    "bonus_points": 0.0,
-    "score_multiplier": 1.0,
-    "setup_component_active": false
+    "bonus_points_t1": 0.0,
+    "bonus_points_t2": 0.0,
+    "score_multiplier_t1": 1.0,
+    "score_multiplier_t2": 1.0,
+    "setup_component_active": false,
+    "oos_min_expectancy": 0.005,
+    "oos_min_profit_factor": 1.15,
+    "oos_max_issuer_share": 0.25
   }
 }
