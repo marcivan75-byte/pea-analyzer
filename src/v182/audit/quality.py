@@ -11,11 +11,16 @@ class QualityResult:
 def _check(name: str, passed: bool, value, threshold, detail: str="") -> dict:
     return {"check": name, "passed": bool(passed), "value": value, "threshold": threshold, "detail": detail}
 
-def run_quality_gates(actions: pd.DataFrame, etf: pd.DataFrame, before: dict, after: dict, cfg: dict, wave_metrics: dict) -> QualityResult:
+def run_quality_gates(actions: pd.DataFrame, etf: pd.DataFrame, before: dict, after: dict, cfg: dict, wave_metrics: dict, expected_rows: dict | None = None) -> QualityResult:
     q=cfg["quality_gates"]
     checks=[]
-    checks.append(_check("actions_row_count", len(actions)>=q["actions_min_rows"], len(actions), q["actions_min_rows"]))
-    checks.append(_check("etf_row_count", len(etf)>=q["etf_min_rows"], len(etf), q["etf_min_rows"]))
+    expected_rows = expected_rows or {}
+    actions_min = int(expected_rows.get("ACTION", q["actions_min_rows"]))
+    etf_min = int(expected_rows.get("ETF", q["etf_min_rows"]))
+    checks.append(_check("actions_row_count_no_universe_loss", len(actions)>=actions_min, len(actions), actions_min,
+                         "Expected row count is frozen from the canonical input loaded at run start."))
+    checks.append(_check("etf_row_count_no_universe_loss", len(etf)>=etf_min, len(etf), etf_min,
+                         "Expected row count is frozen from the canonical input loaded at run start."))
     checks.append(_check("actions_unique_isin", actions["isin"].nunique()==len(actions), actions["isin"].nunique(), len(actions)))
     checks.append(_check("etf_unique_isin", etf["isin"].nunique()==len(etf), etf["isin"].nunique(), len(etf)))
     for universe, frame in (("actions",actions),("etf",etf)):
