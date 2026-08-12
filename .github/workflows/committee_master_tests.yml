@@ -19,6 +19,7 @@ on:
       - "tests/test_committee_v21_enrichment.py"
       - "tests/test_topdown_v21.py"
       - "tests/test_tct_v24_1_7.py"
+      - "tests/test_tct_baseline_v24_1_7.py"
       - "tests/test_canonical_universe_v21.py"
       - "tests/test_etf_structural_overlay.py"
       - "tests/test_enrichment_dividends_funds.py"
@@ -55,6 +56,7 @@ jobs:
           python -m py_compile src/v182/features/topdown_features.py
           python -m py_compile src/v182/decision/committee_master.py
           python -m py_compile src/v182/decision/tct_v24_1_7.py
+          python -m py_compile src/v182/decision/tct_baseline_v24_1_7.py
           python -m py_compile src/v182/decision/etf_structural_overlay.py
           python -m py_compile src/v182/reporting/waves.py
           python -m py_compile src/v182/reporting/run.py
@@ -67,14 +69,20 @@ jobs:
           from pathlib import Path
           import json
           from v182.audit.canonical_universe import load_compressed_isins
+          from v182.decision.tct_baseline_v24_1_7 import WEIGHTS_V24_1_2, MAX_COVERAGE_WITH_SETUP_DISABLED
           a=json.loads(Path("config/V21_ACTIONS_CRITERIA_REGISTRY.json").read_text())
           e=json.loads(Path("config/V20_7_1_ETF_CRITERIA_REGISTRY.json").read_text())
+          t=json.loads(Path("config/TCT_V24_1_7_SHADOW.json").read_text())
           integrity=json.loads(Path("config/FULL_REFERENTIAL_INTEGRITY.json").read_text())
           assert a["criteria_count"] == 633 == integrity["actions"]["criteria_count"]
           assert e["criteria_count"] == 268 == integrity["etf"]["criteria_count"]
           assert len(load_compressed_isins("config/V21_ACTION_UNIVERSE_ISINS.parts")) == 1429
           assert e["governance"]["t1_t2_forbidden"] is True
           assert a["governance"]["t1_t2_scope"] == "ACTION_TCT_ONLY"
+          assert abs(sum(WEIGHTS_V24_1_2.values())-1.0) < 1e-12
+          assert WEIGHTS_V24_1_2["setup"] == 0.16
+          assert t["promotion_governance"]["setup_component_active"] is False
+          assert MAX_COVERAGE_WITH_SETUP_DISABLED == 0.84
           assert e["bonus_malus"]["morningstar_bonus"]["5"] == 0.0
           assert e["bonus_malus"]["morningstar_bonus"]["4"] == 3.0
           assert e["bonus_malus"]["morningstar_bonus"]["3"] == 1.0
@@ -82,7 +90,7 @@ jobs:
           assert e["bonus_malus"]["risk_malus"]["7"] == -3.0
           assert e["bonus_malus"]["positive_bonus_cannot_create_buy"] is True
           assert e["bonus_malus"]["mt_core_selection_unchanged"] is True
-          print("Integrity OK: Actions=1429/633, ETF=102/268, T1/T2 Action TCT only, GitOK Morningstar/SRI rules")
+          print("Integrity OK: Actions=1429/633, ETF=102/268, TCT baseline fixed-weight pre-T1/T2, GitOK Morningstar/SRI rules")
           PY
       - name: Unit tests
         run: |
@@ -91,6 +99,7 @@ jobs:
             tests/test_committee_v21_enrichment.py \
             tests/test_topdown_v21.py \
             tests/test_tct_v24_1_7.py \
+            tests/test_tct_baseline_v24_1_7.py \
             tests/test_canonical_universe_v21.py \
             tests/test_etf_structural_overlay.py \
             tests/test_enrichment_dividends_funds.py
