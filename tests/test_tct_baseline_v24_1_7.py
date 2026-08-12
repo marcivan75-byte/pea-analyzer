@@ -17,7 +17,7 @@ def _full_rows(n=25):
         "isin":[f"FR{i:010d}" for i in range(n)],
         "name":[f"A{i}" for i in range(n)],
         "asset_class":"ACTION",
-        "pea_eligible":True,
+        "pea_eligible":pd.Series([True]*n,dtype="object"),
         "score_squeeze":[100-i for i in range(n)],
         "score_earnings_proximity":80.0,
         "score_t1_tech":75.0,
@@ -78,6 +78,7 @@ def test_setup_t1_t2_fields_have_zero_effect_on_baseline():
 
 def test_only_verified_pea_actions_with_minimum_coverage_are_ranked_top20():
     frame=_full_rows(25)
+    # Exercise the exact string parsing regression from the August audit.
     frame.loc[0,"pea_eligible"]="false"
     out,audit=build_tct_baseline(frame,_cfg())
     assert pd.isna(out.loc[0,"tct_baseline_rank"])
