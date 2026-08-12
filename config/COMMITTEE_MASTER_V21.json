@@ -43,7 +43,8 @@
       "generic_horizon_dynamic_weighting": "AVAILABLE_ACTIVE_CRITERIA_RENORMALIZED_TO_100",
       "mt_runner": "v182.reporting.etf_mt_v2081_run",
       "mt_historical_attribution": "90.91% OOS 2021-2023 applies only to exact 38 dynamic PIT core",
-      "mt_missing_policy": "REFERENCE_CORE_REMAINS_STRICT_UNTIL_DYNAMIC_CHALLENGER_IS_SEPARATELY_VALIDATED",
+      "mt_dynamic_challenger": "V20.8.2_ACTIVE_SHADOW_AT_COMMITTEE",
+      "mt_missing_policy": "V20.8.2 renormalizes available PIT criteria to 100% when weighted coverage >=70%; V20.8.1 remains strict historical reference only",
       "structural_overlay": {"layer":"COMMITTEE_AFTER_BASE_SCORE","morningstar_bonus_active":true,"risk_malus_active":true,"positive_bonus_cannot_create_buy":true,"risk_malus_can_downgrade":true,"mt_core_selection_unchanged":true,"short_risk_inverts_quality_and_risk_adjustments":true},
       "t1_t2_forbidden": true
     },
