@@ -23,3 +23,14 @@ def test_completeness_matches_observed_zero_and_false_as_real_values():
     assert out["observed"]==2
     assert out["possible"]==3
     assert math.isclose(out["coverage_pct"],66.7)
+
+
+def test_canonical_seed_status_is_bookkeeping_not_data_coverage():
+    rows=[
+        {"x":pd.NA,"canonical_seed_status":"WHITELIST_ONLY_MISSING_METADATA"},
+        {"x":"42","canonical_seed_status":"LEGACY_ROW"},
+    ]
+    out=completeness(rows,["x","canonical_seed_status"])
+    assert out["possible"]==2
+    assert out["observed"]==1
+    assert math.isclose(out["coverage_pct"],50.0)
