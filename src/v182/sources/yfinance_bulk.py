@@ -24,6 +24,12 @@ def _contains_ticker(frame, ticker: str) -> bool:
     return True
 
 
+def _resolve_actions_requested(cache_dir: str, include_actions: bool | None) -> bool:
+    if include_actions is not None:
+        return bool(include_actions)
+    return Path(cache_dir).name.lower() == "actions"
+
+
 def download_history(
     tickers: list[str],
     cache_dir: str,
@@ -48,7 +54,7 @@ def download_history(
     failure_details: list[dict] = []
     cache = Path(cache_dir)
     cache.mkdir(parents=True, exist_ok=True)
-    actions_requested=(cache.name.lower()=="actions") if include_actions is None else bool(include_actions)
+    actions_requested=_resolve_actions_requested(cache_dir,include_actions)
 
     for start in range(0, len(clean), batch_size):
         batch = clean[start:start + batch_size]
