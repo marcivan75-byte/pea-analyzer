@@ -20,9 +20,11 @@ on:
       - "tests/test_topdown_v21.py"
       - "tests/test_tct_v24_1_7.py"
       - "tests/test_tct_baseline_v24_1_7.py"
+      - "tests/test_tct_exact_v24_1_7.py"
       - "tests/test_canonical_universe_v21.py"
       - "tests/test_etf_structural_overlay.py"
       - "tests/test_enrichment_dividends_funds.py"
+      - "pyproject.toml"
       - ".github/workflows/committee_master_*.yml"
   workflow_dispatch:
 
@@ -53,10 +55,12 @@ jobs:
           python -m py_compile src/v182/sources/gdelt_news.py
           python -m py_compile src/v182/sources/fred_macro.py
           python -m py_compile src/v182/features/ohlcv_features.py
+          python -m py_compile src/v182/features/tct_v24_1_7_exact.py
           python -m py_compile src/v182/features/topdown_features.py
           python -m py_compile src/v182/decision/committee_master.py
           python -m py_compile src/v182/decision/tct_v24_1_7.py
           python -m py_compile src/v182/decision/tct_baseline_v24_1_7.py
+          python -m py_compile src/v182/decision/tct_timing_exact_v24_1_7.py
           python -m py_compile src/v182/decision/etf_structural_overlay.py
           python -m py_compile src/v182/reporting/waves.py
           python -m py_compile src/v182/reporting/run.py
@@ -68,8 +72,10 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import json
+          import ta
           from v182.audit.canonical_universe import load_compressed_isins
           from v182.decision.tct_baseline_v24_1_7 import WEIGHTS_V24_1_2, MAX_COVERAGE_WITH_SETUP_DISABLED
+          from v182.decision.tct_timing_exact_v24_1_7 import FORMULA_VERSION, T1_WEIGHTS, T2_WEIGHTS
           a=json.loads(Path("config/V21_ACTIONS_CRITERIA_REGISTRY.json").read_text())
           e=json.loads(Path("config/V20_7_1_ETF_CRITERIA_REGISTRY.json").read_text())
           t=json.loads(Path("config/TCT_V24_1_7_SHADOW.json").read_text())
@@ -83,6 +89,10 @@ jobs:
           assert WEIGHTS_V24_1_2["setup"] == 0.16
           assert t["promotion_governance"]["setup_component_active"] is False
           assert MAX_COVERAGE_WITH_SETUP_DISABLED == 0.84
+          assert t["formula_version"] == FORMULA_VERSION
+          assert abs(sum(T1_WEIGHTS.values())-1.0) < 1e-12
+          assert abs(sum(T2_WEIGHTS.values())-1.0) < 1e-12
+          assert t["state"]["persist_only_after_baseline_eligibility"] is True
           assert e["bonus_malus"]["morningstar_bonus"]["5"] == 0.0
           assert e["bonus_malus"]["morningstar_bonus"]["4"] == 3.0
           assert e["bonus_malus"]["morningstar_bonus"]["3"] == 1.0
@@ -90,7 +100,7 @@ jobs:
           assert e["bonus_malus"]["risk_malus"]["7"] == -3.0
           assert e["bonus_malus"]["positive_bonus_cannot_create_buy"] is True
           assert e["bonus_malus"]["mt_core_selection_unchanged"] is True
-          print("Integrity OK: Actions=1429/633, ETF=102/268, TCT baseline fixed-weight pre-T1/T2, GitOK Morningstar/SRI rules")
+          print("Integrity OK: Actions=1429/633, ETF=102/268, exact TCT V24.1.7 source formulas/state, GitOK Morningstar/SRI rules")
           PY
       - name: Unit tests
         run: |
@@ -100,6 +110,7 @@ jobs:
             tests/test_topdown_v21.py \
             tests/test_tct_v24_1_7.py \
             tests/test_tct_baseline_v24_1_7.py \
+            tests/test_tct_exact_v24_1_7.py \
             tests/test_canonical_universe_v21.py \
             tests/test_etf_structural_overlay.py \
             tests/test_enrichment_dividends_funds.py
