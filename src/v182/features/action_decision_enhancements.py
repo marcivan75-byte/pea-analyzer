@@ -11,6 +11,13 @@ def _num(value):
     except (TypeError,ValueError): return None
 
 
+def _first_num(row: pd.Series, *fields: str) -> float | None:
+    for field in fields:
+        value=_num(row.get(field))
+        if value is not None: return value
+    return None
+
+
 def _morningstar_score(rating) -> float | None:
     x=_num(rating)
     if x is None or x<1 or x>5: return None
@@ -35,15 +42,13 @@ def _target_growth_score(upside_pct) -> float | None:
 
 
 def build_action_enhancement_observations(actions: pd.DataFrame) -> list[dict]:
-    """Build bounded 0-100 decision factors from observed values only."""
+    """Build observed-only Morningstar, growth and >4% dividend factors."""
     now=datetime.now(timezone.utc).isoformat(); out=[]
     for _,row in actions.iterrows():
         isin=str(row.get("isin","") or "")
-        morning=_morningstar_score(row.get("morningstar_rating"))
-        div=_dividend_gt4_score(row.get("dividend_yield_pct") if row.get("dividend_yield_pct") is not None else row.get("dividend_yield_v21_pct"))
-        target_raw=row.get("upside_pct_yf") if row.get("upside_pct_yf") not in (None,"") else row.get("upside_pct")
-        if target_raw in (None,""): target_raw=row.get("target_upside_pct_v21")
-        target=_target_growth_score(target_raw)
+        morning=_morningstar_score(_first_num(row,"morningstar_rating"))
+        div=_dividend_gt4_score(_first_num(row,"dividend_yield_pct","dividend_yield_v21_pct"))
+        target=_target_growth_score(_first_num(row,"upside_pct_yf","upside_pct","target_upside_pct_v21"))
         total_parts=[]; total_weights=[]
         if target is not None: total_parts.append(target*0.75); total_weights.append(0.75)
         if div is not None: total_parts.append(div*0.25); total_weights.append(0.25)
