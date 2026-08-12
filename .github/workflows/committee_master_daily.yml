@@ -2,6 +2,15 @@ name: Committee Master V21 daily scoring
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "config/COMMITTEE_MASTER_V21.json"
+      - "config/V21_ACTIONS_CRITERIA_REGISTRY.json"
+      - "config/V20_7_1_ETF_CRITERIA_REGISTRY.json"
+      - "src/v182/decision/committee_master.py"
+      - "src/v182/reporting/committee_master_run.py"
+      - ".github/workflows/committee_master_daily.yml"
   schedule:
     - cron: "15 18 * * 1-5"
 
