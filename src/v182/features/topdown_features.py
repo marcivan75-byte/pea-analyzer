@@ -1,6 +1,5 @@
 from __future__ import annotations
 from dataclasses import dataclass
-import math
 import pandas as pd
 
 from v182.sources.fred_macro import global_macro_score
@@ -26,17 +25,17 @@ def _clamp(value: float) -> float:
     return float(max(0.0, min(100.0, value)))
 
 
-def _market_regime_score(frame: pd.DataFrame) -> float | None:
+def _market_regime_score(frame: pd.DataFrame, min_observations: int = 10) -> float | None:
     if frame.empty:
         return None
     p1=_num(frame,"perf_1m_pct")
     p6=_num(frame,"perf_6m_pct")
     values=[]
-    if p1.notna().sum() >= 10:
+    if p1.notna().sum() >= min_observations:
         breadth=float((p1.dropna()>0).mean()*100.0)
         median=float(p1.median())
         values.append(0.55*breadth + 0.45*_clamp(50.0+median*4.0))
-    if p6.notna().sum() >= 10:
+    if p6.notna().sum() >= min_observations:
         breadth=float((p6.dropna()>0).mean()*100.0)
         median=float(p6.median())
         values.append(0.60*breadth + 0.40*_clamp(50.0+median*1.5))
@@ -64,7 +63,7 @@ def _group_regime_scores(frame: pd.DataFrame, groups: pd.Series, min_names: int 
         key=str(group).strip()
         if not key or key.upper() in {"N/A","NA","NONE"} or len(sub)<min_names:
             continue
-        score=_market_regime_score(sub)
+        score=_market_regime_score(sub,min_observations=min_names)
         if score is not None:
             out[key]=score
     return out
@@ -88,18 +87,7 @@ def _instrument_candidates(frame: pd.DataFrame, top_n: int) -> pd.DataFrame:
 
 
 def build_topdown(actions: pd.DataFrame, etfs: pd.DataFrame, *, fred_api_key: str | None, instrument_news_top_n: int = 80) -> TopDownResult:
-    """Build the currently supportable Top-Down funnel without neutral imputation.
-
-    - Global macro: FRED when available; otherwise a clearly labelled
-      market-implied fallback so the Committee does not confuse it with an
-      official macro feed.
-    - Country macro: market-implied country regime proxy until ECB/Eurostat
-      country feeds are directly connected.
-    - News: GDELT lexical scores over a 2-day window; no article/evidence means
-      the criterion remains missing.
-    - Market sentiment: cross-sectional breadth/momentum from the current PIT
-      market data, not a fabricated 50/100.
-    """
+    """Build the currently supportable Top-Down funnel without neutral imputation."""
     diagnostics=[]; provenance={}; global_scores={}; action_scores={}; etf_scores={}
     combined=pd.concat([actions.assign(__asset="ACTION"),etfs.assign(__asset="ETF")],ignore_index=True,sort=False)
 
