@@ -1,51 +1,50 @@
 {
-  "version": "V21.1_COMMITTEE_MASTER_WIRING_2026_08_12",
+  "version": "V21.3_COMMITTEE_MASTER_1829_DYNAMIC_2026_08_12",
   "status": "SHADOW_REFERENCE_SCORING",
   "live_orders_enabled": false,
-  "principle": "Complete referential -> canonical universe -> horizon engines -> bonus/malus/gates -> overlays -> committee -> sector ranking -> outputs",
+  "principle": "Complete referential -> 1829 canonical Actions -> collections + source audits -> dynamic available-criterion weights to 100% -> horizon engines -> rotation/catch-up -> bonus/malus/gates -> Committee -> virtual performance",
   "assets": {
     "ACTIONS": {
       "registry": "config/V21_ACTIONS_CRITERIA_REGISTRY.json",
-      "canonical_universe": "V21.0_1429_EXACT_ISIN_WHITELIST",
+      "canonical_universe": "V21.3_1829_EXACT_ISIN_WHITELIST",
+      "canonical_universe_path": "config/V21_3_ACTION_UNIVERSE_1829_ISINS.parts",
       "horizons": ["CT", "MT", "LT", "SHORT", "TOP_DOWN"],
+      "dynamic_weighting": {"enabled": true, "available_active_criteria_sum_pct": 100, "minimum_coverage_gates_preserved": true, "neutral_imputation_forbidden": true},
+      "rotation_catchup": {"enabled": true, "market_high_regime_is_computed_not_hardcoded": true, "sector_rotation": true, "action_catchup": true, "recovery_gate_required_for_full_catchup_bonus": true},
+      "high_52w_overlay": {"enabled": true, "far_from_high_bonus_requires_recovery": true, "near_high_malus": true, "horizons": ["CT", "MT", "LT"]},
+      "morningstar_stock_rating": {"enabled": true, "positive_weight": true, "attributed_data_only": true, "missing_policy": "DYNAMIC_REWEIGHT_NO_IMPUTATION"},
+      "total_return": {"target_upside_strengthened": true, "dividend_gt4_strengthened": true, "combined_total_return_factor": true},
       "tct": {
-        "adapter": "ACTION_TCT_V24_1_7",
+        "adapter": "ACTION_TCT_V24_1_7_TIMING",
         "config": "config/TCT_V24_1_7_SHADOW.json",
         "t1_t2_scope": "ACTION_TCT_ONLY",
         "mode": "SHADOW_RESEARCH_ONLY",
         "baseline_required": true,
-        "baseline_engine": "v182.decision.tct_baseline_v24_1_7",
+        "baseline_engine": "v182.decision.tct_baseline_v24_1_8",
+        "baseline_version": "V24.1.8_DYNAMIC_NORMALIZATION_SHADOW",
         "exact_timing_engine": "v182.decision.tct_timing_exact_v24_1_7",
         "exact_indicator_engine": "v182.features.tct_v24_1_7_exact",
         "formula_version": "T1T2_V2_2026_08",
-        "source_kit": "KIT_TCT_V24_1_7_T1_T2_V2_SHADOW_PROCESS_REFERENTIAL",
         "baseline_top_n": 20,
         "baseline_min_coverage": 0.60,
-        "baseline_missing_weight_policy": "ZERO_FIXED_WEIGHT_NO_REDISTRIBUTION",
+        "baseline_missing_weight_policy": "ACTIVE_AVAILABLE_PILLARS_RENORMALIZED_TO_100_SETUP_EXCLUDED",
         "setup_component_active": false,
-        "baseline_max_score": 84.0,
-        "baseline_max_coverage": 0.84,
         "state_path": "state/TCT_V24_1_7_T1_STATE.json",
         "state_restored_between_github_runs": true,
         "persist_t1_only_after_baseline_eligibility": true,
         "t2_revalidates_current_baseline": true,
-        "score_influence": 0
+        "score_influence": 0,
+        "performance_attribution": "NONE_TO_V24_1_8_UNTIL_DEDICATED_PIT_BACKTEST"
       }
     },
     "ETF": {
       "registry": "config/V20_7_1_ETF_CRITERIA_REGISTRY.json",
       "horizons": ["CT", "MT", "LT", "SHORT", "TOP_DOWN"],
+      "generic_horizon_dynamic_weighting": "AVAILABLE_ACTIVE_CRITERIA_RENORMALIZED_TO_100",
       "mt_runner": "v182.reporting.etf_mt_v2081_run",
       "mt_historical_attribution": "90.91% OOS 2021-2023 applies only to exact 38 dynamic PIT core",
-      "structural_overlay": {
-        "layer": "COMMITTEE_AFTER_BASE_SCORE",
-        "morningstar_bonus_active": true,
-        "risk_malus_active": true,
-        "positive_bonus_cannot_create_buy": true,
-        "risk_malus_can_downgrade": true,
-        "mt_core_selection_unchanged": true,
-        "short_risk_inverts_quality_and_risk_adjustments": true
-      },
+      "mt_missing_policy": "REFERENCE_CORE_REMAINS_STRICT_UNTIL_DYNAMIC_CHALLENGER_IS_SEPARATELY_VALIDATED",
+      "structural_overlay": {"layer":"COMMITTEE_AFTER_BASE_SCORE","morningstar_bonus_active":true,"risk_malus_active":true,"positive_bonus_cannot_create_buy":true,"risk_malus_can_downgrade":true,"mt_core_selection_unchanged":true,"short_risk_inverts_quality_and_risk_adjustments":true},
       "t1_t2_forbidden": true
     },
     "GOLD": {
@@ -61,41 +60,17 @@
       "minimum_coverage": 0.7,
       "primary_price": "XAU_EUR",
       "secondary_price": "XAU_USD",
-      "horizons": {
-        "TACTICAL_2_12W": {"technical": 0.45, "macro": 0.25, "flows": 0.20, "positioning": 0.10},
-        "STRATEGIC_6_24M": {"real_rates_usd": 0.25, "central_banks": 0.20, "gold_etf_flows": 0.20, "cftc": 0.15, "stress_geopolitics": 0.10, "technical": 0.10}
-      },
-      "quality": {"qds_or_required_for_buy_reinforce": 70, "data_trust_required_for_committee": 70},
+      "horizons": {"TACTICAL_2_12W":{"technical":0.45,"macro":0.25,"flows":0.20,"positioning":0.10},"STRATEGIC_6_24M":{"real_rates_usd":0.25,"central_banks":0.20,"gold_etf_flows":0.20,"cftc":0.15,"stress_geopolitics":0.10,"technical":0.10}},
+      "quality": {"qds_or_required_for_buy_reinforce":70,"data_trust_required_for_committee":70},
       "policy": "Preserve source-backed top-level family weights. Missing observations remain MISSING. Reconstructed intra-block weights are provisional until dedicated PIT backtest. No performance claim and no real order."
     }
   },
-  "topdown": {
-    "global_macro": "FRED primary, explicit market-implied C fallback",
-    "country_macro": "market-implied C interim; direct ECB/Eurostat target",
-    "news": "GDELT 2d lexical, missing remains missing",
-    "market_sentiment": "PIT breadth/momentum C interim",
-    "neutral_imputation_forbidden": true
-  },
+  "collection_audit": {"after_each_collection":true,"excel_directory":"outputs/data_audit","latest":"outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx","includes_missing":true,"includes_partial":true,"includes_sources":true},
+  "performance_tracking": {"enabled":true,"mode":"VIRTUAL_RESEARCH_ONLY","config":"config/COMMITTEE_VIRTUAL_MONEY_MANAGEMENT.json","workbook":"outputs/performance/COMMITTEE_BUY_PERFORMANCE.xlsx","state":"state/committee_performance","live_orders_enabled":false},
+  "topdown": {"global_macro":"FRED primary, explicit market-implied C fallback","country_macro":"market-implied C interim; direct ECB/Eurostat target","news":"GDELT 2d lexical, missing remains missing","market_sentiment":"PIT breadth/momentum C interim","neutral_imputation_forbidden":true},
   "runner": "v182.reporting.unified_runner",
-  "robustness": {
-    "horizon_failure_isolation": true,
-    "persistent_rankings": true,
-    "silent_exception_swallowing_forbidden": true,
-    "partial_success_supported": true
-  },
+  "robustness": {"horizon_failure_isolation":true,"persistent_rankings":true,"silent_exception_swallowing_forbidden":true,"partial_success_supported":true},
   "outputs": {
-    "directory": "outputs/committee_master",
-    "decisions_csv": "COMMITTEE_DECISIONS.csv",
-    "sector_ranking_csv": "SECTOR_RANKING.csv",
-    "criteria_coverage_csv": "CRITERIA_COVERAGE.csv",
-    "tct_baseline_csv": "TCT_BASELINE_V24_1_7.csv",
-    "tct_shadow_csv": "TCT_SHADOW_V24_1_7.csv",
-    "tct_state_json": "state/TCT_V24_1_7_T1_STATE.json",
-    "gold_decision_json": "outputs/gold_v1_1/GOLD_V1_1_DECISION.json",
-    "gold_criteria_csv": "outputs/gold_v1_1/GOLD_V1_1_CRITERIA.csv",
-    "gold_sources_csv": "outputs/gold_v1_1/GOLD_V1_1_SOURCE_STATUS.csv",
-    "gold_history_csv": "state/GOLD_V1_1_SHADOW_HISTORY.csv",
-    "summary_json": "SUMMARY.json",
-    "unified_summary": "outputs/unified/UNIFIED_SUMMARY_LATEST.json"
+    "directory":"outputs/committee_master","decisions_csv":"COMMITTEE_DECISIONS.csv","sector_ranking_csv":"SECTOR_RANKING.csv","criteria_coverage_csv":"CRITERIA_COVERAGE.csv","effective_weights_csv":"EFFECTIVE_WEIGHTS_100.csv","effective_weights_xlsx":"EFFECTIVE_WEIGHTS_100.xlsx","tct_baseline_csv":"TCT_BASELINE_V24_1_8.csv","tct_shadow_csv":"TCT_SHADOW_V24_1_7.csv","tct_state_json":"state/TCT_V24_1_7_T1_STATE.json","data_availability_xlsx":"outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx","sector_rotation_csv":"outputs/V21_3_SECTOR_ROTATION.csv","performance_xlsx":"outputs/performance/COMMITTEE_BUY_PERFORMANCE.xlsx","gold_decision_json":"outputs/gold_v1_1/GOLD_V1_1_DECISION.json","gold_criteria_csv":"outputs/gold_v1_1/GOLD_V1_1_CRITERIA.csv","gold_sources_csv":"outputs/gold_v1_1/GOLD_V1_1_SOURCE_STATUS.csv","gold_history_csv":"state/GOLD_V1_1_SHADOW_HISTORY.csv","summary_json":"SUMMARY.json","unified_summary":"outputs/unified/UNIFIED_SUMMARY_LATEST.json"
   }
 }
