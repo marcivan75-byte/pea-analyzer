@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from v182.io.frames import is_missing
+
+
 def completeness(rows: list[dict], fields: list[str]) -> dict:
+    """Measure observed cells using the same canonical missing policy as merges/audits."""
     possible=len(rows)*len(fields)
     observed=sum(
         1 for row in rows for field in fields
-        if str(row.get(field,"")).strip().upper()
-        not in {"","MISSING","UNKNOWN","NON_OBSERVE","NOT_LOADED"}
+        if not is_missing(row.get(field))
     )
     return {
         "observed":observed,
