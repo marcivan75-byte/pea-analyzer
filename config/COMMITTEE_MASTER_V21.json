@@ -22,6 +22,15 @@
       "horizons": ["CT", "MT", "LT", "SHORT", "TOP_DOWN"],
       "mt_runner": "v182.reporting.etf_mt_v2081_run",
       "mt_historical_attribution": "90.91% OOS 2021-2023 applies only to exact 38 dynamic PIT core",
+      "structural_overlay": {
+        "layer": "COMMITTEE_AFTER_BASE_SCORE",
+        "morningstar_bonus_active": true,
+        "risk_malus_active": true,
+        "positive_bonus_cannot_create_buy": true,
+        "risk_malus_can_downgrade": true,
+        "mt_core_selection_unchanged": true,
+        "short_risk_inverts_quality_and_risk_adjustments": true
+      },
       "t1_t2_forbidden": true
     },
     "GOLD": {
