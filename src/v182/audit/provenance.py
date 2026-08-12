@@ -20,8 +20,15 @@ def provenance_path() -> Path:
     return Path(raw)
 
 
-def _value_hash(value) -> str:
+def value_hash(value) -> str:
     return hashlib.sha256(str(value).encode("utf-8",errors="replace")).hexdigest()
+
+
+def retained_meta_matches_value(meta:dict|None,value)->bool:
+    """A persisted provenance record may govern only the exact retained value."""
+    if not meta: return False
+    expected=str(meta.get("value_sha256") or "").strip()
+    return bool(expected) and expected==value_hash(value)
 
 
 def _read_ledger(path:Path)->pd.DataFrame:
@@ -35,6 +42,7 @@ def load_latest(path: str | Path | None = None) -> dict[tuple[str,str],dict]:
 
     KEEP/QUARANTINE/SKIP events remain in the append-only observation ledger but
     must never supersede the provenance of the currently retained field value.
+    Callers must additionally bind this metadata to their current value hash.
     """
     p=Path(path) if path is not None else provenance_path(); df=_read_ledger(p)
     if df.empty or not {"isin","field","merge_action"}.issubset(df.columns): return {}
@@ -49,7 +57,7 @@ def append_records(records:list[dict],path:str|Path|None=None)->None:
     if not records: return
     p=Path(path) if path is not None else provenance_path(); p.parent.mkdir(parents=True,exist_ok=True); now=datetime.now(timezone.utc).isoformat(); rows=[]
     for r in records:
-        rows.append({"recorded_at_utc":now,"universe":r.get("universe",""),"isin":r.get("isin",""),"field":r.get("field",""),"source":r.get("source",""),"source_url":r.get("source_url",""),"evidence_level":r.get("evidence_level","D"),"as_of":r.get("as_of",""),"validation_status":r.get("validation_status",""),"merge_action":r.get("merge_action",""),"merge_reason":r.get("merge_reason",""),"value_sha256":_value_hash(r.get("value"))})
+        rows.append({"recorded_at_utc":now,"universe":r.get("universe",""),"isin":r.get("isin",""),"field":r.get("field",""),"source":r.get("source",""),"source_url":r.get("source_url",""),"evidence_level":r.get("evidence_level","D"),"as_of":r.get("as_of",""),"validation_status":r.get("validation_status",""),"merge_action":r.get("merge_action",""),"merge_reason":r.get("merge_reason",""),"value_sha256":value_hash(r.get("value"))})
     pd.DataFrame(rows,columns=COLUMNS).to_csv(p,sep=";",encoding="utf-8-sig",index=False,mode="a",header=not p.exists())
 
 
