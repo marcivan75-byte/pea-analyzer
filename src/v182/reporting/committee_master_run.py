@@ -11,6 +11,7 @@ from v182.decision.committee_master import (
     sector_ranking, criterion_coverage_report,
 )
 from v182.decision.tct_v24_1_7 import load_tct_config, tct_shadow_snapshot
+from v182.audit.canonical_universe import filter_actions
 
 logger=logging.getLogger(__name__)
 ROOT=Path(__file__).resolve().parents[3]
@@ -34,6 +35,27 @@ def _read_table(path: Path) -> pd.DataFrame:
 
 def _first_existing(paths:list[Path]) -> Path|None:
     return next((p for p in paths if p.exists()),None)
+
+
+def _enforce_canonical_actions(actions: pd.DataFrame, root: Path) -> tuple[pd.DataFrame, dict]:
+    """Committee-level hard lock on the exact V21.0 1,429-action universe.
+
+    This is intentionally repeated after enrichment. If refresh fails and the
+    unified runner falls back to the legacy 1,486-row input, the Committee still
+    cannot score out-of-universe rows. Missing canonical ISINs fail closed.
+    """
+    if actions.empty:
+        return actions,{"status":"EMPTY","canonical_rows":0,"excluded_rows":0}
+    result=filter_actions(actions,root/"config"/"V21_ACTION_UNIVERSE_ISINS.parts")
+    audit={
+        "status":"PASS",
+        "input_rows":int(len(actions)),
+        "canonical_rows":int(len(result.included)),
+        "excluded_rows":int(len(result.excluded)),
+        "whitelist_count":int(result.whitelist_count),
+        "whitelist_sha256":result.whitelist_sha256,
+    }
+    return result.included.reset_index(drop=True),audit
 
 
 def _failed_horizon(asset_class: str, horizon: str, version: str, exc: Exception) -> pd.DataFrame:
@@ -66,6 +88,11 @@ def run(root: Path=ROOT) -> dict:
     actions_path=_first_existing([outputs/"V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv",root/"inputs"/"V18.2_PEA_ACTIONS_MASTER.csv"])
     etf_path=_first_existing([outputs/"V18.2_PEA_ETF_MASTER_ENRICHED.csv",root/"inputs"/"V18.2_PEA_ETF_MASTER.csv"])
     actions=_read_table(actions_path) if actions_path else pd.DataFrame(); etfs=_read_table(etf_path) if etf_path else pd.DataFrame()
+    canonical_audit={"status":"NO_INPUT","canonical_rows":0,"excluded_rows":0}
+    if not actions.empty:
+        actions,canonical_audit=_enforce_canonical_actions(actions,root)
+        if canonical_audit.get("excluded_rows",0):
+            logger.warning("Committee excluded %s legacy Action rows outside V21 canonical universe",canonical_audit["excluded_rows"])
 
     parts=[]; coverage_parts=[]; horizon_failures=[]
     if not actions.empty:
@@ -123,10 +150,11 @@ def run(root: Path=ROOT) -> dict:
     summary={
         "version":master_cfg["version"],"status":master_cfg["status"],"generated_at_utc":generated,"live_orders_enabled":False,
         "input_files":{"actions":str(actions_path.relative_to(root)) if actions_path else None,"etf":str(etf_path.relative_to(root)) if etf_path else None,"etf_mt":str(mt_path.relative_to(root)) if mt_path else None},
+        "canonical_actions":canonical_audit,
         "registry_integrity":{"actions_criteria_expected":633,"actions_criteria_loaded":int(actions_reg.get("criteria_count",0)),"etf_fields_expected":268,"etf_fields_loaded":int(etf_reg.get("criteria_count",0)),"t1_t2_scope":"ACTION_TCT_ONLY","tct_formula_version":tct_cfg.get("formula_version"),"gold_reference_present":(root/gold_required).exists()},
         "status_counts":status_counts.to_dict("records"),"decision_counts":decision_counts.to_dict("records"),"missing_active_criteria_by_horizon":missing_by_horizon,"tct_shadow_status":tct_status,"horizon_failures":horizon_failures,
         "outputs":{"decisions":"outputs/committee_master/COMMITTEE_DECISIONS.csv","sector_ranking":"outputs/committee_master/SECTOR_RANKING.csv","criteria_coverage":"outputs/committee_master/CRITERIA_COVERAGE.csv","tct_shadow":"outputs/committee_master/TCT_SHADOW_V24_1_7.csv"},
-        "notes":["No criterion is deleted because its weight is zero.","Each Action/ETF horizon is isolated: one failure no longer aborts the other horizons.","ETF MT historical 90.91% attribution applies only to its 38 PIT dynamic core.","Gold remains blocked until its exact 102-criterion registry is present.","T1/T2 are ACTION TCT timing-only SHADOW overlays and have zero base-score influence."]
+        "notes":["Committee enforces the exact V21 1429-Action whitelist even if enrichment falls back to the legacy input.","No criterion is deleted because its weight is zero.","Each Action/ETF horizon is isolated: one failure no longer aborts the other horizons.","ETF MT historical 90.91% attribution applies only to its 38 PIT dynamic core.","Gold remains blocked until its exact 102-criterion registry is present.","T1/T2 are ACTION TCT timing-only SHADOW overlays and have zero base-score influence."]
     }
     (outdir/"SUMMARY.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding="utf-8")
     print(json.dumps(summary,ensure_ascii=False,indent=2)); return summary
