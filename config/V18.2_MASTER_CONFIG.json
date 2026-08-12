@@ -24,6 +24,11 @@
     "cache_days": 1,
     "fundamental_refresh_days": 7
   },
+  "committee_full_coverage": {
+    "actions_fundamentals_scope": "ALL",
+    "actions_consensus_scope": "ALL",
+    "policy": "Collect the full canonical Actions universe for Committee scoring; missing source data remains missing and is never imputed."
+  },
   "derived_features": [
     "perf_1m_pct",
     "perf_3m_pct",
@@ -51,62 +56,14 @@
     "positive_reversal_flag"
   ],
   "fallback_policy": [
-    [
-      "OHLCV",
-      "yfinance",
-      "Marketstack",
-      "Alpha Vantage",
-      "Issuer/Euronext"
-    ],
-    [
-      "FUNDAMENTALS_ACTIONS",
-      "yfinance",
-      "Alpha Vantage",
-      "Issuer",
-      "Zonebourse"
-    ],
-    [
-      "CONSENSUS_ACTIONS",
-      "Boursorama",
-      "Zonebourse",
-      "yfinance",
-      "Finnhub"
-    ],
-    [
-      "ETF_COSTS_AUM",
-      "ABC Bourse",
-      "Issuer/KID",
-      "Boursorama",
-      ""
-    ],
-    [
-      "ETF_MORNINGSTAR",
-      "Boursorama",
-      "Morningstar-authorized source",
-      "",
-      ""
-    ],
-    [
-      "NEWS_EVENTS",
-      "AMF/Issuer",
-      "Finnhub",
-      "GDELT",
-      "Boursorama/Zonebourse"
-    ],
-    [
-      "MACRO",
-      "FRED",
-      "",
-      "",
-      ""
-    ],
-    [
-      "ENERGY",
-      "EIA",
-      "",
-      "",
-      ""
-    ]
+    ["OHLCV","yfinance","Marketstack","Alpha Vantage","Issuer/Euronext"],
+    ["FUNDAMENTALS_ACTIONS","yfinance","Alpha Vantage","Issuer","Zonebourse"],
+    ["CONSENSUS_ACTIONS","Boursorama","Zonebourse","yfinance","Finnhub"],
+    ["ETF_COSTS_AUM","ABC Bourse","Issuer/KID","Boursorama",""],
+    ["ETF_MORNINGSTAR","Boursorama","Morningstar-authorized source","",""],
+    ["NEWS_EVENTS","AMF/Issuer","Finnhub","GDELT","Boursorama/Zonebourse"],
+    ["MACRO","FRED","","",""],
+    ["ENERGY","EIA","","",""]
   ],
   "merge_policy": {
     "primary_key": "isin",
