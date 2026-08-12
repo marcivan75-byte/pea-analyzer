@@ -8,6 +8,7 @@ import pandas as pd
 
 EXPECTED_ACTIONS=1829
 EXPECTED_SHA256="1e95d51d5a8fa3e616e97ec3fec0a033b29e841d0971ff5a644efa4f5049c085"
+IDENTITY_ONLY_STATUS="WHITELIST_ONLY_MISSING_METADATA"
 
 
 @dataclass(frozen=True)
@@ -57,12 +58,14 @@ def filter_actions(frame: pd.DataFrame, path: str | Path, *, materialize_missing
     if missing and not materialize_missing:
         raise RuntimeError(f"V21_3_ACTION_UNIVERSE_MISSING_CANONICAL_ISINS:{len(missing)}")
     if missing:
+        if "canonical_seed_status" not in included.columns:
+            included["canonical_seed_status"]="LEGACY_ROW"
+        else:
+            included["canonical_seed_status"]=included["canonical_seed_status"].fillna("LEGACY_ROW")
         skeleton=pd.DataFrame(pd.NA,index=range(len(missing)),columns=included.columns)
         skeleton["isin"]=missing
         if "asset_class" in skeleton.columns: skeleton["asset_class"]="ACTION"
-        if "canonical_seed_status" not in included.columns:
-            included["canonical_seed_status"]="LEGACY_ROW"
-            skeleton["canonical_seed_status"]="WHITELIST_ONLY_MISSING_METADATA"
+        skeleton["canonical_seed_status"]=IDENTITY_ONLY_STATUS
         included=pd.concat([included,skeleton],ignore_index=True)
     if len(included)!=EXPECTED_ACTIONS or included["isin"].nunique()!=EXPECTED_ACTIONS:
         raise RuntimeError(f"V21_3_ACTION_UNIVERSE_FILTER_COUNT:{len(included)}:{included['isin'].nunique()}")

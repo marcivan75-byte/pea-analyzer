@@ -119,6 +119,8 @@ jobs:
           assert mm["single_position_per_isin"] is True
           print(f"V21.6.2 integrity OK: Actions 1829/633 (materialized identity-only={materialized.materialized_missing_count}), ETF 102/268, TCT, Gold, bias-safe virtual book")
           PY
+      - name: Publish Action identity hydration worklist
+        run: python -m v182.audit.identity_hydration
       - name: Run unified Committee pipeline
         run: python -m v182.reporting.unified_runner
       - name: Show unified summary
