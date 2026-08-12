@@ -86,7 +86,8 @@ def test_build_etf_ticker_map_writes_gaps_for_unresolved_isin(tmp_path):
     mapped = pd.read_csv(tmp_path / "map.csv", sep=";", encoding="utf-8-sig")
     assert mapped.iloc[0]["yahoo_ticker"] == "CAC.PA"
 
-def test_wave5_finnhub_targets_committee_watch_only():
+def test_wave5_finnhub_targets_full_action_universe():
+    """V21.3+ intentionally collects consensus for all mapped PEA Actions."""
     from unittest.mock import patch, MagicMock
     from v182.reporting.waves import wave5_consensus_finnhub
     actions_df = pd.DataFrame([
@@ -100,7 +101,7 @@ def test_wave5_finnhub_targets_committee_watch_only():
         return resp
     with patch("requests.get", side_effect=fake_get):
         obs, _ = wave5_consensus_finnhub(actions_df, api_key="fake")
-    assert {o["isin"] for o in obs} == {"FR0000120073"}
+    assert {o["isin"] for o in obs} == {"FR0000120073", "FR0000000002"}
 
 def test_wave6_etf_info_maps_dividend_yield_only():
     from unittest.mock import patch
