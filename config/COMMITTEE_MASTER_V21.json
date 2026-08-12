@@ -15,12 +15,20 @@
         "mode": "SHADOW_RESEARCH_ONLY",
         "baseline_required": true,
         "baseline_engine": "v182.decision.tct_baseline_v24_1_7",
+        "exact_timing_engine": "v182.decision.tct_timing_exact_v24_1_7",
+        "exact_indicator_engine": "v182.features.tct_v24_1_7_exact",
+        "formula_version": "T1T2_V2_2026_08",
+        "source_kit": "KIT_TCT_V24_1_7_T1_T2_V2_SHADOW_PROCESS_REFERENTIAL",
         "baseline_top_n": 20,
         "baseline_min_coverage": 0.60,
         "baseline_missing_weight_policy": "ZERO_FIXED_WEIGHT_NO_REDISTRIBUTION",
         "setup_component_active": false,
         "baseline_max_score": 84.0,
         "baseline_max_coverage": 0.84,
+        "state_path": "state/TCT_V24_1_7_T1_STATE.json",
+        "state_restored_between_github_runs": true,
+        "persist_t1_only_after_baseline_eligibility": true,
+        "t2_revalidates_current_baseline": true,
         "score_influence": 0
       }
     },
@@ -72,6 +80,7 @@
     "criteria_coverage_csv": "CRITERIA_COVERAGE.csv",
     "tct_baseline_csv": "TCT_BASELINE_V24_1_7.csv",
     "tct_shadow_csv": "TCT_SHADOW_V24_1_7.csv",
+    "tct_state_json": "state/TCT_V24_1_7_T1_STATE.json",
     "summary_json": "SUMMARY.json",
     "unified_summary": "outputs/unified/UNIFIED_SUMMARY_LATEST.json"
   }
