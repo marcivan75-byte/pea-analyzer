@@ -6,6 +6,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/"src"))
 
 from v182.decision.committee_master import load_registry, score_horizon, tct_adapter, gold_adapter, sector_ranking
+from v182.audit.quality import run_quality_gates
 
 def test_registry_integrity_and_t1_t2_scope():
     a=load_registry(ROOT/"config"/"V21_ACTIONS_CRITERIA_REGISTRY.json")
@@ -46,3 +47,15 @@ def test_sector_ranking_is_within_sector_and_horizon():
     r=sector_ranking(d)
     finance=r[(r.sector=="FINANCE") & (r.horizon=="MT")].sort_values("rank")
     assert list(finance["name"])==["B","A"]
+
+def test_quality_gate_uses_canonical_input_count_not_stale_static_threshold():
+    actions=pd.DataFrame({"isin":["A1","A2"],"yahoo_ticker":["A1.PA","A2.PA"]})
+    etfs=pd.DataFrame({"isin":["E1"],"yahoo_ticker":["E1.PA"]})
+    before={"ACTION":{"coverage_pct":100.0},"ETF":{"coverage_pct":100.0}}
+    after={"ACTION":{"coverage_pct":100.0},"ETF":{"coverage_pct":100.0}}
+    cfg={"quality_gates":{"actions_min_rows":1486,"etf_min_rows":102,"ticker_coverage_min_pct":100.0,"coverage_regression_tolerance_points":0.0,"ohlcv_success_min_pct":90.0}}
+    waves={"WAVE_01":{"requested":2,"successful":2},"WAVE_02":{"requested":1,"successful":1}}
+    q=run_quality_gates(actions,etfs,before,after,cfg,waves,expected_rows={"ACTION":2,"ETF":1})
+    assert q.passed is True
+    assert q.checks[0]["threshold"] == 2
+    assert q.checks[1]["threshold"] == 1
