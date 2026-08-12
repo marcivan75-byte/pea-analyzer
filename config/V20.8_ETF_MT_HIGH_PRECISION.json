@@ -1,7 +1,7 @@
 {
   "version": "20.8.1",
   "module": "ETF_MT_HIGH_PRECISION",
-  "status": "SHADOW_HIGH_PRECISION_VIA_PR",
+  "status": "ACTIVE_REFERENCE_SCORING_NO_REAL_ORDERS",
   "objective": {
     "target_win_rate": 0.9,
     "guaranteed": false,
@@ -18,9 +18,11 @@
   "score": {
     "active_decision_core": "38_DYNAMIC_PIT_BACKTESTED",
     "active_dynamic_weight_total": 1.0,
-    "structural_overlay_mode": "SHADOW_ONLY_UNTIL_HISTORICAL_PIT",
+    "structural_overlay_mode": "SEPARATE_COMMITTEE_AND_CHALLENGER_LAYERS_NOT_PART_OF_90_91",
     "recommended_future_dynamic_total": 0.69,
     "recommended_future_structural_total": 0.31,
+    "recommended_69_31_composite_status": "RESEARCH_ONLY_NOT_BACKTESTED_AS_FULL_COMPOSITE",
+    "committee_structural_overlay_active_fields": ["morningstar_rating", "risk_indicator"],
     "score_raw_weight": 0.55,
     "cross_section_rank_weight": 0.45,
     "final_score_formula": "0.55 * score_raw + 0.45 * score_rank_pct",
@@ -97,11 +99,11 @@
     "corr_market252": {"backtested_weight": 0.012652946636080742, "recommended_composite_weight": 0.008730533178895711, "group": "Sensibilité marché", "direction": "LOW"}
   },
   "structural_overlay": {
-    "dividend_yield": {"recommended_composite_weight": 0.02, "status": "FROZEN_NO_HISTORICAL_PIT", "decision_role": "SHADOW_ONLY"},
-    "ter": {"recommended_composite_weight": 0.1, "status": "FROZEN_NO_HISTORICAL_PIT", "decision_role": "SHADOW_ONLY"},
-    "aum": {"recommended_composite_weight": 0.08, "status": "FROZEN_NO_HISTORICAL_PIT", "decision_role": "SHADOW_ONLY"},
-    "beta_3y_structural": {"recommended_composite_weight": 0.04, "status": "FROZEN_NO_HISTORICAL_PIT", "decision_role": "SHADOW_ONLY"},
-    "diversification": {"recommended_composite_weight": 0.07, "status": "FROZEN_NO_HISTORICAL_PIT", "decision_role": "SHADOW_ONLY"}
+    "dividend_yield": {"recommended_composite_weight": 0.02, "status": "FROZEN_NO_HISTORICAL_PIT", "decision_role": "PRESERVED_DECISION_RELEVANT_CHALLENGER_NO_MT_PROMOTION"},
+    "ter": {"recommended_composite_weight": 0.1, "status": "FROZEN_NO_HISTORICAL_PIT", "decision_role": "PRESERVED_DECISION_RELEVANT_CHALLENGER_NO_MT_PROMOTION"},
+    "aum": {"recommended_composite_weight": 0.08, "status": "FROZEN_NO_HISTORICAL_PIT", "decision_role": "PRESERVED_DECISION_RELEVANT_CHALLENGER_NO_MT_PROMOTION"},
+    "beta_3y_structural": {"recommended_composite_weight": 0.04, "status": "FROZEN_NO_HISTORICAL_PIT", "decision_role": "PRESERVED_DECISION_RELEVANT_CHALLENGER_NO_MT_PROMOTION"},
+    "diversification": {"recommended_composite_weight": 0.07, "status": "FROZEN_NO_HISTORICAL_PIT", "decision_role": "PRESERVED_DECISION_RELEVANT_CHALLENGER_NO_MT_PROMOTION"}
   },
   "evidence": {
     "development": {"period": "2012-2020", "trades": 86, "wins": 81, "win_rate": 0.9418604651162791},
