@@ -1,6 +1,8 @@
 from __future__ import annotations
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-import time
+
+from v182.sources.rate_limit import StartRateLimiter
 
 # Raw yfinance fields are kept under stable V18.2 names. The Committee Master
 # resolves them to canonical V21 criteria through explicit semantic aliases.
@@ -64,19 +66,47 @@ def _future_earnings_fields(info: dict, now_ts: float | None = None) -> dict:
     }
 
 
-def collect_info(tickers: list[str], delay_seconds: float = 0.4) -> tuple[list[dict], list[dict]]:
+def _collect_one(ticker: str, yf, limiter: StartRateLimiter) -> tuple[list[dict], dict | None]:
+    limiter.wait()
+    try:
+        info = yf.Ticker(ticker).get_info()
+        observations=[]
+        for source_field, target_field in FIELDS.items():
+            value = info.get(source_field)
+            if value is not None:
+                observations.append({"ticker":ticker,"field":target_field,"value":value,"source":"yfinance"})
+        for field,value in _future_earnings_fields(info).items():
+            observations.append({"ticker":ticker,"field":field,"value":value,"source":"yfinance"})
+        return observations, None
+    except Exception as exc:
+        return [], {"ticker": ticker, "error": type(exc).__name__, "detail": str(exc)[:160]}
+
+
+def collect_info(
+    tickers: list[str], delay_seconds: float = 0.4, max_workers: int = 4,
+) -> tuple[list[dict], list[dict]]:
+    """Collect yfinance metadata with bounded concurrency and stable rate cadence.
+
+    `delay_seconds` is now the minimum interval between request starts globally,
+    rather than dead time after every completed request. Network waits may overlap
+    across a small worker pool, but the source request-start cadence is not raised.
+    """
     import yfinance as yf
-    observations, failures = [], []
-    for ticker in sorted({x for x in tickers if x}):
-        try:
-            info = yf.Ticker(ticker).get_info()
-            for source_field, target_field in FIELDS.items():
-                value = info.get(source_field)
-                if value is not None:
-                    observations.append({"ticker":ticker,"field":target_field,"value":value,"source":"yfinance"})
-            for field,value in _future_earnings_fields(info).items():
-                observations.append({"ticker":ticker,"field":field,"value":value,"source":"yfinance"})
-        except Exception as exc:
-            failures.append({"ticker": ticker, "error": type(exc).__name__, "detail": str(exc)[:160]})
-        time.sleep(delay_seconds)
+
+    unique=sorted({x for x in tickers if x})
+    if not unique:
+        return [], []
+    limiter=StartRateLimiter(delay_seconds)
+    observations: list[dict]=[]
+    failures: list[dict]=[]
+    workers=max(1,min(int(max_workers),len(unique)))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures=[executor.submit(_collect_one,ticker,yf,limiter) for ticker in unique]
+        for future in as_completed(futures):
+            obs,failure=future.result()
+            observations.extend(obs)
+            if failure is not None:
+                failures.append(failure)
+    observations.sort(key=lambda row:(str(row.get("ticker","")),str(row.get("field",""))))
+    failures.sort(key=lambda row:str(row.get("ticker","")))
     return observations, failures
