@@ -37,11 +37,13 @@ def run() -> None:
 
     actions_df = load_master(INPUTS / "V18.2_PEA_ACTIONS_MASTER.csv")
     etf_df = load_master(INPUTS / "V18.2_PEA_ETF_MASTER.csv")
+    expected_rows = {"ACTION": len(actions_df), "ETF": len(etf_df)}
 
     before = {
         "ACTION": completeness(actions_df.to_dict("records"), _fields(actions_df)),
         "ETF": completeness(etf_df.to_dict("records"), _fields(etf_df)),
     }
+    print(f"Univers canonique gelé au début du run — Actions: {expected_rows['ACTION']} | ETF: {expected_rows['ETF']}")
     print(f"Couverture avant run — Actions: {before['ACTION']['coverage_pct']}% | ETF: {before['ETF']['coverage_pct']}%")
 
     quarantine_log: list[dict] = []
@@ -208,7 +210,7 @@ def run() -> None:
         "ETF": completeness(etf_df.to_dict("records"), _fields(etf_df)),
     }
     (OUTPUTS / "audit" / "V18.2_COVERAGE_BEFORE_AFTER.json").write_text(
-        json.dumps({"before": before, "after": after}, ensure_ascii=False, indent=2), encoding="utf-8")
+        json.dumps({"expected_rows": expected_rows, "before": before, "after": after}, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(f"Couverture après run — Actions: {after['ACTION']['coverage_pct']}% "
           f"(+{round(after['ACTION']['coverage_pct'] - before['ACTION']['coverage_pct'], 1)} pts) | "
@@ -217,9 +219,9 @@ def run() -> None:
 
     from v182.audit.quality import run_quality_gates
     from v182.reporting.exports import export_master_excel, export_run_report
-    quality=run_quality_gates(actions_df, etf_df, before, after, cfg, wave_metrics)
+    quality=run_quality_gates(actions_df, etf_df, before, after, cfg, wave_metrics, expected_rows=expected_rows)
     (OUTPUTS / "audit" / "V18.2_QUALITY_GATES.json").write_text(
-        json.dumps({"passed":quality.passed,"checks":quality.checks},ensure_ascii=False,indent=2),encoding="utf-8")
+        json.dumps({"passed":quality.passed,"expected_rows":expected_rows,"checks":quality.checks},ensure_ascii=False,indent=2),encoding="utf-8")
     export_master_excel(actions_df, OUTPUTS / "V18.2_PEA_ACTIONS_ACTUALISE.xlsx", "V18.2 Actions PEA actualisées")
     export_master_excel(etf_df, OUTPUTS / "V18.2_PEA_ETF_ACTUALISE.xlsx", "V18.2 ETF PEA actualisés")
     export_run_report(before, after, quality.checks, OUTPUTS / "V18.2_RUN_REPORT.xlsx")
