@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import pandas as pd
 
-from v182.audit.provenance import append_records, load_latest
+from v182.audit.provenance import actual_sources_by_field, append_records, load_latest
 from v182.io.frames import apply_observations
 
 
@@ -54,3 +54,18 @@ def test_in_memory_replacement_keeps_hash_bound_provenance_within_same_batch(tmp
     assert out.loc[0,"x"]=="20"
     ledger_df=pd.read_csv(ledger,sep=";",dtype=str)
     assert list(ledger_df["merge_action"][-2:])==["INSERT","REPLACE"]
+
+
+def test_actual_sources_report_only_latest_retained_source_per_key(tmp_path:Path):
+    ledger=tmp_path/"provenance.csv"
+    append_records([
+        {"universe":"ACTION","isin":"A1","field":"x","value":"10","source":"SOURCE_A","source_url":"a","evidence_level":"C","as_of":"2026-08-01","validation_status":"AUTO_MATCH","merge_action":"INSERT","merge_reason":"FIRST"},
+    ],ledger)
+    append_records([
+        {"universe":"ACTION","isin":"A1","field":"x","value":"20","source":"SOURCE_B","source_url":"b","evidence_level":"B","as_of":"2026-08-02","validation_status":"AUTO_MATCH","merge_action":"REPLACE","merge_reason":"HIGHER"},
+        {"universe":"ACTION","isin":"A2","field":"x","value":"30","source":"SOURCE_C","source_url":"c","evidence_level":"B","as_of":"2026-08-02","validation_status":"AUTO_MATCH","merge_action":"INSERT","merge_reason":"FIRST"},
+    ],ledger)
+    sources=actual_sources_by_field(ledger)
+    row=sources[(sources["universe"]=="ACTION")&(sources["field"]=="x")].iloc[0]
+    assert row["sources_reelles"]=="SOURCE_B | SOURCE_C"
+    assert "SOURCE_A" not in row["sources_reelles"]
