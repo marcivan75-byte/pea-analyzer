@@ -1,6 +1,6 @@
 {
-  "version": "2026-08-11",
-  "purpose": "Prevent silent reduction of the complete Actions/ETF decision referentials while horizon weights are optimized separately.",
+  "version": "2026-08-12",
+  "purpose": "Prevent silent reduction of the complete Actions/ETF/Gold decision referentials while horizon weights are optimized separately.",
   "actions": {
     "source": "MATRICE_MAITRE_REPONDERATION_PEA_ACTIONS_ETF_TOUS_CRITERES_2026-08-11.xlsx / 02_Actions_633",
     "criteria_count": 633,
@@ -15,9 +15,20 @@
     "full_19_column_table_sha256": "03b37c02f3852d132b09584e85924818f729c7d60d49160f0293272950c30ea9",
     "rule": "All 268 rows remain part of the master referential, including Morningstar, yield, TER, AUM, risk, tracking/replication and diversification."
   },
+  "gold": {
+    "source": "PROCESSUS_DECISIONNEL_COMITE_MAITRE_2026-08-11 + Cahier_des_charges_Complet_V9.5.2 + V18.4/V20.3 Gold Engine",
+    "registry": "config/GOLD_V1_1_102_CRITERIA.json",
+    "criteria_count": 102,
+    "contribution_blocks": 11,
+    "ordered_criteria_names_sha256": "cd3d21c35b77c28e37a012d0687d362aaac6b4ce965430865615a502a390928d",
+    "top_level_family_weights": "SOURCE_PRESERVED",
+    "intra_block_weights": "PROVISIONAL_RECONSTRUCTION_NOT_BACKTEST_OPTIMISED",
+    "rule": "All 102 Gold criteria remain traceable. Missing data stay MISSING. No performance claim until dedicated PIT backtest."
+  },
   "t1_t2": {
     "scope": "ACTION_TCT_ONLY",
     "etf_forbidden": true,
+    "gold_forbidden": true,
     "actions_non_tct_forbidden": true
   }
 }
