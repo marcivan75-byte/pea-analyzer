@@ -19,6 +19,7 @@ SOURCE_HINTS = [
     (("rsi", "macd", "perf_", "mm", "volatility", "drawdown", "atr", "stoch", "rvol", "distance_high_52w", "catchup", "rotation"), "OHLCV yfinance -> calcul interne PIT"),
     (("per", "pb", "roe", "roa", "margin", "growth", "debt", "fcf", "market_cap"), "yfinance / Alpha Vantage / Emetteur"),
 ]
+TECHNICAL_FIELDS={"canonical_seed_status"}
 
 
 def source_hint(field: str) -> str:
@@ -29,7 +30,7 @@ def source_hint(field: str) -> str:
 
 
 def _field_status(frame: pd.DataFrame, asset_class: str, wave_id: str) -> pd.DataFrame:
-    rows=[]; n=max(len(frame),1); identity={"isin","name"}
+    rows=[]; n=max(len(frame),1); identity={"isin","name"}|TECHNICAL_FIELDS
     for field in frame.columns:
         if field in identity: continue
         available=int((~frame[field].apply(is_missing)).sum()); coverage=available/n*100.0
@@ -63,7 +64,8 @@ def write_collection_audit(
     """Write post-collection Excel with retained-source provenance.
 
     Actual sources are joined by ``asset_class + field`` so identically named
-    Action and ETF fields cannot contaminate each other's lineage.
+    Action and ETF fields cannot contaminate each other's lineage. Canonical
+    bookkeeping columns are excluded from data-availability statistics.
     """
     root=Path(output_root); root.mkdir(parents=True,exist_ok=True)
     inventory=pd.concat([_field_status(actions,"ACTION",wave_id),_field_status(etfs,"ETF",wave_id)],ignore_index=True)
