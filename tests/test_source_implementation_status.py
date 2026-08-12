@@ -1,0 +1,32 @@
+from __future__ import annotations
+
+from pathlib import Path
+import pandas as pd
+
+
+def test_source_implementation_status_is_explicit_and_active_paths_exist():
+    root=Path(__file__).resolve().parents[1]
+    status=pd.read_csv(root/"config"/"V21_SOURCE_IMPLEMENTATION_STATUS.csv",sep=";",dtype=str).fillna("")
+    required={"Source","Implementation_status","Active_code_path","Governance_note"}
+    assert required.issubset(status.columns)
+    assert status["Source"].is_unique
+    assert not (status["Implementation_status"].str.strip()=="").any()
+
+    for _,row in status.iterrows():
+        implementation=str(row["Implementation_status"])
+        paths=[p.strip() for p in str(row["Active_code_path"]).split("|") if p.strip()]
+        if implementation.startswith("ACTIVE_"):
+            assert paths, f"Active source has no auditable code path: {row['Source']}"
+            for path in paths:
+                assert (root/path).exists(), f"Missing active source path {path} for {row['Source']}"
+
+
+def test_declared_but_unwired_sources_are_not_misrepresented_as_active():
+    root=Path(__file__).resolve().parents[1]
+    status=pd.read_csv(root/"config"/"V21_SOURCE_IMPLEMENTATION_STATUS.csv",sep=";",dtype=str).fillna("").set_index("Source")
+    assert status.loc["Marketstack","Implementation_status"]=="DECLARED_NOT_WIRED"
+    assert status.loc["Alpha Vantage","Implementation_status"]=="DECLARED_NOT_WIRED"
+    assert status.loc["EIA","Implementation_status"]=="DECLARED_NOT_WIRED"
+    assert status.loc["Finnhub","Implementation_status"]=="ACTIVE_AUTOMATED"
+    assert status.loc["FRED","Implementation_status"]=="ACTIVE_AUTOMATED"
+    assert status.loc["OpenFIGI","Implementation_status"]=="ACTIVE_AUTOMATED"

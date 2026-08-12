@@ -1,0 +1,15 @@
+Source;Declared_role;Implementation_status;Active_code_path;Operational_scope;Governance_note
+Yahoo Finance / yfinance;OHLCV fundamentals ETF structure estimates;ACTIVE_AUTOMATED;src/v182/sources/yfinance_bulk.py | src/v182/sources/yfinance_info.py | src/v182/sources/yfinance_funds.py;Actions+ETF+Gold market proxies;Primary bulk source actually wired
+Marketstack;OHLCV fallback validation;DECLARED_NOT_WIRED;;None in current runtime;Secret may exist but no collector is versioned
+Alpha Vantage;OHLCV and fundamentals fallback;DECLARED_NOT_WIRED;;None in current runtime;Secret may exist but no collector is versioned
+Boursorama Bulk;Consensus Morningstar market and ETF tables;DECLARED_NOT_AUTOMATED;;Manual/reference only;Scrape selector file contains only a disabled _example entry
+Zonebourse Bulk;Consensus estimates and revisions;DECLARED_NOT_WIRED;;None in current runtime;Do not report as an actual source until collector/provenance exists
+ABC Bourse Bulk;ETF TER AUM benchmark distribution theme;DECLARED_NOT_WIRED;;None in current runtime;Do not report as an actual source until collector/provenance exists
+Issuer / KID / Factsheet;Official structure and fundamentals;MANUAL_OR_REFERENTIAL_NOT_GENERIC_AUTOMATED;;Manual snapshots/reference fields;Official evidence may be retained only when attributed in input/provenance
+AMF / Euronext;Regulatory events and identity;DECLARED_NOT_GENERIC_AUTOMATED;;Manual validation/reference;No generic AMF/Euronext collector is versioned for current Action refresh
+Finnhub;Consensus recommendations revisions price targets;ACTIVE_AUTOMATED;src/v182/sources/finnhub_consensus.py;Actions;Current module does not provide the registry's former generic news/intermarket wording
+FRED;Macro regime;ACTIVE_AUTOMATED;src/v182/sources/fred_macro.py | src/v182/decision/gold_v1_1.py;Top-down+Gold;Official API wired
+EIA;Energy transmission;DECLARED_NOT_WIRED;;None in current runtime;EIA_API_KEY environment declaration is not equivalent to an implemented collector
+GDELT;News discovery and sentiment inputs;ACTIVE_AUTOMATED;src/v182/sources/gdelt_news.py | src/v182/decision/gold_v1_1.py;Top-down+Gold;Public API wired
+OpenFIGI;ISIN to ticker/exchange mapping;ACTIVE_AUTOMATED;src/v182/mapping/etf_isin_resolver.py;ETF mapping;Active for ETF ticker resolution only, must not invent Action tickers
+Morningstar authorized/attributed snapshot;Action stock rating snapshot;ACTIVE_MANUAL_SNAPSHOT_LOADER;src/v182/sources/morningstar_actions.py;Actions;Loader is active but data acquisition remains an authorized attributed snapshot, not automated scraping
