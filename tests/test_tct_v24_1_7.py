@@ -2,7 +2,7 @@ from pathlib import Path
 import pandas as pd
 
 from v182.decision.tct_v24_1_7 import (
-    parse_pea_eligibility, universe_gate, weighted_quality,
+    parse_pea_eligibility, universe_gate,
     evaluate_t1, make_t1_state, evaluate_t2, tct_shadow_snapshot, load_tct_config,
 )
 
@@ -70,7 +70,6 @@ def test_t2_requires_exact_t1_and_confirms_valid_state():
     result=evaluate_t2(row,state,5,CFG)
     assert result["status"] == "SHADOW_T2_CONFIRMED"
     assert result["decision"] == "T2_CONFIRM_75_SHADOW"
-    # RS degradation is represented by the continuous quality component, not a hard gate.
     assert "RELATIVE_STRENGTH_DEGRADED" not in result.get("reasons",[])
     no_state=evaluate_t2(row,None,5,CFG)
     assert "EXACT_LINKED_T1_REQUIRED" in no_state["reasons"]
