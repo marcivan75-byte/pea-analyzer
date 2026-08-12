@@ -16,6 +16,7 @@ class CanonicalUniverseResult:
     excluded: pd.DataFrame
     whitelist_count: int
     whitelist_sha256: str
+    materialized_missing_count: int = 0
 
 
 def _read_encoded(path: Path) -> str:
@@ -38,12 +39,34 @@ def load_compressed_isins(path: str | Path) -> list[str]:
     return isins
 
 
-def filter_actions(frame: pd.DataFrame, path: str | Path) -> CanonicalUniverseResult:
-    """Filter the expanded V21.3 universe by exact ISIN, never by row count alone."""
+def filter_actions(frame: pd.DataFrame, path: str | Path, *, materialize_missing: bool = True) -> CanonicalUniverseResult:
+    """Return the exact canonical Action universe, never by row count alone.
+
+    Legacy masters may contain only the historical subset. Missing canonical ISINs
+    are materialized as explicit skeleton rows when ``materialize_missing`` is
+    enabled; all non-identity fields stay missing and therefore remain subject to
+    normal data-coverage gates. No name, ticker, score or market datum is invented.
+    """
     if "isin" not in frame.columns: raise RuntimeError("V21_3_ACTION_UNIVERSE_MISSING_ISIN_COLUMN")
-    isins=load_compressed_isins(path); allowed=set(isins); duplicated=frame[frame["isin"].astype(str).duplicated(keep=False)]
+    isins=load_compressed_isins(path); allowed=set(isins)
+    normalized=frame.copy(); normalized["isin"]=normalized["isin"].astype(str).str.strip()
+    duplicated=normalized[normalized["isin"].duplicated(keep=False)]
     if not duplicated.empty: raise RuntimeError(f"V21_3_ACTION_UNIVERSE_DUPLICATE_INPUT_ISIN:{len(duplicated)}")
-    included=frame[frame["isin"].astype(str).isin(allowed)].copy(); excluded=frame[~frame["isin"].astype(str).isin(allowed)].copy(); missing=allowed-set(included["isin"].astype(str))
-    if missing: raise RuntimeError(f"V21_3_ACTION_UNIVERSE_MISSING_CANONICAL_ISINS:{len(missing)}")
-    if len(included)!=EXPECTED_ACTIONS: raise RuntimeError(f"V21_3_ACTION_UNIVERSE_FILTER_COUNT:{len(included)}")
-    raw='\n'.join(isins)+'\n'; return CanonicalUniverseResult(included,excluded,len(isins),hashlib.sha256(raw.encode()).hexdigest())
+    included=normalized[normalized["isin"].isin(allowed)].copy(); excluded=normalized[~normalized["isin"].isin(allowed)].copy()
+    present=set(included["isin"]); missing=[isin for isin in isins if isin not in present]
+    if missing and not materialize_missing:
+        raise RuntimeError(f"V21_3_ACTION_UNIVERSE_MISSING_CANONICAL_ISINS:{len(missing)}")
+    if missing:
+        skeleton=pd.DataFrame(pd.NA,index=range(len(missing)),columns=included.columns)
+        skeleton["isin"]=missing
+        if "asset_class" in skeleton.columns: skeleton["asset_class"]="ACTION"
+        if "canonical_seed_status" not in included.columns:
+            included["canonical_seed_status"]="LEGACY_ROW"
+            skeleton["canonical_seed_status"]="WHITELIST_ONLY_MISSING_METADATA"
+        included=pd.concat([included,skeleton],ignore_index=True)
+    if len(included)!=EXPECTED_ACTIONS or included["isin"].nunique()!=EXPECTED_ACTIONS:
+        raise RuntimeError(f"V21_3_ACTION_UNIVERSE_FILTER_COUNT:{len(included)}:{included['isin'].nunique()}")
+    order={isin:i for i,isin in enumerate(isins)}; included["_canonical_order"]=included["isin"].map(order)
+    included=included.sort_values("_canonical_order").drop(columns=["_canonical_order"]).reset_index(drop=True)
+    raw='\n'.join(isins)+'\n'
+    return CanonicalUniverseResult(included,excluded,len(isins),hashlib.sha256(raw.encode()).hexdigest(),len(missing))
