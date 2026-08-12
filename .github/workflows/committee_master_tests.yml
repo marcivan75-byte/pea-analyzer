@@ -119,5 +119,6 @@ jobs:
             tests/test_canonical_universe_v21.py \
             tests/test_action_v21_3.py \
             tests/test_etf_mt_v2082_dynamic.py \
+            tests/test_committee_performance.py \
             tests/test_etf_structural_overlay.py \
             tests/test_enrichment_dividends_funds.py
