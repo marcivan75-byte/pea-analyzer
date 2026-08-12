@@ -11,7 +11,7 @@ on:
       - "config/V20_7_1_ETF_CRITERIA_REGISTRY.json"
       - "config/FULL_REFERENTIAL_INTEGRITY.json"
       - "config/TCT_V24_1_7_SHADOW.json"
-      - "config/V21_ACTION_UNIVERSE_ISINS.zlib.b64"
+      - "config/V21_ACTION_UNIVERSE_ISINS.parts/**"
       - "src/v182/audit/**"
       - "src/v182/sources/**"
       - "src/v182/features/**"
@@ -57,7 +57,7 @@ jobs:
           tct=json.loads(Path("config/TCT_V24_1_7_SHADOW.json").read_text())
           assert a["criteria_count"] == 633 == integrity["actions"]["criteria_count"]
           assert e["criteria_count"] == 268 == integrity["etf"]["criteria_count"]
-          assert len(load_compressed_isins("config/V21_ACTION_UNIVERSE_ISINS.zlib.b64")) == 1429
+          assert len(load_compressed_isins("config/V21_ACTION_UNIVERSE_ISINS.parts")) == 1429
           assert e["governance"]["t1_t2_forbidden"] is True
           assert a["governance"]["t1_t2_scope"] == "ACTION_TCT_ONLY"
           assert tct["scope"]["t1_t2_actions_tct_only"] is True
