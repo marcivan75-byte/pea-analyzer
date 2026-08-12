@@ -28,6 +28,5 @@ target-version = "py312"
 line-length = 140
 
 [tool.ruff.lint]
-# CI uses a deliberately narrow safety subset first; style cleanup remains
-# separate from functional correctness to avoid mass formatting changes.
-select = ["E9", "F63", "F7", "F82"]
+# Functional/safety lint only. Formatting remains separate from model changes.
+select = ["E9", "F401", "F63", "F7", "F811", "F821", "F822", "F823", "F82", "F841"]
