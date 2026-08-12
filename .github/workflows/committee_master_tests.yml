@@ -1,24 +1,11 @@
-name: Committee Master V21.3 validation
+name: Committee Master V21.4 full audit validation
 
 on:
   pull_request:
     paths:
-      - "config/COMMITTEE_MASTER_V21.json"
-      - "config/V18.2_MASTER_CONFIG.json"
-      - "config/V21_ACTIONS_CRITERIA_REGISTRY.json"
-      - "config/V20_7_1_ETF_CRITERIA_REGISTRY.json"
-      - "config/V20.8.2_ETF_MT_DYNAMIC.json"
-      - "config/COMMITTEE_VIRTUAL_MONEY_MANAGEMENT.json"
-      - "config/GOLD_V1_1_102_CRITERIA.json"
-      - "config/FULL_REFERENTIAL_INTEGRITY.json"
-      - "config/TCT_V24_1_7_SHADOW.json"
-      - "config/V21_3_ACTION_UNIVERSE_1829_ISINS.parts/**"
-      - "src/v182/audit/**"
-      - "src/v182/sources/**"
-      - "src/v182/features/**"
-      - "src/v182/reporting/**"
-      - "src/v182/decision/**"
-      - "tests/**"
+      - "config/**"
+      - "src/**/*.py"
+      - "tests/**/*.py"
       - "pyproject.toml"
       - ".github/workflows/committee_master_*.yml"
   workflow_dispatch:
@@ -34,37 +21,23 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install
+      - name: Install complete test toolchain
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
-          pip install pytest
-      - name: Compile V21.3 modules
-        run: |
-          python -m py_compile src/v182/audit/canonical_universe.py
-          python -m py_compile src/v182/features/ohlcv_features.py
-          python -m py_compile src/v182/features/sector_rotation.py
-          python -m py_compile src/v182/features/action_decision_enhancements.py
-          python -m py_compile src/v182/features/etf_mt_v2082_dynamic.py
-          python -m py_compile src/v182/sources/morningstar_actions.py
-          python -m py_compile src/v182/decision/effective_weights.py
-          python -m py_compile src/v182/decision/action_overlays_v21_3.py
-          python -m py_compile src/v182/decision/tct_baseline_v24_1_8.py
-          python -m py_compile src/v182/decision/etf_mt_committee_v2082.py
-          python -m py_compile src/v182/decision/gold_v1_1.py
-          python -m py_compile src/v182/reporting/collection_audit.py
-          python -m py_compile src/v182/reporting/committee_performance.py
-          python -m py_compile src/v182/reporting/run.py
-          python -m py_compile src/v182/reporting/etf_mt_v2081_run.py
-          python -m py_compile src/v182/reporting/committee_master_run.py
-          python -m py_compile src/v182/reporting/committee_master_gold_v1_1.py
-          python -m py_compile src/v182/reporting/unified_runner.py
-      - name: Referential integrity
+          pip install -e ".[test]"
+      - name: Compile every Python module and test
+        run: python -m compileall -q src tests
+      - name: Ruff safety lint
+        run: ruff check src tests
+      - name: Static Python safety audit
+        run: python -m v182.audit.static_code_audit --root . --output outputs/audit/PYTHON_STATIC_AUDIT.json --fail-high
+      - name: Referential and governance integrity
         run: |
           python - <<'PY'
           from pathlib import Path
           import json
           from v182.audit.canonical_universe import load_compressed_isins, EXPECTED_SHA256
+          from v182.core.merge import ACCEPTED_VALIDATION_STATUSES
           from v182.decision.tct_baseline_v24_1_7 import WEIGHTS_V24_1_2, MAX_COVERAGE_WITH_SETUP_DISABLED
           from v182.decision.tct_baseline_v24_1_8 import ACTIVE_WEIGHT, NORMALIZATION_POLICY
           from v182.decision.tct_timing_exact_v24_1_7 import FORMULA_VERSION, T1_WEIGHTS, T2_WEIGHTS
@@ -73,6 +46,7 @@ jobs:
           ed=json.loads(Path("config/V20.8.2_ETF_MT_DYNAMIC.json").read_text())
           g=json.loads(Path("config/GOLD_V1_1_102_CRITERIA.json").read_text())
           t=json.loads(Path("config/TCT_V24_1_7_SHADOW.json").read_text())
+          mm=json.loads(Path("config/COMMITTEE_VIRTUAL_MONEY_MANAGEMENT.json").read_text())
           integrity=json.loads(Path("config/FULL_REFERENTIAL_INTEGRITY.json").read_text())
           master=json.loads(Path("config/V18.2_MASTER_CONFIG.json").read_text())
           assert a["criteria_count"] == 633 == integrity["actions"]["criteria_count"]
@@ -85,8 +59,13 @@ jobs:
           assert master["collection_audit"]["after_each_wave"] is True
           for h in ("CT","MT","LT","SHORT","TOP_DOWN"):
               assert abs(sum(a["weights"][h].values())-1.0) < 1e-6
+          assert a["governance"]["positive_unvalidated_overlay_can_create_buy"] is False
+          assert a["governance"]["total_return_composite_active_weight"] is False
+          assert all("total_return_potential_score" not in a["weights"][h] for h in ("CT","MT","LT"))
+          assert all("target_upside_gt4_score" in a["weights"][h] for h in ("CT","MT","LT"))
           assert a["weights"]["MT"]["morningstar_action_score"] > 0
           assert a["weights"]["LT"]["dividend_gt4_score"] > 0
+          assert "ATTRIBUTED" in ACCEPTED_VALIDATION_STATUSES
           assert e["governance"]["t1_t2_forbidden"] is True
           assert a["governance"]["t1_t2_scope"] == "ACTION_TCT_ONLY"
           assert abs(sum(WEIGHTS_V24_1_2.values())-1.0) < 1e-12
@@ -103,22 +82,18 @@ jobs:
           assert g["governance"]["criteria_count"] == len(g["criteria"]) == 102
           assert g["governance"]["contribution_blocks"] == 11
           assert g["governance"]["t1_t2_forbidden"] is True
-          print("Integrity OK: Actions=1829/633, ETF=102/268 + V20.8.2 dynamic, TCT V24.1.8 dynamic, GOLD=102/11")
+          assert mm["entry_execution_rule"] == "NEXT_RUN_OBSERVED_PRICE_AFTER_SIGNAL_DATE"
+          assert mm["single_position_per_isin"] is True
+          assert mm["max_instrument_exposure_pct"] <= mm["max_position_pct"]
+          print("V21.4 integrity OK: 1829/633 Actions, 102/268 ETF, exact TCT, Gold 102/11, bias-safe virtual book")
           PY
-      - name: Unit tests
-        run: |
-          pytest -q \
-            tests/test_committee_master.py \
-            tests/test_committee_v21_enrichment.py \
-            tests/test_topdown_v21.py \
-            tests/test_tct_v24_1_7.py \
-            tests/test_tct_baseline_v24_1_7.py \
-            tests/test_tct_baseline_v24_1_8.py \
-            tests/test_tct_exact_v24_1_7.py \
-            tests/test_gold_v1_1.py \
-            tests/test_canonical_universe_v21.py \
-            tests/test_action_v21_3.py \
-            tests/test_etf_mt_v2082_dynamic.py \
-            tests/test_committee_performance.py \
-            tests/test_etf_structural_overlay.py \
-            tests/test_enrichment_dividends_funds.py
+      - name: Full pytest suite
+        run: pytest -q
+      - name: Upload static audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-static-audit-${{ github.run_id }}
+          path: outputs/audit/PYTHON_STATIC_AUDIT.json
+          if-no-files-found: warn
+          retention-days: 30
