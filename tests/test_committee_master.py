@@ -80,10 +80,10 @@ def test_criterion_coverage_reports_resolution_source():
     assert report.loc[report.criterion=="per_forward_v21","resolution"].iloc[0] == "ALIAS:per_forward_yf"
     assert report.loc[report.criterion=="revenue_growth_v21_pct","availability_pct"].iloc[0] == 50.0
 
-def test_tct_is_shadow_only():
+def test_tct_is_shadow_only_and_requires_baseline_before_t1_t2():
     t=tct_adapter().iloc[0]
     assert t["horizon"]=="TCT"
-    assert t["status"]=="SHADOW_INPUT_REQUIRED"
+    assert t["status"]=="SHADOW_BASELINE_REQUIRED"
     assert "T1/T2 ACTION TCT only" in t["notes"]
 
 def test_gold_missing_reference_blocks(tmp_path):
