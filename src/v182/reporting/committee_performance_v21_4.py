@@ -3,10 +3,13 @@ from __future__ import annotations
 from datetime import datetime, timezone, date
 from pathlib import Path
 import json
+import logging
 import math
 import pandas as pd
 
 from v182.reporting.committee_performance import _price_master, _read, _save, _style_xlsx
+
+logger=logging.getLogger(__name__)
 
 
 def _num(value):
@@ -21,9 +24,13 @@ def _model_version(root:Path)->str:
         try:
             value=json.loads(summary.read_text(encoding="utf-8")).get("version")
             if value: return str(value)
-        except (OSError,ValueError,json.JSONDecodeError): pass
-    try: return str(json.loads((root/"config"/"COMMITTEE_MASTER_V21.json").read_text(encoding="utf-8")).get("version","UNKNOWN"))
-    except (OSError,ValueError,json.JSONDecodeError): return "UNKNOWN"
+        except (OSError,ValueError,json.JSONDecodeError) as exc:
+            logger.debug("Unable to read Committee summary version from %s: %s: %s",summary,type(exc).__name__,exc)
+    try:
+        return str(json.loads((root/"config"/"COMMITTEE_MASTER_V21.json").read_text(encoding="utf-8")).get("version","UNKNOWN"))
+    except (OSError,ValueError,json.JSONDecodeError) as exc:
+        logger.warning("Unable to resolve model version from Committee config: %s: %s",type(exc).__name__,exc)
+        return "UNKNOWN"
 
 
 def _drawdown_multiplier(nav:pd.DataFrame,cfg:dict)->tuple[float,float]:
@@ -54,8 +61,6 @@ def _eligible_signal_rows(decisions:pd.DataFrame,cfg:dict)->pd.DataFrame:
     d["_score"]=pd.to_numeric(d.get("score"),errors="coerce"); d["_coverage"]=pd.to_numeric(d.get("coverage_pct"),errors="coerce")
     d=d[(d["_score"]>=min_score)&(d["_coverage"]>=min_cov)&d["isin"].notna()]
     if d.empty: return d
-    # One signal per instrument: strongest current Committee conviction wins;
-    # all supporting horizons are retained for audit.
     horizons=d.groupby("isin")["horizon"].apply(lambda s:"|".join(sorted(set(map(str,s))))).to_dict()
     best=d.sort_values(["_score","_coverage"],ascending=False).drop_duplicates("isin",keep="first").copy()
     best["contributing_horizons"]=best["isin"].astype(str).map(horizons)
@@ -78,8 +83,6 @@ def run(root:Path)->dict:
     if positions.empty: positions=pd.DataFrame(columns=["position_id","book_id","model_version","open_date","asset_class","primary_horizon","contributing_horizons","isin","name","sector","entry_price","quantity","entry_score","entry_coverage_pct","stop_pct","status"])
     if signals.empty: signals=pd.DataFrame(columns=["signal_id","book_id","model_version","signal_date","status","asset_class","primary_horizon","contributing_horizons","isin","name","sector","signal_score","signal_coverage_pct","filled_date","filled_price","closed_date","closed_price","realized_return_pct","close_reason"])
 
-    # Close existing positions first. Data outage alone does not force liquidation;
-    # stops remain active and no new entry is allowed from blocked data.
     current_by_isin={k:g for k,g in current.groupby(current["isin"].astype(str))}
     cash=float(cfg["initial_capital_eur"])
     book_nav=nav[nav.get("book_id",pd.Series(index=nav.index,dtype=str)).astype(str)==book_id] if not nav.empty else pd.DataFrame()
@@ -105,7 +108,6 @@ def run(root:Path)->dict:
     throttle,drawdown=_drawdown_multiplier(book_nav,cfg); daily_turnover=0.0
     open_isins=set(open_pos["isin"].astype(str)); pending=signals[(signals["book_id"].astype(str)==book_id)&(signals["status"].astype(str)=="PENDING_ENTRY")].copy()
 
-    # Fill only signals from an earlier date: this removes same-day look-ahead.
     for sidx,s in pending.sort_values("signal_date").iterrows():
         if str(s.get("signal_date"))>=today: continue
         isin=str(s.get("isin","") or "")
@@ -130,7 +132,6 @@ def run(root:Path)->dict:
         tx=pd.concat([tx,pd.DataFrame([{"book_id":book_id,"model_version":model,"date":today,"type":"BUY","position_id":pid,"isin":isin,"price":p,"quantity":qty,"gross_eur":value,"cost_eur":value*fee,"reason":"NEXT_RUN_COMMITTEE_BUY"}])],ignore_index=True)
         signals.at[sidx,"status"]="OPEN"; signals.at[sidx,"filled_date"]=today; signals.at[sidx,"filled_price"]=p
 
-    # Create today's signals after fills; by construction they cannot execute now.
     eligible=_eligible_signal_rows(current,cfg); existing_active=set(signals[(signals["book_id"].astype(str)==book_id)&signals["status"].astype(str).isin(["PENDING_ENTRY","OPEN"])] ["isin"].astype(str)) if not signals.empty else set()
     new=[]
     for _,r in eligible.iterrows():
@@ -140,7 +141,6 @@ def run(root:Path)->dict:
         new.append({"signal_id":f"{book_id}|{today}|{isin}","book_id":book_id,"model_version":model,"signal_date":today,"status":"PENDING_ENTRY","asset_class":r.get("asset_class"),"primary_horizon":r.get("horizon"),"contributing_horizons":r.get("contributing_horizons"),"isin":isin,"name":r.get("name"),"sector":r.get("sector") or pinfo.get("sector"),"signal_score":r.get("_score"),"signal_coverage_pct":r.get("_coverage")})
     if new: signals=pd.concat([signals,pd.DataFrame(new)],ignore_index=True).drop_duplicates("signal_id",keep="first")
 
-    # Mark only open positions; closed signals are frozen at realized return.
     mark_rows=[]; open_pos=positions[(positions["book_id"].astype(str)==book_id)&(positions["status"].astype(str)=="OPEN")].copy()
     for _,r in open_pos.iterrows():
         isin=str(r.get("isin","") or ""); p=prices.get(isin,{}).get("price"); entry=_num(r.get("entry_price"))
