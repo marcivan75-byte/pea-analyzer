@@ -62,9 +62,10 @@ def _format_excel(path: Path) -> None:
             letter=col[0].column_letter
             width=min(40,max(10,max((len(str(c.value)) if c.value is not None else 0) for c in col)+2))
             ws.column_dimensions[letter].width=width
-        for cell in ws["G"][1:]:
+        # coverage_pct is stored as 0..100 and is column H in inventory sheets.
+        for cell in ws["H"][1:]:
             if isinstance(cell.value,(int,float)):
-                cell.number_format='0.00%'
+                cell.number_format='0.00'
     wb.save(path)
 
 
