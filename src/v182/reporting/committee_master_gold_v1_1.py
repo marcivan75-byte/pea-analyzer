@@ -5,6 +5,7 @@ import json
 import pandas as pd
 
 from v182.decision.committee_master import sector_ranking
+from v182.decision.etf_mt_committee_v2082 import apply as apply_etf_mt_v2082
 from v182.reporting import committee_master_run
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -26,6 +27,7 @@ def _gold_rows(payload: dict) -> pd.DataFrame:
 
 def run(root: Path = ROOT) -> dict:
     summary = committee_master_run.run(root)
+    summary = apply_etf_mt_v2082(root, summary)
     outdir = root / "outputs" / "committee_master"
     gold_path = root / "outputs" / "gold_v1_1" / "GOLD_V1_1_DECISION.json"
     if not gold_path.exists():
@@ -66,6 +68,7 @@ def run(root: Path = ROOT) -> dict:
     summary["outputs"]["gold_history"] = "state/GOLD_V1_1_SHADOW_HISTORY.csv"
     summary["notes"] = [n for n in summary.get("notes", []) if "Gold remains blocked" not in n]
     summary["notes"].extend([
+        "ETF MT V20.8.2 replaces missing-weight blocking at Committee level with available-criterion renormalization to 100%, subject to 70% weighted coverage; it has no historical performance attribution yet.",
         "Gold V1.1 is integrated as autonomous SHADOW/RESEARCH_ONLY scoring outside PEA.",
         "Gold top-level tactical 45/25/20/10 and strategic 25/20/20/15/10/10 families are source-preserved; reconstructed intra-block weights are provisional and not performance-optimised.",
         "Gold missing official WGC/central-bank/consensus observations remain MISSING; no neutral 50/100 imputation.",
