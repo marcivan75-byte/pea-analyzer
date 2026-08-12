@@ -7,6 +7,7 @@ on:
       - "config/V18.2_MASTER_CONFIG.json"
       - "config/V21_ACTIONS_CRITERIA_REGISTRY.json"
       - "config/V20_7_1_ETF_CRITERIA_REGISTRY.json"
+      - "config/GOLD_V1_1_102_CRITERIA.json"
       - "config/FULL_REFERENTIAL_INTEGRITY.json"
       - "config/TCT_V24_1_7_SHADOW.json"
       - "config/V21_ACTION_UNIVERSE_ISINS.parts/**"
@@ -21,6 +22,7 @@ on:
       - "tests/test_tct_v24_1_7.py"
       - "tests/test_tct_baseline_v24_1_7.py"
       - "tests/test_tct_exact_v24_1_7.py"
+      - "tests/test_gold_v1_1.py"
       - "tests/test_canonical_universe_v21.py"
       - "tests/test_etf_structural_overlay.py"
       - "tests/test_enrichment_dividends_funds.py"
@@ -62,10 +64,12 @@ jobs:
           python -m py_compile src/v182/decision/tct_baseline_v24_1_7.py
           python -m py_compile src/v182/decision/tct_timing_exact_v24_1_7.py
           python -m py_compile src/v182/decision/etf_structural_overlay.py
+          python -m py_compile src/v182/decision/gold_v1_1.py
           python -m py_compile src/v182/reporting/waves.py
           python -m py_compile src/v182/reporting/run.py
           python -m py_compile src/v182/reporting/etf_structure_refresh.py
           python -m py_compile src/v182/reporting/committee_master_run.py
+          python -m py_compile src/v182/reporting/committee_master_gold_v1_1.py
           python -m py_compile src/v182/reporting/unified_runner.py
       - name: Referential integrity
         run: |
@@ -78,6 +82,7 @@ jobs:
           from v182.decision.tct_timing_exact_v24_1_7 import FORMULA_VERSION, T1_WEIGHTS, T2_WEIGHTS
           a=json.loads(Path("config/V21_ACTIONS_CRITERIA_REGISTRY.json").read_text())
           e=json.loads(Path("config/V20_7_1_ETF_CRITERIA_REGISTRY.json").read_text())
+          g=json.loads(Path("config/GOLD_V1_1_102_CRITERIA.json").read_text())
           t=json.loads(Path("config/TCT_V24_1_7_SHADOW.json").read_text())
           integrity=json.loads(Path("config/FULL_REFERENTIAL_INTEGRITY.json").read_text())
           assert a["criteria_count"] == 633 == integrity["actions"]["criteria_count"]
@@ -100,7 +105,14 @@ jobs:
           assert e["bonus_malus"]["risk_malus"]["7"] == -3.0
           assert e["bonus_malus"]["positive_bonus_cannot_create_buy"] is True
           assert e["bonus_malus"]["mt_core_selection_unchanged"] is True
-          print("Integrity OK: Actions=1429/633, ETF=102/268, exact TCT V24.1.7 source formulas/state, GitOK Morningstar/SRI rules")
+          assert g["governance"]["criteria_count"] == len(g["criteria"]) == 102
+          assert len({c["name"] for c in g["criteria"]}) == 102
+          assert g["governance"]["contribution_blocks"] == 11
+          assert abs(sum(g["horizons"]["TACTICAL_2_12W"]["block_weights"].values())-1.0) < 1e-12
+          assert abs(sum(g["horizons"]["STRATEGIC_6_24M"]["block_weights"].values())-1.0) < 1e-12
+          assert g["governance"]["t1_t2_forbidden"] is True
+          assert g["live_orders_enabled"] is False
+          print("Integrity OK: Actions=1429/633, ETF=102/268, TCT exact, GOLD=102/11 source-preserved families")
           PY
       - name: Unit tests
         run: |
@@ -111,6 +123,7 @@ jobs:
             tests/test_tct_v24_1_7.py \
             tests/test_tct_baseline_v24_1_7.py \
             tests/test_tct_exact_v24_1_7.py \
+            tests/test_gold_v1_1.py \
             tests/test_canonical_universe_v21.py \
             tests/test_etf_structural_overlay.py \
             tests/test_enrichment_dividends_funds.py
