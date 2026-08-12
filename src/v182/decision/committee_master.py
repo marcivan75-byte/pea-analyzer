@@ -8,8 +8,8 @@ import numpy as np
 HORIZONS = ("CT", "MT", "LT", "SHORT", "TOP_DOWN")
 
 # Canonical V21 names may differ from the historical V18.2 storage schema.
-# Only semantically equivalent aliases are allowed here. An alias never
-# changes a criterion's weight or direction and never deletes the source field.
+# Only semantically equivalent aliases are allowed. Aliases never change a
+# criterion weight/direction and source fields remain preserved in the master.
 FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "per_forward_v21": ("per_forward", "per_forward_yf"),
     "pb_v21": ("pb",),
@@ -27,8 +27,11 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "target_upside_pct_v21": ("target_upside_pct", "upside_pct", "upside_pct_yf"),
     "consensus_delta_4w": ("consensus_delta_4w", "consensus_delta", "consensus_delta_yf"),
     "net_upgrades_30d_v21": ("net_upgrades_30d",),
+    "broker_weighted_revision_30d": ("broker_weighted_revision_30d",),
     "fcf_yield_v21": ("fcf_yield",),
     "debt_to_ebitda_v21": ("dette_ebitda", "debt_to_ebitda"),
+    "diversification_direct_score": ("direct_diversification_score",),
+    "direct_beta3y": ("beta_3y", "beta3y", "beta_3y_structural"),
 }
 
 
@@ -41,7 +44,12 @@ def _to_numeric(series: pd.Series, field: str) -> pd.Series:
         return pd.to_numeric(series, errors="coerce")
     s = series.astype(str).str.strip()
     low = s.str.lower()
-    bool_map = {"true":1.0,"false":0.0,"yes":1.0,"no":0.0,"oui":1.0,"non":0.0,"pass":1.0,"fail":0.0,"1":1.0,"0":0.0,"distribution":1.0,"distributing":1.0,"dist":1.0,"accumulation":0.5,"accumulating":0.5,"acc":0.5}
+    bool_map = {
+        "true":1.0,"false":0.0,"yes":1.0,"no":0.0,"oui":1.0,"non":0.0,
+        "pass":1.0,"fail":0.0,"1":1.0,"0":0.0,
+        "distribution":1.0,"distributing":1.0,"dist":1.0,
+        "accumulation":0.5,"accumulating":0.5,"acc":0.5,
+    }
     mapped = low.map(bool_map)
     numeric = pd.to_numeric(s.str.replace(",", ".", regex=False).str.replace("%","",regex=False), errors="coerce")
     return numeric.where(numeric.notna(), mapped)
@@ -56,15 +64,70 @@ def _first_numeric(frame: pd.DataFrame, fields: tuple[str, ...]) -> tuple[pd.Ser
     return None, None
 
 
-def resolve_field(frame: pd.DataFrame, name: str) -> tuple[pd.Series | None, str]:
-    """Resolve one canonical criterion without semantic substitution.
+def _sector_series(frame: pd.DataFrame) -> pd.Series:
+    out = pd.Series("UNKNOWN", index=frame.index, dtype=object)
+    fields = ("sector_v21", "sector_yf", "sector", "sector_yahoo", "industry_yf", "industry")
+    for field in fields:
+        if field not in frame.columns:
+            continue
+        raw = frame[field].astype(str).str.strip()
+        valid = ~raw.str.lower().isin({"", "nan", "none", "n/a", "na"})
+        out = out.where(~((out == "UNKNOWN") & valid), raw)
+    return out
 
-    Resolution order: exact canonical field -> approved alias -> exact derived
-    formula. Fields with different horizons/definitions are deliberately not
-    aliased (for example 3-year growth is not used as current revenue growth).
+
+def _sector_percentile(values: pd.Series, sectors: pd.Series, *, direction: str) -> pd.Series:
+    x = pd.to_numeric(values, errors="coerce")
+    result = pd.Series(np.nan, index=x.index, dtype=float)
+    for _sector, idx in sectors.groupby(sectors).groups.items():
+        sub = x.loc[idx]
+        if sub.notna().sum() < 2:
+            continue
+        ascending = direction != "LOW"
+        result.loc[idx] = sub.rank(method="average", pct=True, ascending=ascending) * 100.0
+    return result
+
+
+def _valuation_discount_score(frame: pd.DataFrame) -> tuple[pd.Series | None, str]:
+    """V21 formula: 45% inverse Forward PER + 20% inverse P/B + 35% FCF yield.
+
+    Each component is ranked within sector and row weights are renormalised when
+    one component is genuinely unavailable. A missing component is never
+    replaced by a neutral score.
     """
+    per, per_src = _first_numeric(frame, ("per_forward_v21", "per_forward", "per_forward_yf"))
+    pb, pb_src = _first_numeric(frame, ("pb_v21", "pb"))
+    fcf, fcf_src = resolve_field(frame, "fcf_yield_v21") if "fcf_yield_v21" not in frame.columns else (_to_numeric(frame["fcf_yield_v21"], "fcf_yield_v21"), "fcf_yield_v21")
+    if per is None and pb is None and fcf is None:
+        return None, "MISSING"
+    sectors = _sector_series(frame)
+    numer = pd.Series(0.0, index=frame.index)
+    denom = pd.Series(0.0, index=frame.index)
+    sources=[]
+    for values, weight, direction, source in (
+        (per, 0.45, "LOW", per_src),
+        (pb, 0.20, "LOW", pb_src),
+        (fcf, 0.35, "HIGH", fcf_src),
+    ):
+        if values is None:
+            continue
+        ranked = _sector_percentile(values, sectors, direction=direction)
+        ok = ranked.notna()
+        numer += ranked.fillna(0.0) * weight
+        denom += ok.astype(float) * weight
+        sources.append(str(source))
+    score = numer / denom.replace(0, np.nan)
+    if not score.notna().any():
+        return None, "MISSING"
+    return score, "DERIVED:SECTOR_NEUTRAL_VALUATION_45_20_35:" + ",".join(sources)
+
+
+def resolve_field(frame: pd.DataFrame, name: str) -> tuple[pd.Series | None, str]:
+    """Resolve canonical criteria without semantic substitution."""
     if name in frame.columns:
-        return _to_numeric(frame[name], name), f"DIRECT:{name}"
+        values = _to_numeric(frame[name], name)
+        if values.notna().any():
+            return values, f"DIRECT:{name}"
 
     for alias in FIELD_ALIASES.get(name, ()):
         if alias in frame.columns:
@@ -75,8 +138,6 @@ def resolve_field(frame: pd.DataFrame, name: str) -> tuple[pd.Series | None, str
     if name == "consensus_score_100_v21":
         values, source = _first_numeric(frame, ("consensus_score",))
         if values is not None:
-            # Finnhub consensus_score is a 1..5 weighted mean; scale is
-            # monotonic and therefore preserves cross-sectional rank.
             return values * 20.0, f"DERIVED:{source}*20"
 
     if name == "target_upside_pct_v21":
@@ -99,6 +160,9 @@ def resolve_field(frame: pd.DataFrame, name: str) -> tuple[pd.Series | None, str
         if debt is not None and ebitda is not None:
             valid = ebitda.where(ebitda != 0)
             return debt / valid, f"DERIVED:{debt_source}/{ebitda_source}"
+
+    if name == "valuation_discount_score":
+        return _valuation_discount_score(frame)
 
     return None, "MISSING"
 
@@ -153,7 +217,6 @@ def score_horizon(frame: pd.DataFrame, registry: dict, horizon: str) -> pd.DataF
 
 
 def criterion_coverage_report(frame: pd.DataFrame, registry: dict, asset_class: str, horizons: Iterable[str]) -> pd.DataFrame:
-    """Audit active criterion availability and canonical resolution source."""
     rows=[]
     n=max(len(frame),1)
     for horizon in horizons:
@@ -184,17 +247,44 @@ def _decision(score: pd.Series, status: pd.Series, cfg: dict, horizon: str) -> p
 
 
 def classify_sector(row: pd.Series, asset_class: str) -> str:
-    if asset_class == "GOLD": return "METAUX PRECIEUX"
-    fields = ("sector","sector_yf","sector_yahoo","industry","industry_yf","morningstar_category","category","geo_exposure","official_benchmark")
-    raw = ""
+    if asset_class == "GOLD":
+        return "METAUX PRECIEUX"
+    fields = (
+        "sector_v21","sector_yf","sector","sector_yahoo","industry_yf","industry",
+        "morningstar_category","category","geo_exposure","official_benchmark","name",
+    )
+    candidates=[]
     for f in fields:
-        if f in row and pd.notna(row[f]) and str(row[f]).strip(): raw = str(row[f]).strip(); break
-    if not raw: return "NON CLASSE"
-    t = raw.lower()
-    mapping = [(('bank','financial','finance','assurance','insurance'),'FINANCE'),(('health','pharma','biotech','santé','medical'),'SANTE'),(('technology','tech','software','semiconductor'),'TECHNOLOGIE'),(('industrial','construction','engineering','aerospace','machinery'),'INDUSTRIE'),(('energy','oil','gas','petrol','énergie'),'ENERGIE'),(('utility','utilities','electric','water','grid'),'UTILITIES'),(('telecom','communication','media','entertainment'),'COMMUNICATION / MEDIAS'),(('consumer','retail','luxury','food','beverage'),'CONSOMMATION'),(('real estate','immobilier','reit'),'IMMOBILIER'),(('material','chemical','mining','metal'),'MATERIAUX')]
+        if f in row and pd.notna(row[f]):
+            raw=str(row[f]).strip()
+            if raw and raw.lower() not in {"nan","none","n/a","na"}:
+                candidates.append(raw)
+    if not candidates:
+        return "NON CLASSE"
+    t=" | ".join(candidates).lower()
+    mapping = [
+        (("bank","financial","finance","assurance","insurance","asset management","capital markets"),"FINANCE"),
+        (("health","pharma","biotech","santé","medical","life sciences"),"SANTE"),
+        (("technology","tech","software","semiconductor","it services","electronics"),"TECHNOLOGIE"),
+        (("industrial","construction","engineering","aerospace","machinery","transportation","logistics"),"INDUSTRIE"),
+        (("energy","oil","gas","petrol","énergie","offshore","drilling"),"ENERGIE"),
+        (("utility","utilities","electric","water","grid","renewable utilities"),"UTILITIES"),
+        (("telecom","communication","media","entertainment","publishing","broadcast"),"COMMUNICATION / MEDIAS"),
+        (("consumer","retail","luxury","food","beverage","restaurant","apparel","household"),"CONSOMMATION"),
+        (("real estate","immobilier","reit","property"),"IMMOBILIER"),
+        (("material","chemical","mining","metal","forest products","paper"),"MATERIAUX"),
+    ]
     for tokens,label in mapping:
-        if any(tok in t for tok in tokens): return label
-    return "ETF MULTISECTORIEL / PAYS" if asset_class == "ETF" else raw.upper()[:80]
+        if any(tok in t for tok in tokens):
+            return label
+    if asset_class == "ETF":
+        return "ETF MULTISECTORIEL / PAYS"
+    # Preserve a meaningful provider sector when it exists instead of reducing
+    # everything to NON CLASSE.
+    for raw in candidates:
+        if raw.lower() not in {str(row.get("name","")).strip().lower()}:
+            return raw.upper()[:80]
+    return "NON CLASSE"
 
 
 def decisions_from_scores(frame: pd.DataFrame, registry: dict, asset_class: str, horizons: Iterable[str]) -> pd.DataFrame:
@@ -222,18 +312,20 @@ def overlay_etf_mt(etf_frame: pd.DataFrame, mt_ranking: pd.DataFrame | None) -> 
         isin=str(rr.get(isin_col,"") if isin_col else "")
         mrow=master.loc[isin] if not master.empty and isin in master.index else rr
         if isinstance(mrow,pd.DataFrame): mrow=mrow.iloc[0]
-        out.append({"asset_class":"ETF","horizon":"MT","isin":isin,"name":str(rr.get(name_col,"") if name_col else mrow.get("name","")),"sector":classify_sector(mrow,"ETF"),"score":pd.to_numeric(rr.get(score_col,np.nan),errors="coerce") if score_col else np.nan,"coverage_pct":pd.to_numeric(rr.get(coverage_col,100.0),errors="coerce") if coverage_col else 100.0,"status":str(rr.get("status","SCORABLE")),"decision":str(rr.get(decision_col,"") if decision_col else rr.get("decision","")),"active_criteria":38,"available_criteria":38,"score_source":"V20.8.1_DYNAMIC_38_CORE","backtest_attribution":"Historical OOS validation 2021-2023: 90.91% for the 38 dynamic PIT core only.","notes":"Full ETF referential preserved separately; structural/qualitative criteria remain visible for committee review and reweighting."})
+        out.append({"asset_class":"ETF","horizon":"MT","isin":isin,"name":str(rr.get(name_col,"") if name_col else mrow.get("name","")),"sector":classify_sector(mrow,"ETF"),"score":pd.to_numeric(rr.get(score_col,np.nan),errors="coerce") if score_col else np.nan,"coverage_pct":pd.to_numeric(rr.get(coverage_col,100.0),errors="coerce") if coverage_col else 100.0,"status":str(rr.get("status","SCORABLE")),"decision":str(rr.get(decision_col,"") if decision_col else rr.get("decision","")),"active_criteria":38,"available_criteria":38,"score_source":"V20.8.1_DYNAMIC_38_CORE","backtest_attribution":"Historical OOS validation 2021-2023: 90.91% for the 38 dynamic PIT core only.","notes":"38 PIT dynamic core only. Full ETF structural/qualitative referential remains active at Committee layer and separately attributable."})
     return pd.DataFrame(out)
 
 
-def tct_adapter() -> pd.DataFrame:
-    return pd.DataFrame([{"asset_class":"ACTION","horizon":"TCT","isin":"","name":"ACTION TCT / T1-T2 MODULE","sector":"TRANSVERSAL","score":np.nan,"coverage_pct":0.0,"status":"SHADOW_INPUT_REQUIRED","decision":"SHADOW_INPUT_REQUIRED","active_criteria":0,"available_criteria":0,"score_source":"V24.1.7_T1_T2_V2","backtest_attribution":"","notes":"T1/T2 ACTION TCT only; 0 influence on base score; no ETF/non-TCT use; live execution forbidden."}])
+def tct_adapter(tct_shadow: pd.DataFrame | None = None) -> pd.DataFrame:
+    if tct_shadow is not None and not tct_shadow.empty:
+        return tct_shadow.copy()
+    return pd.DataFrame([{"asset_class":"ACTION","horizon":"TCT","isin":"","name":"ACTION TCT / T1-T2 MODULE","sector":"TRANSVERSAL","score":np.nan,"coverage_pct":0.0,"status":"SHADOW_BASELINE_REQUIRED","decision":"SHADOW_BASELINE_REQUIRED","active_criteria":0,"available_criteria":0,"score_source":"V24.1.7_T1_T2_V2","backtest_attribution":"V24.1.7 V2 timing overlay not yet promoted; prior T1/T2 OOS failed promotion gates.","notes":"T1/T2 ACTION TCT only; timing overlay; 0 influence on base score; no ETF/non-TCT use; live execution forbidden."}])
 
 
 def gold_adapter(gold_registry_path: str | Path) -> pd.DataFrame:
     p=Path(gold_registry_path)
     if not p.exists():
-        return pd.DataFrame([{"asset_class":"GOLD","horizon":h,"isin":"","name":"OR","sector":"METAUX PRECIEUX","score":np.nan,"coverage_pct":0.0,"status":"BLOCKED_REFERENCE","decision":"ABSTAIN_BLOCKED_REFERENCE","active_criteria":102,"available_criteria":0,"score_source":"GOLD_V1_CONTRACT","backtest_attribution":"","notes":"Exact 102-criterion PIT registry not present. No score or weight is fabricated."} for h in ("TACTICAL_2_12W","STRATEGIC_6_24M")])
+        return pd.DataFrame([{"asset_class":"GOLD","horizon":h,"isin":"","name":"OR","sector":"METAUX PRECIEUX","score":np.nan,"coverage_pct":0.0,"status":"BLOCKED_REFERENCE","decision":"ABSTAIN_BLOCKED_REFERENCE","active_criteria":102,"available_criteria":0,"score_source":"GOLD_V1_CONTRACT","backtest_attribution":"","notes":"Exact 102-criterion PIT registry not present. Historical block architecture is documented, but no missing V1 weight/score is fabricated."} for h in ("TACTICAL_2_12W","STRATEGIC_6_24M")])
     cfg=json.loads(p.read_text(encoding="utf-8")); rows=[]
     for h,spec in cfg.get("current_scores",{}).items():
         rows.append({"asset_class":"GOLD","horizon":h,"isin":"","name":"OR","sector":"METAUX PRECIEUX","score":spec.get("score"),"coverage_pct":spec.get("coverage_pct",0),"status":spec.get("status","SCORABLE"),"decision":spec.get("decision","REVIEW"),"active_criteria":len(cfg.get("criteria",[])),"available_criteria":spec.get("available_criteria",0),"score_source":cfg.get("version","GOLD_V1"),"backtest_attribution":"","notes":"Exact GOLD registry supplied."})
