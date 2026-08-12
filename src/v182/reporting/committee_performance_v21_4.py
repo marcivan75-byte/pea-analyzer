@@ -67,6 +67,15 @@ def _eligible_signal_rows(decisions:pd.DataFrame,cfg:dict)->pd.DataFrame:
     return best
 
 
+def _current_buy_confirmation(rows:pd.DataFrame,cfg:dict)->dict|None:
+    """Require the deferred entry to remain a valid BUY on the fill run."""
+    if rows is None or rows.empty: return None
+    eligible=_eligible_signal_rows(rows,cfg)
+    if eligible.empty: return None
+    r=eligible.sort_values(["_score","_coverage"],ascending=False).iloc[0]
+    return {"score":float(r["_score"]),"coverage_pct":float(r["_coverage"]),"horizon":str(r.get("horizon") or "MT"),"contributing_horizons":str(r.get("contributing_horizons") or r.get("horizon") or "MT")}
+
+
 def run(root:Path)->dict:
     cfg=json.loads((root/"config"/"COMMITTEE_VIRTUAL_MONEY_MANAGEMENT.json").read_text(encoding="utf-8"))
     decisions_path=root/"outputs"/"committee_master"/"COMMITTEE_DECISIONS.csv"
@@ -81,21 +90,19 @@ def run(root:Path)->dict:
     fee=float(cfg["transaction_cost_per_side_pct"])/100.0; allowed={"ACTION","ETF"} if not cfg.get("gold_in_virtual_pea_book",False) else {"ACTION","ETF","GOLD"}
     current=decisions[decisions["asset_class"].astype(str).isin(allowed)].copy()
     if positions.empty: positions=pd.DataFrame(columns=["position_id","book_id","model_version","open_date","asset_class","primary_horizon","contributing_horizons","isin","name","sector","entry_price","quantity","entry_score","entry_coverage_pct","stop_pct","status"])
-    if signals.empty: signals=pd.DataFrame(columns=["signal_id","book_id","model_version","signal_date","status","asset_class","primary_horizon","contributing_horizons","isin","name","sector","signal_score","signal_coverage_pct","filled_date","filled_price","closed_date","closed_price","realized_return_pct","close_reason"])
+    if signals.empty: signals=pd.DataFrame(columns=["signal_id","book_id","model_version","signal_date","status","asset_class","primary_horizon","contributing_horizons","isin","name","sector","signal_score","signal_coverage_pct","filled_date","filled_price","fill_validation_score","fill_validation_coverage_pct","closed_date","closed_price","realized_return_pct","close_reason"])
 
     current_by_isin={k:g for k,g in current.groupby(current["isin"].astype(str))}
     cash=float(cfg["initial_capital_eur"])
     book_nav=nav[nav.get("book_id",pd.Series(index=nav.index,dtype=str)).astype(str)==book_id] if not nav.empty else pd.DataFrame()
-    if not book_nav.empty:
-        cash=_num(book_nav.iloc[-1].get("cash_eur")) or cash
+    if not book_nav.empty: cash=_num(book_nav.iloc[-1].get("cash_eur")) or cash
     for idx,pos in positions[(positions["book_id"].astype(str)==book_id)&(positions["status"].astype(str)=="OPEN")].iterrows():
         isin=str(pos.get("isin","") or ""); p=prices.get(isin,{}).get("price"); entry=_num(pos.get("entry_price")); qty=_num(pos.get("quantity")); stop=_num(pos.get("stop_pct"))
         if p is None or entry is None or qty is None: continue
         stop_hit=stop is not None and p<=entry*(1.0-stop/100.0); rows=current_by_isin.get(isin,pd.DataFrame())
         decisions_now=set(rows.get("decision",pd.Series(dtype=str)).astype(str)) if not rows.empty else set()
         data_only_failure=bool(decisions_now) and decisions_now.issubset({"BLOCK_DATA","FAILED","BLOCKED_INPUT","BLOCKED_CONFIG"})
-        hold=bool(decisions_now.intersection(set(cfg.get("hold_decisions",[]))))
-        decision_exit=bool(decisions_now) and not hold and not data_only_failure
+        hold=bool(decisions_now.intersection(set(cfg.get("hold_decisions",[])))); decision_exit=bool(decisions_now) and not hold and not data_only_failure
         if stop_hit or decision_exit:
             proceeds=qty*p*(1.0-fee); cash+=proceeds; reason="STOP" if stop_hit else "NO_ACTIVE_HOLD_DECISION"
             positions.at[idx,"status"]="CLOSED"; positions.at[idx,"close_date"]=today; positions.at[idx,"close_price"]=p; positions.at[idx,"exit_reason"]=reason
@@ -116,8 +123,11 @@ def run(root:Path)->dict:
         try: age=(date.fromisoformat(today)-date.fromisoformat(str(s.get("signal_date")))).days
         except ValueError: age=0
         if age>7: signals.at[sidx,"status"]="CANCELLED_STALE"; continue
-        p=prices.get(isin,{}).get("price"); score=_num(s.get("signal_score")); coverage=_num(s.get("signal_coverage_pct")); horizon=str(s.get("primary_horizon") or "MT")
-        if p is None or p<=0 or score is None or coverage is None or throttle<=0 or equity<=0: continue
+        confirmation=_current_buy_confirmation(current_by_isin.get(isin,pd.DataFrame()),cfg)
+        if confirmation is None:
+            signals.at[sidx,"status"]="CANCELLED_NOT_RECONFIRMED"; continue
+        p=prices.get(isin,{}).get("price"); score=float(confirmation["score"]); coverage=float(confirmation["coverage_pct"]); horizon=str(confirmation["horizon"])
+        if p is None or p<=0 or throttle<=0 or equity<=0: continue
         if len(open_isins)>=int(cfg.get("max_open_positions",20)): break
         stop=float(cfg["stops_pct"].get(horizon,12.0)); exposure=_current_value(open_pos,prices); sector=str(s.get("sector") or prices.get(isin,{}).get("sector") or "NON CLASSE")
         sector_value=sum((_num(r.get("quantity")) or 0)*(prices.get(str(r.get("isin")),{}).get("price") or (_num(r.get("entry_price")) or 0)) for _,r in open_pos.iterrows() if str(r.get("sector"))==sector)
@@ -127,13 +137,12 @@ def run(root:Path)->dict:
         if value<=0: continue
         qty=value/p; cost=value*(1.0+fee)
         if cost>cash: continue
-        cash-=cost; daily_turnover+=value; pid=f"{book_id}|{today}|{isin}"; row={"position_id":pid,"book_id":book_id,"model_version":model,"open_date":today,"asset_class":s.get("asset_class"),"primary_horizon":horizon,"contributing_horizons":s.get("contributing_horizons"),"isin":isin,"name":s.get("name"),"sector":sector,"entry_price":p,"quantity":qty,"entry_score":score,"entry_coverage_pct":coverage,"stop_pct":stop,"status":"OPEN"}
+        cash-=cost; daily_turnover+=value; pid=f"{book_id}|{today}|{isin}"; row={"position_id":pid,"book_id":book_id,"model_version":model,"open_date":today,"asset_class":s.get("asset_class"),"primary_horizon":horizon,"contributing_horizons":confirmation["contributing_horizons"],"isin":isin,"name":s.get("name"),"sector":sector,"entry_price":p,"quantity":qty,"entry_score":score,"entry_coverage_pct":coverage,"stop_pct":stop,"status":"OPEN"}
         positions=pd.concat([positions,pd.DataFrame([row])],ignore_index=True); open_pos=pd.concat([open_pos,pd.DataFrame([row])],ignore_index=True); open_isins.add(isin)
-        tx=pd.concat([tx,pd.DataFrame([{"book_id":book_id,"model_version":model,"date":today,"type":"BUY","position_id":pid,"isin":isin,"price":p,"quantity":qty,"gross_eur":value,"cost_eur":value*fee,"reason":"NEXT_RUN_COMMITTEE_BUY"}])],ignore_index=True)
-        signals.at[sidx,"status"]="OPEN"; signals.at[sidx,"filled_date"]=today; signals.at[sidx,"filled_price"]=p
+        tx=pd.concat([tx,pd.DataFrame([{"book_id":book_id,"model_version":model,"date":today,"type":"BUY","position_id":pid,"isin":isin,"price":p,"quantity":qty,"gross_eur":value,"cost_eur":value*fee,"reason":"NEXT_RUN_RECONFIRMED_COMMITTEE_BUY"}])],ignore_index=True)
+        signals.at[sidx,"status"]="OPEN"; signals.at[sidx,"filled_date"]=today; signals.at[sidx,"filled_price"]=p; signals.at[sidx,"fill_validation_score"]=score; signals.at[sidx,"fill_validation_coverage_pct"]=coverage
 
-    eligible=_eligible_signal_rows(current,cfg); existing_active=set(signals[(signals["book_id"].astype(str)==book_id)&signals["status"].astype(str).isin(["PENDING_ENTRY","OPEN"])] ["isin"].astype(str)) if not signals.empty else set()
-    new=[]
+    eligible=_eligible_signal_rows(current,cfg); existing_active=set(signals[(signals["book_id"].astype(str)==book_id)&signals["status"].astype(str).isin(["PENDING_ENTRY","OPEN"])] ["isin"].astype(str)) if not signals.empty else set(); new=[]
     for _,r in eligible.iterrows():
         isin=str(r.get("isin","") or "")
         if not isin or isin in open_isins or isin in existing_active: continue
