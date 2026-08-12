@@ -48,8 +48,7 @@ def diversification_score(sector_hhi_value: float | None) -> float | None:
 
     Existing Committee outputs show `diversification_direct_score` as exactly
     100 * (1 - direct_sector_hhi). Top-holdings concentration remains a separate
-    structural criterion and is not blended into this canonical score, avoiding
-    an undocumented double-counting formula.
+    structural criterion and is not blended into this canonical score.
     """
     if sector_hhi_value is None:
         return None
@@ -57,10 +56,12 @@ def diversification_score(sector_hhi_value: float | None) -> float | None:
 
 
 def collect_fund_structure(tickers: list[str], delay_seconds: float = 0.2) -> tuple[list[dict], list[dict]]:
-    """Collect ETF holdings/sector structure through yfinance `funds_data`.
+    """Collect observed ETF top-holdings and sector structure.
 
-    Missing or unsupported fund data remains missing and is returned in failures;
-    no diversification score is imputed from category/name text.
+    `funds_data.top_holdings` is normally only a top-N table. Its row count is
+    therefore recorded as `top_holdings_observed_count` only and MUST NOT be
+    promoted to the referential's total `direct_holdings_count` criterion.
+    Missing or unsupported data remain missing; no category/name imputation.
     """
     import yfinance as yf
     observations=[]; failures=[]
@@ -85,10 +86,7 @@ def collect_fund_structure(tickers: list[str], delay_seconds: float = 0.2) -> tu
                     {"ticker":ticker,"field":"diversification_direct_score","value":score,"source":"yfinance.funds_data"},
                 ])
             if isinstance(top,pd.DataFrame) and not top.empty:
-                observations.extend([
-                    {"ticker":ticker,"field":"direct_holdings_count","value":int(len(top)),"source":"yfinance.funds_data"},
-                    {"ticker":ticker,"field":"top_holdings_observed_count","value":int(len(top)),"source":"yfinance.funds_data"},
-                ])
+                observations.append({"ticker":ticker,"field":"top_holdings_observed_count","value":int(len(top)),"source":"yfinance.funds_data"})
             if concentration is None and hhi is None:
                 failures.append({"ticker":ticker,"reason":"NO_FUND_STRUCTURE_DATA"})
         except Exception as exc:
