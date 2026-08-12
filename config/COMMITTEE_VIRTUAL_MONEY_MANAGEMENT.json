@@ -1,17 +1,33 @@
 {
-  "version": "V1_2026_08_12",
+  "version": "V2_2026_08_12_BIAS_SAFE",
   "mode": "VIRTUAL_RESEARCH_ONLY",
   "initial_capital_eur": 100000.0,
   "max_total_exposure_pct": 80.0,
   "cash_buffer_min_pct": 20.0,
   "max_position_pct": 5.0,
+  "max_instrument_exposure_pct": 5.0,
   "max_sector_exposure_pct": 20.0,
+  "max_open_positions": 20,
+  "max_daily_turnover_pct": 20.0,
   "risk_budget_per_position_pct": 0.75,
   "transaction_cost_per_side_pct": 0.25,
   "minimum_buy_score": 77.0,
+  "minimum_signal_coverage_pct": 70.0,
+  "entry_execution_rule": "NEXT_RUN_OBSERVED_PRICE_AFTER_SIGNAL_DATE",
+  "single_position_per_isin": true,
   "stops_pct": {"TCT": 6.0, "CT": 8.0, "MT": 12.0, "LT": 18.0},
   "exit_on_decisions": ["REJECT", "REVIEW", "NO_SHORT_RISK", "BLOCK_DATA", "FAILED"],
+  "hold_decisions": ["BUY_CANDIDATE", "WATCH", "SHADOW_BUY_TACTICAL"],
   "buy_decisions": ["BUY_CANDIDATE", "SHADOW_BUY_TACTICAL"],
+  "drawdown_throttle": {
+    "enabled": true,
+    "level_1_drawdown_pct": 5.0,
+    "level_1_new_position_multiplier": 0.75,
+    "level_2_drawdown_pct": 10.0,
+    "level_2_new_position_multiplier": 0.5,
+    "level_3_drawdown_pct": 15.0,
+    "level_3_new_position_multiplier": 0.0
+  },
   "gold_in_virtual_pea_book": false,
-  "policy": "Virtual research only. Position sizing and stop assumptions are management rules, not backtest-proven performance claims."
+  "policy": "Virtual research only. Signals are entered no earlier than the next observed run after signal date. One consolidated position per ISIN. Model cohorts are versioned. Sizing and stops are governance assumptions, not backtest-proven performance claims."
 }
