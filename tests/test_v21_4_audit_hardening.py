@@ -5,7 +5,7 @@ import pandas as pd
 from v182.core.merge import decide
 from v182.io.frames import apply_observations
 from v182.features.action_decision_enhancements import build_action_enhancement_observations
-from v182.reporting.committee_performance_v21_4 import _eligible_signal_rows, _drawdown_multiplier
+from v182.reporting.committee_performance_v21_4 import _eligible_signal_rows, _drawdown_multiplier, _current_buy_confirmation
 from v182.reporting.unified_runner import _skip_dependency
 
 
@@ -41,6 +41,15 @@ def test_virtual_signal_selection_consolidates_multiple_horizons_per_isin():
     ])
     out=_eligible_signal_rows(d,cfg); assert len(out)==2
     a1=out[out["isin"]=="A1"].iloc[0]; assert a1["horizon"]=="MT"; assert a1["contributing_horizons"]=="CT|MT"
+
+
+def test_deferred_virtual_entry_must_be_reconfirmed_on_fill_run():
+    cfg={"buy_decisions":["BUY_CANDIDATE"],"minimum_buy_score":77,"minimum_signal_coverage_pct":70}
+    still_buy=pd.DataFrame([{"decision":"BUY_CANDIDATE","score":82,"coverage_pct":85,"isin":"A1","horizon":"MT"}])
+    confirm=_current_buy_confirmation(still_buy,cfg)
+    assert confirm is not None and confirm["score"]==82.0 and confirm["horizon"]=="MT"
+    invalidated=pd.DataFrame([{"decision":"WATCH","score":75,"coverage_pct":90,"isin":"A1","horizon":"MT"}])
+    assert _current_buy_confirmation(invalidated,cfg) is None
 
 
 def test_drawdown_throttle_can_stop_new_virtual_positions():
