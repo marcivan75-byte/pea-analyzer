@@ -1,0 +1,63 @@
+name: Committee Master V21 daily scoring
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 18 * * 1-5"
+
+permissions:
+  contents: read
+
+jobs:
+  committee-master:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      PYTHONUNBUFFERED: "1"
+      FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pytest
+      - name: Validate committee registries
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          a=json.loads(Path("config/V21_ACTIONS_CRITERIA_REGISTRY.json").read_text())
+          e=json.loads(Path("config/V20_7_1_ETF_CRITERIA_REGISTRY.json").read_text())
+          assert a["criteria_count"] == 633
+          assert e["criteria_count"] == 268
+          assert e["governance"]["t1_t2_forbidden"] is True
+          assert a["governance"]["t1_t2_scope"] == "ACTION_TCT_ONLY"
+          print("Registry integrity OK")
+          PY
+      - name: Refresh Actions and ETF data
+        id: enrich
+        continue-on-error: true
+        run: python -m v182.reporting.run
+      - name: Run ETF MT V20.8.1
+        id: etf_mt
+        continue-on-error: true
+        run: python -m v182.reporting.etf_mt_v2081_run
+      - name: Run complete committee scoring
+        run: python -m v182.reporting.committee_master_run
+      - name: Show committee summary
+        run: cat outputs/committee_master/SUMMARY.json
+      - name: Upload committee results
+        uses: actions/upload-artifact@v4
+        with:
+          name: committee-master-v21-${{ github.run_id }}
+          path: |
+            outputs/committee_master/
+            outputs/etf_mt_v2081/
+            outputs/audit/
+            outputs/gaps/
+          if-no-files-found: warn
+          retention-days: 30
