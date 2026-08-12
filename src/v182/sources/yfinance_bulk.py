@@ -31,12 +31,14 @@ def download_history(
     interval: str = "1d",
     batch_size: int = 100,
     auto_adjust: bool = True,
+    include_actions: bool | None = None,
 ) -> DownloadResult:
-    """Download OHLCV plus observed corporate actions in batches.
+    """Download market history with observable retries/cache failures.
 
-    Dividends/splits are requested with `actions=True` so dividend continuity and
-    3-year CAGR can be derived from the same PIT history. A failed batch is
-    retried ticker-by-ticker once. Cache/network failures are observable.
+    Corporate actions are intentionally requested only for the Action cache so
+    Action LT can derive dividend continuity/CAGR. ETF ACC/DIST policy belongs to
+    the ETF structural referential and must not be overwritten by observed cash
+    dividends from price history. Callers may override with `include_actions`.
     """
     import yfinance as yf
 
@@ -46,13 +48,14 @@ def download_history(
     failure_details: list[dict] = []
     cache = Path(cache_dir)
     cache.mkdir(parents=True, exist_ok=True)
+    actions_requested=(cache.name.lower()=="actions") if include_actions is None else bool(include_actions)
 
     for start in range(0, len(clean), batch_size):
         batch = clean[start:start + batch_size]
         try:
             frame = yf.download(
                 tickers=batch, period=period, interval=interval, group_by="ticker",
-                auto_adjust=auto_adjust, actions=True, threads=True, progress=False, timeout=30,
+                auto_adjust=auto_adjust, actions=actions_requested, threads=True, progress=False, timeout=30,
             )
             output = cache / f"history_{start:05d}.parquet"
             try:
@@ -66,17 +69,17 @@ def download_history(
                 else: missing.append(ticker)
             if missing:
                 logger.info("yfinance partial batch %s: %s/%s tickers missing; individual retry", start, len(missing), len(batch))
-                _retry_individual(yf, missing, cache, start, period, interval, auto_adjust, successful, failed, failure_details)
+                _retry_individual(yf, missing, cache, start, period, interval, auto_adjust, actions_requested, successful, failed, failure_details)
         except Exception as exc:
             logger.warning("yfinance batch %s failed: %s: %s; individual retry", start, type(exc).__name__, exc)
             failure_details.append({"scope":"batch","batch_start":start,"error":type(exc).__name__,"detail":str(exc)[:180]})
-            _retry_individual(yf, batch, cache, start, period, interval, auto_adjust, successful, failed, failure_details)
+            _retry_individual(yf, batch, cache, start, period, interval, auto_adjust, actions_requested, successful, failed, failure_details)
         time.sleep(0.5)
 
     successful=sorted(set(successful))
     failed=sorted(set(failed)-set(successful))
     manifest = cache / "history_manifest.json"
-    payload={"requested":len(clean),"successful":successful,"failed":failed,"failure_details":failure_details,"actions_requested":True}
+    payload={"requested":len(clean),"successful":successful,"failed":failed,"failure_details":failure_details,"actions_requested":actions_requested}
     try:
         manifest.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception as exc:
@@ -85,10 +88,10 @@ def download_history(
     return DownloadResult(len(clean), successful, failed, str(manifest))
 
 
-def _retry_individual(yf, tickers, cache: Path, batch_start: int, period: str, interval: str, auto_adjust: bool, successful: list[str], failed: list[str], failure_details: list[dict]) -> None:
+def _retry_individual(yf, tickers, cache: Path, batch_start: int, period: str, interval: str, auto_adjust: bool, actions_requested: bool, successful: list[str], failed: list[str], failure_details: list[dict]) -> None:
     for offset,ticker in enumerate(tickers):
         try:
-            frame=yf.download(tickers=[ticker],period=period,interval=interval,group_by="ticker",auto_adjust=auto_adjust,actions=True,threads=False,progress=False,timeout=30)
+            frame=yf.download(tickers=[ticker],period=period,interval=interval,group_by="ticker",auto_adjust=auto_adjust,actions=actions_requested,threads=False,progress=False,timeout=30)
             if _contains_ticker(frame,ticker):
                 successful.append(ticker)
                 try:
