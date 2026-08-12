@@ -25,6 +25,19 @@ def is_missing(value) -> bool:
     return text in {"", "MISSING", "UNKNOWN", MISSING_TOKEN, "NOT_LOADED", "NAN", "<NA>", "N/A", "NA", "NULL"}
 
 
+def _ensure_text_assignable(frame: pd.DataFrame, field: str) -> None:
+    """Allow canonical string storage even when pandas inferred a numeric dtype.
+
+    Master files are normally loaded as strings, but secondary refresh modules or
+    tests may provide numerically inferred columns. pandas 3.x rejects assigning a
+    retained string observation such as ``"45.0"`` into a float64 column. The
+    merge contract stores retained master values as strings, so convert only the
+    target column to object before an INSERT/REPLACE when required.
+    """
+    if field in frame.columns and frame[field].dtype != object:
+        frame[field] = frame[field].astype(object)
+
+
 def apply_observations(frame: pd.DataFrame, observations: list[dict]) -> tuple[pd.DataFrame, list[dict]]:
     """Merge observations using per-field provenance when available.
 
@@ -61,6 +74,7 @@ def apply_observations(frame: pd.DataFrame, observations: list[dict]) -> tuple[p
             }
         decision=decide(existing,obs)
         if decision.action in {"INSERT","REPLACE"}:
+            _ensure_text_assignable(frame,field)
             value=obs.get("value"); frame.at[isin,field]="" if value is None else str(value)
             provenance[(str(isin),str(field))]={**obs,"merge_action":decision.action,"merge_reason":decision.reason}
         elif decision.action=="QUARANTINE":
