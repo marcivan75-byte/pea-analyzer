@@ -32,7 +32,8 @@
   "canonical_universe": {
     "actions_reference_version": "V21.0",
     "actions_expected_count": 1429,
-    "actions_whitelist_path": "config/V21_ACTION_UNIVERSE_ISINS.txt",
+    "actions_whitelist_path": "config/V21_ACTION_UNIVERSE_ISINS.zlib.b64",
+    "actions_whitelist_sha256": "03797bb98b5276482d66c6bf884a151edd5bf75d8a7b0e0858f0e7f6d76c33a0",
     "strict_when_whitelist_present": true,
     "do_not_filter_by_count_only": true
   },
