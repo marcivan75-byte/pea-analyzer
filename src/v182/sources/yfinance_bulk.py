@@ -48,6 +48,24 @@ def _contains_ticker(frame, ticker: str) -> bool:
     return _has_observed_price(frame)
 
 
+def _clear_history_cache(cache:Path)->None:
+    """Remove prior-run OHLCV payloads before a fresh full-history download.
+
+    Current callers request the complete 5y window on every run. Keeping old
+    retry parquet files can therefore reintroduce stale observations when the
+    same ticker fails in the current run. Cleanup failure is fatal rather than
+    silently mixing vintages.
+    """
+    targets=list(cache.glob("history_*.parquet"))
+    manifest=cache/"history_manifest.json"
+    if manifest.exists(): targets.append(manifest)
+    for path in targets:
+        try:
+            path.unlink()
+        except OSError as exc:
+            raise RuntimeError(f"YFINANCE_CACHE_CLEANUP_FAILED:{path.name}:{type(exc).__name__}") from exc
+
+
 def _resolve_actions_requested(cache_dir: str, include_actions: bool | None) -> bool:
     if include_actions is not None:
         return bool(include_actions)
@@ -78,6 +96,7 @@ def download_history(
     failure_details: list[dict] = []
     cache = Path(cache_dir)
     cache.mkdir(parents=True, exist_ok=True)
+    _clear_history_cache(cache)
     actions_requested=_resolve_actions_requested(cache_dir,include_actions)
 
     for start in range(0, len(clean), batch_size):
