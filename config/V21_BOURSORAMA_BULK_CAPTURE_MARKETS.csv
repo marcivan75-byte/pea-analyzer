@@ -1,0 +1,8 @@
+priority;market;exchange_id;capture_url;parser_mode;governance_note
+P0;France;;https://www.boursorama.com/bourse/actions/consensus/recommandations-paris/;BULK_FACTSET;Save manually as HTML; follow pagination/market filters as needed
+P0;Germany;4920;https://www.boursorama.com/bourse/actions/consensus/recommandations-international/?InternationalFilter%5Bexchange%5D=4920&InternationalFilter%5Bperiod%5D=2026;BULK_FACTSET;Confirmed Boursorama international consensus structure
+P0;Netherlands;3101;https://www.boursorama.com/bourse/actions/consensus/recommandations-international/?InternationalFilter%5Bexchange%5D=3101&InternationalFilter%5Bperiod%5D=2026;BULK_FACTSET;Confirmed Boursorama international consensus structure
+P0;Belgium;3201;https://www.boursorama.com/bourse/actions/consensus/recommandations-international/?InternationalFilter%5Bexchange%5D=3201&InternationalFilter%5Bperiod%5D=2026;BULK_FACTSET;Confirmed Boursorama international consensus structure
+P0;Spain;3401;https://www.boursorama.com/bourse/actions/consensus/recommandations-international/?InternationalFilter%5Bexchange%5D=3401&InternationalFilter%5Bperiod%5D=2026;BULK_FACTSET;Confirmed Boursorama international consensus structure
+P0;Italy;3901;https://www.boursorama.com/bourse/actions/consensus/recommandations-international/?InternationalFilter%5Bexchange%5D=3901&InternationalFilter%5Bperiod%5D=2026;BULK_FACTSET;Confirmed Boursorama international consensus structure
+P0;Portugal;3501;https://www.boursorama.com/bourse/actions/consensus/recommandations-international/?InternationalFilter%5Bexchange%5D=3501&InternationalFilter%5Bperiod%5D=2026;BULK_FACTSET;Confirmed Boursorama international consensus structure
