@@ -37,6 +37,7 @@ def _exit_code(payload:dict)->int:
 def _boursorama_attributed_import(root:Path)->dict:
     """Ingest user/authorized Boursorama snapshots; never fetch Boursorama automatically."""
     from v182.io.frames import load_master, save_master, apply_observations
+    from v182.reporting.collection_audit import write_collection_audit
     from v182.sources.boursorama_import import load_boursorama_imports, write_capture_worklist, write_import_audit
     from v182.sources.boursorama_current_summary import load_current_summaries
     from v182.sources.boursorama_bulk_import import load_bulk_consensus_pages
@@ -60,6 +61,11 @@ def _boursorama_attributed_import(root:Path)->dict:
     save_master(actions,actions_path); save_master(etfs,etfs_path)
     outdir=root/"outputs"/"data_audit"
     audit=write_import_audit(root,observations,failures+quarantined,stats,outdir)
+    global_audit=write_collection_audit(
+        actions,etfs,"WAVE_BOURSORAMA_ATTRIBUTED",outdir,
+        failures=failures+quarantined,
+        source_context="Boursorama attributed HTML/CSV/XLSX intake after online refresh; FactSet consensus/forecasts + Morningstar ETF context",
+    )
     worklist=write_capture_worklist(root,actions,etfs,root/"outputs"/"gaps"/"V21_BOURSORAMA_CAPTURE_WORKLIST.csv")
     return {
         **audit,
@@ -70,6 +76,7 @@ def _boursorama_attributed_import(root:Path)->dict:
         "bulk_consensus_matched_rows":int(bulk_stats.get("matched_rows",0)),
         "merge_quarantined":len(quarantined),
         "capture_worklist":worklist,
+        "collection_audit_after_boursorama":global_audit,
         "merge_policy":"Evidence/freshness aware; missing never overwrites observed data.",
         "automated_boursorama_retrieval":False,
     }
@@ -107,6 +114,7 @@ def run(root:Path=ROOT)->dict:
             "Boursorama is high-priority attributed input only: no automated Boursorama retrieval is performed because its published CGU prohibit automated recovery.",
             "Attributed Boursorama single-title pages and saved multi-action consensus pages feed targets, analyst counts, EPS, yield and forward PER before Committee scoring.",
             "Attributed Boursorama ETF pages feed existing Morningstar rating/category and risk-indicator fields before the already-governed ETF structural overlay.",
+            "The global collection-availability workbook is republished after Boursorama merge so Committee coverage and provenance reflect the retained Boursorama values.",
             "Missing canonical Action ISINs are materialized as identity-only rows; no ticker/name/market data are invented.",
             "New/unvalidated Action factors, including 52-week overlays, remain challenger-only until dedicated PIT/OOS validation.",
             "Every collection publishes retained-value provenance plus missing/partial/available data.",
