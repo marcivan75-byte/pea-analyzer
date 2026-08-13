@@ -51,9 +51,18 @@
       "boursorama_revenue_q1_yoy_pct","boursorama_revenue_q2_yoy_pct","boursorama_revenue_q3_yoy_pct","boursorama_revenue_q4_yoy_pct","boursorama_revenue_fy_yoy_pct",
       "boursorama_touched_52w_high_flag","boursorama_touched_52w_low_flag","boursorama_next_dividend_event_date","boursorama_days_to_dividend_event",
       "boursorama_next_corporate_event_date","boursorama_days_to_corporate_event","boursorama_next_corporate_event_type","boursorama_next_corporate_event_class","boursorama_corporate_events_visible_count",
+      "boursorama_market_cap_reported_m","boursorama_market_cap_currency","boursorama_market_cap_reported_raw","boursorama_last_dividend_amount_reported","boursorama_last_dividend_currency","boursorama_last_dividend_reported_raw",
       "boursorama_tec_summary","boursorama_tec_macd_positive_flag","boursorama_tec_macd_negative_flag","boursorama_tec_rsi_overbought_flag","boursorama_tec_rsi_oversold_flag"
     ],
     "action_context_only_policy": "Analyst-depth metrics, accounting histories, quarterly growth, corporate/dividend event calendars, 52-week palmares and TEC interpretation do not alter validated weights until dedicated PIT/OOS validation.",
+    "action_semantic_guards": {
+      "profile_market_cap_requires_explicit_eur_for_canonical_market_cap": true,
+      "profile_eur_labelled_dividend_requires_explicit_eur": true,
+      "implicit_fx_conversion_for_profile_monetary_fields": false,
+      "generic_corporate_event_is_finnhub_earnings": false,
+      "tec_context_replaces_internal_pit_technicals": false,
+      "consensus_depth_active_weight": false
+    },
     "etf_canonical_fields": ["morningstar_rating","morningstar_category","risk_indicator"],
     "etf_context_fields": [
       "boursorama_reference_index","boursorama_creation_date","boursorama_management_company","boursorama_managers","boursorama_legal_form",
@@ -69,6 +78,7 @@
       "new_context_fields_inherit_v20_8_1_performance": false
     },
     "bulk_capture_strategy": "Capture consolidated market pages first, then individual pages only for gaps/high-priority candidates.",
+    "deep_capture_plan": "config/V21_BOURSORAMA_DEEP_CAPTURE_PLAN.csv",
     "audit_outputs": ["outputs/data_audit/BOURSORAMA_IMPORT_OBSERVATIONS.csv","outputs/data_audit/BOURSORAMA_IMPORT_FAILURES.csv","outputs/data_audit/BOURSORAMA_IMPORT_SUMMARY.json","outputs/gaps/V21_BOURSORAMA_CAPTURE_WORKLIST.csv"]
   },
   "topdown": {"enabled":true,"instrument_news_top_n":120,"news_window":"2d","neutral_imputation_forbidden":true,"global_macro_primary":"FRED","country_macro_direct_target":"ECB_EUROSTAT","country_macro_interim":"MARKET_IMPLIED_COUNTRY_REGIME_C","news_primary":"GDELT","market_sentiment_interim":"INTERNAL_PIT_BREADTH_MOMENTUM_C"},
