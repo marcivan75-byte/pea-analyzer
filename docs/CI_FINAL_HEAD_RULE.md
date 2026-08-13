@@ -1,0 +1,1 @@
+Final PR head must pass complete CI. Intermediate commits may skip CI only when they are not merge candidates. Any code change after the last green CI invalidates that validation and requires a new complete CI run.
