@@ -16,7 +16,8 @@ ROOT = Path(__file__).resolve().parents[3]
 INPUTS = ROOT / "inputs"
 CONFIG = ROOT / "config"
 OUTPUTS = ROOT / "outputs" / "etf_mt_v2081"
-CACHE = ROOT / "data" / "cache" / "etf_mt_v2081"
+# Shared with the main ETF enrichment wave: one OHLCV refresh serves every ETF module.
+CACHE = ROOT / "data" / "cache" / "etf"
 
 
 def run() -> dict:
