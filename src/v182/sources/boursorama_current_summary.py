@@ -40,6 +40,14 @@ def _date_iso(text: str) -> str:
     return max(dates) if dates else datetime.now(timezone.utc).date().isoformat()
 
 
+def _summary_value(text: str, label: str, *, percent: bool = False) -> float | None:
+    """Read a Boursorama summary metric after its optional fiscal year label."""
+    suffix = r"\s*%" if percent else ""
+    pattern = rf"{label}\s+estim[ée](?:\s+\d{{4}})?[^0-9]{{0,160}}([0-9]+(?:[,.][0-9]+)?){suffix}"
+    match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
+    return _num(match.group(1)) if match else None
+
+
 def parse_current_summary(html: str, canonical_action_isins: set[str], source_file: str = "") -> tuple[list[dict], list[dict]]:
     soup = BeautifulSoup(html, "lxml")
     text = soup.get_text("\n", strip=True)
@@ -53,19 +61,15 @@ def parse_current_summary(html: str, canonical_action_isins: set[str], source_fi
     as_of = _date_iso(text)
     fields: dict[str, float] = {}
 
-    per = re.search(r"PER\s+estim[ée][^0-9]{0,80}([0-9]+(?:[,.][0-9]+)?)", text, flags=re.IGNORECASE)
-    if per:
-        value = _num(per.group(1))
-        if value is not None:
-            fields["boursorama_per_forward_current"] = value
-            fields["per_forward_v21"] = value
+    per = _summary_value(text, "PER")
+    if per is not None:
+        fields["boursorama_per_forward_current"] = per
+        fields["per_forward_v21"] = per
 
-    yield_match = re.search(r"rendement\s+estim[ée][^0-9]{0,80}([0-9]+(?:[,.][0-9]+)?)\s*%", text, flags=re.IGNORECASE)
-    if yield_match:
-        value = _num(yield_match.group(1))
-        if value is not None:
-            fields["boursorama_dividend_yield_forward_current_pct"] = value
-            fields["dividend_yield_v21_pct"] = value
+    dividend_yield = _summary_value(text, "rendement", percent=True)
+    if dividend_yield is not None:
+        fields["boursorama_dividend_yield_forward_current_pct"] = dividend_yield
+        fields["dividend_yield_v21_pct"] = dividend_yield
 
     observations = [{
         "universe": "ACTION",
@@ -98,7 +102,5 @@ def load_current_summaries(root: Path, actions, relative_root: str = "inputs/bou
         html = path.read_text(encoding="utf-8", errors="replace")
         obs, failed = parse_current_summary(html, canonical, str(path))
         observations.extend(obs)
-        # ETF HTML naturally has no canonical Action ISIN; do not report that as
-        # a failure in this Action-summary supplemental pass.
         failures.extend(f for f in failed if f.get("reason") != "ACTION_ISIN_NOT_UNIQUE")
     return observations, failures, {"files": files, "observations": len(observations), "failures": len(failures)}
