@@ -30,3 +30,15 @@ def test_declared_but_unwired_sources_are_not_misrepresented_as_active():
     assert status.loc["Finnhub","Implementation_status"]=="ACTIVE_AUTOMATED"
     assert status.loc["FRED","Implementation_status"]=="ACTIVE_AUTOMATED"
     assert status.loc["OpenFIGI","Implementation_status"]=="ACTIVE_AUTOMATED"
+
+
+def test_boursorama_is_high_priority_attributed_not_automated_scraping():
+    root=Path(__file__).resolve().parents[1]
+    status=pd.read_csv(root/"config"/"V21_SOURCE_IMPLEMENTATION_STATUS.csv",sep=";",dtype=str).fillna("").set_index("Source")
+    row=status.loc["Boursorama"]
+    assert row["Implementation_status"]=="ACTIVE_ATTRIBUTED_IMPORT_HIGH_PRIORITY"
+    assert "boursorama_import.py" in row["Active_code_path"]
+    assert "boursorama_bulk_import.py" in row["Active_code_path"]
+    assert "boursorama_current_summary.py" in row["Active_code_path"]
+    note=row["Governance_note"].lower()
+    assert "direct automated recovery is not performed" in note
