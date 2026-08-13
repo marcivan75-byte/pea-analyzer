@@ -4,20 +4,28 @@ Ce répertoire alimente le process PEA avec des données Boursorama à forte val
 
 ## Règle d'accès
 
-Le runtime GitHub ne lance aucun robot, navigateur ni scraper contre Boursorama. Il ingère uniquement des pages ou tableaux que l'utilisateur (ou une source autorisée) a enregistrés/exportés et déposés ici. Chaque donnée conservée garde son URL Boursorama, sa date et le fournisseur sous-jacent lorsqu'il est identifiable (notamment FactSet ou Morningstar/Sustainalytics).
+Le runtime GitHub ne lance aucun robot, navigateur ni scraper contre Boursorama. Il ingère uniquement des pages ou tableaux que l'utilisateur (ou une source autorisée) a enregistrés/exportés et déposés ici. Chaque donnée conservée garde son URL Boursorama, sa date et le fournisseur sous-jacent lorsqu'il est identifiable (notamment FactSet, Cofisem, TEC ou Morningstar/Sustainalytics).
 
 ## Formats pris en charge
 
 - `.html` / `.htm` : page Boursorama enregistrée depuis le navigateur ;
 - `.csv` / `.xlsx` / `.xlsm` : tableau attribué contenant obligatoirement `isin`, `source_url`, `source_date`.
 
-Les sous-répertoires sont libres. Recommandation :
+Sous-répertoires recommandés :
 
-- `actions/` : fiches `.../cours/consensus/...` enregistrées, y compris les valeurs européennes hors Paris lorsque Boursorama les couvre ;
-- `bulk/` : pages `.../bourse/actions/consensus/recommandations-paris/...` ou équivalentes ;
-- `etf/` : pages de recherche/caractéristiques ETF présentant ISIN, Morningstar et risque.
+- `actions/consensus/` : fiches `.../cours/consensus/...` ;
+- `actions/profile/` : fiches `.../cours/societe/profil/...` ;
+- `actions/key_figures/` : fiches `.../cours/societe/chiffres-cles/...` ;
+- `actions/technical/` : pages `.../cours/analyses/...` ;
+- `bulk/consensus/` : pages consensus/recommandations multi-actions ;
+- `bulk/per/` : pages `.../bourse/actions/palmares/per/...` ;
+- `bulk/dividends/` : pages `.../bourse/actions/palmares/dividendes/...` ;
+- `bulk/extremes/` : pages `.../bourse/actions/palmares/extremes-annuels/...` ;
+- `bulk/calendars/` : pages Boursorama de calendrier de dividendes enregistrées ;
+- `etf/search/` : pages de recherche/palmarès ETF ;
+- `etf/detail/` : pages individuelles ETF, performances/risques et composition.
 
-## Champs Actions extraits automatiquement
+## Actions — consensus et prévisions
 
 Selon le contenu de la capture :
 
@@ -30,10 +38,7 @@ Selon le contenu de la capture :
 - dividende et rendement prévisionnel ;
 - chiffre d'affaires, EBITDA, EBIT ;
 - dette financière nette ;
-- actif net par action et cash-flow par action ;
-- capitalisation ;
-- secteur et éligibilité PEA lorsqu'ils sont explicitement observés ;
-- contexte ESG Morningstar/Sustainalytics lorsqu'il est présent.
+- actif net par action et cash-flow par action.
 
 Les champs canoniques déjà utilisés par le moteur sont renseignés lorsque la sémantique correspond exactement :
 
@@ -45,32 +50,110 @@ Les champs canoniques déjà utilisés par le moteur sont renseignés lorsque la
 - `market_cap`
 - `sector_v21`
 
-Aucun nouveau poids n'est créé. La fusion standard A/B/C/D décide si l'observation Boursorama/FactSet de preuve B remplace ou non la valeur déjà présente.
+Aucun nouveau poids n'est créé. La fusion A/B/C/D décide si une observation Boursorama/FactSet de preuve B remplace la valeur déjà présente.
+
+## Actions — profil société
+
+Les captures de profil peuvent enrichir :
+
+- secteur et indice de référence ;
+- ouverture, clôture précédente, haut/bas intraday, volume, capital échangé ;
+- capitalisation ;
+- PER et rendement estimés ;
+- dernier dividende et date ;
+- effectif, nombre de titres, segment de marché ;
+- éligibilité PEA lorsqu'elle est explicitement observée ;
+- risque ESG Morningstar/Sustainalytics disponible sur la page.
+
+Les correspondances sémantiques strictes peuvent compléter `market_cap`, `per_forward_v21`, `dividend_yield_v21_pct` et `sector_v21`. Le reste demeure du contexte attribué.
+
+## Actions — chiffres clés historiques
+
+Les pages `chiffres-cles` sont exploitées pour conserver, lorsqu'ils sont présents :
+
+- chiffre d'affaires, résultat opérationnel, résultat net et résultat net part du groupe ;
+- dette financière courante/non courante, dette totale, actif/passif, trésorerie ;
+- BPA et BPA dilué ;
+- marge opérationnelle ;
+- rentabilité financière et ratio d'endettement ;
+- effectif ;
+- CA trimestriel, semestriel et annuel avec variation calculée entre deux observations publiées du tableau.
+
+Ces champs sont enregistrés sous `boursorama_*`. Ils **ne modifient pas les poids validés** tant qu'un backtest PIT/OOS dédié n'a pas démontré leur valeur incrémentale.
 
 ## Pages bulk multi-actions
 
-Une capture de la page de recommandations peut enrichir de nombreux titres en une seule fois. Le parseur récupère notamment :
+Les pages consolidées sont prioritaires avant les fiches individuelles, car une capture peut enrichir de nombreux titres :
 
-- Reco.
-- Der. Cours
-- Obj. Cours
-- Potentiel
-- Nb. Analystes
-- BNA forward
-- Rendement forward
-- PER forward
-- PER réalisé
+- recommandations : Reco, cours, objectif, potentiel, analystes, BNA forward, rendement forward, PER forward/réalisé ;
+- palmarès PER : PER et BNA par exercice ;
+- palmarès dividendes : dividende et rendement par exercice ;
+- extrêmes annuels : titres observés sur nouveau plus haut ou plus bas 52 semaines et contexte de séance.
 
-Le mapping utilise d'abord le code Boursorama explicite quand il permet une correspondance Euronext Paris non ambiguë, puis un nom canonique unique. Aucune correspondance floue n'est acceptée. Pour Amsterdam, Milan, Madrid, Francfort et les autres places européennes, les fiches individuelles enregistrées restent prises en charge par ISIN ; aucun suffixe/ticker de marché n'est inventé.
+Pour les extrêmes 52 semaines, **absence de la liste ≠ 0** : seul un événement effectivement observé produit un flag positif.
 
-## Champs ETF extraits
+Le mapping utilise un code/ticker Boursorama explicite lorsqu'il est sûr, sinon un nom canonique unique. Aucune correspondance floue n'est acceptée. Pour les autres places européennes, l'ISIN des fiches individuelles reste la clé de référence ; aucun suffixe de marché n'est inventé.
 
-- `morningstar_rating`
-- `morningstar_category`
-- `risk_indicator`
-- performances/prix/devise Boursorama disponibles dans la table
+## Calendrier dividendes
 
-Ces champs alimentent le mécanisme ETF déjà existant : 4 étoiles = bonus +3, 3 étoiles = +1, et risque SRI 6–7 = malus -3, sans modifier le cœur MT V20.8.1.
+Les captures attribuées du calendrier peuvent fournir :
+
+- date du prochain événement de dividende ;
+- type d'événement ;
+- montant ;
+- rendement affiché ;
+- nombre de jours avant l'événement.
+
+Le rendement ponctuel d'un événement n'est **pas** assimilé automatiquement au rendement annuel canonique `dividend_yield_v21_pct`.
+
+## Analyse technique Boursorama / TEC
+
+Lorsqu'une page d'analyse contient une synthèse TEC datée, le process peut conserver :
+
+- résumé textuel attribué ;
+- MACD positif/négatif et au-dessus/en-dessous du signal lorsque ces formulations sont explicitement présentes ;
+- RSI surachat/survente ;
+- stochastique surachat/survente.
+
+Ces données sont classées **contexte/shadow de preuve C** et ne remplacent pas les indicateurs techniques PIT calculés directement à partir de l'OHLCV.
+
+## ETF — Morningstar, caractéristiques et risque
+
+Le process conserve lorsque cela est réellement observable :
+
+- `morningstar_rating` ;
+- `morningstar_category` ;
+- `risk_indicator` seulement si le numérateur 1–7 est explicite ;
+- indice de référence ;
+- date de création ;
+- société de gestion / gérants ;
+- forme juridique ;
+- classe d'actifs et zone géographique ;
+- politique de distribution/capitalisation ;
+- réplication ;
+- frais de gestion maximum ;
+- actif net et date ;
+- performances ETF ;
+- performances de la catégorie Morningstar et rang lorsque disponibles ;
+- Top 10 des positions et date du portefeuille ;
+- date des données Morningstar.
+
+Garde-fous ETF :
+
+- un simple `/7` graphique ne devient jamais `7/7` ;
+- `frais de gestion maximum` n'est jamais renommé `TER` sans preuve sémantique ;
+- performance de catégorie Morningstar ≠ performance de l'ETF ;
+- ces nouveaux champs structurels/performance/composition n'héritent pas du taux historique 90,91 % du cœur exact V20.8.1.
+
+Les champs `morningstar_rating`, `morningstar_category` et `risk_indicator` peuvent alimenter le mécanisme ETF déjà existant lorsqu'ils sont réellement observés. Le cœur MT V20.8.1 reste inchangé.
+
+## Stratégie de capture prioritaire
+
+1. Capturer d'abord les pages bulk par marché (France, Allemagne, Pays-Bas, Belgique, Espagne, Italie, Portugal).
+2. Capturer ensuite les palmarès PER/dividendes/extrêmes et calendriers utiles.
+3. Pour le Top Comité/Watch, compléter avec les fiches consensus + profil + chiffres clés + analyse technique.
+4. Pour les 102 ETF, privilégier les pages recherche puis les pages individuelles nécessaires pour caractéristiques, performances et composition.
+5. Le worklist identifie ensuite les champs encore manquants ; aucune valeur n'est inventée pour fermer artificiellement les trous.
 
 ## Audit produit à chaque run
 
@@ -80,4 +163,4 @@ Ces champs alimentent le mécanisme ETF déjà existant : 4 étoiles = bonus +3,
 - `outputs/gaps/V21_BOURSORAMA_CAPTURE_WORKLIST.csv`
 - `outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx` est régénéré après la fusion Boursorama.
 
-Le worklist priorise les titres du Comité/Watch et ceux dont consensus, objectif ou PER forward manquent encore.
+Le worklist priorise les titres du Comité/Watch, les ETF et les instruments dont consensus, objectif, PER forward ou contexte Boursorama à forte valeur restent incomplets.
