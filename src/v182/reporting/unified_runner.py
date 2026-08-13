@@ -38,6 +38,7 @@ def _boursorama_attributed_import(root:Path)->dict:
     """Ingest user/authorized Boursorama snapshots; never fetch Boursorama automatically."""
     from v182.io.frames import load_master, save_master, apply_observations
     from v182.sources.boursorama_import import load_boursorama_imports, write_capture_worklist, write_import_audit
+    from v182.sources.boursorama_current_summary import load_current_summaries
 
     actions_path=root/"outputs"/"V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv"
     etfs_path=root/"outputs"/"V18.2_PEA_ETF_MASTER_ENRICHED.csv"
@@ -45,6 +46,8 @@ def _boursorama_attributed_import(root:Path)->dict:
         raise FileNotFoundError("Boursorama import requires current enriched Action and ETF masters")
     actions=load_master(actions_path); etfs=load_master(etfs_path)
     observations,failures,stats=load_boursorama_imports(root,actions,etfs)
+    current_obs,current_fail,current_stats=load_current_summaries(root,actions)
+    observations.extend(current_obs); failures.extend(current_fail); stats["current_summary"]=current_stats
     action_obs=[o for o in observations if o.get("universe")=="ACTION"]
     etf_obs=[o for o in observations if o.get("universe")=="ETF"]
     actions,qa=apply_observations(actions,action_obs)
@@ -58,6 +61,7 @@ def _boursorama_attributed_import(root:Path)->dict:
         **audit,
         "action_observations":len(action_obs),
         "etf_observations":len(etf_obs),
+        "current_summary_observations":len(current_obs),
         "merge_quarantined":len(quarantined),
         "capture_worklist":worklist,
         "merge_policy":"Evidence/freshness aware; missing never overwrites observed data.",
@@ -95,7 +99,7 @@ def run(root:Path=ROOT)->dict:
         "governance":[
             "Runtime/software version is distinct from model versions; decision_tracks is the authoritative model-version map.",
             "Boursorama is high-priority attributed input only: no automated Boursorama retrieval is performed because its published CGU prohibit automated recovery.",
-            "Attributed Boursorama Action consensus/targets/PER/forecasts and ETF Morningstar/risk fields merge before Committee scoring using evidence and freshness.",
+            "Attributed Boursorama Action consensus/targets/PER/current estimated PER/forecasts and ETF Morningstar/risk fields merge before Committee scoring using evidence and freshness.",
             "Missing canonical Action ISINs are materialized as identity-only rows; no ticker/name/market data are invented.",
             "New/unvalidated Action factors, including 52-week overlays, remain challenger-only until dedicated PIT/OOS validation.",
             "Every collection publishes retained-value provenance plus missing/partial/available data.",
