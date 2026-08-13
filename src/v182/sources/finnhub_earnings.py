@@ -92,7 +92,7 @@ def fetch_earnings_calendar(
 def _select_eps_row(payload: Any, as_of: date) -> dict | None:
     if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
         return None
-    candidates=[]
+    future=[]; past=[]
     for row in payload["data"]:
         if not isinstance(row, dict) or row.get("epsAvg") is None:
             continue
@@ -100,14 +100,19 @@ def _select_eps_row(payload: Any, as_of: date) -> dict | None:
             period=date.fromisoformat(str(row.get("period"))[:10])
         except (TypeError, ValueError):
             continue
-        # The nearest fiscal period is the most useful current estimate around
-        # reporting season; exact revisions are later computed only against the
-        # same period in persisted PIT snapshots.
-        candidates.append((abs((period-as_of).days), period, row))
-    if not candidates:
-        return None
-    candidates.sort(key=lambda item:(item[0], item[1]))
-    return candidates[0][2]
+        if period >= as_of:
+            future.append((period,row))
+        else:
+            past.append((period,row))
+    # Prefer the nearest forward fiscal period. Falling back to the latest past
+    # period is useful only when Finnhub returns no forward estimate at all.
+    if future:
+        future.sort(key=lambda item:item[0])
+        return future[0][1]
+    if past:
+        past.sort(key=lambda item:item[0],reverse=True)
+        return past[0][1]
+    return None
 
 
 def _fetch_eps_one(ticker: str, api_key: str, requests_module, limiter: StartRateLimiter, as_of: date) -> tuple[dict | None, dict | None, bool]:
@@ -244,7 +249,10 @@ def update_eps_history(
         subset=history[(history["isin"].astype(str)==isin)&(history["period"].astype(str)==period)].copy()
         subset["_date"]=pd.to_datetime(subset["snapshot_date"],errors="coerce")
         subset["_eps"]=pd.to_numeric(subset["eps_avg"],errors="coerce")
-        current=float(row["eps_avg"])
+        try:
+            current=float(row["eps_avg"])
+        except (TypeError,ValueError):
+            continue
         fields={
             "eps_estimate_finnhub":current,
             "eps_estimate_high_finnhub":row.get("eps_high"),
