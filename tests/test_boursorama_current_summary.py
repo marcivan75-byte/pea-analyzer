@@ -21,3 +21,4 @@ def test_current_summary_extracts_current_forward_per_and_yield():
     assert by_field["dividend_yield_v21_pct"]["value"] == 1.62
     assert by_field["per_forward_v21"]["validation_status"] == "ATTRIBUTED"
     assert by_field["per_forward_v21"]["source"] == "Boursorama/FactSet"
+    assert by_field["per_forward_v21"]["as_of"] == "2026-08-10"
