@@ -136,7 +136,7 @@ def collect_finnhub_earnings(
             if value is not None:
                 observations.append(_obs(isin,field,value,"Finnhub EPS Estimates","B",FINNHUB_ESTIMATES_DOC,as_of=as_of.isoformat()))
     stats={
-        "status":"SUCCESS" if not calendar_failures else "PARTIAL_SUCCESS",
+        "source_status":"SUCCESS" if not calendar_failures else "PARTIAL_SUCCESS",
         "calendar_events_received":len(events),"calendar_isins_matched":matched_events,
         "calendar_window_days":calendar_days,"eps_estimates":eps_status,"eps_history":history_status,
         "observations":len(observations),"failures":len(failures),"no_revision_imputation":True,
@@ -145,7 +145,7 @@ def collect_finnhub_earnings(
 
 
 def collect_amf_short_positions(actions_df: pd.DataFrame, *, as_of: date | None = None) -> tuple[list[dict],list[dict],dict]:
-    as_of=as_of or date.today(); rows,failures,stats=fetch_current_public_shorts(as_of=as_of)
+    as_of=as_of or date.today(); rows,failures,source_stats=fetch_current_public_shorts(as_of=as_of)
     allowed={str(x).strip().upper() for x in actions_df.get("isin",pd.Series(dtype=str)).dropna()}
     observations=[]; matched=0
     for row in rows:
@@ -157,5 +157,10 @@ def collect_amf_short_positions(actions_df: pd.DataFrame, *, as_of: date | None 
             if field in {"isin","issuer"} or value is None:
                 continue
             observations.append(_obs(isin,field,value,"AMF Open Data - Positions courtes nettes","A",AMF_SHORT_STABLE_URL,as_of=as_of.isoformat()))
-    stats={**stats,"canonical_action_isins_matched":matched,"observations":len(observations),"evidence_level":"A","absence_means_zero":False}
+    source_status=source_stats.get("status","UNKNOWN")
+    stats={
+        **{k:v for k,v in source_stats.items() if k!="status"},
+        "source_status":source_status,"canonical_action_isins_matched":matched,"observations":len(observations),
+        "evidence_level":"A","absence_means_zero":False,
+    }
     return observations,failures,stats
