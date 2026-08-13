@@ -5,7 +5,7 @@ import json
 import pandas as pd
 
 from v182.decision.committee_master import load_registry, decisions_from_scores, sector_ranking
-from v182.reporting import committee_master_gold_v1_1
+from v182.reporting import committee_master_gold_v1_1, tct_sector_committee
 
 ROOT=Path(__file__).resolve().parents[3]
 HORIZONS=["CT","MT","LT","SHORT","TOP_DOWN"]
@@ -83,6 +83,21 @@ def run(root:Path=ROOT)->dict:
     summary["decision_counts"]=decisions.groupby(["asset_class","horizon","decision"],dropna=False).size().reset_index(name="count").to_dict("records")
     summary.setdefault("outputs",{})["action_reference_vs_challenger"]="outputs/committee_master/ACTION_REFERENCE_VS_CHALLENGER_V21_4.csv"
     summary["outputs"]["sector_ranking_challenger"]="outputs/committee_master/SECTOR_RANKING_CHALLENGER_V21_4.csv"
+
+    try:
+        tct_sector_context=tct_sector_committee.run(root)
+    except Exception as exc:
+        tct_sector_context={"status":"FAILED_REPORTING_CONTEXT","error":type(exc).__name__,"detail":str(exc)[:300],"score_changes":False,"live_orders_enabled":False}
+    summary["tct_sector_context"]=tct_sector_context
+    if tct_sector_context.get("status")=="SUCCESS":
+        summary["outputs"].update({
+            "tct_sector_dashboard":"outputs/committee_master/TCT_SECTOR_DASHBOARD.csv",
+            "tct_sector_details":"outputs/committee_master/TCT_SECTOR_COMMITTEE_DETAILS.csv",
+            "tct_sector_classification_gaps":"outputs/committee_master/TCT_SECTOR_CLASSIFICATION_GAPS.csv",
+            "tct_sector_context_summary":"outputs/committee_master/TCT_SECTOR_CONTEXT_SUMMARY.json",
+            "tct_sector_workbook":"outputs/committee_master/TCT_SECTOR_COMMITTEE.xlsx",
+        })
     summary.setdefault("notes",[]).append("Actions use V21.0 frozen weights as final reference decision; V21.4 enriched scores and unvalidated positive/negative 52w overlays are challenger-only until PIT/OOS validation.")
+    summary["notes"].append("TCT sector/earnings context is reporting-only: it reuses the V24.1.8 baseline and exact T1/T2 shadow state, adds no score weight, no T1/T2 influence and no live execution.")
     (outdir/"SUMMARY.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2,default=str),encoding="utf-8")
     return summary
