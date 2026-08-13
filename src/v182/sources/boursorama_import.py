@@ -39,7 +39,6 @@ def _num(value: object) -> float | None:
         return None
     token = match.group(0).replace(" ", "")
     if "," in token and "." in token:
-        # French formatting normally uses comma decimal and spaces thousands.
         token = token.replace(".", "").replace(",", ".")
     elif "," in token:
         token = token.replace(",", ".")
@@ -53,7 +52,7 @@ def _date_iso(value: str | None) -> str:
     if not value:
         return datetime.now(timezone.utc).date().isoformat()
     text = str(value).strip()
-    for fmt in ("%d/%m/%Y", "%d.%m.%Y", "%d/%m/%y", "%Y-%m-%d"):
+    for fmt in ("%d/%m/%Y", "%d.%m.%Y", "%d/%m/%y", "%d.%m.%y", "%Y-%m-%d"):
         try:
             return datetime.strptime(text, fmt).date().isoformat()
         except ValueError:
@@ -101,8 +100,12 @@ def _flatten_columns(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _read_tables(html: str) -> list[pd.DataFrame]:
+    """Read French Boursorama tables without turning 1,81 into 181."""
     try:
-        return [_flatten_columns(frame) for frame in pd.read_html(StringIO(html))]
+        return [
+            _flatten_columns(frame)
+            for frame in pd.read_html(StringIO(html), decimal=",", thousands=" ")
+        ]
     except (ValueError, ImportError):
         return []
 
@@ -144,9 +147,11 @@ def _consensus_fields(tables: list[pd.DataFrame], text: str) -> dict[str, object
             "median": _clean_values(_row_values(frame, ("Note médiane", "Note mediane"))),
             "target": _clean_values(_row_values(frame, ("Historique des objectifs de cours médian", "Historique des objectifs de cours median"))),
         }
-        for key in ("buy", "reinforce", "hold", "reduce", "sell", "analysts"):
+        for key in ("buy", "reinforce", "hold", "reduce", "sell"):
             if rows[key]:
-                fields[f"boursorama_consensus_{key}_count"] = rows[key][-1]
+                fields[f"boursorama_consensus_{key}_count"] = int(round(rows[key][-1]))
+        if rows["analysts"]:
+            fields["boursorama_consensus_analysts"] = int(round(rows["analysts"][-1]))
         if rows["median"]:
             current = rows["median"][-1]
             fields["boursorama_consensus_note_median"] = current
@@ -156,8 +161,6 @@ def _consensus_fields(tables: list[pd.DataFrame], text: str) -> dict[str, object
                 one_month = rows["median"][-3]
                 fields["boursorama_consensus_note_1m"] = one_month
                 fields["consensus_delta_4w"] = round(one_month - current, 4)
-        if rows["analysts"]:
-            fields["boursorama_consensus_analysts"] = int(round(rows["analysts"][-1]))
         if rows["target"]:
             fields["boursorama_target_price"] = rows["target"][-1]
             if len(rows["target"]) >= 3:
@@ -173,13 +176,19 @@ def _consensus_fields(tables: list[pd.DataFrame], text: str) -> dict[str, object
 
 
 def _forecast_fields(tables: list[pd.DataFrame]) -> dict[str, object]:
+    """Keep FactSet realized/forward tables as raw attributed fields.
+
+    The canonical current forward PER/yield are supplied by the summary block or
+    the dated bulk-consensus page, avoiding equal-date conflicts between two
+    Boursorama representations of the same concept.
+    """
     fields: dict[str, object] = {}
     row_specs = {
         "Bénéfice net par action": ("boursorama_eps_reported", "boursorama_eps_forward_1y", "boursorama_eps_forward_2y"),
         "Benefice net par action": ("boursorama_eps_reported", "boursorama_eps_forward_1y", "boursorama_eps_forward_2y"),
-        "PER": ("boursorama_per_reported", "per_forward_v21", "boursorama_per_forward_2y"),
+        "PER": ("boursorama_per_reported", "boursorama_per_forward_1y", "boursorama_per_forward_2y"),
         "Dividende par action": ("boursorama_dividend_per_share_reported", "boursorama_dividend_per_share_forward_1y", "boursorama_dividend_per_share_forward_2y"),
-        "Rendement": ("boursorama_dividend_yield_reported_pct", "dividend_yield_v21_pct", "boursorama_dividend_yield_forward_2y_pct"),
+        "Rendement": ("boursorama_dividend_yield_reported_pct", "boursorama_dividend_yield_forward_1y_pct", "boursorama_dividend_yield_forward_2y_pct"),
         "Chiffre d'affaires": ("boursorama_revenue_reported_m", "boursorama_revenue_forward_1y_m", "boursorama_revenue_forward_2y_m"),
         "EBITDA": ("boursorama_ebitda_reported", "boursorama_ebitda_forward_1y", "boursorama_ebitda_forward_2y"),
         "EBIT": ("boursorama_ebit_reported", "boursorama_ebit_forward_1y", "boursorama_ebit_forward_2y"),
@@ -196,11 +205,7 @@ def _forecast_fields(tables: list[pd.DataFrame]) -> dict[str, object]:
             values = _clean_values(_row_values(frame, (label,)))
             if not values:
                 continue
-            # Boursorama sometimes exposes YoY percentages in separate cells in
-            # the same row. Keep the first three economic values only.
             if len(values) > 3:
-                # In rendered tables the sequence can be value, growth, value,
-                # growth, value, growth. Select positions 0/2/4 when plausible.
                 economic = values[::2][:3]
                 if len(economic) == 3:
                     values = economic
@@ -232,21 +237,18 @@ def _summary_fields(text: str, soup: BeautifulSoup) -> dict[str, object]:
     controversy = re.search(r"Niveau\s+de\s+controverse\s*:\s*([^\n|]+)", text, flags=re.IGNORECASE)
     if controversy:
         fields["morningstar_sustainalytics_controversy_bourso"] = controversy.group(1).strip()
-    # Sector is exposed in the summary block. DOM sibling parsing is more robust
-    # than a broad regex across the entire page.
     sector_label = soup.find(string=lambda s: isinstance(s, str) and _norm(s) == "secteur")
     if sector_label is not None:
         parent = sector_label.parent
-        candidates = []
-        if parent is not None:
-            candidates.extend(parent.find_all_next(["a", "span", "div"], limit=8))
+        candidates = list(parent.find_all_next(["a", "span", "div"], limit=8)) if parent is not None else []
         for node in candidates:
             candidate = node.get_text(" ", strip=True)
             if candidate and _norm(candidate) not in {"secteur", "indice de reference"} and len(candidate) < 80:
                 fields["boursorama_sector"] = candidate
                 fields["sector_v21"] = candidate
                 break
-    if re.search(r"\bPEA\b", text):
+    normalized = _norm(text)
+    if re.search(r"\beligibilite\b.{0,220}\bpea\b", normalized):
         fields["boursorama_pea_eligibility_observed"] = True
     return fields
 
@@ -271,7 +273,12 @@ def parse_action_html(html: str, *, canonical_action_isins: set[str], source_fil
     fields.update(_forecast_fields(tables))
     observations = []
     for field, value in fields.items():
-        provider = "FactSet" if field.startswith("boursorama_consensus") or field.startswith("boursorama_target") or field in {"consensus_score_100_v21", "consensus_delta_4w", "target_upside_pct_v21", "per_forward_v21", "dividend_yield_v21_pct"} or field.startswith("boursorama_eps") or field.startswith("boursorama_per") or field.startswith("boursorama_revenue") or field.startswith("boursorama_ebit") or field.startswith("boursorama_net_debt") or field.startswith("boursorama_book") or field.startswith("boursorama_cash_flow") or field.startswith("boursorama_dividend") else "Morningstar/Sustainalytics" if field.startswith("morningstar_") else ""
+        provider = (
+            "FactSet" if field.startswith(("boursorama_consensus", "boursorama_target", "boursorama_eps", "boursorama_per", "boursorama_revenue", "boursorama_ebit", "boursorama_net_debt", "boursorama_book", "boursorama_cash_flow", "boursorama_dividend"))
+            or field in {"consensus_score_100_v21", "consensus_delta_4w", "target_upside_pct_v21"}
+            else "Morningstar/Sustainalytics" if field.startswith("morningstar_")
+            else ""
+        )
         observations.append(_obs("ACTION", isin, field, value, as_of=as_of, source_url=source_url, source_file=source_file, provider=provider))
     return observations, [], {"rows": 1, "isin": isin, "fields": len(fields), "as_of": as_of, "source_url": source_url}
 
@@ -420,7 +427,7 @@ def load_boursorama_imports(root: Path, actions: pd.DataFrame, etfs: pd.DataFram
     action_isins = set(actions["isin"].astype(str).str.strip()) if "isin" in actions.columns else set()
     observations: list[dict] = []
     failures: list[dict] = []
-    stats = {"directory": relative_root, "files": 0, "action_pages": 0, "etf_pages": 0, "manual_tables": 0, "observations": 0}
+    stats = {"directory": relative_root, "files": 0, "action_pages": 0, "etf_pages": 0, "bulk_pages_deferred": 0, "manual_tables": 0, "observations": 0}
     for path in sorted(directory.rglob("*")):
         if not path.is_file() or path.name.startswith("."):
             continue
@@ -429,16 +436,19 @@ def load_boursorama_imports(root: Path, actions: pd.DataFrame, etfs: pd.DataFram
             continue
         stats["files"] += 1
         if suffix in {".csv", ".xlsx", ".xlsm"}:
-            obs, failed, detail = parse_manual_table(path, actions, etfs)
+            obs, failed, _detail = parse_manual_table(path, actions, etfs)
             stats["manual_tables"] += 1
         else:
             html = path.read_text(encoding="utf-8", errors="replace")
             text = _norm(BeautifulSoup(html, "lxml").get_text(" ", strip=True))
-            if "trackers" in text or "morningstar" in text and "isin" in text and "categorie" in text:
-                obs, failed, detail = parse_etf_html(html, etfs=etfs, source_file=str(path))
+            if ("nb analyst" in text or "nombre d analystes" in text) and "obj cours" in text and "libelle" in text:
+                obs, failed = [], []
+                stats["bulk_pages_deferred"] += 1
+            elif "trackers" in text or ("morningstar" in text and "isin" in text and "categorie" in text):
+                obs, failed, _detail = parse_etf_html(html, etfs=etfs, source_file=str(path))
                 stats["etf_pages"] += 1
             else:
-                obs, failed, detail = parse_action_html(html, canonical_action_isins=action_isins, source_file=str(path))
+                obs, failed, _detail = parse_action_html(html, canonical_action_isins=action_isins, source_file=str(path))
                 stats["action_pages"] += 1
         observations.extend(obs)
         failures.extend(failed)
