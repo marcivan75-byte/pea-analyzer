@@ -1,0 +1,1 @@
+Optimization is accepted only if outputs, coverage, tests, governance and traceability are unchanged or strengthened. Runtime and cost improvements must come from reuse, caching, deduplication, resumability and I/O efficiency rather than reduced analysis.
