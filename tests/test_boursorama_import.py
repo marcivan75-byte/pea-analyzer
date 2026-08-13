@@ -55,7 +55,7 @@ def _action_html() -> str:
     """
 
 
-def test_action_html_extracts_high_value_fields_without_duplicate_current_per_semantics():
+def test_action_html_extracts_high_value_fields_with_finnhub_compatible_consensus_scale():
     obs, failures, stats = parse_action_html(
         _action_html(),
         canonical_action_isins={"NL0000235190"},
@@ -66,8 +66,12 @@ def test_action_html_extracts_high_value_fields_without_duplicate_current_per_se
     by_field = {row["field"]: row for row in obs}
     assert by_field["boursorama_consensus_analysts"]["value"] == 27
     assert by_field["boursorama_consensus_note_median"]["value"] == 1.74
-    assert by_field["consensus_score_100_v21"]["value"] == 81.5
-    assert by_field["consensus_delta_4w"]["value"] == 0.06
+    # FactSet/Boursorama uses 1=best; canonical Finnhub-like scale uses 5=best
+    # then *20. Therefore (6-1.74)*20 = 85.2.
+    assert by_field["consensus_score_100_v21"]["value"] == 85.2
+    # One-month note 1.80 -> current 1.74 is an improvement of 0.06 on the
+    # inverted 1..5 scale, equivalent to +1.2 on the canonical 0..100 delta.
+    assert by_field["consensus_delta_4w"]["value"] == 1.2
     assert by_field["target_upside_pct_v21"]["value"] == 7.25
     assert by_field["boursorama_per_forward_1y"]["value"] == 27.76
     assert by_field["boursorama_dividend_yield_forward_1y_pct"]["value"] == 1.70
