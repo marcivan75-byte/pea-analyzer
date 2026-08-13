@@ -132,6 +132,13 @@ def _clean_values(values: list[object] | None) -> list[float]:
 
 
 def _consensus_fields(tables: list[pd.DataFrame], text: str) -> dict[str, object]:
+    """Map FactSet/Boursorama 1=best note to the canonical Finnhub-like scale.
+
+    Finnhub's raw consensus score is 1..5 with 5=best and the Committee's
+    canonical fallback multiplies it by 20. FactSet/Boursorama uses the inverse
+    convention (1=best, 5=worst), so the semantically equivalent canonical
+    score is (6-note)*20 and the 4-week delta is (note_1m-note_now)*20.
+    """
     fields: dict[str, object] = {}
     for frame in tables:
         labels = [_norm(v) for v in frame.iloc[:, 0].astype(str).tolist()] if not frame.empty else []
@@ -156,11 +163,12 @@ def _consensus_fields(tables: list[pd.DataFrame], text: str) -> dict[str, object
             current = rows["median"][-1]
             fields["boursorama_consensus_note_median"] = current
             if 1.0 <= current <= 5.0:
-                fields["consensus_score_100_v21"] = round((5.0 - current) / 4.0 * 100.0, 4)
+                fields["consensus_score_100_v21"] = round((6.0 - current) * 20.0, 4)
             if len(rows["median"]) >= 3:
                 one_month = rows["median"][-3]
                 fields["boursorama_consensus_note_1m"] = one_month
-                fields["consensus_delta_4w"] = round(one_month - current, 4)
+                if 1.0 <= one_month <= 5.0 and 1.0 <= current <= 5.0:
+                    fields["consensus_delta_4w"] = round((one_month - current) * 20.0, 4)
         if rows["target"]:
             fields["boursorama_target_price"] = rows["target"][-1]
             if len(rows["target"]) >= 3:
