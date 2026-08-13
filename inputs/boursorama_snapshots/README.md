@@ -13,7 +13,7 @@ Le runtime GitHub ne lance aucun robot, navigateur ni scraper contre Boursorama.
 
 Les sous-répertoires sont libres. Recommandation :
 
-- `actions/` : fiches `.../cours/consensus/...` enregistrées ;
+- `actions/` : fiches `.../cours/consensus/...` enregistrées, y compris les valeurs européennes hors Paris lorsque Boursorama les couvre ;
 - `bulk/` : pages `.../bourse/actions/consensus/recommandations-paris/...` ou équivalentes ;
 - `etf/` : pages de recherche/caractéristiques ETF présentant ISIN, Morningstar et risque.
 
@@ -61,7 +61,7 @@ Une capture de la page de recommandations peut enrichir de nombreux titres en un
 - PER forward
 - PER réalisé
 
-Le mapping utilise d'abord le code Boursorama explicite quand il permet une correspondance Euronext Paris non ambiguë, puis un nom canonique unique. Aucune correspondance floue n'est acceptée.
+Le mapping utilise d'abord le code Boursorama explicite quand il permet une correspondance Euronext Paris non ambiguë, puis un nom canonique unique. Aucune correspondance floue n'est acceptée. Pour Amsterdam, Milan, Madrid, Francfort et les autres places européennes, les fiches individuelles enregistrées restent prises en charge par ISIN ; aucun suffixe/ticker de marché n'est inventé.
 
 ## Champs ETF extraits
 
@@ -78,5 +78,6 @@ Ces champs alimentent le mécanisme ETF déjà existant : 4 étoiles = bonus +3,
 - `outputs/data_audit/BOURSORAMA_IMPORT_FAILURES.csv`
 - `outputs/data_audit/BOURSORAMA_IMPORT_SUMMARY.json`
 - `outputs/gaps/V21_BOURSORAMA_CAPTURE_WORKLIST.csv`
+- `outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx` est régénéré après la fusion Boursorama.
 
 Le worklist priorise les titres du Comité/Watch et ceux dont consensus, objectif ou PER forward manquent encore.
