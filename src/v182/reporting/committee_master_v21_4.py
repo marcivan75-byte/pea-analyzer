@@ -5,7 +5,7 @@ import json
 import pandas as pd
 
 from v182.decision.committee_master import load_registry, decisions_from_scores, sector_ranking
-from v182.reporting import committee_master_gold_v1_1, tct_sector_committee
+from v182.reporting import committee_executive_views, committee_master_gold_v1_1, tct_sector_committee
 
 ROOT=Path(__file__).resolve().parents[3]
 HORIZONS=["CT","MT","LT","SHORT","TOP_DOWN"]
@@ -77,8 +77,6 @@ def run(root:Path=ROOT)->dict:
     ref_buy=int((comparison["reference_decision"].astype(str)=="BUY_CANDIDATE").sum()) if not comparison.empty else 0
     chal_buy=int((comparison["challenger_decision"].astype(str)=="BUY_CANDIDATE").sum()) if not comparison.empty else 0
     summary["action_dual_track"]={"status":"ACTIVE_REFERENCE_PLUS_SHADOW_CHALLENGER","reference_version":reference_reg.get("version"),"challenger_version":challenger_reg.get("version"),"final_decision_source":"REFERENCE","comparison_rows":int(len(comparison)),"decision_divergences":divergences,"reference_buy_count":ref_buy,"challenger_buy_count":chal_buy,"performance_attribution":"NONE_TO_V21_4_CHALLENGER_UNTIL_DEDICATED_PIT_OOS_BACKTEST"}
-    # Rebuild aggregate counts after reference replacement so SUMMARY matches the
-    # decisions actually consumed by the Committee/performance tracker.
     summary["status_counts"]=decisions.groupby(["asset_class","horizon","status"],dropna=False).size().reset_index(name="count").to_dict("records")
     summary["decision_counts"]=decisions.groupby(["asset_class","horizon","decision"],dropna=False).size().reset_index(name="count").to_dict("records")
     summary.setdefault("outputs",{})["action_reference_vs_challenger"]="outputs/committee_master/ACTION_REFERENCE_VS_CHALLENGER_V21_4.csv"
@@ -97,7 +95,29 @@ def run(root:Path=ROOT)->dict:
             "tct_sector_context_summary":"outputs/committee_master/TCT_SECTOR_CONTEXT_SUMMARY.json",
             "tct_sector_workbook":"outputs/committee_master/TCT_SECTOR_COMMITTEE.xlsx",
         })
+
+    try:
+        executive_views=committee_executive_views.run(root)
+    except Exception as exc:
+        executive_views={
+            "status":"FAILED_REPORTING_CONTEXT","error":type(exc).__name__,"detail":str(exc)[:300],
+            "score_changes":False,"new_composite_opportunity_score":False,
+            "fixed_probability_or_expectancy_added":False,"t1_t2_score_influence":0.0,"live_orders_enabled":False,
+        }
+    summary["committee_executive_views"]=executive_views
+    if executive_views.get("status")=="SUCCESS":
+        summary["outputs"].update({
+            "committee_executive_workbook":"outputs/committee_master/COMMITTEE_EXECUTIVE_VIEWS.xlsx",
+            "action_priority_by_horizon":"outputs/committee_master/ACTION_COMMITTEE_PRIORITY_BY_HORIZON.csv",
+            "etf_committee_top30":"outputs/committee_master/ETF_COMMITTEE_TOP30.csv",
+            "tct_committee_top50":"outputs/committee_master/TCT_COMMITTEE_TOP50.csv",
+            "tct_earnings_d0_5_context":"outputs/committee_master/TCT_EARNINGS_D0_5_CONTEXT.csv",
+            "committee_data_quality":"outputs/committee_master/COMMITTEE_DATA_QUALITY.csv",
+            "committee_executive_summary":"outputs/committee_master/COMMITTEE_EXECUTIVE_VIEWS_SUMMARY.json",
+        })
+
     summary.setdefault("notes",[]).append("Actions use V21.0 frozen weights as final reference decision; V21.4 enriched scores and unvalidated positive/negative 52w overlays are challenger-only until PIT/OOS validation.")
     summary["notes"].append("TCT sector/earnings context is reporting-only: it reuses the V24.1.8 baseline and exact T1/T2 shadow state, adds no score weight, no T1/T2 influence and no live execution.")
+    summary["notes"].append("Executive Committee views are presentation-only: compact horizon views, ETF Top30, TCT Top50/T1/T2 shadow/Earnings/event-risk, sector Top3 and data-quality views reuse existing scores and decisions; no opportunity composite, fixed probability/expectancy or live trade instruction is introduced.")
     (outdir/"SUMMARY.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2,default=str),encoding="utf-8")
     return summary
