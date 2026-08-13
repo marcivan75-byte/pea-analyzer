@@ -149,7 +149,9 @@ def parse_consensus_bulk_html(html: str, actions: pd.DataFrame, source_file: str
     if "recommandations" not in source_url.casefold() and "consensus" not in text.casefold():
         return [], [], {"matched_rows": 0, "not_a_consensus_bulk_page": True}
     try:
-        tables = [_flatten(frame) for frame in pd.read_html(StringIO(html))]
+        # Boursorama publishes French decimal commas. Explicit parsing avoids
+        # destructive conversions such as 224,043 -> 224043.
+        tables = [_flatten(frame) for frame in pd.read_html(StringIO(html), decimal=",", thousands=" ")]
     except (ValueError, ImportError):
         tables = []
     name_map, ticker_map = _master_aliases(actions)
