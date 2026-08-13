@@ -16,6 +16,7 @@ def test_boursorama_config_is_high_priority_attributed_and_weight_neutral():
     assert spec["missing_policy"] == "NO_IMPUTATION"
     for flag in (
         "bulk_consensus_pages_supported",
+        "action_consensus_depth_supported",
         "action_single_title_pages_supported",
         "action_profile_pages_supported",
         "action_key_figures_pages_supported",
@@ -34,6 +35,8 @@ def test_boursorama_config_is_high_priority_attributed_and_weight_neutral():
     for field in ("consensus_score_100_v21","consensus_delta_4w","target_upside_pct_v21","per_forward_v21"):
         assert field in spec["action_canonical_fields"]
     for field in (
+        "boursorama_consensus_bullish_pct",
+        "boursorama_analyst_firms_list_raw",
         "boursorama_actual_revenue_k_eur",
         "boursorama_next_corporate_event_date",
         "boursorama_touched_52w_high_flag",
