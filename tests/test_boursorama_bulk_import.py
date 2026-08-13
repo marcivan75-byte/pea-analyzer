@@ -25,8 +25,10 @@ def test_bulk_consensus_maps_by_boursorama_link_and_extracts_factset_fields():
     obs, failures, stats = parse_consensus_bulk_html(html, actions, "bulk.html")
     assert failures == []
     assert stats["matched_rows"] == 2
+    assert stats["as_of"] == "2026-08-07"
     air = {row["field"]: row["value"] for row in obs if row["isin"] == "NL0000235190"}
     assert air["boursorama_bulk_recommendation"] == "Acheter"
+    assert air["boursorama_reference_close"] == 213.600
     assert air["boursorama_target_price"] == 224.043
     assert air["target_upside_pct_v21"] == 4.889
     assert air["boursorama_consensus_analysts"] == 28.0
@@ -34,6 +36,8 @@ def test_bulk_consensus_maps_by_boursorama_link_and_extracts_factset_fields():
     assert air["dividend_yield_v21_pct"] == 1.699
     assert air["per_forward_v21"] == 27.756
     assert air["boursorama_per_reported"] == 29.355
+    assert air["boursorama_target_price"] < 1000.0
+    assert air["per_forward_v21"] < 100.0
 
 
 def test_bulk_consensus_does_not_guess_unmatched_names():
