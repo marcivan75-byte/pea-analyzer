@@ -25,6 +25,7 @@
     "merge_policy": "STANDARD_EVIDENCE_AND_FRESHNESS",
     "missing_policy": "NO_IMPUTATION",
     "bulk_consensus_pages_supported": true,
+    "action_consensus_depth_supported": true,
     "action_single_title_pages_supported": true,
     "action_profile_pages_supported": true,
     "action_key_figures_pages_supported": true,
@@ -40,7 +41,8 @@
     "etf_composition_pages_supported": true,
     "action_canonical_fields": ["consensus_score_100_v21","consensus_delta_4w","target_upside_pct_v21","per_forward_v21","dividend_yield_v21_pct","market_cap","sector_v21"],
     "action_context_fields": [
-      "boursorama_target_price","boursorama_consensus_analysts","boursorama_eps_forward_1y","boursorama_per_reported","boursorama_per_forward_current",
+      "boursorama_target_price","boursorama_consensus_analysts","boursorama_consensus_bullish_count","boursorama_consensus_neutral_count","boursorama_consensus_bearish_count","boursorama_consensus_bullish_pct","boursorama_consensus_neutral_pct","boursorama_consensus_bearish_pct","boursorama_consensus_net_bullish_balance_pct","boursorama_analyst_firms_list_raw","boursorama_analyst_firms_anonymity_warning",
+      "boursorama_eps_forward_1y","boursorama_per_reported","boursorama_per_forward_current",
       "boursorama_revenue_forward_1y_m","boursorama_ebitda_forward_1y","boursorama_ebit_forward_1y","boursorama_net_debt_forward_1y",
       "boursorama_book_value_per_share_forward_1y","boursorama_cash_flow_per_share_forward_1y","morningstar_sustainalytics_esg_risk_bourso",
       "boursorama_actual_revenue_k_eur","boursorama_actual_operating_income_k_eur","boursorama_actual_net_income_k_eur","boursorama_actual_group_net_income_k_eur",
@@ -51,7 +53,7 @@
       "boursorama_next_corporate_event_date","boursorama_days_to_corporate_event","boursorama_next_corporate_event_type","boursorama_next_corporate_event_class","boursorama_corporate_events_visible_count",
       "boursorama_tec_summary","boursorama_tec_macd_positive_flag","boursorama_tec_macd_negative_flag","boursorama_tec_rsi_overbought_flag","boursorama_tec_rsi_oversold_flag"
     ],
-    "action_context_only_policy": "Accounting histories, quarterly growth, corporate/dividend event calendars, 52-week palmares and TEC interpretation do not alter validated weights until dedicated PIT/OOS validation.",
+    "action_context_only_policy": "Analyst-depth metrics, accounting histories, quarterly growth, corporate/dividend event calendars, 52-week palmares and TEC interpretation do not alter validated weights until dedicated PIT/OOS validation.",
     "etf_canonical_fields": ["morningstar_rating","morningstar_category","risk_indicator"],
     "etf_context_fields": [
       "boursorama_reference_index","boursorama_creation_date","boursorama_management_company","boursorama_managers","boursorama_legal_form",
