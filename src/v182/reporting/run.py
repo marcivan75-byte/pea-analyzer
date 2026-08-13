@@ -9,7 +9,7 @@ import pandas as pd
 from v182.io.frames import load_master, save_master
 from v182.audit.completeness import completeness
 from v182.state.checkpoint import Checkpoint
-from v182.reporting import waves
+from v182.reporting import waves, event_sources
 from v182.reporting.collection_audit import write_collection_audit
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -167,6 +167,30 @@ def run() -> dict:
     elif not finnhub_key:
         _audit(actions_df,etf_df,"WAVE_05_ACTION_CONSENSUS_KEY_MISSING",failures=[{"source":"Finnhub","reason":"FINNHUB_API_KEY_MISSING"}],source_context="Finnhub indisponible; données restent manquantes")
         print("WAVE_05 — FINNHUB_API_KEY absent : critères concernés restent N/A")
+
+    if not checkpoint.done("WAVE_05B_FINNHUB_EARNINGS") and finnhub_key:
+        obs5b, failures5b, stats5b = event_sources.collect_finnhub_earnings(
+            actions_df, finnhub_key, STATE / "finnhub" / "EPS_ESTIMATE_HISTORY.csv",
+        )
+        actions_df, q5b = apply_and_track(actions_df, obs5b)
+        quarantine_log += q5b
+        _write_failures("V18.2_WAVE05B_FINNHUB_EARNINGS", failures5b)
+        checkpoint.mark("WAVE_05B_FINNHUB_EARNINGS", "DONE", observed=len(obs5b), failed=len(failures5b), **stats5b)
+        wave_metrics["WAVE_05B_FINNHUB_EARNINGS"]={"observed":len(obs5b),"failed":len(failures5b),**stats5b}
+        _audit(actions_df,etf_df,"WAVE_05B_FINNHUB_EARNINGS",failures=failures5b+q5b,source_context="Finnhub Earnings Calendar + EPS Estimates PIT history")
+        print(f"WAVE_05B — Finnhub Earnings/EPS: {len(obs5b)} observations, {len(failures5b)} échecs")
+    elif not finnhub_key:
+        _audit(actions_df,etf_df,"WAVE_05B_FINNHUB_EARNINGS_KEY_MISSING",failures=[{"source":"Finnhub Earnings","reason":"FINNHUB_API_KEY_MISSING"}],source_context="Calendrier Earnings et EPS Estimates non collectés")
+
+    if not checkpoint.done("WAVE_05C_AMF_SHORT"):
+        obs5c, failures5c, stats5c = event_sources.collect_amf_short_positions(actions_df)
+        actions_df, q5c = apply_and_track(actions_df, obs5c)
+        quarantine_log += q5c
+        _write_failures("V18.2_WAVE05C_AMF_SHORT", failures5c)
+        checkpoint.mark("WAVE_05C_AMF_SHORT", "DONE", observed=len(obs5c), failed=len(failures5c), **stats5c)
+        wave_metrics["WAVE_05C_AMF_SHORT"]={"observed":len(obs5c),"failed":len(failures5c),**stats5c}
+        _audit(actions_df,etf_df,"WAVE_05C_AMF_SHORT",failures=failures5c+q5c,source_context="AMF Open Data positions courtes nettes publiques; absence != 0")
+        print(f"WAVE_05C — AMF positions courtes: {len(obs5c)} observations sur {stats5c.get('canonical_action_isins_matched',0)} ISIN")
 
     if not checkpoint.done("WAVE_06"):
         obs6, failures6 = waves.wave6_etf_info(etf_with_tickers, cfg)
