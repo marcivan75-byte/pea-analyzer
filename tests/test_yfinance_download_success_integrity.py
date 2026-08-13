@@ -72,6 +72,25 @@ def test_incremental_merge_preserves_long_history_and_replaces_overlap():
     assert merged.loc[pd.Timestamp("2026-08-13"),("AAA.PA","Close")]==13.0
 
 
+def test_retry_merge_does_not_erase_peer_ticker_values():
+    columns=pd.MultiIndex.from_product([["AAA.PA","BBB.PA"],["Close"]])
+    batch=pd.DataFrame(
+        [[np.nan,20.0]],
+        index=[pd.Timestamp("2026-08-13")],
+        columns=columns,
+    )
+    retry=pd.DataFrame(
+        [[10.0]],
+        index=[pd.Timestamp("2026-08-13")],
+        columns=pd.MultiIndex.from_tuples([("AAA.PA","Close")]),
+    )
+
+    merged=_merge_history_frames(batch,retry)
+
+    assert merged.loc[pd.Timestamp("2026-08-13"),("AAA.PA","Close")]==10.0
+    assert merged.loc[pd.Timestamp("2026-08-13"),("BBB.PA","Close")]==20.0
+
+
 def test_cache_is_usable_only_for_matching_contract(tmp_path):
     tickers=["AAA.PA","BBB.PA"]
     (tmp_path/"history_00000.parquet").write_text("placeholder",encoding="utf-8")
