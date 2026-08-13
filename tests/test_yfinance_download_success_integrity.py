@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 
-from v182.sources.yfinance_bulk import _clear_history_cache, _contains_ticker
+from v182.sources.yfinance_bulk import (
+    CACHE_FORMAT_VERSION,
+    _cache_is_usable,
+    _clear_history_cache,
+    _contains_ticker,
+    _merge_history_frames,
+)
 
 
 def test_multiindex_ticker_with_all_nan_prices_is_not_successful():
@@ -44,3 +52,39 @@ def test_clear_history_cache_removes_batches_retries_and_manifest_only(tmp_path)
     assert not stale_retry.exists()
     assert not stale_manifest.exists()
     assert unrelated.exists()
+
+
+def test_incremental_merge_preserves_long_history_and_replaces_overlap():
+    columns=pd.MultiIndex.from_product([["AAA.PA"],["Close","Volume"]])
+    old=pd.DataFrame(
+        [[10.0,100],[11.0,110],[12.0,120]],
+        index=pd.date_range("2026-08-10",periods=3),columns=columns,
+    )
+    recent=pd.DataFrame(
+        [[12.5,125],[13.0,130]],
+        index=pd.date_range("2026-08-12",periods=2),columns=columns,
+    )
+
+    merged=_merge_history_frames(old,recent)
+
+    assert list(merged.index)==list(pd.date_range("2026-08-10",periods=4))
+    assert merged.loc[pd.Timestamp("2026-08-12"),("AAA.PA","Close")]==12.5
+    assert merged.loc[pd.Timestamp("2026-08-13"),("AAA.PA","Close")]==13.0
+
+
+def test_cache_is_usable_only_for_matching_contract(tmp_path):
+    tickers=["AAA.PA","BBB.PA"]
+    (tmp_path/"history_00000.parquet").write_text("placeholder",encoding="utf-8")
+    manifest={
+        "cache_format_version":CACHE_FORMAT_VERSION,
+        "requested_tickers":tickers,
+        "interval":"1d",
+        "batch_size":50,
+        "auto_adjust":True,
+        "actions_requested":False,
+    }
+    (tmp_path/"history_manifest.json").write_text(json.dumps(manifest),encoding="utf-8")
+
+    assert _cache_is_usable(tmp_path,tickers,"1d",50,True,False) is True
+    assert _cache_is_usable(tmp_path,["AAA.PA"],"1d",50,True,False) is False
+    assert _cache_is_usable(tmp_path,tickers,"1d",100,True,False) is False
