@@ -2,18 +2,11 @@ name: Committee Master V21.6.2 hardened unified scoring
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - "config/**"
-      - "src/**/*.py"
-      - "pyproject.toml"
-      - ".github/workflows/committee_master_daily.yml"
   schedule:
     - cron: "15 18 * * 1-5"
 
 concurrency:
-  group: committee-master-${{ github.ref }}
+  group: committee-master-production
   cancel-in-progress: true
 
 permissions:
@@ -22,9 +15,10 @@ permissions:
 jobs:
   committee-master:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 45
     env:
       PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
       PEA_PROVENANCE_PATH: state/provenance/OBSERVATION_PROVENANCE.csv
       FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
       FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -67,10 +61,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
       - name: Install project
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e .
+        run: pip install -e .
       - name: Full Python compile and static safety gate
         run: |
           python -m compileall -q src
@@ -181,4 +175,4 @@ jobs:
             state/provenance/
             state/committee_performance_v21_4/
           if-no-files-found: warn
-          retention-days: 30
+          retention-days: 14
