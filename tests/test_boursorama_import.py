@@ -55,7 +55,7 @@ def _action_html() -> str:
     """
 
 
-def test_action_html_extracts_high_value_canonical_fields():
+def test_action_html_extracts_high_value_fields_without_duplicate_current_per_semantics():
     obs, failures, stats = parse_action_html(
         _action_html(),
         canonical_action_isins={"NL0000235190"},
@@ -69,8 +69,10 @@ def test_action_html_extracts_high_value_canonical_fields():
     assert by_field["consensus_score_100_v21"]["value"] == 81.5
     assert by_field["consensus_delta_4w"]["value"] == 0.06
     assert by_field["target_upside_pct_v21"]["value"] == 7.25
-    assert by_field["per_forward_v21"]["value"] == 27.76
-    assert by_field["dividend_yield_v21_pct"]["value"] == 1.70
+    assert by_field["boursorama_per_forward_1y"]["value"] == 27.76
+    assert by_field["boursorama_dividend_yield_forward_1y_pct"]["value"] == 1.70
+    assert "per_forward_v21" not in by_field
+    assert "dividend_yield_v21_pct" not in by_field
     assert by_field["market_cap"]["value"] == 170_064_000_000.0
     assert by_field["boursorama_eps_forward_1y"]["value"] == 7.29
     assert by_field["boursorama_revenue_forward_1y_m"]["value"] == 80438.0
