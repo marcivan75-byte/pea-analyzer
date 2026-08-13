@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
-import math
 
 import pandas as pd
 
@@ -20,6 +19,19 @@ def _read(path: Path) -> pd.DataFrame:
 
 def _numeric(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors="coerce")
+
+
+def _series(frame: pd.DataFrame, field: str, default=False) -> pd.Series:
+    if field in frame.columns:
+        return frame[field]
+    return pd.Series(default, index=frame.index)
+
+
+def _bool_series(frame: pd.DataFrame, field: str) -> pd.Series:
+    values = _series(frame, field, False)
+    if pd.api.types.is_bool_dtype(values):
+        return values.fillna(False).astype(bool)
+    return values.astype(str).str.strip().str.lower().isin({"true", "1", "yes", "oui"})
 
 
 def _priority(decision: object) -> int:
@@ -43,14 +55,16 @@ def _priority(decision: object) -> int:
 
 def _rank_within(frame: pd.DataFrame) -> pd.DataFrame:
     out = frame.copy()
-    out["score_num"] = _numeric(out.get("score", pd.Series(index=out.index, dtype=float)))
-    out["committee_rank"] = pd.NA
+    if not {"asset_class", "horizon"}.issubset(out.columns):
+        return out
+    out["score_num"] = _numeric(_series(out, "score", None))
+    rank = pd.Series(pd.NA, index=out.index, dtype="Int64")
     for (_asset, _horizon), idx in out.groupby(["asset_class", "horizon"], dropna=False).groups.items():
         scored = out.loc[idx, "score_num"]
         valid = scored.notna()
         if valid.any():
-            out.loc[scored.index[valid], "committee_rank"] = scored.loc[valid].rank(method="first", ascending=False).astype("Int64")
-    out["committee_rank"] = pd.array(out["committee_rank"], dtype="Int64")
+            rank.loc[scored.index[valid]] = scored.loc[valid].rank(method="first", ascending=False).astype("Int64")
+    out["committee_rank"] = rank
     return out
 
 
@@ -58,9 +72,20 @@ def build_action_priority(decisions: pd.DataFrame, top_n_per_horizon: int = 30) 
     if decisions.empty:
         return pd.DataFrame()
     ranked = _rank_within(decisions)
-    ranked = ranked[ranked["asset_class"].astype(str).eq("ACTION") & ranked["horizon"].astype(str).isin(ACTION_HORIZONS)].copy()
+    required = {"asset_class", "horizon", "decision"}
+    if not required.issubset(ranked.columns):
+        return pd.DataFrame()
+    ranked = ranked[
+        ranked["asset_class"].astype(str).eq("ACTION")
+        & ranked["horizon"].astype(str).isin(ACTION_HORIZONS)
+    ].copy()
+    if ranked.empty:
+        return pd.DataFrame()
     ranked["decision_priority"] = ranked["decision"].map(_priority)
-    ranked["coverage_num"] = _numeric(ranked.get("coverage_pct", pd.Series(index=ranked.index, dtype=float)))
+    ranked["coverage_num"] = _numeric(_series(ranked, "coverage_pct", None))
+    for field in ("name", "isin"):
+        if field not in ranked.columns:
+            ranked[field] = ""
     ranked = ranked.sort_values(
         ["horizon", "decision_priority", "score_num", "coverage_num", "name", "isin"],
         ascending=[True, True, False, False, True, True],
@@ -79,10 +104,17 @@ def build_etf_top30(decisions: pd.DataFrame, top_n: int = 30) -> pd.DataFrame:
     if decisions.empty:
         return pd.DataFrame()
     ranked = _rank_within(decisions)
-    etf = ranked[ranked["asset_class"].astype(str).eq("ETF") & ranked["horizon"].astype(str).isin(ETF_HORIZONS)].copy()
+    if not {"asset_class", "horizon", "isin"}.issubset(ranked.columns):
+        return pd.DataFrame()
+    etf = ranked[
+        ranked["asset_class"].astype(str).eq("ETF")
+        & ranked["horizon"].astype(str).isin(ETF_HORIZONS)
+    ].copy()
     if etf.empty:
         return pd.DataFrame()
-
+    for field in ("name", "sector"):
+        if field not in etf.columns:
+            etf[field] = ""
     base = etf[["isin", "name", "sector"]].drop_duplicates("isin", keep="first").copy()
     for horizon in ETF_HORIZONS:
         sub = etf[etf["horizon"].astype(str).eq(horizon)].copy()
@@ -110,13 +142,12 @@ def build_etf_top30(decisions: pd.DataFrame, top_n: int = 30) -> pd.DataFrame:
 
     for horizon in ETF_HORIZONS:
         base[f"selected_{horizon.lower()}"] = base.apply(lambda row, h=horizon: selected(row, h), axis=1)
-    base["selected_horizon_count"] = base[[f"selected_{h.lower()}" for h in ETF_HORIZONS]].sum(axis=1)
-    base["mt_reference_validated_flag"] = base.get("source_mt", pd.Series(index=base.index, dtype=object)).astype(str).str.contains("V20.8.1", regex=False)
-
+    flag_cols = [f"selected_{h.lower()}" for h in ETF_HORIZONS]
+    base["selected_horizon_count"] = base[flag_cols].sum(axis=1)
+    base["mt_reference_validated_flag"] = _series(base, "source_mt", "").astype(str).str.contains("V20.8.1", regex=False)
     sort_cols = [c for c in ("rank_mt", "rank_ct", "rank_lt", "name") if c in base.columns]
-    ascending = [True] * len(sort_cols)
     if sort_cols:
-        base = base.sort_values(sort_cols, ascending=ascending, na_position="last")
+        base = base.sort_values(sort_cols, ascending=[True] * len(sort_cols), na_position="last")
     return base.head(top_n).reset_index(drop=True)
 
 
@@ -144,7 +175,6 @@ def enrich_tct_details(details: pd.DataFrame, baseline: pd.DataFrame) -> pd.Data
         return out
     source = baseline[cols].drop_duplicates("isin", keep="last").copy()
     out = out.merge(source, on="isin", how="left", suffixes=("", "_baseline"))
-
     market_cap = _first_numeric(out, ("market_cap", "market_cap_yf"))
     if market_cap is not None:
         out["market_cap_native_m"] = (market_cap / 1_000_000.0).round(2)
@@ -155,10 +185,12 @@ def enrich_tct_details(details: pd.DataFrame, baseline: pd.DataFrame) -> pd.Data
 
 def _top_names(group: pd.DataFrame, n: int = 3) -> str:
     work = group.copy()
-    work["_rank"] = _numeric(work.get("tct_baseline_rank", pd.Series(index=work.index, dtype=float)))
-    work["_score"] = _numeric(work.get("tct_baseline_score", pd.Series(index=work.index, dtype=float)))
+    work["_rank"] = _numeric(_series(work, "tct_baseline_rank", None))
+    work["_score"] = _numeric(_series(work, "tct_baseline_score", None))
+    if "name" not in work.columns:
+        work["name"] = ""
     work = work.sort_values(["_rank", "_score", "name"], ascending=[True, False, True], na_position="last")
-    names = [str(v).strip() for v in work.get("name", pd.Series(dtype=str)).head(n) if str(v).strip()]
+    names = [str(v).strip() for v in work["name"].head(n) if str(v).strip()]
     return " | ".join(names)
 
 
@@ -169,22 +201,30 @@ def build_tct_views(details: pd.DataFrame, dashboard: pd.DataFrame, baseline: pd
             "earnings_d0_5": pd.DataFrame(), "event_risk": pd.DataFrame(), "sectors": dashboard.copy(),
         }
     d = enrich_tct_details(details, baseline)
-    d["rank_num"] = _numeric(d.get("tct_baseline_rank", pd.Series(index=d.index, dtype=float)))
-    d["days_num"] = _numeric(d.get("days_to_earnings", pd.Series(index=d.index, dtype=float)))
-    d["timing_quality_num"] = _numeric(d.get("timing_quality_score", pd.Series(index=d.index, dtype=float)))
+    d["rank_num"] = _numeric(_series(d, "tct_baseline_rank", None))
+    d["days_num"] = _numeric(_series(d, "days_to_earnings", None))
+    d["timing_quality_num"] = _numeric(_series(d, "timing_quality_score", None))
+    if "isin" not in d.columns:
+        d["isin"] = ""
 
     top50 = d[d["rank_num"].notna()].sort_values(["rank_num", "isin"]).head(50).copy()
-    t1 = d[d.get("timing_t1_flag", False).astype(bool)].sort_values(["rank_num", "timing_quality_num"], ascending=[True, False], na_position="last").copy()
-    t2 = d[d.get("timing_t2_flag", False).astype(bool)].sort_values(["rank_num", "timing_quality_num"], ascending=[True, False], na_position="last").copy()
-    earnings = d[d.get("earnings_bucket", pd.Series(index=d.index, dtype=str)).isin({"EARNINGS_D0_1", "EARNINGS_D2_5"})].sort_values(["days_num", "rank_num"], na_position="last").copy()
-    event_risk = d[d.get("event_gap_risk_flag", False).astype(bool)].sort_values(["rank_num", "isin"], na_position="last").copy()
+    t1 = d[_bool_series(d, "timing_t1_flag")].sort_values(
+        ["rank_num", "timing_quality_num"], ascending=[True, False], na_position="last"
+    ).copy()
+    t2 = d[_bool_series(d, "timing_t2_flag")].sort_values(
+        ["rank_num", "timing_quality_num"], ascending=[True, False], na_position="last"
+    ).copy()
+    earnings = d[_series(d, "earnings_bucket", "").astype(str).isin({"EARNINGS_D0_1", "EARNINGS_D2_5"})].sort_values(
+        ["days_num", "rank_num"], na_position="last"
+    ).copy()
+    event_risk = d[_bool_series(d, "event_gap_risk_flag")].sort_values(["rank_num", "isin"], na_position="last").copy()
 
     sectors = dashboard.copy()
-    if not sectors.empty and "sector" in sectors.columns:
+    if not sectors.empty and "sector" in sectors.columns and "sector" in d.columns:
         top_map = {str(sector): _top_names(group) for sector, group in d.groupby("sector", dropna=False)}
         sectors["top_3_baseline"] = sectors["sector"].astype(str).map(top_map).fillna("")
         signal_map = {}
-        signal_rows = d[d.get("timing_t1_flag", False).astype(bool) | d.get("timing_t2_flag", False).astype(bool)]
+        signal_rows = d[_bool_series(d, "timing_t1_flag") | _bool_series(d, "timing_t2_flag")]
         for sector, group in signal_rows.groupby("sector", dropna=False):
             signal_map[str(sector)] = _top_names(group)
         sectors["top_3_timing_shadow"] = sectors["sector"].astype(str).map(signal_map).fillna("")
@@ -215,9 +255,9 @@ def build_tct_views(details: pd.DataFrame, dashboard: pd.DataFrame, baseline: pd
 
 def build_quality_summary(decisions: pd.DataFrame, tct_details: pd.DataFrame) -> pd.DataFrame:
     rows = []
-    if not decisions.empty:
+    if not decisions.empty and {"asset_class", "horizon"}.issubset(decisions.columns):
         work = decisions.copy()
-        work["coverage_num"] = _numeric(work.get("coverage_pct", pd.Series(index=work.index, dtype=float)))
+        work["coverage_num"] = _numeric(_series(work, "coverage_pct", None))
         for (asset, horizon), group in work.groupby(["asset_class", "horizon"], dropna=False):
             blocked = group["status"].astype(str).str.startswith("BLOCK").sum() if "status" in group.columns else 0
             rows.append({
@@ -230,13 +270,14 @@ def build_quality_summary(decisions: pd.DataFrame, tct_details: pd.DataFrame) ->
                 "note": "Committee final decision coverage; no neutral missing-data imputation.",
             })
     if not tct_details.empty:
+        coverage = _numeric(_series(tct_details, "tct_baseline_coverage_pct", None))
         rows.append({
             "scope": "ACTION:TCT_CONTEXT",
             "rows": int(len(tct_details)),
-            "mean_coverage_pct": round(float(_numeric(tct_details.get("tct_baseline_coverage_pct", pd.Series(dtype=float))).mean()), 2) if "tct_baseline_coverage_pct" in tct_details.columns else None,
-            "min_coverage_pct": round(float(_numeric(tct_details.get("tct_baseline_coverage_pct", pd.Series(dtype=float))).min()), 2) if "tct_baseline_coverage_pct" in tct_details.columns else None,
+            "mean_coverage_pct": round(float(coverage.mean()), 2) if coverage.notna().any() else None,
+            "min_coverage_pct": round(float(coverage.min()), 2) if coverage.notna().any() else None,
             "blocked_rows": 0,
-            "data_gap_rows": int(tct_details.get("timing_data_gap_flag", pd.Series(False, index=tct_details.index)).astype(bool).sum()),
+            "data_gap_rows": int(_bool_series(tct_details, "timing_data_gap_flag").sum()),
             "note": "TCT context only; T1/T2 influence remains zero and live execution remains forbidden.",
         })
     return pd.DataFrame(rows)
@@ -292,7 +333,7 @@ def write_outputs(
     quality.to_csv(quality_csv, sep=";", index=False, encoding="utf-8-sig")
 
     decision_counts = []
-    if not decisions.empty:
+    if not decisions.empty and {"asset_class", "horizon", "decision"}.issubset(decisions.columns):
         decision_counts = decisions.groupby(["asset_class", "horizon", "decision"], dropna=False).size().reset_index(name="count").to_dict("records")
     summary = {
         "version": VERSION,
@@ -350,7 +391,6 @@ def run(root: Path) -> dict:
     details = _read(outdir / "TCT_SECTOR_COMMITTEE_DETAILS.csv")
     dashboard = _read(outdir / "TCT_SECTOR_DASHBOARD.csv")
     baseline = _read(outdir / "TCT_BASELINE_V24_1_8.csv")
-
     action_priority = build_action_priority(decisions)
     etf_top30 = build_etf_top30(decisions)
     tct_views = build_tct_views(details, dashboard, baseline)
