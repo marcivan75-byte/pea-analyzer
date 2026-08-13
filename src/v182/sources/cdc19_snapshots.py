@@ -5,31 +5,12 @@ from datetime import datetime, timezone
 import pandas as pd
 
 SNAPSHOT_SPECS = {
-    "Euronext Live": {
-        "path": "inputs/source_snapshots/EURONEXT_LIVE.csv",
-        "universe": "BOTH",
-        "evidence": "A",
-    },
-    "Boursorama": {
-        "path": "inputs/source_snapshots/BOURSORAMA.csv",
-        "universe": "BOTH",
-        "evidence": "B",
-    },
-    "Amundi ETF": {
-        "path": "inputs/source_snapshots/AMUNDI_ETF.csv",
-        "universe": "ETF",
-        "evidence": "A",
-    },
-    "BNPP ETF": {
-        "path": "inputs/source_snapshots/BNPP_ETF.csv",
-        "universe": "ETF",
-        "evidence": "A",
-    },
+    "Euronext Live": {"path": "inputs/source_snapshots/EURONEXT_LIVE.csv", "universe": "BOTH", "evidence": "A"},
+    "Amundi ETF": {"path": "inputs/source_snapshots/AMUNDI_ETF.csv", "universe": "ETF", "evidence": "A"},
+    "BNPP ETF": {"path": "inputs/source_snapshots/BNPP_ETF.csv", "universe": "ETF", "evidence": "A"},
 }
 
-META_COLUMNS = {
-    "isin", "source_url", "source_date", "source_name", "notes", "captured_at", "evidence_level",
-}
+META_COLUMNS = {"isin", "source_url", "source_date", "source_name", "notes", "captured_at", "evidence_level"}
 
 
 def _missing(value) -> bool:
@@ -43,34 +24,21 @@ def _missing(value) -> bool:
     return str(value).strip().lower() in {"", "nan", "none", "n/a", "na", "unknown"}
 
 
-def load_snapshot(
-    root: Path,
-    source_name: str,
-    actions: pd.DataFrame,
-    etfs: pd.DataFrame,
-) -> tuple[list[dict], list[dict], dict]:
+def load_snapshot(root: Path, source_name: str, actions: pd.DataFrame, etfs: pd.DataFrame) -> tuple[list[dict], list[dict], dict]:
     spec = SNAPSHOT_SPECS[source_name]
     path = root / spec["path"]
     if not path.exists():
-        return [], [{"source": source_name, "reason": "ATTRIBUTED_SNAPSHOT_MISSING", "path": spec["path"]}], {
-            "mode": "ATTRIBUTED_SNAPSHOT_LOADER", "path": spec["path"], "rows": 0,
-        }
+        return [], [{"source": source_name, "reason": "ATTRIBUTED_SNAPSHOT_MISSING", "path": spec["path"]}], {"mode": "ATTRIBUTED_SNAPSHOT_LOADER", "path": spec["path"], "rows": 0}
     try:
         frame = pd.read_csv(path, sep=";", encoding="utf-8-sig", dtype=str).fillna("")
     except Exception as exc:
-        return [], [{"source": source_name, "reason": type(exc).__name__, "detail": str(exc)[:180]}], {
-            "mode": "ATTRIBUTED_SNAPSHOT_LOADER", "path": spec["path"], "rows": 0,
-        }
+        return [], [{"source": source_name, "reason": type(exc).__name__, "detail": str(exc)[:180]}], {"mode": "ATTRIBUTED_SNAPSHOT_LOADER", "path": spec["path"], "rows": 0}
     if frame.empty:
-        return [], [{"source": source_name, "reason": "ATTRIBUTED_SNAPSHOT_EMPTY", "path": spec["path"]}], {
-            "mode": "ATTRIBUTED_SNAPSHOT_LOADER", "path": spec["path"], "rows": 0,
-        }
+        return [], [{"source": source_name, "reason": "ATTRIBUTED_SNAPSHOT_EMPTY", "path": spec["path"]}], {"mode": "ATTRIBUTED_SNAPSHOT_LOADER", "path": spec["path"], "rows": 0}
     required = {"isin", "source_url", "source_date"}
     missing_cols = required - set(frame.columns)
     if missing_cols:
-        return [], [{"source": source_name, "reason": "SNAPSHOT_SCHEMA_MISSING", "columns": ",".join(sorted(missing_cols))}], {
-            "mode": "ATTRIBUTED_SNAPSHOT_LOADER", "path": spec["path"], "rows": len(frame),
-        }
+        return [], [{"source": source_name, "reason": "SNAPSHOT_SCHEMA_MISSING", "columns": ",".join(sorted(missing_cols))}], {"mode": "ATTRIBUTED_SNAPSHOT_LOADER", "path": spec["path"], "rows": len(frame)}
 
     action_isins = set(actions["isin"].astype(str).str.strip()) if "isin" in actions.columns else set()
     etf_isins = set(etfs["isin"].astype(str).str.strip()) if "isin" in etfs.columns else set()
@@ -109,15 +77,9 @@ def load_snapshot(
                 "collected_at": now,
                 "as_of": source_date,
                 "evidence_level": spec["evidence"],
-                "validation_status": "ATTRIBUTED_SNAPSHOT",
+                "validation_status": "ATTRIBUTED",
             })
-    return observations, failures, {
-        "mode": "ATTRIBUTED_SNAPSHOT_LOADER",
-        "path": spec["path"],
-        "rows": int(len(frame)),
-        "accepted_rows": accepted_rows,
-        "observations": len(observations),
-    }
+    return observations, failures, {"mode": "ATTRIBUTED_SNAPSHOT_LOADER", "path": spec["path"], "rows": int(len(frame)), "accepted_rows": accepted_rows, "observations": len(observations)}
 
 
 def load_all_snapshots(root: Path, actions: pd.DataFrame, etfs: pd.DataFrame) -> tuple[list[dict], list[dict], dict]:
