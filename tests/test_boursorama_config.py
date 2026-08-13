@@ -14,6 +14,8 @@ def test_boursorama_config_is_high_priority_attributed_and_weight_neutral():
     assert spec["direct_automated_fetch"] is False
     assert spec["evidence_level"] == "B"
     assert spec["missing_policy"] == "NO_IMPUTATION"
+    assert spec["deep_capture_plan"] == "config/V21_BOURSORAMA_DEEP_CAPTURE_PLAN.csv"
+    assert (root/spec["deep_capture_plan"]).exists()
     for flag in (
         "bulk_consensus_pages_supported",
         "action_consensus_depth_supported",
@@ -40,10 +42,19 @@ def test_boursorama_config_is_high_priority_attributed_and_weight_neutral():
         "boursorama_actual_revenue_k_eur",
         "boursorama_next_corporate_event_date",
         "boursorama_touched_52w_high_flag",
+        "boursorama_market_cap_currency",
+        "boursorama_last_dividend_currency",
         "boursorama_tec_summary",
     ):
         assert field in spec["action_context_fields"]
         assert field not in spec["action_canonical_fields"]
+    action_guards=spec["action_semantic_guards"]
+    assert action_guards["profile_market_cap_requires_explicit_eur_for_canonical_market_cap"] is True
+    assert action_guards["profile_eur_labelled_dividend_requires_explicit_eur"] is True
+    assert action_guards["implicit_fx_conversion_for_profile_monetary_fields"] is False
+    assert action_guards["generic_corporate_event_is_finnhub_earnings"] is False
+    assert action_guards["tec_context_replaces_internal_pit_technicals"] is False
+    assert action_guards["consensus_depth_active_weight"] is False
     for field in ("morningstar_rating","morningstar_category","risk_indicator"):
         assert field in spec["etf_canonical_fields"]
     guards=spec["etf_semantic_guards"]
