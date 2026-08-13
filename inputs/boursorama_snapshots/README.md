@@ -52,6 +52,19 @@ Les champs canoniques déjà utilisés par le moteur sont renseignés lorsque la
 
 Aucun nouveau poids n'est créé. La fusion A/B/C/D décide si une observation Boursorama/FactSet de preuve B remplace la valeur déjà présente.
 
+## Actions — profondeur du consensus
+
+Une fiche consensus peut aussi fournir la structure du consensus, conservée séparément des critères validés :
+
+- Acheter + Renforcer : nombre et pourcentage bullish ;
+- Conserver : nombre et pourcentage neutral ;
+- Alléger + Vendre : nombre et pourcentage bearish ;
+- balance nette bullish ;
+- liste brute des cabinets d'analystes ayant suivi la valeur ;
+- avertissement lorsque certains bureaux souhaitent rester anonymes.
+
+La liste des cabinets est conservée **brute** : elle n'est pas découpée naïvement sur les virgules, car certains noms légaux de cabinets contiennent eux-mêmes des virgules. Aucun bonus de « profondeur analystes » n'est actif avant validation PIT/OOS dédiée.
+
 ## Actions — profil société
 
 Les captures de profil peuvent enrichir :
@@ -66,6 +79,15 @@ Les captures de profil peuvent enrichir :
 - risque ESG Morningstar/Sustainalytics disponible sur la page.
 
 Les correspondances sémantiques strictes peuvent compléter `market_cap`, `per_forward_v21`, `dividend_yield_v21_pct` et `sector_v21`. Le reste demeure du contexte attribué.
+
+### Garde devises profil
+
+Boursorama peut afficher la capitalisation et le dernier dividende dans la devise locale (`MNOK`, `MSEK`, `GBP`, etc.). Le runtime contrôle la devise sur la capture **avant fusion** :
+
+- `market_cap` et `boursorama_market_cap_eur_m` ne sont conservés que si `EUR` est explicitement affiché ;
+- `boursorama_last_dividend_amount_eur` n'est conservé que si le montant est explicitement en EUR ;
+- une valeur locale reste sous forme `reported` + devise + valeur brute ;
+- aucune conversion FX implicite n'est réalisée.
 
 ## Actions — chiffres clés historiques
 
@@ -159,9 +181,11 @@ Les champs `morningstar_rating`, `morningstar_category` et `risk_indicator` peuv
 
 ## Stratégie de capture prioritaire
 
+Le plan détaillé est versionné dans `config/V21_BOURSORAMA_DEEP_CAPTURE_PLAN.csv`.
+
 1. Capturer d'abord les pages bulk par marché (France, Allemagne, Pays-Bas, Belgique, Espagne, Italie, Portugal).
 2. Capturer ensuite les palmarès PER/dividendes/extrêmes et les calendriers sociétés cotées/dividendes.
-3. Pour le Top Comité/Watch, compléter avec les fiches consensus + profil + chiffres clés + analyse technique.
+3. Pour le Top Comité/Watch, compléter avec les fiches consensus + profondeur analystes + profil + chiffres clés + analyse technique.
 4. Pour les 102 ETF, privilégier les pages recherche puis les pages individuelles nécessaires pour caractéristiques, performances et composition.
 5. Le worklist identifie ensuite les champs encore manquants ; aucune valeur n'est inventée pour fermer artificiellement les trous.
 
