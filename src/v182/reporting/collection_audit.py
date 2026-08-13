@@ -9,15 +9,15 @@ from v182.audit.provenance import actual_sources_by_field
 from v182.io.frames import is_missing
 
 SOURCE_HINTS = [
-    (("morningstar",), "Morningstar / source autorisee ou snapshot attribue"),
-    (("consensus", "target_", "upside", "upgrade", "downgrade", "analyst"), "Finnhub / yfinance / Boursorama / Zonebourse"),
+    (("morningstar",), "Morningstar / Boursorama attribue / source autorisee"),
+    (("consensus", "target_", "upside", "upgrade", "downgrade", "analyst"), "Boursorama/FactSet / Finnhub / yfinance / Zonebourse"),
     (("funnel_global_macro", "macro_", "real_yield", "inflation"), "FRED / BCE / Eurostat"),
     (("news", "bnis", "sentiment"), "AMF / Emetteur / GDELT / Finnhub"),
     (("ter", "aum", "tracking", "replication", "holdings"), "Emetteur/KID / Boursorama / Morningstar-authorized source"),
-    (("dividend", "payout"), "yfinance / Emetteur / Boursorama"),
-    (("sector", "industry", "country"), "yfinance / Euronext / referentiel"),
+    (("dividend", "payout"), "Boursorama/FactSet / yfinance / Emetteur"),
+    (("sector", "industry", "country"), "Boursorama / yfinance / Euronext / referentiel"),
     (("rsi", "macd", "perf_", "mm", "volatility", "drawdown", "atr", "stoch", "rvol", "distance_high_52w", "catchup", "rotation"), "OHLCV yfinance -> calcul interne PIT"),
-    (("per", "pb", "roe", "roa", "margin", "growth", "debt", "fcf", "market_cap"), "yfinance / Alpha Vantage / Emetteur"),
+    (("per", "pb", "roe", "roa", "margin", "growth", "debt", "fcf", "market_cap", "eps", "ebitda", "ebit"), "Boursorama/FactSet / yfinance / Alpha Vantage / Emetteur"),
 ]
 TECHNICAL_FIELDS={"canonical_seed_status"}
 
