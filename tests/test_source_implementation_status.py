@@ -52,5 +52,6 @@ def test_boursorama_is_high_priority_attributed_not_automated_scraping():
     note=row["Governance_note"].lower()
     assert "no direct automated recovery" in note or "direct automated recovery is not performed" in note
     assert "context/shadow" in note
+    assert "market cap/dividend" in note
     assert "local currencies remain reported context" in note
     assert "management fee maximum is never relabelled ter" in note
