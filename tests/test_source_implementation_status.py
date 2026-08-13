@@ -41,6 +41,7 @@ def test_boursorama_is_high_priority_attributed_not_automated_scraping():
         "boursorama_import.py",
         "boursorama_bulk_import.py",
         "boursorama_current_summary.py",
+        "boursorama_consensus_depth.py",
         "boursorama_action_extended.py",
         "boursorama_company_calendar.py",
         "boursorama_etf_import.py",
