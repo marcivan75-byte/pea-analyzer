@@ -1,0 +1,1 @@
+CI final head = full compile + Ruff + static audit + referential/governance checks + full pytest. Cost savings come from fewer obsolete runs and dependency caching only.
