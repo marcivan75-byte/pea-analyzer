@@ -5,7 +5,7 @@ import json
 import pandas as pd
 
 from v182.decision.committee_master import load_registry, decisions_from_scores, sector_ranking
-from v182.reporting import committee_executive_views, committee_master_gold_v1_1, tct_sector_committee
+from v182.reporting import committee_executive_brief, committee_executive_views, committee_master_gold_v1_1, tct_sector_committee
 
 ROOT=Path(__file__).resolve().parents[3]
 HORIZONS=["CT","MT","LT","SHORT","TOP_DOWN"]
@@ -116,8 +116,22 @@ def run(root:Path=ROOT)->dict:
             "committee_executive_summary":"outputs/committee_master/COMMITTEE_EXECUTIVE_VIEWS_SUMMARY.json",
         })
 
+    try:
+        executive_brief=committee_executive_brief.run(root)
+    except Exception as exc:
+        executive_brief={
+            "status":"FAILED_REPORTING_CONTEXT","error":type(exc).__name__,"detail":str(exc)[:300],
+            "score_changes":False,"new_composite_opportunity_score":False,
+            "fixed_probability_or_expectancy_added":False,"t1_t2_score_influence":0.0,"live_orders_enabled":False,
+        }
+    summary["committee_executive_brief"]=executive_brief
+    if executive_brief.get("status")=="SUCCESS":
+        summary["outputs"]["committee_executive_brief"]="outputs/committee_master/COMMITTEE_EXECUTIVE_BRIEF.html"
+        summary["outputs"]["committee_executive_brief_summary"]="outputs/committee_master/COMMITTEE_EXECUTIVE_BRIEF_SUMMARY.json"
+
     summary.setdefault("notes",[]).append("Actions use V21.0 frozen weights as final reference decision; V21.4 enriched scores and unvalidated positive/negative 52w overlays are challenger-only until PIT/OOS validation.")
     summary["notes"].append("TCT sector/earnings context is reporting-only: it reuses the V24.1.8 baseline and exact T1/T2 shadow state, adds no score weight, no T1/T2 influence and no live execution.")
     summary["notes"].append("Executive Committee views are presentation-only: compact horizon views, ETF Top30, TCT Top50/T1/T2 shadow/Earnings/event-risk, sector Top3 and data-quality views reuse existing scores and decisions; no opportunity composite, fixed probability/expectancy or live trade instruction is introduced.")
+    summary["notes"].append("The mobile executive brief is a self-contained HTML presentation generated from the current Committee outputs only; it can be viewed on Android or printed to PDF without adding a PDF dependency to the scoring runtime.")
     (outdir/"SUMMARY.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2,default=str),encoding="utf-8")
     return summary
