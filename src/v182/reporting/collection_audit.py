@@ -31,6 +31,7 @@ def source_hint(field: str) -> str:
 
 def _field_status(frame: pd.DataFrame, asset_class: str, wave_id: str) -> pd.DataFrame:
     rows=[]; n=max(len(frame),1); identity={"isin","name"}|TECHNICAL_FIELDS
+    generated_at=datetime.now(timezone.utc).isoformat()
     for field in frame.columns:
         if field in identity: continue
         available=int((~frame[field].apply(is_missing)).sum()); coverage=available/n*100.0
@@ -39,21 +40,33 @@ def _field_status(frame: pd.DataFrame, asset_class: str, wave_id: str) -> pd.Dat
             "collection":wave_id,"asset_class":asset_class,"field":field,"status":status,
             "available_rows":available,"missing_rows":int(len(frame)-available),"universe_rows":int(len(frame)),
             "coverage_pct":round(coverage,2),"source_theorique":source_hint(field),
-            "generated_at_utc":datetime.now(timezone.utc).isoformat(),
+            "generated_at_utc":generated_at,
         })
     return pd.DataFrame(rows)
 
 
-def _format_excel(path: Path) -> None:
-    from openpyxl import load_workbook
+def _format_workbook(wb) -> None:
     from openpyxl.styles import Font, PatternFill, Alignment
-    wb=load_workbook(path); header_fill=PatternFill("solid",fgColor="1F4E78")
+
+    header_fill=PatternFill("solid",fgColor="1F4E78")
     for ws in wb.worksheets:
         ws.freeze_panes="A2"; ws.sheet_view.showGridLines=False
         for cell in ws[1]:
-            cell.font=Font(bold=True,color="FFFFFF"); cell.fill=header_fill; cell.alignment=Alignment(horizontal="center",vertical="center")
+            cell.font=Font(bold=True,color="FFFFFF")
+            cell.fill=header_fill
+            cell.alignment=Alignment(horizontal="center",vertical="center")
         for col in ws.columns:
-            letter=col[0].column_letter; width=min(55,max(10,max((len(str(c.value)) if c.value is not None else 0) for c in col)+2)); ws.column_dimensions[letter].width=width
+            letter=col[0].column_letter
+            width=min(55,max(10,max((len(str(c.value)) if c.value is not None else 0) for c in col)+2))
+            ws.column_dimensions[letter].width=width
+
+
+def _format_excel(path: Path) -> None:
+    """Backward-compatible standalone formatter for external callers/tests."""
+    from openpyxl import load_workbook
+
+    wb=load_workbook(path)
+    _format_workbook(wb)
     wb.save(path)
 
 
@@ -61,12 +74,7 @@ def write_collection_audit(
     actions: pd.DataFrame, etfs: pd.DataFrame, wave_id: str, output_root: str | Path,
     *, failures: list[dict] | None = None, source_context: str = "",
 ) -> str:
-    """Write post-collection Excel with retained-source provenance.
-
-    Actual sources are joined by ``asset_class + field`` so identically named
-    Action and ETF fields cannot contaminate each other's lineage. Canonical
-    bookkeeping columns are excluded from data-availability statistics.
-    """
+    """Write the unchanged post-wave audit with one workbook save instead of two."""
     root=Path(output_root); root.mkdir(parents=True,exist_ok=True)
     inventory=pd.concat([_field_status(actions,"ACTION",wave_id),_field_status(etfs,"ETF",wave_id)],ignore_index=True)
     provenance=actual_sources_by_field()
@@ -92,6 +100,8 @@ def write_collection_audit(
         inventory[["field","asset_class","sources_reelles","source_urls","evidence_levels","last_as_of","source_theorique"]].drop_duplicates().to_excel(writer,sheet_name="Sources_reelles",index=False)
         provenance.to_excel(writer,sheet_name="Provenance_agregee",index=False)
         failures_df.to_excel(writer,sheet_name="Echecs_collecte",index=False)
-    _format_excel(path); latest=root/"COLLECTION_DATA_AVAILABILITY_LATEST.xlsx"; shutil.copyfile(path,latest)
+        _format_workbook(writer.book)
+
+    latest=root/"COLLECTION_DATA_AVAILABILITY_LATEST.xlsx"; shutil.copyfile(path,latest)
     history_path=root/"COLLECTION_AUDIT_HISTORY.csv"; hist=summary.copy(); hist["generated_at_utc"]=datetime.now(timezone.utc).isoformat(); hist.to_csv(history_path,sep=";",encoding="utf-8-sig",index=False,mode="a",header=not history_path.exists())
     return str(path)
