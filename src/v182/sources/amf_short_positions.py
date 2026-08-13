@@ -27,7 +27,7 @@ def _read_csv(content: bytes) -> pd.DataFrame:
     last=None
     for encoding in ("utf-8-sig","utf-8","latin-1"):
         try:
-            return pd.read_csv(BytesIO(content),sep=None,engine="python",encoding=encoding,dtype=str,low_memory=False)
+            return pd.read_csv(BytesIO(content),sep=None,engine="python",encoding=encoding,dtype=str)
         except Exception as exc:
             last=exc
     raise ValueError(f"AMF_CSV_PARSE_FAILED:{type(last).__name__ if last else 'UNKNOWN'}")
