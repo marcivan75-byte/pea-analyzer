@@ -8,6 +8,8 @@ import unicodedata
 from bs4 import BeautifulSoup
 
 PROFILE_MARKET_CAP_FIELDS = {"market_cap", "boursorama_market_cap_eur_m"}
+PROFILE_DIVIDEND_EUR_FIELD = "boursorama_last_dividend_amount_eur"
+PROFILE_MONETARY_EUR_FIELDS = PROFILE_MARKET_CAP_FIELDS | {PROFILE_DIVIDEND_EUR_FIELD}
 
 
 def _norm(value: object) -> str:
@@ -32,18 +34,24 @@ def _num(value: object) -> float | None:
         return None
 
 
-def _profile_market_cap_raw(html: str) -> str | None:
+def _line_value(html: str, labels: set[str]) -> str | None:
     soup = BeautifulSoup(html, "lxml")
     text = soup.get_text("\n", strip=True)
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     normalized = [_norm(line) for line in lines]
-    labels = {"valorisation", "capitalisation boursiere"}
     for idx, label in enumerate(normalized):
         if label in labels or any(label.startswith(prefix) for prefix in labels):
             for raw in lines[idx + 1:idx + 5]:
                 if _num(raw) is not None:
                     return raw
-    # Some templates keep label and value in the same text node.
+    return None
+
+
+def _profile_market_cap_raw(html: str) -> str | None:
+    raw = _line_value(html, {"valorisation", "capitalisation boursiere"})
+    if raw:
+        return raw
+    text = BeautifulSoup(html, "lxml").get_text("\n", strip=True)
     match = re.search(
         r"(?:Valorisation|Capitalisation\s+boursi[èe]re)\s*[:\-]?\s*([0-9][0-9\s.,]*\s*M\s*[A-Z]{3})",
         text,
@@ -52,17 +60,43 @@ def _profile_market_cap_raw(html: str) -> str | None:
     return match.group(1).strip() if match else None
 
 
-def _currency(raw: str | None) -> str | None:
+def _profile_dividend_raw(html: str) -> str | None:
+    raw = _line_value(html, {"dernier dividende", "dernier coupon"})
+    if raw:
+        return raw
+    text = BeautifulSoup(html, "lxml").get_text("\n", strip=True)
+    match = re.search(
+        r"(?:Dernier\s+dividende|Dernier\s+coupon)\s*[:\-]?\s*([0-9][0-9\s.,]*\s*[A-Z]{3})",
+        text,
+        flags=re.I,
+    )
+    return match.group(1).strip() if match else None
+
+
+def _market_cap_currency(raw: str | None) -> str | None:
     if not raw:
         return None
     text = str(raw).upper().replace("\u202f", " ").replace("\xa0", " ")
     # Boursorama displays values such as `170 064 M EUR`, `26 541 MNOK` or
-    # `389 859 MSEK`. Accept either spaced or compact `M<CCY>` forms.
+    # `389 859 MSEK`. Accept both spaced and compact `M<CCY>` forms.
     match = re.search(r"\bM\s*([A-Z]{3})\b", text)
     if match:
         return match.group(1)
     match = re.search(r"\bM([A-Z]{3})\b", text)
     return match.group(1) if match else None
+
+
+def _amount_currency(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    text = str(raw).upper().replace("\u202f", " ").replace("\xa0", " ")
+    candidates = re.findall(r"\b([A-Z]{3})\b", text)
+    # Prefer recognizable ISO-like currency tokens. Unknown tokens are not
+    # treated as EUR; they are simply preserved as reported context.
+    for token in candidates:
+        if token in {"EUR", "USD", "GBP", "NOK", "SEK", "DKK", "CHF", "PLN", "CZK", "HUF"}:
+            return token
+    return candidates[-1] if candidates else None
 
 
 def _resolve_path(root: Path, source_file: str) -> Path | None:
@@ -89,71 +123,109 @@ def sanitize_profile_market_cap_observations(
     root: Path,
     observations: list[dict],
 ) -> tuple[list[dict], list[dict], dict]:
-    """Prevent local-currency Boursorama market caps from entering EUR canonical data.
+    """Guard EUR-labelled profile monetary fields before evidence-aware merge.
 
-    The legacy profile parser stages the observed numeric market cap. This guard
-    runs before evidence-aware merge. Canonical `market_cap` and the explicit
-    `_eur_m` field are retained only when the saved Boursorama profile itself
-    states EUR. Local/unknown currencies are preserved as attributed context and
-    never converted implicitly.
+    The profile parser stages numeric values. This runtime guard validates their
+    displayed currency from the same saved Boursorama page. Canonical EUR market
+    cap and EUR-labelled last-dividend amount are retained only when EUR is
+    explicit. Local/unknown currencies remain attributed raw context; there is
+    no implicit FX conversion.
+
+    The function keeps its historical name for runtime compatibility.
     """
     by_file: dict[str, list[dict]] = {}
     for row in observations:
-        if str(row.get("field")) in PROFILE_MARKET_CAP_FIELDS:
+        if str(row.get("field")) in PROFILE_MONETARY_EUR_FIELDS:
             by_file.setdefault(str(row.get("source_file") or ""), []).append(row)
 
-    currency_by_file: dict[str, tuple[str | None, float | None, str | None]] = {}
+    info_by_file: dict[str, dict[str, object]] = {}
     failures: list[dict] = []
     for source_file in by_file:
         path = _resolve_path(root, source_file)
         if path is None:
-            currency_by_file[source_file] = (None, None, None)
+            info_by_file[source_file] = {}
             failures.append({
                 "source": "Boursorama",
                 "source_file": source_file,
-                "reason": "PROFILE_MARKET_CAP_SOURCE_FILE_UNAVAILABLE_FOR_CURRENCY_GUARD",
+                "reason": "PROFILE_MONETARY_SOURCE_FILE_UNAVAILABLE_FOR_CURRENCY_GUARD",
             })
             continue
         html = path.read_text(encoding="utf-8", errors="replace")
-        raw = _profile_market_cap_raw(html)
-        currency_by_file[source_file] = (_currency(raw), _num(raw), raw)
+        market_raw = _profile_market_cap_raw(html)
+        dividend_raw = _profile_dividend_raw(html)
+        info_by_file[source_file] = {
+            "market_raw": market_raw,
+            "market_value": _num(market_raw),
+            "market_currency": _market_cap_currency(market_raw),
+            "dividend_raw": dividend_raw,
+            "dividend_value": _num(dividend_raw),
+            "dividend_currency": _amount_currency(dividend_raw),
+        }
 
     safe: list[dict] = []
-    context_added: set[tuple[str, str]] = set()
-    dropped_local = 0
-    dropped_unknown = 0
-    retained_eur = 0
+    context_added: set[tuple[str, str, str]] = set()
+    stats = {
+        "profile_files_with_eur_labelled_monetary_fields": len(by_file),
+        "market_cap_retained_eur_observations": 0,
+        "market_cap_dropped_local_currency_observations": 0,
+        "market_cap_dropped_unknown_currency_observations": 0,
+        "dividend_retained_eur_observations": 0,
+        "dividend_dropped_local_currency_observations": 0,
+        "dividend_dropped_unknown_currency_observations": 0,
+        "policy": "EUR-labelled profile monetary fields retained only when the saved Boursorama page explicitly states EUR; no implicit FX conversion.",
+    }
+
     for row in observations:
         field = str(row.get("field") or "")
-        if field not in PROFILE_MARKET_CAP_FIELDS:
+        if field not in PROFILE_MONETARY_EUR_FIELDS:
             safe.append(row)
             continue
         source_file = str(row.get("source_file") or "")
-        currency, reported_m, raw = currency_by_file.get(source_file, (None, None, None))
-        if currency == "EUR":
-            safe.append(row)
-            retained_eur += 1
+        info = info_by_file.get(source_file, {})
+        isin = str(row.get("isin") or "")
+
+        if field in PROFILE_MARKET_CAP_FIELDS:
+            currency = info.get("market_currency")
+            reported = info.get("market_value")
+            raw = info.get("market_raw")
+            if currency == "EUR":
+                safe.append(row)
+                stats["market_cap_retained_eur_observations"] += 1
+                continue
+            if currency:
+                stats["market_cap_dropped_local_currency_observations"] += 1
+            else:
+                stats["market_cap_dropped_unknown_currency_observations"] += 1
+            key = (isin, source_file, "market_cap")
+            if key not in context_added:
+                if reported is not None:
+                    safe.append(_context_observation(row, "boursorama_market_cap_reported_m", reported))
+                if currency:
+                    safe.append(_context_observation(row, "boursorama_market_cap_currency", currency))
+                if raw:
+                    safe.append(_context_observation(row, "boursorama_market_cap_reported_raw", raw))
+                context_added.add(key)
             continue
 
+        currency = info.get("dividend_currency")
+        reported = info.get("dividend_value")
+        raw = info.get("dividend_raw")
+        if currency == "EUR":
+            safe.append(row)
+            stats["dividend_retained_eur_observations"] += 1
+            continue
         if currency:
-            dropped_local += 1
+            stats["dividend_dropped_local_currency_observations"] += 1
         else:
-            dropped_unknown += 1
-        key = (str(row.get("isin") or ""), source_file)
+            stats["dividend_dropped_unknown_currency_observations"] += 1
+        key = (isin, source_file, "last_dividend")
         if key not in context_added:
-            template = row
-            if reported_m is not None:
-                safe.append(_context_observation(template, "boursorama_market_cap_reported_m", reported_m))
+            if reported is not None:
+                safe.append(_context_observation(row, "boursorama_last_dividend_amount_reported", reported))
             if currency:
-                safe.append(_context_observation(template, "boursorama_market_cap_currency", currency))
+                safe.append(_context_observation(row, "boursorama_last_dividend_currency", currency))
             if raw:
-                safe.append(_context_observation(template, "boursorama_market_cap_reported_raw", raw))
+                safe.append(_context_observation(row, "boursorama_last_dividend_reported_raw", raw))
             context_added.add(key)
 
-    return safe, failures, {
-        "profile_files_with_market_cap": len(by_file),
-        "retained_eur_observations": retained_eur,
-        "dropped_local_currency_observations": dropped_local,
-        "dropped_unknown_currency_observations": dropped_unknown,
-        "policy": "Canonical market_cap retained only when Boursorama profile explicitly states EUR; no implicit FX conversion.",
-    }
+    return safe, failures, stats
