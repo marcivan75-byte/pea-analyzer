@@ -85,18 +85,23 @@ def _normalize_frame(frame:pd.DataFrame | None,tickers:list[str])->pd.DataFrame:
         out.columns=pd.MultiIndex.from_tuples([(tickers[0],str(c)) for c in out.columns])
     if isinstance(out.index,pd.DatetimeIndex) and out.index.tz is not None:
         out.index=out.index.tz_localize(None)
+    out=out[~out.index.duplicated(keep="last")]
     return out.sort_index()
 
 
 def _merge_history_frames(existing:pd.DataFrame | None,update:pd.DataFrame | None)->pd.DataFrame:
-    """Append recent observations while letting the newest download replace overlap."""
+    """Merge by cell: recent observed values replace overlap without erasing peers."""
     if existing is None or existing.empty:
         return pd.DataFrame() if update is None else update.sort_index()
     if update is None or update.empty:
         return existing.sort_index()
-    merged=pd.concat([existing,update],axis=0,sort=False)
-    merged=merged[~merged.index.duplicated(keep="last")]
-    return merged.sort_index()
+    base=existing[~existing.index.duplicated(keep="last")].sort_index()
+    fresh=update[~update.index.duplicated(keep="last")].sort_index()
+    index=base.index.union(fresh.index)
+    columns=base.columns.union(fresh.columns,sort=False)
+    base=base.reindex(index=index,columns=columns)
+    fresh=fresh.reindex(index=index,columns=columns)
+    return fresh.combine_first(base).sort_index()
 
 
 def _read_manifest(cache:Path)->dict | None:
@@ -111,6 +116,7 @@ def _read_manifest(cache:Path)->dict | None:
 
 
 def _cache_is_usable(cache:Path,tickers:list[str],interval:str,batch_size:int,auto_adjust:bool,actions_requested:bool)->bool:
+    """Validate cache contract; missing individual batches are rebuilt selectively."""
     manifest=_read_manifest(cache)
     if not manifest or manifest.get("cache_format_version")!=CACHE_FORMAT_VERSION:
         return False
@@ -120,6 +126,10 @@ def _cache_is_usable(cache:Path,tickers:list[str],interval:str,batch_size:int,au
         return False
     if bool(manifest.get("auto_adjust"))!=bool(auto_adjust) or bool(manifest.get("actions_requested"))!=bool(actions_requested):
         return False
+    return True
+
+
+def _cache_files_complete(cache:Path,tickers:list[str],batch_size:int)->bool:
     return all((cache/f"history_{start:05d}.parquet").exists() for start in range(0,len(tickers),batch_size))
 
 
@@ -162,12 +172,12 @@ def download_history(
     auto_adjust: bool = True,
     include_actions: bool | None = None,
 ) -> DownloadResult:
-    """Maintain a persistent OHLCV history with incremental daily refreshes.
+    """Maintain persistent OHLCV with a full bootstrap then incremental refreshes.
 
-    First use (or an invalid/incompatible cache) bootstraps the configured full
-    history, normally 5y. Subsequent runs download only a recent overlap window
-    (1mo by default), merge it into the retained parquet history and never erase
-    valid long history. A second run on the same UTC day reuses the current cache.
+    First use (or an incompatible cache) bootstraps the configured history,
+    normally 5y. Subsequent runs download only a recent overlap window (1mo by
+    default), merge it into retained parquet history and never erase valid long
+    history. A second run on the same UTC day reuses a complete current cache.
 
     Set PEA_YF_FORCE_REFRESH=1 to refresh again on the same day, or
     PEA_YF_FORCE_FULL_HISTORY=1 for an explicit full reconstruction.
@@ -183,7 +193,7 @@ def download_history(
     usable=(not force_full) and _cache_is_usable(cache,clean,interval,batch_size,auto_adjust,actions_requested)
     prior_manifest=_read_manifest(cache) if usable else None
 
-    if usable and not force_refresh and _updated_today_utc(prior_manifest):
+    if usable and _cache_files_complete(cache,clean,batch_size) and not force_refresh and _updated_today_utc(prior_manifest):
         successful=sorted(set(prior_manifest.get("successful",[])))
         failed=sorted(set(prior_manifest.get("failed",[])))
         logger.info("OHLCV cache hit: already refreshed today (%s tickers)",len(clean))
