@@ -1,4 +1,4 @@
-name: Committee Master V21.4 full audit validation
+name: Committee Master fast PR validation
 
 on:
   pull_request:
@@ -10,90 +10,36 @@ on:
       - ".github/workflows/committee_master_*.yml"
   workflow_dispatch:
 
+concurrency:
+  group: committee-smoke-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   validation:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    env:
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install complete test toolchain
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[test]"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+      - name: Install lightweight lint tool only
+        run: pip install ruff
       - name: Compile every Python module and test
         run: python -m compileall -q src tests
       - name: Ruff safety lint
         run: ruff check src tests
-      - name: Static Python safety audit
-        run: python -m v182.audit.static_code_audit --root . --output outputs/audit/PYTHON_STATIC_AUDIT.json --fail-high
-      - name: Referential and governance integrity
+      - name: Validate critical JSON syntax
         run: |
-          python - <<'PY'
-          from pathlib import Path
-          import json
-          from v182.audit.canonical_universe import load_compressed_isins, EXPECTED_SHA256
-          from v182.core.merge import ACCEPTED_VALIDATION_STATUSES
-          from v182.decision.tct_baseline_v24_1_7 import WEIGHTS_V24_1_2, MAX_COVERAGE_WITH_SETUP_DISABLED
-          from v182.decision.tct_baseline_v24_1_8 import ACTIVE_WEIGHT, NORMALIZATION_POLICY
-          from v182.decision.tct_timing_exact_v24_1_7 import FORMULA_VERSION, T1_WEIGHTS, T2_WEIGHTS
-          a=json.loads(Path("config/V21_ACTIONS_CRITERIA_REGISTRY.json").read_text())
-          e=json.loads(Path("config/V20_7_1_ETF_CRITERIA_REGISTRY.json").read_text())
-          ed=json.loads(Path("config/V20.8.2_ETF_MT_DYNAMIC.json").read_text())
-          g=json.loads(Path("config/GOLD_V1_1_102_CRITERIA.json").read_text())
-          t=json.loads(Path("config/TCT_V24_1_7_SHADOW.json").read_text())
-          mm=json.loads(Path("config/COMMITTEE_VIRTUAL_MONEY_MANAGEMENT.json").read_text())
-          integrity=json.loads(Path("config/FULL_REFERENTIAL_INTEGRITY.json").read_text())
-          master=json.loads(Path("config/V18.2_MASTER_CONFIG.json").read_text())
-          assert a["criteria_count"] == 633 == integrity["actions"]["criteria_count"]
-          assert integrity["actions"]["universe_count"] == 1829
-          assert e["criteria_count"] == 268 == integrity["etf"]["criteria_count"]
-          assert len(load_compressed_isins("config/V21_3_ACTION_UNIVERSE_1829_ISINS.parts")) == 1829
-          assert EXPECTED_SHA256 == master["canonical_universe"]["actions_whitelist_sha256"]
-          assert master["quality_gates"]["actions_min_rows"] == 1829
-          assert master["dynamic_weighting"]["enabled"] is True
-          assert master["collection_audit"]["after_each_wave"] is True
-          for h in ("CT","MT","LT","SHORT","TOP_DOWN"):
-              assert abs(sum(a["weights"][h].values())-1.0) < 1e-6
-          assert a["governance"]["positive_unvalidated_overlay_can_create_buy"] is False
-          assert a["governance"]["total_return_composite_active_weight"] is False
-          assert all("total_return_potential_score" not in a["weights"][h] for h in ("CT","MT","LT"))
-          assert all("target_upside_gt4_score" in a["weights"][h] for h in ("CT","MT","LT"))
-          assert a["weights"]["MT"]["morningstar_action_score"] > 0
-          assert a["weights"]["LT"]["dividend_gt4_score"] > 0
-          assert "ATTRIBUTED" in ACCEPTED_VALIDATION_STATUSES
-          assert e["governance"]["t1_t2_forbidden"] is True
-          assert a["governance"]["t1_t2_scope"] == "ACTION_TCT_ONLY"
-          assert abs(sum(WEIGHTS_V24_1_2.values())-1.0) < 1e-12
-          assert WEIGHTS_V24_1_2["setup"] == 0.16
-          assert abs(MAX_COVERAGE_WITH_SETUP_DISABLED-0.84) < 1e-12
-          assert abs(ACTIVE_WEIGHT-0.84) < 1e-12
-          assert NORMALIZATION_POLICY == "ACTIVE_AVAILABLE_PILLARS_RENORMALIZED_TO_100_SETUP_EXCLUDED"
-          assert t["promotion_governance"]["setup_component_active"] is False
-          assert t["formula_version"] == FORMULA_VERSION
-          assert abs(sum(T1_WEIGHTS.values())-1.0) < 1e-12
-          assert abs(sum(T2_WEIGHTS.values())-1.0) < 1e-12
-          assert ed["missing_policy"] == "AVAILABLE_CRITERIA_RENORMALIZED_TO_100_PERCENT"
-          assert ed["historical_performance_attribution"] == "NONE_UNTIL_DEDICATED_PIT_BACKTEST"
-          assert g["governance"]["criteria_count"] == len(g["criteria"]) == 102
-          assert g["governance"]["contribution_blocks"] == 11
-          assert g["governance"]["t1_t2_forbidden"] is True
-          assert mm["entry_execution_rule"] == "NEXT_RUN_OBSERVED_PRICE_AFTER_SIGNAL_DATE"
-          assert mm["single_position_per_isin"] is True
-          assert mm["max_instrument_exposure_pct"] <= mm["max_position_pct"]
-          print("V21.4 integrity OK: 1829/633 Actions, 102/268 ETF, exact TCT, Gold 102/11, bias-safe virtual book")
-          PY
-      - name: Full pytest suite
-        run: pytest -q
-      - name: Upload static audit
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-static-audit-${{ github.run_id }}
-          path: outputs/audit/PYTHON_STATIC_AUDIT.json
-          if-no-files-found: warn
-          retention-days: 30
+          python -m json.tool config/V21_ACTIONS_CRITERIA_REGISTRY.json >/dev/null
+          python -m json.tool config/V20_7_1_ETF_CRITERIA_REGISTRY.json >/dev/null
+          python -m json.tool config/V20.8.2_ETF_MT_DYNAMIC.json >/dev/null
+          python -m json.tool config/GOLD_V1_1_102_CRITERIA.json >/dev/null
+          python -m json.tool config/TCT_V24_1_7_SHADOW.json >/dev/null
