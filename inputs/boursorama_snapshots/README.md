@@ -21,7 +21,7 @@ Sous-répertoires recommandés :
 - `bulk/per/` : pages `.../bourse/actions/palmares/per/...` ;
 - `bulk/dividends/` : pages `.../bourse/actions/palmares/dividendes/...` ;
 - `bulk/extremes/` : pages `.../bourse/actions/palmares/extremes-annuels/...` ;
-- `bulk/calendars/` : pages Boursorama de calendrier de dividendes enregistrées ;
+- `bulk/calendars/` : pages Boursorama de calendrier sociétés cotées et dividendes ;
 - `etf/search/` : pages de recherche/palmarès ETF ;
 - `etf/detail/` : pages individuelles ETF, performances/risques et composition.
 
@@ -94,9 +94,19 @@ Pour les extrêmes 52 semaines, **absence de la liste ≠ 0** : seul un événem
 
 Le mapping utilise un code/ticker Boursorama explicite lorsqu'il est sûr, sinon un nom canonique unique. Aucune correspondance floue n'est acceptée. Pour les autres places européennes, l'ISIN des fiches individuelles reste la clé de référence ; aucun suffixe de marché n'est inventé.
 
-## Calendrier dividendes
+## Calendriers sociétés cotées et dividendes
 
-Les captures attribuées du calendrier peuvent fournir :
+Le calendrier des sociétés cotées peut fournir, pour une société reconnue sans fuzzy matching :
+
+- date et heure du prochain événement visible ;
+- libellé de l'événement ;
+- classe `RESULTS`, `REVENUE`, `ANALYST_INVESTOR_MEETING`, `GENERAL_MEETING`, `DIVIDEND`, `REPORT` ou `OTHER` ;
+- nombre d'événements futurs visibles dans la capture ;
+- jours avant le prochain événement et flags contextuels 7j/30j.
+
+Ces champs restent sous `boursorama_*` : un résultat ou un chiffre d'affaires du calendrier Boursorama n'est pas artificiellement renommé `days_to_earnings`, afin de préserver la sémantique du calendrier Finnhub.
+
+Le calendrier dividendes peut en plus fournir :
 
 - date du prochain événement de dividende ;
 - type d'événement ;
@@ -150,7 +160,7 @@ Les champs `morningstar_rating`, `morningstar_category` et `risk_indicator` peuv
 ## Stratégie de capture prioritaire
 
 1. Capturer d'abord les pages bulk par marché (France, Allemagne, Pays-Bas, Belgique, Espagne, Italie, Portugal).
-2. Capturer ensuite les palmarès PER/dividendes/extrêmes et calendriers utiles.
+2. Capturer ensuite les palmarès PER/dividendes/extrêmes et les calendriers sociétés cotées/dividendes.
 3. Pour le Top Comité/Watch, compléter avec les fiches consensus + profil + chiffres clés + analyse technique.
 4. Pour les 102 ETF, privilégier les pages recherche puis les pages individuelles nécessaires pour caractéristiques, performances et composition.
 5. Le worklist identifie ensuite les champs encore manquants ; aucune valeur n'est inventée pour fermer artificiellement les trous.
