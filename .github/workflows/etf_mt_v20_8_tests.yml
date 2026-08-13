@@ -1,36 +1,21 @@
-name: ETF MT V20.8.1 validation
+name: ETF MT V20.8.1 on-demand validation
 
 on:
-  pull_request:
-    paths:
-      - 'config/V20.8_ETF_MT_HIGH_PRECISION.json'
-      - 'src/v182/decision/**'
-      - 'src/v182/features/etf_mt_v2081.py'
-      - 'src/v182/reporting/etf_mt_v2081_run.py'
-      - 'tests/test_etf_mt_high_precision.py'
-      - 'tests/test_etf_mt_v2081_workflow.py'
-      - '.github/workflows/etf_mt_v20_8_tests.yml'
-      - '.github/workflows/etf_mt_v20_8_daily.yml'
-  push:
-    branches:
-      - main
-    paths:
-      - 'config/V20.8_ETF_MT_HIGH_PRECISION.json'
-      - 'src/v182/decision/**'
-      - 'src/v182/features/etf_mt_v2081.py'
-      - 'src/v182/reporting/etf_mt_v2081_run.py'
-      - 'tests/test_etf_mt_high_precision.py'
-      - 'tests/test_etf_mt_v2081_workflow.py'
-      - '.github/workflows/etf_mt_v20_8_tests.yml'
-      - '.github/workflows/etf_mt_v20_8_daily.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: etf-mt-v20-8-validation
+  cancel-in-progress: true
 
 jobs:
   validate-etf-mt:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,12 +24,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: pyproject.toml
 
       - name: Install package and test runner
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e .
-          python -m pip install pytest
+        run: python -m pip install -e ".[test]"
 
       - name: Validate configuration JSON
         run: python -m json.tool config/V20.8_ETF_MT_HIGH_PRECISION.json >/dev/null
