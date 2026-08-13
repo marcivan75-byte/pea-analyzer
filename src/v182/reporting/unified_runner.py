@@ -42,6 +42,7 @@ def _boursorama_attributed_import(root:Path)->dict:
     from v182.sources.boursorama_current_summary import load_current_summaries
     from v182.sources.boursorama_bulk_import import load_bulk_consensus_pages
     from v182.sources.boursorama_action_extended import load_action_extended_pages
+    from v182.sources.boursorama_company_calendar import load_company_calendar_pages
     from v182.sources.boursorama_etf_import import load_etf_pages
 
     actions_path=root/"outputs"/"V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv"
@@ -59,18 +60,22 @@ def _boursorama_attributed_import(root:Path)->dict:
     current_obs,current_fail,current_stats=load_current_summaries(root,actions)
     bulk_obs,bulk_fail,bulk_stats=load_bulk_consensus_pages(root,actions)
     extended_obs,extended_fail,extended_stats=load_action_extended_pages(root,actions)
+    calendar_obs,calendar_fail,calendar_stats=load_company_calendar_pages(root,actions)
     etf_obs,etf_fail,etf_stats=load_etf_pages(root,etfs)
     observations.extend(current_obs)
     observations.extend(bulk_obs)
     observations.extend(extended_obs)
+    observations.extend(calendar_obs)
     observations.extend(etf_obs)
     failures.extend(current_fail)
     failures.extend(bulk_fail)
     failures.extend(extended_fail)
+    failures.extend(calendar_fail)
     failures.extend(etf_fail)
     stats["current_summary"]=current_stats
     stats["bulk_consensus"]=bulk_stats
     stats["action_extended"]=extended_stats
+    stats["company_calendar"]=calendar_stats
     stats["safe_etf_pages"]=etf_stats
 
     action_obs=[o for o in observations if o.get("universe")=="ACTION"]
@@ -86,7 +91,7 @@ def _boursorama_attributed_import(root:Path)->dict:
         failures=failures+quarantined,
         source_context=(
             "Boursorama attributed HTML/CSV/XLSX after online refresh: FactSet consensus/PER/dividends, "
-            "Cofisem company/key-figure context, dividend calendar, TEC technical context and Morningstar ETF "
+            "Cofisem company/key-figure context, company/dividend calendars, TEC technical context and Morningstar ETF "
             "characteristics/performance/composition. New complex fields remain context/shadow unless an existing "
             "canonical semantic match is explicit; ETF graphical risk remains missing without an explicit numerator."
         ),
@@ -101,6 +106,9 @@ def _boursorama_attributed_import(root:Path)->dict:
         "bulk_consensus_matched_rows":int(bulk_stats.get("matched_rows",0)),
         "action_extended_observations":len(extended_obs),
         "action_extended_matched_rows":int(extended_stats.get("matched_rows",0)),
+        "company_calendar_observations":len(calendar_obs),
+        "company_calendar_matched_rows":int(calendar_stats.get("matched_rows",0)),
+        "company_calendar_upcoming_events":int(calendar_stats.get("upcoming_events",0)),
         "etf_detail_files":int(etf_stats.get("detail_files",0)),
         "etf_explicit_risk_rows":int(etf_stats.get("explicit_risk_rows",0)),
         "merge_quarantined":len(quarantined),
@@ -142,7 +150,7 @@ def run(root:Path=ROOT)->dict:
         "governance":[
             "Runtime/software version is distinct from model versions; decision_tracks is the authoritative model-version map.",
             "Boursorama is high-priority attributed input only: no automated Boursorama retrieval is performed because its published CGU prohibit automated recovery.",
-            "Boursorama Action intake covers consensus, current estimates, company profile, multi-year key figures, PER/dividend/52-week palmares, dividend calendar and TEC technical context when saved pages are supplied.",
+            "Boursorama Action intake covers consensus, current estimates, company profile, multi-year key figures, PER/dividend/52-week palmares, company/dividend calendars and TEC technical context when saved pages are supplied.",
             "Only exact existing semantics populate canonical fields; newly exposed accounting, event, 52-week and TEC data remain context/shadow until dedicated PIT/OOS validation.",
             "Boursorama ETF intake covers Morningstar rating/category, explicit risk, characteristics, management-fee maximum, replication, net assets, performance/category comparison and composition when observed.",
             "A management-fee maximum is not relabelled as TER, and ETF risk_indicator is retained only when the 1..7 numerator is explicitly observable, never inferred from a rendered '/7'.",
