@@ -32,6 +32,7 @@
     "action_dividend_palmares_supported": true,
     "action_52w_extremes_palmares_supported": true,
     "action_dividend_calendar_supported": true,
+    "action_company_calendar_supported": true,
     "action_technical_analysis_context_supported": true,
     "etf_morningstar_pages_supported": true,
     "etf_detail_pages_supported": true,
@@ -47,9 +48,10 @@
       "boursorama_eps_actual_eur","boursorama_eps_diluted_actual_eur","boursorama_operating_margin_pct","boursorama_return_on_equity_pct","boursorama_debt_ratio_pct",
       "boursorama_revenue_q1_yoy_pct","boursorama_revenue_q2_yoy_pct","boursorama_revenue_q3_yoy_pct","boursorama_revenue_q4_yoy_pct","boursorama_revenue_fy_yoy_pct",
       "boursorama_touched_52w_high_flag","boursorama_touched_52w_low_flag","boursorama_next_dividend_event_date","boursorama_days_to_dividend_event",
+      "boursorama_next_corporate_event_date","boursorama_days_to_corporate_event","boursorama_next_corporate_event_type","boursorama_next_corporate_event_class","boursorama_corporate_events_visible_count",
       "boursorama_tec_summary","boursorama_tec_macd_positive_flag","boursorama_tec_macd_negative_flag","boursorama_tec_rsi_overbought_flag","boursorama_tec_rsi_oversold_flag"
     ],
-    "action_context_only_policy": "Accounting histories, quarterly growth, event calendar, 52-week palmares and TEC interpretation do not alter validated weights until dedicated PIT/OOS validation.",
+    "action_context_only_policy": "Accounting histories, quarterly growth, corporate/dividend event calendars, 52-week palmares and TEC interpretation do not alter validated weights until dedicated PIT/OOS validation.",
     "etf_canonical_fields": ["morningstar_rating","morningstar_category","risk_indicator"],
     "etf_context_fields": [
       "boursorama_reference_index","boursorama_creation_date","boursorama_management_company","boursorama_managers","boursorama_legal_form",
