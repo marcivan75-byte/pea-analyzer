@@ -20,6 +20,7 @@ _SIGNAL_SCORE = {
 }
 _NUM_TOKEN = r"[+\-−]?(?:\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d+)(?:[.,]\d+)?"
 _BOURSORAMA_BUCKETS = {1:"ACHETER",2:"RENFORCER",3:"CONSERVER",4:"ALLEGER",5:"VENDRE"}
+_INVESTING_SIGNAL_PATTERN = r"Strong Buy|Strong Sell|Achat fort|Acheter fort|Vente forte|Vendre fort|Neutral|Neutre|Buy|Sell|Achat|Acheter|Vente|Vendre"
 
 
 def _clean_text(html: str) -> str:
@@ -64,7 +65,7 @@ def normalize_signal(value: str | None) -> str | None:
 
 
 def _find_signal_near(text: str, label: str, radius: int = 220) -> str | None:
-    signal_pattern = r"(Strong Buy|Strong Sell|Achat fort|Acheter fort|Vente forte|Vendre fort|Renforcer|Conserver|All[eé]ger|Neutral|Neutre|Buy|Sell|Achat|Acheter|Vente|Vendre)"
+    signal_pattern = rf"({_INVESTING_SIGNAL_PATTERN}|Renforcer|Conserver|All[eé]ger)"
     for match in re.finditer(re.escape(label), text, flags=re.IGNORECASE):
         start = max(0, match.start() - radius)
         end = min(len(text), match.end() + radius)
@@ -80,10 +81,31 @@ def _find_signal_near(text: str, label: str, radius: int = 220) -> str | None:
     return None
 
 
+def _investing_timeframe_sequence(text: str) -> tuple[str | None, str | None]:
+    """Parse Investing's explicit Daily/Weekly/Monthly summary sequence first.
+
+    This prevents a proximity parser from swapping adjacent weekly and monthly
+    values when the flattened page contains all three timeframe labels together.
+    """
+    pattern = re.compile(
+        rf"(?:Daily|Journalier)\s+(?P<daily>{_INVESTING_SIGNAL_PATTERN})"
+        rf".{{0,120}}?(?:Weekly|Hebdomadaire)\s+(?P<weekly>{_INVESTING_SIGNAL_PATTERN})"
+        rf".{{0,120}}?(?:Monthly|Mensuel)\s+(?P<monthly>{_INVESTING_SIGNAL_PATTERN})",
+        flags=re.IGNORECASE,
+    )
+    match = pattern.search(text)
+    if not match:
+        return None, None
+    return normalize_signal(match.group("weekly")), normalize_signal(match.group("monthly"))
+
+
 def extract_investing_technical(html: str) -> dict[str, str]:
     text = _clean_text(html)
-    weekly = _find_signal_near(text, "Weekly") or _find_signal_near(text, "Hebdomadaire")
-    monthly = _find_signal_near(text, "Monthly") or _find_signal_near(text, "Mensuel")
+    weekly, monthly = _investing_timeframe_sequence(text)
+    if weekly is None:
+        weekly = _find_signal_near(text, "Weekly") or _find_signal_near(text, "Hebdomadaire")
+    if monthly is None:
+        monthly = _find_signal_near(text, "Monthly") or _find_signal_near(text, "Mensuel")
     return {k: v for k, v in {"investing_weekly_signal": weekly, "investing_monthly_signal": monthly}.items() if v}
 
 
@@ -249,15 +271,68 @@ def _consensus_url(quote_url: str) -> str:
 
 def _investing_url_from_row(row: pd.Series) -> str | None:
     value = str(row.get("investing_url", "") or "").strip()
-    return value if "investing.com" in value else None
+    if "investing.com" not in value or "/equities/" not in value:
+        return None
+    return value.split("?",1)[0].rstrip("/")
+
+
+def _investing_search_candidates(html: str, *, isin: str, ticker: str, name: str) -> list[tuple[int, str]]:
+    soup = BeautifulSoup(html or "", "lxml")
+    isin_u = isin.strip().upper()
+    ticker_root = ticker.strip().upper().split(".",1)[0]
+    name_u = re.sub(r"\s+", " ", name.strip().upper())
+    candidates: dict[str, int] = {}
+    for link in soup.find_all("a", href=True):
+        href = str(link.get("href", "")).strip()
+        if "/equities/" not in href or href.rstrip("/").endswith("-technical"):
+            continue
+        url = urljoin("https://www.investing.com", href.split("?",1)[0]).rstrip("/")
+        context = " ".join(filter(None, [
+            link.get_text(" ", strip=True),
+            link.parent.get_text(" ", strip=True) if link.parent else "",
+        ])).upper()
+        score = 0
+        if isin_u and isin_u in context:
+            score += 100
+        if ticker_root and re.search(rf"\b{re.escape(ticker_root)}\b", context):
+            score += 35
+        if name_u and len(name_u) >= 4 and name_u in context:
+            score += 25
+        candidates[url] = max(score, candidates.get(url, -1))
+    return sorted(((score, url) for url, score in candidates.items()), reverse=True)
+
+
+def _select_investing_candidate(candidates: list[tuple[int, str]], *, allow_unique_unscored: bool) -> str | None:
+    if not candidates:
+        return None
+    if len(candidates) == 1 and (candidates[0][0] > 0 or allow_unique_unscored):
+        return candidates[0][1]
+    top_score = candidates[0][0]
+    if top_score <= 0:
+        return None
+    top = [url for score, url in candidates if score == top_score]
+    return top[0] if len(top) == 1 else None
 
 
 def _discover_investing_url(row: pd.Series, requests, limiter: StartRateLimiter, headers: dict[str, str]) -> str | None:
+    """Resolve an Investing equity URL without arbitrarily choosing an ADR/venue.
+
+    Explicit URLs win. ISIN search may accept a single result even when the page
+    omits identifying text. Ticker/name searches require a unique positive match;
+    equal-scoring venue/ADR candidates are left unresolved instead of guessed.
+    """
     direct = _investing_url_from_row(row)
     if direct:
         return direct
-    queries = [str(row.get("isin", "") or "").strip(), str(row.get("name", "") or "").strip()]
-    for query in queries:
+    isin = str(row.get("isin", "") or "").strip()
+    ticker = str(row.get("yahoo_ticker", row.get("ticker", "")) or "").strip()
+    name = str(row.get("name", "") or "").strip()
+    queries = [
+        (isin, True),
+        (ticker.split(".",1)[0], False),
+        (name, False),
+    ]
+    for query, is_isin_query in queries:
         if not query:
             continue
         try:
@@ -265,11 +340,10 @@ def _discover_investing_url(row: pd.Series, requests, limiter: StartRateLimiter,
             response = requests.get(f"https://www.investing.com/search/?q={quote_plus(query)}", timeout=20, headers=headers)
             if response.status_code >= 400:
                 continue
-            soup = BeautifulSoup(response.text, "lxml")
-            for link in soup.find_all("a", href=True):
-                href = str(link.get("href", ""))
-                if "/equities/" in href and not href.endswith("-technical"):
-                    return urljoin("https://www.investing.com", href.split("?", 1)[0])
+            candidates = _investing_search_candidates(response.text, isin=isin, ticker=ticker, name=name)
+            resolved = _select_investing_candidate(candidates, allow_unique_unscored=is_isin_query)
+            if resolved:
+                return resolved
         except Exception:
             continue
     return None
@@ -359,7 +433,7 @@ def _fetch_action(row: pd.Series, requests, limiter: StartRateLimiter) -> tuple[
         except Exception as exc:
             failures.append({"isin": isin, "source": "Investing", "reason": type(exc).__name__, "detail": str(exc)[:160]})
     else:
-        failures.append({"isin": isin, "source": "Investing", "reason": "URL_NOT_RESOLVED"})
+        failures.append({"isin": isin, "source": "Investing", "reason": "URL_NOT_RESOLVED_OR_AMBIGUOUS"})
 
     result["investing_weekly_monthly_alignment"] = technical_alignment(
         result.get("investing_weekly_signal"), result.get("investing_monthly_signal")
