@@ -32,3 +32,19 @@ def test_unmatched_finnhub_symbol_does_not_create_observation(tmp_path):
     observations,failures=build_calendar_observations(actions,rows,tmp_path/"eps.csv",observed_at=datetime(2026,8,14,tzinfo=timezone.utc))
     assert observations==[]
     assert failures==[]
+
+
+def test_ambiguous_bare_symbol_is_quarantined_but_exact_exchange_symbol_is_safe(tmp_path):
+    actions=pd.DataFrame([
+        {"isin":"FR0000000001","yahoo_ticker":"ABC.PA"},
+        {"isin":"NL0000000002","yahoo_ticker":"ABC.AS"},
+    ])
+    bare=[{"symbol":"ABC","date":"2026-09-10","year":2026,"quarter":3,"epsEstimate":1.0}]
+    observations,failures=build_calendar_observations(actions,bare,tmp_path/"eps.csv",observed_at=datetime(2026,8,14,tzinfo=timezone.utc))
+    assert observations==[]
+    assert failures and failures[0]["reason"]=="AMBIGUOUS_SYMBOL_ALIAS:ABC"
+
+    exact=[{"symbol":"ABC.PA","date":"2026-09-10","year":2026,"quarter":3,"epsEstimate":1.1}]
+    observations2,failures2=build_calendar_observations(actions,exact,tmp_path/"eps.csv",observed_at=datetime(2026,8,14,tzinfo=timezone.utc))
+    assert not failures2
+    assert {row["isin"] for row in observations2}=={"FR0000000001"}
