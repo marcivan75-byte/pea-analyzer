@@ -13,8 +13,9 @@
     "challenger_weights": {"path":"config/V21_ACTIONS_CRITERIA_REGISTRY.json","version":"V21.4_ACTIONS_AUDIT_HARDENED_2026_08_12","role":"SHADOW_CHALLENGER_NO_PERFORMANCE_ATTRIBUTION"},
     "derived_decision_factors_v21_4": ["morningstar_action_score","target_upside_gt4_score","target_upside_growth_score","dividend_gt4_score","total_return_potential_score_AUDIT_ONLY","sector_rotation_score","sector_catchup_score","action_catchup_score","market_high_regime_score","distance_high_52w_pct","catchup_52w_score","high_52w_bonus_malus_points"],
     "cdc_observed_fields_v21_6_3": ["next_earnings_date_fh","next_earnings_hour_fh","earnings_days_to_event_fh","eps_estimate_next_fh","eps_actual_fh","revenue_estimate_next_fh","revenue_actual_fh","eps_estimate_revision_abs_fh","eps_estimate_revision_pct_fh","amf_short_position_pct","amf_short_holder_count","amf_short_latest_date","amf_short_disclosed_flag"],
+    "cdc_committee_visibility_v21_6_3": {"exported_into_committee_decisions":true,"decision_influence":0.0,"score_mutation_forbidden":true,"decision_mutation_forbidden":true},
     "postselection_confirmation_v21_6_3": {"scope":"BUY_WATCH_CT_MT_LT_ONLY","sources":["Boursorama","Investing"],"investing_timeframes":["WEEKLY","MONTHLY"],"decision_influence":0.0,"positive_confirmation_can_create_buy":false,"promotion_requires":"DEDICATED_PIT_OOS_BACKTEST"},
-    "rule": "All 633 master criteria and all 1829 exact Action ISINs remain. V21.6.3 CDC fields add observed evidence without changing active weights. Boursorama/Investing postselection is output-only confirmation with zero decision influence. V21.0 weights remain final reference until challengers pass dedicated PIT/OOS validation."
+    "rule": "All 633 master criteria and all 1829 exact Action ISINs remain. V21.6.3 CDC fields add observed evidence without changing active weights and are explicitly exported into Committee Action rows at influence 0. Boursorama/Investing postselection is output-only confirmation with zero decision influence. V21.0 weights remain final reference until challengers pass dedicated PIT/OOS validation."
   },
   "etf": {
     "source": "MATRICE_MAITRE_REPONDERATION_PEA_ACTIONS_ETF_TOUS_CRITERES_2026-08-11.xlsx / 03_ETF_268",
@@ -22,8 +23,8 @@
     "universe_count": 102,
     "ordered_criteria_names_sha256": "40eabc1c49ac790835e7faa3676d2c0a266a47f4e677bee7e84c3ff4282db42f",
     "full_19_column_table_sha256": "03b37c02f3852d132b09584e85924818f729c7d60d49160f0293272950c30ea9",
-    "boursorama_category_rank_v21_6_3": {"periods":["1m","3m","6m","1y","3y","5y"],"history":"state/boursorama/ETF_CATEGORY_RANK_HISTORY.csv","status":"SHADOW_CONFIRMATION","decision_influence":0.0,"mt_dynamic_38_unchanged":true,"missing_not_imputed":true},
-    "rule": "All 268 fields remain. V20.8.1 exact 38-PIT MT core retains the only 90.91% historical attribution; V20.8.2 remains challenger. Boursorama category rank/evolution is shadow-only and cannot alter the validated MT core or its attribution."
+    "boursorama_category_rank_v21_6_3": {"published_basis":"MORNINGSTAR_ANNUAL_CATEGORY_RANK_LAST_5_CALENDAR_YEARS","rank_window_years":5,"rank_format":"RAW_INTEGER_LOWER_IS_BETTER","category_population_published_with_rank":false,"percentile_fabrication_forbidden":true,"history":"state/boursorama/ETF_CATEGORY_RANK_HISTORY.csv","status":"SHADOW_CONFIRMATION","decision_influence":0.0,"mt_dynamic_38_unchanged":true,"missing_not_imputed":true},
+    "rule": "All 268 fields remain. V20.8.1 exact 38-PIT MT core retains the only 90.91% historical attribution; V20.8.2 remains challenger. Boursorama/Morningstar annual category ranks are preserved exactly as raw published integers and their evolution is shadow-only; no category percentile is fabricated and the validated MT core remains unchanged."
   },
   "gold": {
     "source": "PROCESSUS_DECISIONNEL_COMITE_MAITRE_2026-08-11 + Cahier_des_charges_Complet_V9.5.2 + V18.4/V20.3 Gold Engine",
