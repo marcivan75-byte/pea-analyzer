@@ -3,6 +3,8 @@ from __future__ import annotations
 import pandas as pd
 
 from v182.sources.postselection_market_sheets import (
+    _investing_search_candidates,
+    _select_investing_candidate,
     enrich_postselection,
     extract_boursorama_action,
     extract_investing_technical,
@@ -20,7 +22,7 @@ class _Response:
 class _Requests:
     def get(self,url,*args,**kwargs):
         if "investing.com" in url and url.endswith("-technical"):
-            return _Response("<div>Weekly Strong Buy</div><div>Monthly Buy</div>")
+            return _Response("<div>Daily Sell Weekly Strong Buy Monthly Buy</div>")
         if "boursorama.com" in url and "/consensus/" in url:
             return _Response("<div>Consensus des analystes : Achat</div><div>Objectif de cours 3 mois : 150,50 EUR</div><div>Potentiel : +12,5 %</div>")
         if "boursorama.com" in url:
@@ -37,6 +39,33 @@ def test_signal_normalization_and_weekly_monthly_alignment():
     assert technical["investing_weekly_signal"]=="STRONG_BUY"
     assert technical["investing_monthly_signal"]=="SELL"
     assert technical_alignment("STRONG_BUY","SELL")=="DIVERGENCE"
+
+
+def test_investing_explicit_daily_weekly_monthly_sequence_prevents_timeframe_swap():
+    english=extract_investing_technical("Daily Strong Sell Weekly Neutral Monthly Strong Buy")
+    assert english["investing_weekly_signal"]=="NEUTRAL"
+    assert english["investing_monthly_signal"]=="STRONG_BUY"
+
+    french=extract_investing_technical("Journalier Vente Hebdomadaire Achat Fort Mensuel Vente Forte")
+    assert french["investing_weekly_signal"]=="STRONG_BUY"
+    assert french["investing_monthly_signal"]=="STRONG_SELL"
+
+
+def test_investing_candidate_selector_rejects_equal_score_adr_or_venue_ambiguity():
+    html="""
+    <div>ASML <a href="/equities/asml-holding">ASML Amsterdam</a></div>
+    <div>ASML <a href="/equities/asml-holding-nv-adr">ASML ADR</a></div>
+    """
+    candidates=_investing_search_candidates(html,isin="NL0010273215",ticker="ASML.AS",name="ASML")
+    assert len(candidates)==2
+    assert _select_investing_candidate(candidates,allow_unique_unscored=False) is None
+
+
+def test_investing_candidate_selector_allows_unique_isin_result_but_not_unique_unscored_name_guess():
+    html='<a href="/equities/example-company">Voir le titre</a>'
+    candidates=_investing_search_candidates(html,isin="FR0000000001",ticker="EX.PA",name="Example SA")
+    assert _select_investing_candidate(candidates,allow_unique_unscored=True)=="https://www.investing.com/equities/example-company"
+    assert _select_investing_candidate(candidates,allow_unique_unscored=False) is None
 
 
 def test_boursorama_action_extracts_realistic_quote_and_direct_target_formats():
