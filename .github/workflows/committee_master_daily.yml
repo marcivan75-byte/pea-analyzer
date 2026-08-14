@@ -3,10 +3,11 @@ name: Committee Master V21.6.3 study-hardened
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, agent/v21-6-3-cdc-postselection]
     paths:
       - "config/**"
       - "src/**/*.py"
+      - "tests/**/*.py"
       - "pyproject.toml"
       - ".github/workflows/committee_master_daily.yml"
   schedule:
@@ -21,8 +22,13 @@ permissions:
 
 jobs:
   committee-master:
+    if: >-
+      github.ref == 'refs/heads/main' ||
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.ref == 'refs/heads/agent/v21-6-3-cdc-postselection' && contains(github.event.head_commit.message, '[PIT-OOS-ONCE]'))
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 240
     env:
       PYTHONUNBUFFERED: "1"
       PEA_PROVENANCE_PATH: state/provenance/OBSERVATION_PROVENANCE.csv
@@ -84,7 +90,7 @@ jobs:
           pip install -e .
       - name: Full Python compile and static safety gate
         run: |
-          python -m compileall -q src
+          python -m compileall -q src tests
           python -m v182.audit.static_code_audit --root . --output outputs/audit/PYTHON_STATIC_AUDIT.json --fail-high
       - name: Criterion-study governance gate
         run: python -m v182.audit.criteria_study_governance
@@ -153,6 +159,17 @@ jobs:
         run: python -m v182.audit.identity_hydration
       - name: Run unified Committee pipeline
         run: python -m v182.reporting.unified_runner
+      - name: Monitor Boursorama imports
+        if: always()
+        run: python -m v182.reporting.boursorama_monitor
+      - name: Exceptional PIT/OOS diagnostic — one shot only
+        if: >-
+          success() &&
+          github.ref == 'refs/heads/agent/v21-6-3-cdc-postselection' &&
+          contains(github.event.head_commit.message, '[PIT-OOS-ONCE]')
+        env:
+          ALLOW_EXCEPTIONAL_PIT_OOS_ONCE: "1"
+        run: python -m v182.backtest.exceptional_pit_oos
       - name: Publish Android Investment Committee Control Center
         if: always()
         run: |
@@ -164,6 +181,14 @@ jobs:
         if: always()
         run: |
           if [ -f outputs/unified/UNIFIED_SUMMARY_LATEST.json ]; then cat outputs/unified/UNIFIED_SUMMARY_LATEST.json; fi
+      - name: Show Boursorama monitor
+        if: always()
+        run: |
+          if [ -f outputs/audit/BOURSORAMA_IMPORT_MONITOR.json ]; then cat outputs/audit/BOURSORAMA_IMPORT_MONITOR.json; fi
+      - name: Show exceptional PIT/OOS summary
+        if: always()
+        run: |
+          if [ -f outputs/backtest/exceptional_pit_oos_2026_08_14/EXCEPTIONAL_PIT_OOS_SUMMARY.json ]; then cat outputs/backtest/exceptional_pit_oos_2026_08_14/EXCEPTIONAL_PIT_OOS_SUMMARY.json; fi
       - name: Show committee summary
         if: always()
         run: |
@@ -212,6 +237,7 @@ jobs:
           path: |
             outputs/unified/
             outputs/mobile/
+            outputs/backtest/
             outputs/committee_master/
             outputs/etf_mt_v2081/
             outputs/gold_v1_1/
