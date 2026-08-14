@@ -1,6 +1,7 @@
 import pandas as pd
 
 from v182.decision.committee_master import resolve_field, classify_sector
+from v182.reporting.committee_master_v21_4 import _attach_cdc_context
 
 
 def test_sector_neutral_valuation_discount_uses_exact_45_20_35_formula_with_renormalisation():
@@ -45,3 +46,29 @@ def test_sector_classification_prefers_real_sector_and_maps_common_cases():
     assert classify_sector(pd.Series({"name":"ASML","sector_yf":"Technology"}),"ACTION")=="TECHNOLOGIE"
     assert classify_sector(pd.Series({"name":"Shell","industry_yf":"Oil & Gas Integrated"}),"ACTION")=="ENERGIE"
     assert classify_sector(pd.Series({"name":"Unknown Company","sector_yf":"Specialty Services"}),"ACTION")=="SPECIALTY SERVICES"
+
+
+def test_cdc_context_is_visible_in_committee_without_mutating_score_or_decision():
+    decisions=pd.DataFrame([
+        {"asset_class":"ACTION","horizon":"MT","isin":"FR1","score":81.0,"decision":"BUY_CANDIDATE"},
+        {"asset_class":"ETF","horizon":"MT","isin":"ETF1","score":85.0,"decision":"BUY_CANDIDATE"},
+    ])
+    actions=pd.DataFrame([{
+        "isin":"FR1",
+        "next_earnings_date_fh":"2026-09-10",
+        "eps_estimate_revision_pct_fh":8.5,
+        "amf_short_position_pct":0.7,
+        "amf_short_disclosed_flag":1,
+    }])
+    out=_attach_cdc_context(decisions,actions)
+    assert list(out["score"])==[81.0,85.0]
+    assert list(out["decision"])==["BUY_CANDIDATE","BUY_CANDIDATE"]
+    action=out.iloc[0]
+    etf=out.iloc[1]
+    assert action["next_earnings_date_fh"]=="2026-09-10"
+    assert action["eps_estimate_revision_pct_fh"]==8.5
+    assert action["amf_short_position_pct"]==0.7
+    assert action["cdc_data_status"]=="AVAILABLE"
+    assert action["cdc_decision_influence"]==0.0
+    assert etf["cdc_data_status"]=="NOT_APPLICABLE"
+    assert etf["cdc_decision_influence"]==0.0
