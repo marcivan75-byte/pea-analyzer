@@ -16,11 +16,20 @@ def _allowed_href(href: str) -> bool:
     return any(pattern.match(path) for pattern in _ALLOWED_PATTERNS)
 
 
-def extract_boursorama_instrument_url(html: str, *, isin: str = "", ticker: str = "", name: str = "") -> str | None:
+def extract_boursorama_instrument_url(
+    html: str,
+    *,
+    isin: str = "",
+    ticker: str = "",
+    name: str = "",
+    allow_single_unscored: bool = False,
+) -> str | None:
     """Extract an instrument quote URL from a Boursorama search result page.
 
     Candidate links are restricted to Action/ETF quote routes. ISIN is the
-    strongest discriminator; ticker and name are only secondary context.
+    strongest discriminator; ticker and name are secondary context. A unique
+    unscored quote result is accepted only when the caller explicitly searched
+    by ISIN, never for a broad ticker/name search.
     """
     soup = BeautifulSoup(html or "", "lxml")
     isin_u = str(isin or "").strip().upper()
@@ -47,6 +56,8 @@ def extract_boursorama_instrument_url(html: str, *, isin: str = "", ticker: str 
     candidates.sort(key=lambda item: item[0], reverse=True)
     best_score, best_url = candidates[0]
     if best_score <= 0 and (isin_u or ticker_u or name_u):
+        if allow_single_unscored and len(candidates) == 1:
+            return best_url
         return None
     return best_url
 
@@ -64,12 +75,16 @@ def resolve_boursorama_url(row, requests, limiter, headers: dict[str, str] | Non
     isin = str(row.get("isin", "") or "").strip()
     ticker = str(row.get("yahoo_ticker", row.get("ticker", "")) or "").strip()
     name = str(row.get("name", "") or "").strip()
-    queries = [isin, ticker.split(".", 1)[0], name]
+    queries = [
+        (isin, True),
+        (ticker.split(".", 1)[0], False),
+        (name, False),
+    ]
     hdrs = headers or {
         "User-Agent": "Mozilla/5.0 (compatible; PEA-Analyzer/21.6.3; +data-quality)",
         "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.5",
     }
-    for query in queries:
+    for query, is_isin_query in queries:
         if not query:
             continue
         try:
@@ -77,7 +92,13 @@ def resolve_boursorama_url(row, requests, limiter, headers: dict[str, str] | Non
             response = requests.get(BOURSORAMA_SEARCH_URL.format(query=quote_plus(query)), timeout=20, headers=hdrs)
             if getattr(response, "status_code", 500) >= 400:
                 continue
-            resolved = extract_boursorama_instrument_url(response.text, isin=isin, ticker=ticker, name=name)
+            resolved = extract_boursorama_instrument_url(
+                response.text,
+                isin=isin,
+                ticker=ticker,
+                name=name,
+                allow_single_unscored=is_isin_query,
+            )
             if resolved:
                 return resolved
         except Exception:
