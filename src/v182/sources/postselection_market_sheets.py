@@ -1,0 +1,299 @@
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
+from urllib.parse import quote_plus, urljoin
+import math
+import re
+import pandas as pd
+from bs4 import BeautifulSoup
+
+from v182.sources.rate_limit import StartRateLimiter
+
+_SIGNAL_SCORE = {
+    "STRONG_BUY": 2.0,
+    "BUY": 1.0,
+    "NEUTRAL": 0.0,
+    "SELL": -1.0,
+    "STRONG_SELL": -2.0,
+}
+
+
+def _clean_text(html: str) -> str:
+    text = BeautifulSoup(html or "", "lxml").get_text(" ", strip=True).replace(" ", " ")
+    return re.sub(r"\s+", " ", text)
+
+
+def _number(value: str | None) -> float | None:
+    if not value:
+        return None
+    raw = value.replace(" ", "").replace("%", "").replace("€", "").replace(",", ".")
+    try:
+        number = float(raw)
+        return number if math.isfinite(number) else None
+    except ValueError:
+        return None
+
+
+def normalize_signal(value: str | None) -> str | None:
+    text = re.sub(r"\s+", " ", str(value or "").strip().upper().replace("É", "E").replace("È", "E"))
+    aliases = {
+        "STRONG BUY": "STRONG_BUY",
+        "ACHAT FORT": "STRONG_BUY",
+        "ACHETER FORT": "STRONG_BUY",
+        "BUY": "BUY",
+        "ACHAT": "BUY",
+        "ACHETER": "BUY",
+        "NEUTRAL": "NEUTRAL",
+        "NEUTRE": "NEUTRAL",
+        "HOLD": "NEUTRAL",
+        "CONSERVER": "NEUTRAL",
+        "SELL": "SELL",
+        "VENTE": "SELL",
+        "VENDRE": "SELL",
+        "STRONG SELL": "STRONG_SELL",
+        "VENTE FORTE": "STRONG_SELL",
+        "VENDRE FORT": "STRONG_SELL",
+    }
+    return aliases.get(text)
+
+
+def _find_signal_near(text: str, label: str, radius: int = 220) -> str | None:
+    signal_pattern = r"(Strong Buy|Strong Sell|Buy|Sell|Neutral|Achat fort|Achat|Acheter|Neutre|Conserver|Vente forte|Vente|Vendre)"
+    for match in re.finditer(re.escape(label), text, flags=re.IGNORECASE):
+        start = max(0, match.start() - radius)
+        end = min(len(text), match.end() + radius)
+        window = text[start:end]
+        candidates = list(re.finditer(signal_pattern, window, flags=re.IGNORECASE))
+        if not candidates:
+            continue
+        label_mid = match.start() - start + len(label) / 2.0
+        nearest = min(candidates, key=lambda m: abs((m.start() + m.end()) / 2.0 - label_mid))
+        normalized = normalize_signal(nearest.group(1))
+        if normalized:
+            return normalized
+    return None
+
+
+def extract_investing_technical(html: str) -> dict[str, str]:
+    text = _clean_text(html)
+    weekly = _find_signal_near(text, "Weekly") or _find_signal_near(text, "Hebdomadaire")
+    monthly = _find_signal_near(text, "Monthly") or _find_signal_near(text, "Mensuel")
+    return {k: v for k, v in {"investing_weekly_signal": weekly, "investing_monthly_signal": monthly}.items() if v}
+
+
+def extract_boursorama_action(html: str) -> dict[str, object]:
+    text = _clean_text(html)
+    out: dict[str, object] = {}
+    consensus = _find_signal_near(text, "Consensus", radius=300)
+    if consensus:
+        out["boursorama_consensus_signal"] = consensus
+    patterns = {
+        "boursorama_target_price": (
+            r"objectif(?: de cours)?(?: moyen| median| médian)?[^0-9]{0,60}([0-9][0-9\s.,]*)\s*€",
+            r"cours objectif[^0-9]{0,60}([0-9][0-9\s.,]*)\s*€",
+        ),
+        "boursorama_target_upside_pct": (
+            r"potentiel[^+\-0-9]{0,60}([+\-]?[0-9][0-9\s.,]*)\s*%",
+        ),
+        "boursorama_per": (
+            r"\bper\b[^0-9]{0,40}([0-9][0-9\s.,]*)",
+        ),
+        "boursorama_dividend_yield_pct": (
+            r"rendement[^0-9]{0,60}([0-9][0-9\s.,]*)\s*%",
+        ),
+        "boursorama_52w_high": (
+            r"(?:plus haut|haut)[^0-9]{0,30}(?:52 semaines|1 an)[^0-9]{0,30}([0-9][0-9\s.,]*)",
+            r"(?:52 semaines|1 an)[^0-9]{0,30}(?:plus haut|haut)[^0-9]{0,30}([0-9][0-9\s.,]*)",
+        ),
+        "boursorama_52w_low": (
+            r"(?:plus bas|bas)[^0-9]{0,30}(?:52 semaines|1 an)[^0-9]{0,30}([0-9][0-9\s.,]*)",
+            r"(?:52 semaines|1 an)[^0-9]{0,30}(?:plus bas|bas)[^0-9]{0,30}([0-9][0-9\s.,]*)",
+        ),
+    }
+    for field, field_patterns in patterns.items():
+        for pattern in field_patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                value = _number(match.group(1))
+                if value is not None:
+                    out[field] = value
+                    break
+    return out
+
+
+def _boursorama_url(row: pd.Series) -> str | None:
+    for field in ("boursorama_url", "source_url"):
+        value = str(row.get(field, "") or "").strip()
+        if "boursorama.com" in value:
+            return value
+    ticker = str(row.get("yahoo_ticker", "") or "").strip().upper()
+    if ticker.endswith(".PA") and len(ticker) > 3:
+        return f"https://www.boursorama.com/cours/1rP{ticker[:-3]}/"
+    return None
+
+
+def _consensus_url(quote_url: str) -> str:
+    if "/cours/consensus/" in quote_url:
+        return quote_url
+    if "/cours/" in quote_url:
+        return quote_url.replace("/cours/", "/cours/consensus/", 1)
+    return quote_url
+
+
+def _investing_url_from_row(row: pd.Series) -> str | None:
+    value = str(row.get("investing_url", "") or "").strip()
+    return value if "investing.com" in value else None
+
+
+def _discover_investing_url(row: pd.Series, requests, limiter: StartRateLimiter, headers: dict[str, str]) -> str | None:
+    direct = _investing_url_from_row(row)
+    if direct:
+        return direct
+    queries = [str(row.get("isin", "") or "").strip(), str(row.get("name", "") or "").strip()]
+    for query in queries:
+        if not query:
+            continue
+        try:
+            limiter.wait()
+            response = requests.get(f"https://www.investing.com/search/?q={quote_plus(query)}", timeout=20, headers=headers)
+            if response.status_code >= 400:
+                continue
+            soup = BeautifulSoup(response.text, "lxml")
+            for link in soup.find_all("a", href=True):
+                href = str(link.get("href", ""))
+                if "/equities/" in href and not href.endswith("-technical"):
+                    return urljoin("https://www.investing.com", href.split("?", 1)[0])
+        except Exception:
+            continue
+    return None
+
+
+def _technical_url(base: str) -> str:
+    clean = base.rstrip("/")
+    if clean.endswith("-technical"):
+        return clean
+    return clean + "-technical"
+
+
+def technical_alignment(weekly: str | None, monthly: str | None) -> str:
+    w = _SIGNAL_SCORE.get(str(weekly or ""))
+    m = _SIGNAL_SCORE.get(str(monthly or ""))
+    if w is None or m is None:
+        return "PARTIAL"
+    if w > 0 and m > 0:
+        return "CONFIRMS_LONG"
+    if w < 0 and m < 0:
+        return "CONTRADICTS_LONG"
+    if w * m < 0:
+        return "DIVERGENCE"
+    return "MIXED_NEUTRAL"
+
+
+def _shadow_confirmation(row: dict[str, object]) -> tuple[float | None, str]:
+    values = [
+        _SIGNAL_SCORE.get(str(row.get("investing_weekly_signal", ""))),
+        _SIGNAL_SCORE.get(str(row.get("investing_monthly_signal", ""))),
+        _SIGNAL_SCORE.get(str(row.get("boursorama_consensus_signal", ""))),
+    ]
+    observed = [v for v in values if v is not None]
+    if not observed:
+        return None, "NO_CONFIRMATION_DATA"
+    average = sum(observed) / len(observed)
+    score = max(0.0, min(100.0, 50.0 + 25.0 * average))
+    if average >= 1.0:
+        label = "CONFIRMS_LONG"
+    elif average <= -1.0:
+        label = "CONTRADICTS_LONG"
+    elif max(observed) > 0 and min(observed) < 0:
+        label = "DIVERGENCE"
+    else:
+        label = "MIXED_NEUTRAL"
+    return round(score, 4), label
+
+
+def _fetch_action(row: pd.Series, requests, limiter: StartRateLimiter) -> tuple[dict[str, object], list[dict]]:
+    isin = str(row.get("isin", "") or "").strip()
+    result: dict[str, object] = {"isin": isin}
+    failures: list[dict] = []
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; PEA-Analyzer/21.6.3; +data-quality)",
+        "Accept-Language": "en-US,en;q=0.8,fr;q=0.6",
+    }
+
+    b_url = _boursorama_url(row)
+    if b_url:
+        combined: dict[str, object] = {}
+        for url in (b_url, _consensus_url(b_url)):
+            try:
+                limiter.wait()
+                response = requests.get(url, timeout=20, headers=headers)
+                if response.status_code >= 400:
+                    failures.append({"isin": isin, "source": "Boursorama", "reason": f"HTTP_{response.status_code}"})
+                    continue
+                combined.update(extract_boursorama_action(response.text))
+            except Exception as exc:
+                failures.append({"isin": isin, "source": "Boursorama", "reason": type(exc).__name__, "detail": str(exc)[:160]})
+        result.update(combined)
+        result["boursorama_url"] = b_url
+    else:
+        failures.append({"isin": isin, "source": "Boursorama", "reason": "URL_NOT_RESOLVED"})
+
+    i_url = _discover_investing_url(row, requests, limiter, headers)
+    if i_url:
+        tech_url = _technical_url(i_url)
+        try:
+            limiter.wait()
+            response = requests.get(tech_url, timeout=20, headers=headers)
+            if response.status_code >= 400:
+                failures.append({"isin": isin, "source": "Investing", "reason": f"HTTP_{response.status_code}"})
+            else:
+                result.update(extract_investing_technical(response.text))
+                result["investing_url"] = i_url
+        except Exception as exc:
+            failures.append({"isin": isin, "source": "Investing", "reason": type(exc).__name__, "detail": str(exc)[:160]})
+    else:
+        failures.append({"isin": isin, "source": "Investing", "reason": "URL_NOT_RESOLVED"})
+
+    result["investing_weekly_monthly_alignment"] = technical_alignment(
+        result.get("investing_weekly_signal"), result.get("investing_monthly_signal")
+    )
+    score, confirmation = _shadow_confirmation(result)
+    result["postselection_confirmation_score_shadow"] = score
+    result["postselection_confirmation"] = confirmation
+    result["postselection_data_status"] = "AVAILABLE" if score is not None or len(result) > 5 else "MISSING"
+    return result, failures
+
+
+def enrich_postselection(
+    actions: pd.DataFrame,
+    shortlisted_isins: set[str] | list[str],
+    *,
+    requests_module=None,
+    observed_at: datetime | None = None,
+    max_workers: int = 6,
+    delay_seconds: float = 0.25,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Enrich shortlisted Actions only. Output is confirmation/shadow and never mutates a model decision."""
+    import requests as requests_default
+
+    requests = requests_module or requests_default
+    wanted = {str(x).strip() for x in shortlisted_isins if str(x).strip()}
+    subset = actions.loc[actions.get("isin", pd.Series("", index=actions.index)).astype(str).isin(wanted)].drop_duplicates("isin").copy()
+    if subset.empty:
+        return pd.DataFrame(columns=["isin"]), pd.DataFrame(columns=["isin", "source", "reason"])
+    limiter = StartRateLimiter(delay_seconds)
+    rows: list[dict[str, object]] = []
+    failures: list[dict] = []
+    workers = max(1, min(int(max_workers), len(subset)))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [executor.submit(_fetch_action, row, requests, limiter) for _, row in subset.iterrows()]
+        for future in as_completed(futures):
+            result, failed = future.result()
+            rows.append(result)
+            failures.extend(failed)
+    stamp = (observed_at or datetime.now(timezone.utc)).isoformat()
+    for row in rows:
+        row["postselection_collected_at"] = stamp
+        row["postselection_decision_influence"] = 0.0
+    return pd.DataFrame(rows).sort_values("isin").reset_index(drop=True), pd.DataFrame(failures)
