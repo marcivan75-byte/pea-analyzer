@@ -29,10 +29,30 @@ def test_extract_action_url_uses_isin_context_not_market_prefix_guess():
     assert url=="https://www.boursorama.com/cours/FF11-KBC/"
 
 
-def test_extract_etf_url_accepts_tracker_quote_route():
+def test_extract_etf_url_accepts_tracker_quote_route_when_identity_matches():
     html='''<div>FR0007052782 <a href="/bourse/trackers/cours/1rTCAC/">Amundi CAC 40</a></div>'''
     url=extract_boursorama_instrument_url(html,isin="FR0007052782",ticker="C40.PA",name="Amundi CAC 40")
     assert url=="https://www.boursorama.com/bourse/trackers/cours/1rTCAC/"
+
+
+def test_route_type_never_breaks_an_unscored_identity_tie():
+    html='''
+    <a href="/cours/1rPUNKNOWN/">Voir une action</a>
+    <a href="/bourse/trackers/cours/1rTUNKNOWN/">Voir un tracker</a>
+    '''
+    assert extract_boursorama_instrument_url(
+        html,isin="FR0000000001",ticker="EX.PA",name="Example",allow_single_unscored=True
+    ) is None
+
+
+def test_equal_identity_scores_are_rejected_instead_of_arbitrarily_selecting_first():
+    html='''
+    <div>ABC <a href="/cours/1rPABC/">ABC Paris</a></div>
+    <div>ABC <a href="/cours/1rAABC/">ABC Amsterdam</a></div>
+    '''
+    assert extract_boursorama_instrument_url(
+        html,isin="",ticker="ABC",name="",allow_single_unscored=False
+    ) is None
 
 
 def test_unique_unscored_quote_is_accepted_only_for_explicit_isin_search():
