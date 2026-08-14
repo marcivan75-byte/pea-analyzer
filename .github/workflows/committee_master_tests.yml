@@ -57,6 +57,10 @@ jobs:
           assert master["postselection_market_sheets"]["investing"]["timeframes"] == ["WEEKLY","MONTHLY"]
           assert master["boursorama_etf_category_rank"]["decision_influence"] == 0.0
           assert master["boursorama_etf_category_rank"]["mt_dynamic_38_unchanged"] is True
+          assert master["boursorama_etf_category_rank"]["rank_format"] == "RAW_INTEGER_LOWER_IS_BETTER"
+          assert master["boursorama_etf_category_rank"]["percentile_fabrication_forbidden"] is True
+          assert integrity["etf"]["boursorama_category_rank_v21_6_3"]["percentile_fabrication_forbidden"] is True
+          assert integrity["actions"]["cdc_committee_visibility_v21_6_3"]["decision_influence"] == 0.0
           assert a["criteria_count"] == 633 == integrity["actions"]["criteria_count"]
           assert integrity["actions"]["universe_count"] == 1829
           assert e["criteria_count"] == 268 == integrity["etf"]["criteria_count"]
