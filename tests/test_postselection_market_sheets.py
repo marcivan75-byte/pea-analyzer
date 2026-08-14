@@ -30,6 +30,11 @@ class _Requests:
         return _Response("",404)
 
 
+class _BlankRequests:
+    def get(self,url,*args,**kwargs):
+        return _Response("<html><body>Page loaded but expected market fields are absent</body></html>")
+
+
 def test_signal_normalization_and_weekly_monthly_alignment():
     assert normalize_signal("Achat fort")=="STRONG_BUY"
     assert normalize_signal("Renforcer")=="BUY"
@@ -132,5 +137,22 @@ def test_postselection_enrichment_is_shadow_and_scoped_to_requested_isin():
     assert row["boursorama_per"]==18.4
     assert row["boursorama_dividend_yield_pct"]==3.2
     assert row["postselection_confirmation"]=="CONFIRMS_LONG"
+    assert row["postselection_data_status"]=="AVAILABLE"
     assert row["postselection_decision_influence"]==0.0
     assert failures.empty
+
+
+def test_http_200_without_observed_fields_is_missing_and_logged_not_false_available():
+    actions=pd.DataFrame([{
+        "isin":"FR0000000001","name":"Example SA","yahoo_ticker":"EX.PA",
+        "boursorama_url":"https://www.boursorama.com/cours/1rPEX/",
+        "investing_url":"https://www.investing.com/equities/example-company",
+    }])
+    enriched,failures=enrich_postselection(actions,{"FR0000000001"},requests_module=_BlankRequests(),max_workers=1,delay_seconds=0)
+    row=enriched.iloc[0]
+    assert row["postselection_data_status"]=="MISSING"
+    assert row["postselection_confirmation"]=="NO_CONFIRMATION_DATA"
+    assert row["postselection_decision_influence"]==0.0
+    reasons=set(failures["reason"])
+    assert "FIELDS_NOT_OBSERVED" in reasons
+    assert "TECHNICAL_SIGNALS_NOT_OBSERVED" in reasons
