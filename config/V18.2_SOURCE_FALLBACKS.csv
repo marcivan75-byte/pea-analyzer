@@ -3,7 +3,7 @@ OHLCV;yfinance;Marketstack declared not wired;Alpha Vantage declared not wired;I
 FUNDAMENTALS_ACTIONS;yfinance;Alpha Vantage declared not wired;Issuer;Zonebourse declared not wired
 CONSENSUS_ACTIONS;Finnhub full-universe;Boursorama postselection;Zonebourse declared not wired;yfinance
 EARNINGS_EPS_REVISIONS;Finnhub earnings calendar PIT snapshots;Issuer;;
-SHORT_INTEREST_ACTIONS;AMF disclosed net short positions;;;
+PUBLIC_SHORT_DISCLOSURE_PROXY_ACTIONS;AMF open public net-short disclosures;;;
 ACTION_MORNINGSTAR;Morningstar attributed/authorized snapshot;Morningstar official worklist;;
 ACTION_TECHNICAL_POSTSELECTION;Investing weekly/monthly;Internal OHLCV technicals;;
 ETF_COSTS_AUM;yfinance/Issuer structure;ABC Bourse declared not wired;Boursorama;Issuer/KID
