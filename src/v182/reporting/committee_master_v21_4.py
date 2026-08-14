@@ -5,6 +5,7 @@ import json
 import pandas as pd
 
 from v182.decision.committee_master import load_registry, decisions_from_scores, sector_ranking
+from v182.io.frames import is_missing
 from v182.reporting import committee_master_gold_v1_1
 from v182.sources.postselection_market_sheets import enrich_postselection
 
@@ -55,7 +56,8 @@ def _attach_cdc_context(decisions: pd.DataFrame, actions: pd.DataFrame) -> pd.Da
     context=actions[["isin",*available]].drop_duplicates("isin").copy()
     out=decisions.merge(context,on="isin",how="left",validate="many_to_one",sort=False)
     action_mask=out["asset_class"].astype(str)=="ACTION"
-    observed=out.loc[action_mask,available].notna().any(axis=1)
+    present=out.loc[action_mask,available].apply(lambda col: ~col.map(is_missing))
+    observed=present.any(axis=1)
     out["cdc_decision_influence"]=0.0
     out["cdc_data_status"]="NOT_APPLICABLE"
     out.loc[action_mask,"cdc_data_status"]="MISSING"
