@@ -53,10 +53,14 @@ jobs:
           assert master["cdc"]["finnhub_earnings_calendar"]["same_fiscal_period_revision_only"] is True
           assert master["cdc"]["finnhub_earnings_calendar"]["symbol_resolution"] == "EXACT_SUFFIX_FIRST_UNIQUE_ALIAS_ONLY"
           assert master["cdc"]["finnhub_earnings_calendar"]["ambiguous_alias_policy"] == "QUARANTINE"
-          assert master["cdc"]["amf_short_positions"]["semantic"] == "OPEN_PUBLIC_DISCLOSURE_PROXY_NOT_TRUE_CURRENT_SHORT_INTEREST"
-          assert master["cdc"]["amf_short_positions"]["publication_end_required"] is True
-          assert master["cdc"]["amf_short_positions"]["latest_active_record_per_holder"] is True
-          assert master["cdc"]["amf_short_positions"]["absence_policy"] == "MISSING_NOT_ZERO"
+          amf=master["cdc"]["amf_short_positions"]
+          assert amf["semantic"] == "OPEN_PUBLIC_DISCLOSURE_PROXY_NOT_TRUE_CURRENT_SHORT_INTEREST"
+          assert amf["publication_start_required"] is True
+          assert amf["publication_end_required"] is True
+          assert amf["latest_active_record_per_holder"] is True
+          assert amf["observation_as_of_policy"] == "LATEST_RETAINED_PUBLIC_DISCLOSURE_DATE"
+          assert amf["freshness_age_field"] == "amf_public_short_days_since_latest_publication"
+          assert amf["absence_policy"] == "MISSING_NOT_ZERO"
           assert master["postselection_market_sheets"]["decision_influence"] == 0.0
           assert master["postselection_market_sheets"]["positive_confirmation_can_create_buy"] is False
           assert master["postselection_market_sheets"]["investing"]["timeframes"] == ["WEEKLY","MONTHLY"]
@@ -65,8 +69,11 @@ jobs:
           assert master["boursorama_etf_category_rank"]["rank_format"] == "RAW_INTEGER_LOWER_IS_BETTER"
           assert master["boursorama_etf_category_rank"]["percentile_fabrication_forbidden"] is True
           assert integrity["etf"]["boursorama_category_rank_v21_6_3"]["percentile_fabrication_forbidden"] is True
-          assert integrity["actions"]["cdc_committee_visibility_v21_6_3"]["decision_influence"] == 0.0
-          assert integrity["actions"]["cdc_committee_visibility_v21_6_3"]["amf_short_semantics"] == "OPEN_PUBLIC_DISCLOSURE_PROXY_NOT_TRUE_CURRENT_SHORT_INTEREST"
+          cdc_visibility=integrity["actions"]["cdc_committee_visibility_v21_6_3"]
+          assert cdc_visibility["decision_influence"] == 0.0
+          assert cdc_visibility["amf_short_semantics"] == "OPEN_PUBLIC_DISCLOSURE_PROXY_NOT_TRUE_CURRENT_SHORT_INTEREST"
+          assert cdc_visibility["amf_observation_as_of"] == "LATEST_RETAINED_PUBLIC_DISCLOSURE_DATE"
+          assert cdc_visibility["amf_freshness_age_field"] == "amf_public_short_days_since_latest_publication"
           assert integrity["actions"]["cdc_identity_governance_v21_6_3"]["ambiguous_alias_policy"] == "QUARANTINE"
           assert a["criteria_count"] == 633 == integrity["actions"]["criteria_count"]
           assert integrity["actions"]["universe_count"] == 1829
@@ -104,7 +111,7 @@ jobs:
           assert mm["entry_execution_rule"] == "NEXT_RUN_OBSERVED_PRICE_AFTER_SIGNAL_DATE"
           assert mm["single_position_per_isin"] is True
           assert mm["max_instrument_exposure_pct"] <= mm["max_position_pct"]
-          print("V21.6.3 integrity OK: 1829/633 Actions, 102/268 ETF, CDC identity/proxy semantics, postselection, exact TCT, Gold 102/11, bias-safe virtual book")
+          print("V21.6.3 integrity OK: 1829/633 Actions, 102/268 ETF, CDC identity/proxy freshness semantics, postselection, exact TCT, Gold 102/11, bias-safe virtual book")
           PY
       - name: Full pytest suite
         run: pytest -q
