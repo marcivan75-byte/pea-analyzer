@@ -110,11 +110,18 @@ jobs:
           assert master["boursorama_etf_category_rank"]["percentile_fabrication_forbidden"] is True
           assert master["cdc"]["finnhub_earnings_calendar"]["ambiguous_alias_policy"] == "QUARANTINE"
           assert master["cdc"]["finnhub_earnings_calendar"]["symbol_resolution"] == "EXACT_SUFFIX_FIRST_UNIQUE_ALIAS_ONLY"
-          assert master["cdc"]["amf_short_positions"]["semantic"] == "OPEN_PUBLIC_DISCLOSURE_PROXY_NOT_TRUE_CURRENT_SHORT_INTEREST"
-          assert master["cdc"]["amf_short_positions"]["publication_end_required"] is True
-          assert master["cdc"]["amf_short_positions"]["latest_active_record_per_holder"] is True
-          assert master["cdc"]["amf_short_positions"]["absence_policy"] == "MISSING_NOT_ZERO"
-          assert integrity["actions"]["cdc_committee_visibility_v21_6_3"]["decision_influence"] == 0.0
+          amf=master["cdc"]["amf_short_positions"]
+          assert amf["semantic"] == "OPEN_PUBLIC_DISCLOSURE_PROXY_NOT_TRUE_CURRENT_SHORT_INTEREST"
+          assert amf["publication_start_required"] is True
+          assert amf["publication_end_required"] is True
+          assert amf["latest_active_record_per_holder"] is True
+          assert amf["observation_as_of_policy"] == "LATEST_RETAINED_PUBLIC_DISCLOSURE_DATE"
+          assert amf["freshness_age_field"] == "amf_public_short_days_since_latest_publication"
+          assert amf["absence_policy"] == "MISSING_NOT_ZERO"
+          cdc_visibility=integrity["actions"]["cdc_committee_visibility_v21_6_3"]
+          assert cdc_visibility["decision_influence"] == 0.0
+          assert cdc_visibility["amf_observation_as_of"] == "LATEST_RETAINED_PUBLIC_DISCLOSURE_DATE"
+          assert cdc_visibility["amf_freshness_age_field"] == "amf_public_short_days_since_latest_publication"
           assert integrity["actions"]["cdc_identity_governance_v21_6_3"]["ambiguous_alias_policy"] == "QUARANTINE"
           assert a["criteria_count"] == 633 == integrity["actions"]["criteria_count"]
           assert integrity["actions"]["universe_count"] == 1829
@@ -142,7 +149,7 @@ jobs:
           assert g["governance"]["contribution_blocks"] == 11
           assert mm["entry_execution_rule"] == "NEXT_RUN_OBSERVED_PRICE_AFTER_SIGNAL_DATE"
           assert mm["single_position_per_isin"] is True
-          print(f"V21.6.3 integrity OK: Actions 1829/633 (materialized identity-only={materialized.materialized_missing_count}), ETF 102/268, CDC identity/proxy semantics, postselection, TCT, Gold, bias-safe virtual book")
+          print(f"V21.6.3 integrity OK: Actions 1829/633 (materialized identity-only={materialized.materialized_missing_count}), ETF 102/268, CDC identity/proxy freshness semantics, postselection, TCT, Gold, bias-safe virtual book")
           PY
       - name: Publish Action identity hydration worklist
         run: python -m v182.audit.identity_hydration
