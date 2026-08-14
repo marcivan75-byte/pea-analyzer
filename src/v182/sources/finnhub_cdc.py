@@ -16,26 +16,47 @@ def _num(value) -> float | None:
         return None
 
 
-def _symbol_aliases(value: object) -> set[str]:
+def _symbol_aliases(value: object) -> list[str]:
     raw = str(value or "").strip().upper()
     if not raw or raw in {"NAN", "NONE"}:
-        return set()
-    aliases = {raw}
+        return []
+    aliases = [raw]
     if "." in raw:
-        aliases.add(raw.split(".", 1)[0])
-    return aliases
+        aliases.append(raw.split(".", 1)[0])
+    return list(dict.fromkeys(aliases))
 
 
-def _action_symbol_map(actions: pd.DataFrame) -> dict[str, str]:
-    mapping: dict[str, str] = {}
+def _action_symbol_index(actions: pd.DataFrame) -> dict[str, set[str]]:
+    """Index every observed symbol alias to all matching ISINs.
+
+    An alias is intentionally not collapsed to a single first-seen ISIN. The
+    PEA universe spans several European venues and bare symbols can collide.
+    Resolution is allowed only when the selected alias maps to exactly one ISIN.
+    """
+    mapping: dict[str, set[str]] = {}
     for _, row in actions.iterrows():
         isin = str(row.get("isin", "") or "").strip()
         if not isin:
             continue
         for field in ("finnhub_ticker", "yahoo_ticker", "ticker", "symbol"):
             for alias in _symbol_aliases(row.get(field)):
-                mapping.setdefault(alias, isin)
+                mapping.setdefault(alias, set()).add(isin)
     return mapping
+
+
+def _resolve_isin(mapping: dict[str, set[str]], symbol: str) -> tuple[str | None, str | None]:
+    aliases = _symbol_aliases(symbol)
+    if not aliases:
+        return None, None
+    # Exact symbol, including exchange suffix, always has priority over a bare
+    # root alias. A bare alias is accepted only when unique in the full universe.
+    for alias in aliases:
+        candidates = mapping.get(alias, set())
+        if len(candidates) == 1:
+            return next(iter(candidates)), None
+        if len(candidates) > 1:
+            return None, f"AMBIGUOUS_SYMBOL_ALIAS:{alias}"
+    return None, None
 
 
 def _history_frame(path: Path) -> pd.DataFrame:
@@ -77,11 +98,12 @@ def build_calendar_observations(
 
     Missing calendar rows stay missing. A first observation cannot manufacture a
     revision because there is no prior same-fiscal-period snapshot to compare.
+    Ambiguous symbol aliases are quarantined rather than assigned by row order.
     """
     now = observed_at or datetime.now(timezone.utc)
     observed_iso = now.isoformat()
     as_of = now.date().isoformat()
-    mapping = _action_symbol_map(actions)
+    mapping = _action_symbol_index(actions)
     history_path = Path(history_path)
     history = _history_frame(history_path)
     matched: list[dict] = []
@@ -90,7 +112,10 @@ def build_calendar_observations(
 
     for item in calendar_rows:
         symbol = str(item.get("symbol", "") or "").strip().upper()
-        isin = next((mapping[a] for a in _symbol_aliases(symbol) if a in mapping), None)
+        isin, resolution_error = _resolve_isin(mapping, symbol)
+        if resolution_error:
+            failures.append({"source": "Finnhub", "symbol": symbol, "reason": resolution_error})
+            continue
         if not isin:
             continue
         event_date = str(item.get("date", "") or "")[:10]
