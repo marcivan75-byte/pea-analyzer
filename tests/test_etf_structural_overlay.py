@@ -93,3 +93,25 @@ def test_short_risk_inverts_quality_and_observed_sri_malus():
     assert out["structural_adjustment"] == 0.0
     assert out["committee_score"] == 74.0
     assert out["decision"] == "WATCH_SHORT_RISK"
+
+
+def test_boursorama_raw_rank_is_visible_but_has_exactly_zero_decision_influence():
+    decisions=pd.DataFrame([{
+        "asset_class":"ETF","horizon":"MT","isin":"ETF1","score":80.0,
+        "decision":"WATCH","status":"SCORABLE","notes":"",
+        "backtest_attribution":"90.91 core only"
+    }])
+    master=pd.DataFrame([{
+        "isin":"ETF1","morningstar_rating":5,"risk_indicator":1,
+        "boursorama_category_name":"Actions France Grandes Cap.",
+        "boursorama_category_rank_latest":3,
+        "boursorama_category_rank_run_improvement":2,
+        "boursorama_category_rank_annual_improvement":5,
+    }])
+    out=apply_etf_structural_overlay(decisions,master,_registry()).iloc[0]
+    assert out["committee_score"] == 80.0
+    assert out["decision"] == "WATCH"
+    assert out["boursorama_category_rank_latest"] == 3
+    assert out["boursorama_category_rank_confirmation"] == "TOP10_STABLE_OR_IMPROVING"
+    assert out["boursorama_rank_decision_influence"] == 0.0
+    assert out["backtest_attribution"] == "90.91 core only"
