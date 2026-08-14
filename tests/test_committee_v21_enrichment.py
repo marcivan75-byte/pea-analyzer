@@ -58,6 +58,8 @@ def test_cdc_context_is_visible_in_committee_without_mutating_score_or_decision(
         "next_earnings_date_fh":"2026-09-10",
         "eps_estimate_revision_pct_fh":8.5,
         "amf_public_short_disclosed_sum_pct":0.7,
+        "amf_public_short_latest_publication_date":"2026-08-13",
+        "amf_public_short_days_since_latest_publication":1,
         "amf_public_short_proxy_flag":1,
         "amf_public_short_not_true_current_interest_flag":1,
     }])
@@ -69,6 +71,8 @@ def test_cdc_context_is_visible_in_committee_without_mutating_score_or_decision(
     assert action["next_earnings_date_fh"]=="2026-09-10"
     assert action["eps_estimate_revision_pct_fh"]==8.5
     assert action["amf_public_short_disclosed_sum_pct"]==0.7
+    assert action["amf_public_short_latest_publication_date"]=="2026-08-13"
+    assert action["amf_public_short_days_since_latest_publication"]==1
     assert action["amf_public_short_not_true_current_interest_flag"]==1
     assert action["cdc_data_status"]=="AVAILABLE"
     assert action["cdc_decision_influence"]==0.0
