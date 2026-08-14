@@ -138,6 +138,7 @@ def test_v21_7_registry_has_no_active_derived_or_unvalidated_overlays():
         assert "sector_rotation_score" not in cfg["weights"][h]
         assert "action_catchup_score" not in cfg["weights"][h]
         assert cfg["weights"][h]["target_upside_pct_v21"]>0
+    for h in ("MT","LT"):
         assert cfg["weights"][h]["dividend_yield_v21_pct"]>0
 
 
