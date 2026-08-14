@@ -6,6 +6,7 @@ import pandas as pd
 
 from v182.io.frames import apply_observations, is_missing
 from v182.sources.yfinance_funds import collect_fund_structure
+from v182.sources.boursorama_etf import fetch_boursorama_etf_rankings
 
 ROOT=Path(__file__).resolve().parents[3]
 
@@ -54,12 +55,11 @@ def _changed(before,after)->bool:
 
 
 def run(root: Path=ROOT) -> dict:
-    """Enrich ETF structure through the same evidence/provenance merge as other observations.
+    """Enrich ETF structure and Boursorama category ranks before Committee scoring.
 
-    Runs after the main refresh and before Committee scoring. yfinance structural
-    fields are evidence C: they may fill missing cells but cannot silently replace
-    stronger retained evidence. Missing data remain missing and all merge attempts
-    enter the append-only provenance ledger.
+    Boursorama rank data is persisted as a shadow/confirmation layer. It is
+    visible to the Committee and its trend is historised, but it does not change
+    the exact V20.8.1 38-PIT MT score or its historical performance attribution.
     """
     outputs=root/"outputs"
     source=outputs/"V18.2_PEA_ETF_MASTER_ENRICHED.csv"
@@ -83,13 +83,25 @@ def run(root: Path=ROOT) -> dict:
     after=_snapshot(df,observations)
     changed_cells=sum(_changed(before.get(key),after.get(key)) for key in before)
 
+    rank_observations,rank_failures=fetch_boursorama_etf_rankings(
+        df,
+        root/"state"/"boursorama"/"ETF_CATEGORY_RANK_HISTORY.csv",
+    )
+    rank_before=_snapshot(df,rank_observations)
+    df,rank_quarantined=apply_observations(df,rank_observations)
+    rank_after=_snapshot(df,rank_observations)
+    rank_changed=sum(_changed(rank_before.get(key),rank_after.get(key)) for key in rank_before)
+
     df.to_csv(outputs/"V18.2_PEA_ETF_MASTER_ENRICHED.csv",sep=";",index=False,encoding="utf-8-sig")
     audit_dir=outputs/"audit"; audit_dir.mkdir(parents=True,exist_ok=True)
     gaps_dir=outputs/"gaps"; gaps_dir.mkdir(parents=True,exist_ok=True)
     merge_failures=[{**q,"source_stage":"PROVENANCE_MERGE"} for q in quarantined]
-    failures=collector_failures+merge_failures
-    if failures:
-        pd.DataFrame(failures).to_csv(gaps_dir/"V21_ETF_FUND_STRUCTURE_FAILURES.csv",sep=";",index=False,encoding="utf-8-sig")
+    rank_merge_failures=[{**q,"source_stage":"BOURSORAMA_PROVENANCE_MERGE"} for q in rank_quarantined]
+    failures=collector_failures+merge_failures+rank_failures+rank_merge_failures
+    if collector_failures or merge_failures:
+        pd.DataFrame(collector_failures+merge_failures).to_csv(gaps_dir/"V21_ETF_FUND_STRUCTURE_FAILURES.csv",sep=";",index=False,encoding="utf-8-sig")
+    if rank_failures or rank_merge_failures:
+        pd.DataFrame(rank_failures+rank_merge_failures).to_csv(gaps_dir/"V21_ETF_BOURSORAMA_RANK_FAILURES.csv",sep=";",index=False,encoding="utf-8-sig")
 
     coverage={}
     for field in ("diversification_direct_score","direct_sector_hhi","direct_top_holdings_concentration_pct","direct_holdings_count"):
@@ -97,6 +109,9 @@ def run(root: Path=ROOT) -> dict:
             coverage[field]=round(float((~df[field].apply(is_missing)).mean()*100.0),2)
         else:
             coverage[field]=0.0
+    rank_coverage=0.0
+    if "boursorama_category_rank_score_shadow" in df.columns:
+        rank_coverage=round(float((~df["boursorama_category_rank_score_shadow"].apply(is_missing)).mean()*100.0),2)
     payload={
         "status":"SUCCESS",
         "generated_at_utc":datetime.now(timezone.utc).isoformat(),
@@ -107,6 +122,11 @@ def run(root: Path=ROOT) -> dict:
         "changed_cells":int(changed_cells),
         "collector_failures":len(collector_failures),
         "merge_quarantined":len(quarantined),
+        "boursorama_rank_observations":len(rank_observations),
+        "boursorama_rank_changed_cells":int(rank_changed),
+        "boursorama_rank_failures":len(rank_failures),
+        "boursorama_rank_merge_quarantined":len(rank_quarantined),
+        "boursorama_rank_coverage_pct":rank_coverage,
         "failures":len(failures),
         "coverage_pct":coverage,
         "governance":{
@@ -117,6 +137,10 @@ def run(root: Path=ROOT) -> dict:
             "stronger_retained_evidence_cannot_be_silently_overwritten":True,
             "diversification_formula":"100*(1-direct_sector_hhi)",
             "top_holdings_concentration_kept_separate":True,
+            "boursorama_category_rank_status":"SHADOW_CONFIRMATION",
+            "boursorama_category_rank_decision_influence":0.0,
+            "boursorama_rank_history":"state/boursorama/ETF_CATEGORY_RANK_HISTORY.csv",
+            "boursorama_missing_rank_not_imputed":True,
         },
     }
     (audit_dir/"V21_ETF_FUND_STRUCTURE.json").write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding="utf-8")
