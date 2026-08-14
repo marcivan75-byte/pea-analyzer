@@ -23,28 +23,37 @@ def _value(observations:list[dict],field:str):
     return next(row["value"] for row in observations if row["field"]==field)
 
 
-def test_extract_category_ranks_requires_explicit_rank_fraction_near_period():
-    html="""
-    <div>1 mois - Classement catégorie : 10 / 100</div>
-    <div>1 an - Rang catégorie 3 sur 100</div>
-    <div>3 ans - Classement catégorie : 20 / 200</div>
+def _page(ranks: list[int]) -> str:
+    joined=" ".join(str(x) for x in ranks)
+    return f"""
+    <div>catégorie morningstar Actions France Grandes Cap.</div>
+    <div>PERFORMANCES ANNUELLES DES 5 DERNIÈRES ANNÉES</div>
+    <div>2021 2022 2023 2024 2025</div>
+    <div>Tracker +10% +11% +12% +13% +14%</div>
+    <div>Catégorie +9% +10% +11% +12% +13%</div>
+    <div>Rang {joined}</div>
+    <div>Calcul fin de mois au 31/07/2026</div>
+    <div>performance volatilité</div>
     """
-    ranks=extract_category_ranks(html)
-    assert ranks["1m"]["rank"]==10
-    assert ranks["1y"]["rank"]==3
-    assert ranks["3y"]["total"]==200
-    assert ranks["1y"]["score"]>ranks["1m"]["score"]
 
 
-def test_rank_history_produces_trend_only_from_previous_snapshot(tmp_path):
+def test_extract_category_ranks_keeps_real_raw_ranks_without_invented_percentile():
+    ranks=extract_category_ranks(_page([7,10,8,30,32]))
+    assert ranks=={"2021":7,"2022":10,"2023":8,"2024":30,"2025":32}
+
+
+def test_rank_history_produces_run_improvement_only_from_previous_snapshot(tmp_path):
     etfs=pd.DataFrame([{"isin":"LU0000000001","source_url":"https://www.boursorama.com/bourse/trackers/cours/1rTTEST/"}])
     history=tmp_path/"rank.csv"
-    req1=_Requests("<div>1 an Classement catégorie 50 / 100</div>")
+    req1=_Requests(_page([50,40,30,20,15]))
     obs1,fail1=fetch_boursorama_etf_rankings(etfs,history,requests_module=req1,observed_at=datetime(2026,8,14,tzinfo=timezone.utc),max_workers=1,delay_seconds=0)
     assert not fail1
-    assert not any(row["field"]=="boursorama_category_rank_trend_shadow" for row in obs1)
+    assert _value(obs1,"boursorama_category_rank_latest")==15
+    assert _value(obs1,"boursorama_category_rank_annual_improvement")==35
+    assert not any(row["field"]=="boursorama_category_rank_run_improvement" for row in obs1)
 
-    req2=_Requests("<div>1 an Classement catégorie 10 / 100</div>")
+    req2=_Requests(_page([50,40,30,20,10]))
     obs2,fail2=fetch_boursorama_etf_rankings(etfs,history,requests_module=req2,observed_at=datetime(2026,8,15,tzinfo=timezone.utc),max_workers=1,delay_seconds=0)
     assert not fail2
-    assert float(_value(obs2,"boursorama_category_rank_trend_shadow"))>0
+    assert _value(obs2,"boursorama_category_rank_latest")==10
+    assert _value(obs2,"boursorama_category_rank_run_improvement")==5
