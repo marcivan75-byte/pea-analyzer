@@ -1,0 +1,27 @@
+{
+  "version": "2026-08-14",
+  "purpose": "Audit trail for the single exceptional PIT/OOS attempt explicitly requested for 2026-08-14.",
+  "requested_once": true,
+  "attempted": true,
+  "attempt_commit": "d2dcd789927bf079b40249c1de73f437d50f83be",
+  "github_actions_run_id": 31787988793,
+  "github_actions_run_number": 27,
+  "result": "BLOCKED_BEFORE_RUNNER_START",
+  "runner_id": 0,
+  "steps_executed": 0,
+  "blocker": "GITHUB_BILLING_OR_SPENDING_LIMIT",
+  "boursorama_import_executed": false,
+  "pit_oos_executed": false,
+  "committee_executed": false,
+  "ci_test_suite_executed": false,
+  "future_default": "DISABLED",
+  "automatic_retry_authorized": false,
+  "retry_requires_new_explicit_user_authorization": true,
+  "final_holdout_opened": false,
+  "no_real_orders": true,
+  "notes": [
+    "The exceptional workflow is gated by an explicit branch/commit marker and an environment flag; ordinary runs cannot execute it.",
+    "No performance conclusion may be inferred from this blocked attempt.",
+    "Permanent improvements retained: Boursorama import monitoring and Android CI visibility."
+  ]
+}
