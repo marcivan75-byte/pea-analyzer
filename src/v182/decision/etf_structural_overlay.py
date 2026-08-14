@@ -78,26 +78,33 @@ def _normalize_long_base(decision: str, score: float, cfg: dict) -> str:
     return _long_decision(score,cfg)
 
 
-def apply_etf_structural_overlay(decisions: pd.DataFrame, etf_master: pd.DataFrame, registry: dict) -> pd.DataFrame:
-    """Apply the explicit ETF Committee bonus/malus layer after base scoring.
+def _rank_confirmation(score: float | None, trend: float | None) -> str:
+    if score is None:
+        return "MISSING"
+    if score >= 75 and (trend is None or trend >= 0):
+        return "FAVORABLE"
+    if score <= 25 or (trend is not None and trend <= -15):
+        return "UNFAVORABLE"
+    if trend is not None and abs(trend) >= 10:
+        return "IMPROVING" if trend > 0 else "DETERIORATING"
+    return "NEUTRAL"
 
-    Governance:
-    - Morningstar is a positive quality bonus.
-    - Risk indicator is an independent negative purchase adjustment.
-    - A positive bonus may improve the numeric Committee ranking but may NOT
-      promote a long decision above its base decision class by itself.
-    - A negative risk adjustment may downgrade a long decision.
-    - MT dynamic Top2/threshold selection is not recomputed: the 38-PIT core
-      remains the source of the historically validated selection.
-    - For SHORT risk, quality bonus reduces risk score and risk malus is inverted
-      into a positive short-risk contribution.
-    - TOP_DOWN is unchanged.
+
+def apply_etf_structural_overlay(decisions: pd.DataFrame, etf_master: pd.DataFrame, registry: dict) -> pd.DataFrame:
+    """Apply validated ETF bonus/malus and expose Boursorama rank in shadow mode.
+
+    Morningstar/risk keep their existing Committee overlay rules. Boursorama
+    category rank and rank evolution are copied to the Committee only as
+    confirmation fields: decision influence is exactly zero, and the exact
+    V20.8.1 38-PIT MT selection remains the source of historical attribution.
     """
     out=decisions.copy()
     for col,default in (
         ("base_score",pd.NA),("morningstar_bonus",0.0),("risk_malus",0.0),
         ("structural_adjustment",0.0),("committee_score",pd.NA),
         ("base_decision",pd.NA),("structural_overlay_status","NOT_APPLICABLE"),
+        ("boursorama_category_rank_score_shadow",pd.NA),("boursorama_category_rank_trend_shadow",pd.NA),
+        ("boursorama_category_rank_confirmation","NOT_APPLICABLE"),("boursorama_rank_decision_influence",0.0),
     ):
         if col not in out.columns:
             out[col]=default
@@ -122,6 +129,15 @@ def apply_etf_structural_overlay(decisions: pd.DataFrame, etf_master: pd.DataFra
         mrow=master.loc[isin]
         if isinstance(mrow,pd.DataFrame):
             mrow=mrow.iloc[0]
+        rank_score=_number(mrow.get("boursorama_category_rank_score_shadow"))
+        rank_trend=_number(mrow.get("boursorama_category_rank_trend_shadow"))
+        if rank_score is not None:
+            out.at[idx,"boursorama_category_rank_score_shadow"]=round(rank_score,4)
+        if rank_trend is not None:
+            out.at[idx,"boursorama_category_rank_trend_shadow"]=round(rank_trend,4)
+        out.at[idx,"boursorama_category_rank_confirmation"]=_rank_confirmation(rank_score,rank_trend)
+        out.at[idx,"boursorama_rank_decision_influence"]=0.0
+
         try:
             base=float(row.get("score"))
         except (TypeError,ValueError):
@@ -146,7 +162,6 @@ def apply_etf_structural_overlay(decisions: pd.DataFrame, etf_master: pd.DataFra
         elif horizon in {"CT","LT"}:
             normalized=_normalize_long_base(base_decision,base,cfg)
             candidate=_long_decision(committee,cfg)
-            # Positive quality bonus cannot promote; negative risk can downgrade.
             if _LONG_ORDER[candidate] < _LONG_ORDER[normalized]:
                 final_decision=candidate
             else:
@@ -170,8 +185,9 @@ def apply_etf_structural_overlay(decisions: pd.DataFrame, etf_master: pd.DataFra
         data_bits=[]
         if stars is not None: data_bits.append(f"MORNINGSTAR_{stars}STAR")
         if risk is not None: data_bits.append(f"RISK_{risk}_OF_7")
+        if rank_score is not None: data_bits.append("BOURSORAMA_RANK_SHADOW")
         out.at[idx,"structural_overlay_status"]="APPLIED:"+",".join(data_bits) if data_bits else "NO_RATING_OR_RISK_DATA"
         note=str(out.at[idx,"notes"] if pd.notna(out.at[idx,"notes"]) else "")
-        suffix="ETF Committee structural overlay applied after base score; positive Morningstar bonus cannot create a BUY; MT core selection unchanged."
+        suffix="ETF Committee overlay applied; Morningstar/risk retain existing rules; Boursorama category rank is shadow-only with zero decision influence; MT core selection unchanged."
         out.at[idx,"notes"]=(note+" | "+suffix).strip(" |")
     return out
