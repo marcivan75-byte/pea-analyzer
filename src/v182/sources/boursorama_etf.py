@@ -8,6 +8,7 @@ import re
 import pandas as pd
 from bs4 import BeautifulSoup
 
+from v182.sources.boursorama_resolver import resolve_boursorama_url
 from v182.sources.rate_limit import StartRateLimiter
 
 PERIODS = {
@@ -63,21 +64,29 @@ def _candidate_urls(source_url: str) -> list[str]:
     if "boursorama.com" not in base:
         return []
     urls = [base]
-    for replacement in ("/performances/", "/caracteristiques/"):
-        if "/cours/" in base:
-            urls.append(base.replace("/cours/", replacement))
+    if "/bourse/trackers/cours/" in base:
+        urls.extend([
+            base.replace("/bourse/trackers/cours/", "/bourse/trackers/performances/", 1),
+            base.replace("/bourse/trackers/cours/", "/bourse/trackers/caracteristiques/", 1),
+        ])
+    elif "/cours/" in base:
+        urls.extend([
+            base.replace("/cours/", "/performances/", 1),
+            base.replace("/cours/", "/caracteristiques/", 1),
+        ])
     return list(dict.fromkeys(urls))
 
 
 def _fetch_one(row: pd.Series, requests, limiter: StartRateLimiter) -> tuple[str, dict[str, dict], str | None]:
     isin = str(row.get("isin", "") or "").strip()
-    urls = _candidate_urls(str(row.get("source_url", "") or ""))
-    if not urls:
-        return isin, {}, "BOURSORAMA_URL_MISSING"
     headers = {
         "User-Agent": "Mozilla/5.0 (compatible; PEA-Analyzer/21.6.3; +data-quality)",
         "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.5",
     }
+    resolved = resolve_boursorama_url(row, requests, limiter, headers)
+    urls = _candidate_urls(resolved or "")
+    if not urls:
+        return isin, {}, "BOURSORAMA_URL_NOT_RESOLVED"
     last_reason = "RANK_NOT_FOUND"
     for url in urls:
         try:
@@ -121,11 +130,9 @@ def fetch_boursorama_etf_rankings(
 
     requests = requests_module or requests_default
     now = observed_at or datetime.now(timezone.utc)
-    candidates = etfs.loc[
-        etfs.get("source_url", pd.Series("", index=etfs.index)).astype(str).str.contains("boursorama.com", case=False, na=False)
-    ].copy()
+    candidates = etfs.drop_duplicates("isin").copy() if "isin" in etfs.columns else pd.DataFrame()
     if candidates.empty:
-        return [], [{"source": "Boursorama", "reason": "NO_ETF_BOURSORAMA_URLS"}]
+        return [], [{"source": "Boursorama", "reason": "NO_ETF_CANDIDATES"}]
 
     limiter = StartRateLimiter(delay_seconds)
     results: dict[str, dict[str, dict]] = {}
