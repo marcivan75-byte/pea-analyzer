@@ -57,8 +57,9 @@ def test_cdc_context_is_visible_in_committee_without_mutating_score_or_decision(
         "isin":"FR1",
         "next_earnings_date_fh":"2026-09-10",
         "eps_estimate_revision_pct_fh":8.5,
-        "amf_short_position_pct":0.7,
-        "amf_short_disclosed_flag":1,
+        "amf_public_short_disclosed_sum_pct":0.7,
+        "amf_public_short_proxy_flag":1,
+        "amf_public_short_not_true_current_interest_flag":1,
     }])
     out=_attach_cdc_context(decisions,actions)
     assert list(out["score"])==[81.0,85.0]
@@ -67,7 +68,8 @@ def test_cdc_context_is_visible_in_committee_without_mutating_score_or_decision(
     etf=out.iloc[1]
     assert action["next_earnings_date_fh"]=="2026-09-10"
     assert action["eps_estimate_revision_pct_fh"]==8.5
-    assert action["amf_short_position_pct"]==0.7
+    assert action["amf_public_short_disclosed_sum_pct"]==0.7
+    assert action["amf_public_short_not_true_current_interest_flag"]==1
     assert action["cdc_data_status"]=="AVAILABLE"
     assert action["cdc_decision_influence"]==0.0
     assert etf["cdc_data_status"]=="NOT_APPLICABLE"
