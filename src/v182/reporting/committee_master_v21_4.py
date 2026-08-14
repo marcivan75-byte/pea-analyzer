@@ -32,7 +32,6 @@ def _key(frame:pd.DataFrame)->pd.Series:
 
 
 def _postselection_isins(decisions: pd.DataFrame) -> set[str]:
-    """Use only long preselected Action candidates for costly external sheet enrichment."""
     mask=(
         (decisions["asset_class"].astype(str)=="ACTION")
         & decisions["horizon"].astype(str).isin(["CT","MT","LT"])
@@ -42,11 +41,6 @@ def _postselection_isins(decisions: pd.DataFrame) -> set[str]:
 
 
 def _attach_cdc_context(decisions: pd.DataFrame, actions: pd.DataFrame) -> pd.DataFrame:
-    """Attach observed CDC evidence to Action Committee rows without changing decisions.
-
-    The Action master is one row per ISIN. CDC fields remain raw observed context;
-    no score is derived here and the explicit influence column is fixed at zero.
-    """
     available=[field for field in CDC_FIELDS if field in actions.columns]
     if not available:
         out=decisions.copy()
@@ -68,13 +62,12 @@ def _attach_cdc_context(decisions: pd.DataFrame, actions: pd.DataFrame) -> pd.Da
 
 
 def run(root:Path=ROOT)->dict:
-    """Dual-track Action Committee plus V21.6.3 CDC/post-selection confirmations.
+    """Reference V21.0 decisions plus V21.7 study-hardened Action challenger.
 
-    The enriched V21.4 Action score is preserved and exported, but final Action
-    CT/MT/LT/SHORT/TOP_DOWN decisions use the frozen V21.0-weight reference until
-    the challenger completes dedicated PIT/OOS validation. CDC evidence is copied
-    to Committee rows with zero influence. Boursorama and Investing are fetched
-    only after BUY/WATCH preselection and cannot alter score or decision.
+    V21.7 incorporates the criterion-by-criterion audit: derived duplicate factors
+    no longer receive separate alpha weights and explicit family budgets are
+    retained for future two-stage optimisation. Final Action decisions remain
+    frozen on V21.0 until dedicated PIT/OOS promotion.
     """
     summary=committee_master_gold_v1_1.run(root)
     outdir=root/"outputs"/"committee_master"; decisions_path=outdir/"COMMITTEE_DECISIONS.csv"
@@ -109,10 +102,12 @@ def run(root:Path=ROOT)->dict:
         decisions.at[idx,"action_score_delta_challenger_vs_reference"]=(challenger_score-float(ref.get("score"))) if pd.notna(challenger_score) and pd.notna(ref.get("score")) else None
         decisions.at[idx,"score"]=ref.get("score"); decisions.at[idx,"coverage_pct"]=ref.get("coverage_pct"); decisions.at[idx,"status"]=ref.get("status"); decisions.at[idx,"decision"]=ref.get("decision"); decisions.at[idx,"active_criteria"]=ref.get("active_criteria"); decisions.at[idx,"available_criteria"]=ref.get("available_criteria"); decisions.at[idx,"score_source"]="V21.0_REFERENCE_WEIGHTS_ON_1829_UNIVERSE"
         note=str(decisions.at[idx,"notes"] if "notes" in decisions.columns and pd.notna(decisions.at[idx,"notes"]) else "")
-        decisions.at[idx,"notes"]=(note+" | FINAL ACTION DECISION uses frozen V21.0 reference weights; V21.4 enriched score and 52w/rotation overlays are challenger-only pending PIT/OOS validation.").strip(" |")
+        decisions.at[idx,"notes"]=(note+" | FINAL ACTION DECISION uses frozen V21.0 reference weights; V21.7 study-hardened score is challenger-only pending PIT/OOS validation.").strip(" |")
         rows.append({"key":key,"isin":row.get("isin"),"name":row.get("name"),"sector":row.get("sector"),"horizon":row.get("horizon"),"reference_score":ref.get("score"),"reference_coverage_pct":ref.get("coverage_pct"),"reference_decision":ref.get("decision"),"challenger_score":challenger_score,"challenger_coverage_pct":challenger_cov,"challenger_decision":row.get("decision"),"challenger_52w_score":row.get("action_52w_challenger_score"),"challenger_52w_decision":row.get("action_52w_challenger_decision"),"delta_score":(challenger_score-float(ref.get("score"))) if pd.notna(challenger_score) and pd.notna(ref.get("score")) else None})
 
-    comparison=pd.DataFrame(rows); comparison.to_csv(outdir/"ACTION_REFERENCE_VS_CHALLENGER_V21_4.csv",sep=";",index=False,encoding="utf-8-sig")
+    comparison=pd.DataFrame(rows)
+    comparison.to_csv(outdir/"ACTION_REFERENCE_VS_CHALLENGER_V21_7.csv",sep=";",index=False,encoding="utf-8-sig")
+    comparison.to_csv(outdir/"ACTION_REFERENCE_VS_CHALLENGER_V21_4.csv",sep=";",index=False,encoding="utf-8-sig")
 
     score_guard=decisions["score"].copy(); decision_guard=decisions["decision"].copy()
     decisions=_attach_cdc_context(decisions,actions)
@@ -142,7 +137,9 @@ def run(root:Path=ROOT)->dict:
     challenger_view.loc[mask,"coverage_pct"]=challenger_view.loc[mask,"action_challenger_coverage_pct"]
     challenger_view.loc[mask,"status"]=challenger_view.loc[mask,"action_challenger_status"]
     challenger_view.loc[mask,"decision"]=challenger_view.loc[mask,"action_challenger_decision"]
-    sector_ranking(challenger_view).to_csv(outdir/"SECTOR_RANKING_CHALLENGER_V21_4.csv",sep=";",index=False,encoding="utf-8-sig")
+    challenger_sector=sector_ranking(challenger_view)
+    challenger_sector.to_csv(outdir/"SECTOR_RANKING_CHALLENGER_V21_7.csv",sep=";",index=False,encoding="utf-8-sig")
+    challenger_sector.to_csv(outdir/"SECTOR_RANKING_CHALLENGER_V21_4.csv",sep=";",index=False,encoding="utf-8-sig")
 
     divergences=int((comparison["reference_decision"].astype(str)!=comparison["challenger_decision"].astype(str)).sum()) if not comparison.empty else 0
     ref_buy=int((comparison["reference_decision"].astype(str)=="BUY_CANDIDATE").sum()) if not comparison.empty else 0
@@ -150,26 +147,18 @@ def run(root:Path=ROOT)->dict:
     cdc_available=0
     if "cdc_data_status" in decisions.columns:
         cdc_available=int(decisions.loc[decisions["asset_class"].astype(str)=="ACTION","cdc_data_status"].eq("AVAILABLE").sum())
-    summary["action_dual_track"]={"status":"ACTIVE_REFERENCE_PLUS_SHADOW_CHALLENGER","reference_version":reference_reg.get("version"),"challenger_version":challenger_reg.get("version"),"final_decision_source":"REFERENCE","comparison_rows":int(len(comparison)),"decision_divergences":divergences,"reference_buy_count":ref_buy,"challenger_buy_count":chal_buy,"performance_attribution":"NONE_TO_V21_4_CHALLENGER_UNTIL_DEDICATED_PIT_OOS_BACKTEST"}
+    summary["action_dual_track"]={"status":"ACTIVE_REFERENCE_PLUS_STUDY_HARDENED_SHADOW_CHALLENGER","reference_version":reference_reg.get("version"),"challenger_version":challenger_reg.get("version"),"final_decision_source":"REFERENCE","comparison_rows":int(len(comparison)),"decision_divergences":divergences,"reference_buy_count":ref_buy,"challenger_buy_count":chal_buy,"family_budget_policy":challenger_reg.get("governance",{}).get("family_budget_policy"),"performance_attribution":"NONE_TO_V21_7_CHALLENGER_UNTIL_DEDICATED_PIT_OOS_BACKTEST"}
     summary["cdc_committee_context"]={"status":"ACTIVE_OBSERVED_CONTEXT","available_action_decision_rows":cdc_available,"fields":[field for field in CDC_FIELDS if field in actions.columns],"decision_influence":0.0,"score_mutation_forbidden":True,"decision_mutation_forbidden":True,"amf_short_semantics":"OPEN_PUBLIC_DISCLOSURE_PROXY_NOT_TRUE_CURRENT_SHORT_INTEREST","amf_observation_as_of":"LATEST_RETAINED_PUBLIC_DISCLOSURE_DATE","amf_staleness_fields":["amf_public_short_days_since_latest_publication","amf_public_short_max_days_since_retained_publication"]}
-    summary["postselection_market_sheets"]={
-        "status":"ACTIVE_SHADOW_CONFIRMATION",
-        "shortlisted_isins":len(shortlist),
-        "enriched_isins":int(len(postselection)),
-        "source_failures":int(len(postselection_failures)),
-        "decision_influence":0.0,
-        "investing_timeframes":["WEEKLY","MONTHLY"],
-        "investing_listing_resolution":"EXPLICIT_URL_OR_UNIQUE_IDENTITY_MATCH_NO_ARBITRARY_ADR_VENUE",
-        "signals":["STRONG_BUY","BUY","NEUTRAL","SELL","STRONG_SELL"],
-        "positive_confirmation_can_create_buy":False,
-    }
+    summary["postselection_market_sheets"]={"status":"ACTIVE_SHADOW_CONFIRMATION","shortlisted_isins":len(shortlist),"enriched_isins":int(len(postselection)),"source_failures":int(len(postselection_failures)),"decision_influence":0.0,"investing_timeframes":["WEEKLY","MONTHLY"],"investing_listing_resolution":"EXPLICIT_URL_OR_UNIQUE_IDENTITY_MATCH_NO_ARBITRARY_ADR_VENUE","signals":["STRONG_BUY","BUY","NEUTRAL","SELL","STRONG_SELL"],"positive_confirmation_can_create_buy":False}
     summary["status_counts"]=decisions.groupby(["asset_class","horizon","status"],dropna=False).size().reset_index(name="count").to_dict("records")
     summary["decision_counts"]=decisions.groupby(["asset_class","horizon","decision"],dropna=False).size().reset_index(name="count").to_dict("records")
-    summary.setdefault("outputs",{})["action_reference_vs_challenger"]="outputs/committee_master/ACTION_REFERENCE_VS_CHALLENGER_V21_4.csv"
-    summary["outputs"]["sector_ranking_challenger"]="outputs/committee_master/SECTOR_RANKING_CHALLENGER_V21_4.csv"
+    summary.setdefault("outputs",{})["action_reference_vs_challenger"]="outputs/committee_master/ACTION_REFERENCE_VS_CHALLENGER_V21_7.csv"
+    summary["outputs"]["action_reference_vs_challenger_legacy_alias"]="outputs/committee_master/ACTION_REFERENCE_VS_CHALLENGER_V21_4.csv"
+    summary["outputs"]["sector_ranking_challenger"]="outputs/committee_master/SECTOR_RANKING_CHALLENGER_V21_7.csv"
+    summary["outputs"]["sector_ranking_challenger_legacy_alias"]="outputs/committee_master/SECTOR_RANKING_CHALLENGER_V21_4.csv"
     summary["outputs"]["postselection_market_sheets"]="outputs/committee_master/POSTSELECTION_MARKET_SHEETS.csv"
-    summary.setdefault("notes",[]).append("Actions use V21.0 frozen weights as final reference decision; V21.4 enriched scores and unvalidated positive/negative 52w overlays are challenger-only until PIT/OOS validation.")
-    summary["notes"].append("V21.6.3 Finnhub earnings/EPS revisions and AMF open public-short-disclosure proxy fields are copied explicitly into Committee Action rows with zero score/decision influence. AMF disclosure data is dated by the latest retained public-disclosure date; both latest and oldest retained disclosure ages are visible, and the proxy is not labelled true current short interest.")
-    summary["notes"].append("V21.6.3 Boursorama/Investing Action enrichment runs only after BUY/WATCH preselection. Investing listing ambiguity is rejected rather than choosing an ADR/venue arbitrarily; weekly/monthly signals remain zero-influence until PIT/OOS validation.")
+    summary.setdefault("notes",[]).append("Actions use frozen V21.0 reference weights for final decisions. V21.7 is a study-hardened challenger: derived threshold scores are folded into canonical criteria, family budgets are explicit, and unvalidated overlays are zero-weight.")
+    summary["notes"].append("Finnhub earnings/EPS revisions and AMF open public-short-disclosure proxy fields are copied into Committee Action rows with zero score/decision influence.")
+    summary["notes"].append("Boursorama/Investing Action enrichment runs only after BUY/WATCH preselection and remains zero-influence until PIT/OOS validation.")
     (outdir/"SUMMARY.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2,default=str),encoding="utf-8")
     return summary
