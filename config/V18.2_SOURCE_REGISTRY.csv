@@ -6,8 +6,8 @@ SRC004;Boursorama ETF category ranking;PUBLIC_BEST_EFFORT;B;31;ETF;Morningstar c
 SRC005;Zonebourse Bulk;DECLARED_PUBLIC_NOT_WIRED;B;7;Actions;Declared consensus estimates and revisions fallback only;9
 SRC006;ABC Bourse Bulk;DECLARED_PUBLIC_NOT_WIRED;B;30;ETF;Declared TER AUM benchmark distribution theme fallback only;9
 SRC007;Issuer / KID / Factsheet;OFFICIAL_MANUAL_REFERENCE;A;90;Actions+ETF;Official structure and fundamentals snapshots;3
-SRC008;AMF public short disclosures;OFFICIAL_OPEN_DATA;A;1;Actions;Open public net-short disclosure proxy by ISIN; publication start/end required; latest active publication per holder; as_of uses latest retained disclosure date and freshness age is exported; explicitly not true current short interest; absence remains missing not zero;1
-SRC009;Finnhub;API;B;1;Actions;Full-universe consensus recommendations price targets earnings calendar and PIT EPS-estimate snapshots; exact exchange symbol priority and ambiguous bare aliases quarantined;2
+SRC008;AMF public short disclosures;OFFICIAL_OPEN_DATA;A;1;Actions;Open public net-short disclosure proxy by ISIN, publication start/end required, latest active publication per holder, as_of uses latest retained disclosure date, latest and oldest retained ages are exported, explicitly not true current short interest, absence remains missing not zero;1
+SRC009;Finnhub;API;B;1;Actions;Full-universe consensus recommendations price targets earnings calendar and PIT EPS-estimate snapshots, exact exchange symbol priority and ambiguous bare aliases quarantined;2
 SRC010;FRED;OFFICIAL_API;A;7;Actions+ETF;Macro Regime Score;2
 SRC011;EIA;DECLARED_OFFICIAL_API_NOT_WIRED;A;7;Actions+ETF;Declared Energy Transmission Score source only;9
 SRC012;GDELT;PUBLIC_API;C;1;Actions;Bulk news discovery and sentiment inputs;4
