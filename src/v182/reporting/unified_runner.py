@@ -72,7 +72,32 @@ def run(root:Path=ROOT)->dict:
     else:
         steps["performance"]=_skip_dependency("Requires SUCCESS current Committee; stale decisions are forbidden for virtual transactions.")
     outputs={
-        "decisions":"outputs/committee_master/COMMITTEE_DECISIONS.csv","postselection_market_sheets":"outputs/committee_master/POSTSELECTION_MARKET_SHEETS.csv","postselection_failures":"outputs/gaps/V21_6_3_POSTSELECTION_MARKET_SHEETS_FAILURES.csv","sector_ranking":"outputs/committee_master/SECTOR_RANKING.csv","sector_ranking_challenger":"outputs/committee_master/SECTOR_RANKING_CHALLENGER_V21_4.csv","action_reference_vs_challenger":"outputs/committee_master/ACTION_REFERENCE_VS_CHALLENGER_V21_4.csv","criteria_coverage":"outputs/committee_master/CRITERIA_COVERAGE.csv","criteria_study_audit":"outputs/audit/CRITERIA_STUDY_GOVERNANCE.json","effective_weights":"outputs/committee_master/EFFECTIVE_WEIGHTS_100.xlsx","tct_baseline":"outputs/committee_master/TCT_BASELINE_V24_1_8.csv","tct_shadow":"outputs/committee_master/TCT_SHADOW_V24_1_7.csv","collection_audit_latest":"outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx","cdc_audit":"outputs/audit/V21_6_3_CDC_REFRESH.json","eps_estimate_history":"state/finnhub/EPS_ESTIMATE_HISTORY.csv","boursorama_etf_rank_history":"state/boursorama/ETF_CATEGORY_RANK_HISTORY.csv","canonical_etf_rank_history":"state/boursorama/ETF_CANONICAL_CATEGORY_RANK_HISTORY.csv","provenance":"state/provenance/OBSERVATION_PROVENANCE.csv","sector_rotation":"outputs/V21_3_SECTOR_ROTATION.csv","performance_workbook":"outputs/performance/COMMITTEE_BUY_PERFORMANCE.xlsx","etf_mt_ranking":"outputs/etf_mt_v2081/V20.8.1_ETF_MT_RANKING.csv","etf_mt_summary":"outputs/etf_mt_v2081/V20.8.1_ETF_MT_SUMMARY.json","gold_decision":"outputs/gold_v1_1/GOLD_V1_1_DECISION.json","gold_criteria":"outputs/gold_v1_1/GOLD_V1_1_CRITERIA.csv","gold_sources":"outputs/gold_v1_1/GOLD_V1_1_SOURCE_STATUS.csv"
+        "decisions":"outputs/committee_master/COMMITTEE_DECISIONS.csv",
+        "postselection_market_sheets":"outputs/committee_master/POSTSELECTION_MARKET_SHEETS.csv",
+        "postselection_failures":"outputs/gaps/V21_6_3_POSTSELECTION_MARKET_SHEETS_FAILURES.csv",
+        "sector_ranking":"outputs/committee_master/SECTOR_RANKING.csv",
+        "sector_ranking_challenger":"outputs/committee_master/SECTOR_RANKING_CHALLENGER_V21_7.csv",
+        "sector_ranking_challenger_legacy_alias":"outputs/committee_master/SECTOR_RANKING_CHALLENGER_V21_4.csv",
+        "action_reference_vs_challenger":"outputs/committee_master/ACTION_REFERENCE_VS_CHALLENGER_V21_7.csv",
+        "action_reference_vs_challenger_legacy_alias":"outputs/committee_master/ACTION_REFERENCE_VS_CHALLENGER_V21_4.csv",
+        "criteria_coverage":"outputs/committee_master/CRITERIA_COVERAGE.csv",
+        "criteria_study_audit":"outputs/audit/CRITERIA_STUDY_GOVERNANCE.json",
+        "effective_weights":"outputs/committee_master/EFFECTIVE_WEIGHTS_100.xlsx",
+        "tct_baseline":"outputs/committee_master/TCT_BASELINE_V24_1_8.csv",
+        "tct_shadow":"outputs/committee_master/TCT_SHADOW_V24_1_7.csv",
+        "collection_audit_latest":"outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx",
+        "cdc_audit":"outputs/audit/V21_6_3_CDC_REFRESH.json",
+        "eps_estimate_history":"state/finnhub/EPS_ESTIMATE_HISTORY.csv",
+        "boursorama_etf_rank_history":"state/boursorama/ETF_CATEGORY_RANK_HISTORY.csv",
+        "canonical_etf_rank_history":"state/boursorama/ETF_CANONICAL_CATEGORY_RANK_HISTORY.csv",
+        "provenance":"state/provenance/OBSERVATION_PROVENANCE.csv",
+        "sector_rotation":"outputs/V21_3_SECTOR_ROTATION.csv",
+        "performance_workbook":"outputs/performance/COMMITTEE_BUY_PERFORMANCE.xlsx",
+        "etf_mt_ranking":"outputs/etf_mt_v2081/V20.8.1_ETF_MT_RANKING.csv",
+        "etf_mt_summary":"outputs/etf_mt_v2081/V20.8.1_ETF_MT_SUMMARY.json",
+        "gold_decision":"outputs/gold_v1_1/GOLD_V1_1_DECISION.json",
+        "gold_criteria":"outputs/gold_v1_1/GOLD_V1_1_CRITERIA.csv",
+        "gold_sources":"outputs/gold_v1_1/GOLD_V1_1_SOURCE_STATUS.csv"
     }
     existing={k:v for k,v in outputs.items() if (root/v).exists()}; failed=[k for k,v in steps.items() if v["status"]=="FAILED"]; skipped=[k for k,v in steps.items() if v["status"].startswith("SKIPPED")]; overall="SUCCESS" if not failed and not skipped else "PARTIAL_SUCCESS"
     decision_tracks={
