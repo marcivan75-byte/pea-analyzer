@@ -35,6 +35,16 @@ def test_extract_etf_url_accepts_tracker_quote_route():
     assert url=="https://www.boursorama.com/bourse/trackers/cours/1rTCAC/"
 
 
+def test_unique_unscored_quote_is_accepted_only_for_explicit_isin_search():
+    html='<a href="/cours/1rAASML/">Voir le cours</a>'
+    assert extract_boursorama_instrument_url(
+        html, isin="NL0010273215", ticker="ASML.AS", name="ASML", allow_single_unscored=True
+    )=="https://www.boursorama.com/cours/1rAASML/"
+    assert extract_boursorama_instrument_url(
+        html, isin="NL0010273215", ticker="ASML.AS", name="ASML", allow_single_unscored=False
+    ) is None
+
+
 def test_resolver_queries_isin_first_and_keeps_explicit_url_priority():
     requests=_Requests('<div>NL0011821202 INGA <a href="/cours/1rAINGA/">ING GROUP</a></div>')
     row={"isin":"NL0011821202","yahoo_ticker":"INGA.AS","name":"ING GROUP"}
