@@ -1,0 +1,165 @@
+{
+  "version": "V21.6.3_CRITERIA_STUDY_2026_08_13",
+  "source": {
+    "file": "AUDIT_CRITERE_PAR_CRITERE_PEA_ACTIONS_ETF_2026-08-13-2.xlsx",
+    "sha256": "311a147399acd3f16540d32b6904aaa747b49c3a29cb99adfe8a6eadde0d72c6",
+    "audit_date": "2026-08-13"
+  },
+  "scope": {
+    "actions_referential_criteria": 633,
+    "etf_referential_criteria": 268,
+    "actions_decision_candidates_to_optimize": 201,
+    "etf_decision_candidates_to_optimize": 62,
+    "actions_alias_source_fallback": 33,
+    "etf_alias_source_fallback": 17,
+    "actions_gates_metadata": 174,
+    "etf_gates_metadata": 90,
+    "actions_derived_reporting_no_weight": 225,
+    "etf_derived_reporting_no_weight": 99
+  },
+  "master_principles": {
+    "preserve_all_referential_fields": true,
+    "zero_weight_does_not_mean_delete": true,
+    "baseline_reference_frozen_during_challenger_tests": true,
+    "aliases_are_sources_or_fallbacks_not_independent_factors": true,
+    "gates_metadata_never_receive_alpha_weight": true,
+    "derived_reporting_components_never_receive_separate_alpha_weight": true,
+    "raw_levels_require_ratio_log_distance_or_cross_sectional_percentile_before_weighting": true,
+    "family_budget_is_optimized_before_intra_family_weights": true,
+    "dense_families_must_not_win_by_column_count": true,
+    "overlays_are_bounded_and_their_marginal_uplift_is_measured_separately": true,
+    "walk_forward_pit_oos_required_for_promotion": true,
+    "costs_turnover_expectancy_profit_factor_drawdown_and_fold_stability_required": true,
+    "holdout_used_for_tuning_becomes_diagnostic_not_certification": true,
+    "t1_t2_scope": "ACTION_TCT_ONLY"
+  },
+  "weighting_layers": {
+    "ALPHA_BASE": ["ALPHA_WEIGHT", "NORMALISER_AVANT_PONDERATION"],
+    "STRUCTURAL_BOUNDED": ["ALPHA_OR_STRUCTURAL_WEIGHT", "STRUCTURAL_FACTOR", "BONUS_MALUS_OR_GATE"],
+    "OVERLAY_CONTEXT": ["OVERLAY_CONTEXT", "CORRELATED_INPUT"],
+    "NO_SEPARATE_WEIGHT": ["ALIAS_SOURCE_FALLBACK", "GATE_OR_METADATA", "METADATA_OR_GATE", "METADATA_OR_MAPPING", "DERIVE_REPORTING_NO_WEIGHT", "DERIVED_OVERLAY_NO_SEPARATE_WEIGHT"]
+  },
+  "family_optimization": {
+    "method": "FAMILY_BUDGET_THEN_INTRA_FAMILY",
+    "fixed_numeric_caps_before_backtest": false,
+    "current_reference_family_budget_must_be_reported": true,
+    "challenger_family_budget_must_sum_to_one_within_base_alpha_layer": true,
+    "correlated_inputs_require_family_cap": true,
+    "high_density_families": ["ANALYST_CONSENSUS", "FUNDAMENTALS", "VALUATION", "MARKET_TECHNICAL"],
+    "actions_family_counts": {
+      "ANALYST_CONSENSUS": {"total":115,"decision_candidates":61},
+      "CATALYST_NEWS": {"total":22,"decision_candidates":16},
+      "DIVIDEND_INCOME": {"total":14,"decision_candidates":4},
+      "FUNDAMENTALS": {"total":60,"decision_candidates":18},
+      "GOVERNANCE": {"total":17,"decision_candidates":0},
+      "IDENTITY": {"total":24,"decision_candidates":0},
+      "MARKET_TECHNICAL": {"total":45,"decision_candidates":42},
+      "PROVENANCE_OTHER": {"total":113,"decision_candidates":2},
+      "SCORING_DECISION": {"total":150,"decision_candidates":0},
+      "SMART_MONEY_INSIDERS": {"total":30,"decision_candidates":27},
+      "TOP_DOWN": {"total":22,"decision_candidates":18},
+      "VALUATION": {"total":21,"decision_candidates":13}
+    },
+    "etf_family_counts": {
+      "DECISION": {"total":23,"decision_candidates":0},
+      "ETF_STRUCTURE": {"total":37,"decision_candidates":15},
+      "FUNNEL_MACRO_NEWS": {"total":13,"decision_candidates":7},
+      "GOVERNANCE": {"total":4,"decision_candidates":0},
+      "IDENTITY": {"total":44,"decision_candidates":1},
+      "MARKET_TECHNICAL": {"total":39,"decision_candidates":31},
+      "PROVENANCE_OTHER": {"total":15,"decision_candidates":1},
+      "REFERENCE_CONTROL": {"total":9,"decision_candidates":0},
+      "SCORING_COMPONENTS": {"total":60,"decision_candidates":0},
+      "SENTIMENT": {"total":12,"decision_candidates":6},
+      "SMART_MONEY": {"total":12,"decision_candidates":1}
+    }
+  },
+  "actions_study_hardening": {
+    "final_reference_unchanged": "V21.0",
+    "challenger_must_not_separately_weight": [
+      "target_upside_gt4_score",
+      "dividend_gt4_score",
+      "action_catchup_score"
+    ],
+    "challenger_overlay_only": [
+      "sector_rotation_score",
+      "morningstar_action_score"
+    ],
+    "canonical_threshold_reinforcement": {
+      "target_upside_gt4_score": "fold_into_target_upside_pct_v21_family_budget",
+      "dividend_gt4_score": "fold_into_dividend_yield_v21_pct_family_budget"
+    },
+    "normalised_raw_levels": {
+      "volume": "CROSS_SECTIONAL_PERCENTILE_OR_LOG_RELATIVE",
+      "market_cap": "CROSS_SECTIONAL_PERCENTILE_OR_LOG_RELATIVE"
+    },
+    "postselection_overlays": {
+      "investing_technical_weekly": "SHADOW_ZERO_WEIGHT",
+      "investing_technical_monthly": "SHADOW_ZERO_WEIGHT",
+      "boursorama_consensus_depth": "SHADOW_ZERO_WEIGHT"
+    }
+  },
+  "etf_study_hardening": {
+    "full_referential_criteria_count": 268,
+    "mt_target_composite_criteria_count": 43,
+    "mt_dynamic_pit_backtested_subblock_count": 38,
+    "mt_structural_target_count": 5,
+    "mt_target_split": {"dynamic":0.69,"structural":0.31},
+    "mt_target_composite_status": "RESEARCH_ONLY_NOT_BACKTESTED_AS_FULL_COMPOSITE",
+    "historical_90_91_attribution": "38_DYNAMIC_PIT_SUBBLOCK_ONLY",
+    "existing_category_rank_candidates": {
+      "rank_cat_1y": {"direction":"LOW","horizons":["CT","MT","LT","SHORT"],"status":"CHALLENGER_TEST"},
+      "rank_cat_3y": {"direction":"LOW","horizons":["MT","LT","SHORT"],"status":"CHALLENGER_TEST"},
+      "rank_cat_5y": {"direction":"LOW","horizons":["LT","SHORT"],"status":"CHALLENGER_TEST"}
+    },
+    "category_rank_trajectory_shadow": {
+      "rank_cat_trajectory_12m": "current rank_cat_1y versus PIT snapshot approximately 12 months earlier",
+      "rank_cat_trajectory_24m": "current rank_cat_3y versus PIT snapshot approximately 24 months earlier",
+      "rank_cat_trajectory_36m": "current rank_cat_5y versus PIT snapshot approximately 36 months earlier",
+      "first_snapshot_policy": "MISSING_NO_IMPUTATION",
+      "positive_value_semantic": "IMPROVEMENT_LOWER_RANK_NUMBER"
+    },
+    "structural_candidates": [
+      "dividend_yield_pct",
+      "ter_pct",
+      "fund_total_assets_eur_m",
+      "risk_indicator",
+      "morningstar_rating",
+      "tracking_error_1y_pct",
+      "tracking_error_3y_pct",
+      "tracking_error_5y_pct",
+      "diversification_direct_score",
+      "spread_pct",
+      "replication_hint"
+    ],
+    "canonical_source_rules": {
+      "aum_m": "fallback_to_fund_total_assets_eur_m_no_separate_weight",
+      "direct_aum_eur_m": "fallback_to_fund_total_assets_eur_m_no_separate_weight",
+      "direct_spread_pct": "fallback_to_spread_pct_no_separate_weight",
+      "direct_morningstar_rating": "fallback_to_morningstar_rating_no_separate_weight",
+      "boursorama_raw_annual_rank": "keep_separate_from_rank_cat_1y_3y_5y_unless_same_semantics_and_denominator_are_proven"
+    },
+    "sentiment_correlated_inputs": ["fear_greed_rating","aaii_bullish_pct","aaii_neutral_pct","aaii_bearish_pct"],
+    "smart_money_overlay": "ifs_effective"
+  },
+  "forbidden_weight_patterns": [
+    "^effective_weight_",
+    "^contrib_",
+    "^component_.*_coverage$",
+    "^score_effectif$",
+    "^score_brut$",
+    "^decision$",
+    "^comite_status$"
+  ],
+  "promotion_sequence": [
+    "freeze_reference",
+    "validate_role_taxonomy",
+    "transform_raw_levels",
+    "optimize_family_budgets",
+    "optimize_intra_family_weights",
+    "test_interactions_and_bounded_bonus_malus",
+    "measure_overlay_marginal_uplift",
+    "walk_forward_pit_oos",
+    "fresh_holdout_before_promotion"
+  ]
+}
