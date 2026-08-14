@@ -1,4 +1,4 @@
-name: Committee Master V21.6.2 hardened unified scoring
+name: Committee Master V21.6.3 CDC postselection hardened
 
 on:
   workflow_dispatch:
@@ -51,12 +51,22 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: state/provenance/
-          key: provenance-v2161-${{ github.run_id }}
+          key: provenance-v2163-${{ github.run_id }}
           restore-keys: |
+            provenance-v2163-
             provenance-v2161-
             provenance-v216-
             provenance-v215-
             provenance-v214-
+      - name: Restore CDC PIT histories
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            state/finnhub/
+            state/boursorama/
+          key: cdc-postselection-v2163-${{ github.run_id }}
+          restore-keys: |
+            cdc-postselection-v2163-
       - name: Restore V21.4 virtual performance state
         uses: actions/cache/restore@v4
         with:
@@ -88,9 +98,14 @@ jobs:
           e=json.loads(Path("config/V20_7_1_ETF_CRITERIA_REGISTRY.json").read_text())
           ed=json.loads(Path("config/V20.8.2_ETF_MT_DYNAMIC.json").read_text())
           g=json.loads(Path("config/GOLD_V1_1_102_CRITERIA.json").read_text())
+          master=json.loads(Path("config/V18.2_MASTER_CONFIG.json").read_text())
           integrity=json.loads(Path("config/FULL_REFERENTIAL_INTEGRITY.json").read_text())
           tct=json.loads(Path("config/TCT_V24_1_7_SHADOW.json").read_text())
           mm=json.loads(Path("config/COMMITTEE_VIRTUAL_MONEY_MANAGEMENT.json").read_text())
+          assert master["version"] == "21.6.3"
+          assert master["postselection_market_sheets"]["decision_influence"] == 0.0
+          assert master["boursorama_etf_category_rank"]["decision_influence"] == 0.0
+          assert master["cdc"]["amf_short_positions"]["absence_policy"] == "MISSING_NOT_ZERO"
           assert a["criteria_count"] == 633 == integrity["actions"]["criteria_count"]
           assert integrity["actions"]["universe_count"] == 1829
           assert e["criteria_count"] == 268 == integrity["etf"]["criteria_count"]
@@ -117,7 +132,7 @@ jobs:
           assert g["governance"]["contribution_blocks"] == 11
           assert mm["entry_execution_rule"] == "NEXT_RUN_OBSERVED_PRICE_AFTER_SIGNAL_DATE"
           assert mm["single_position_per_isin"] is True
-          print(f"V21.6.2 integrity OK: Actions 1829/633 (materialized identity-only={materialized.materialized_missing_count}), ETF 102/268, TCT, Gold, bias-safe virtual book")
+          print(f"V21.6.3 integrity OK: Actions 1829/633 (materialized identity-only={materialized.materialized_missing_count}), ETF 102/268, CDC, postselection, TCT, Gold, bias-safe virtual book")
           PY
       - name: Publish Action identity hydration worklist
         run: python -m v182.audit.identity_hydration
@@ -152,18 +167,26 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: state/provenance/
-          key: provenance-v2161-${{ github.run_id }}
+          key: provenance-v2163-${{ github.run_id }}
+      - name: Save CDC PIT histories
+        if: ${{ always() && (hashFiles('state/finnhub/**') != '' || hashFiles('state/boursorama/**') != '') }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            state/finnhub/
+            state/boursorama/
+          key: cdc-postselection-v2163-${{ github.run_id }}
       - name: Save V21.4 virtual performance state
         if: ${{ always() && hashFiles('state/committee_performance_v21_4/**') != '' }}
         uses: actions/cache/save@v4
         with:
           path: state/committee_performance_v21_4/
           key: committee-performance-v214-${{ github.run_id }}
-      - name: Upload complete Committee V21.6.2 results
+      - name: Upload complete Committee V21.6.3 results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: committee-master-v21-6-2-${{ github.run_id }}
+          name: committee-master-v21-6-3-${{ github.run_id }}
           path: |
             outputs/unified/
             outputs/committee_master/
@@ -179,6 +202,8 @@ jobs:
             state/TCT_V24_1_7_T1_STATE.json
             state/GOLD_V1_1_SHADOW_HISTORY.csv
             state/provenance/
+            state/finnhub/
+            state/boursorama/
             state/committee_performance_v21_4/
           if-no-files-found: warn
           retention-days: 30
