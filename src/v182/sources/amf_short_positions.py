@@ -53,6 +53,8 @@ def parse_amf_short_positions(actions: pd.DataFrame, source: pd.DataFrame, *, ob
     file is historical and a last public position can remain published even when
     the holder has subsequently moved below the public-disclosure threshold.
     Absence from the public file is therefore never treated as zero exposure.
+    Each observation is dated by the latest actual public disclosure retained for
+    that issuer, never artificially by the run date.
     """
     now = observed_at or datetime.now(timezone.utc)
     if source.empty:
@@ -69,6 +71,7 @@ def parse_amf_short_positions(actions: pd.DataFrame, source: pd.DataFrame, *, ob
         "isin": isin_col,
         "position_pct": pct_col,
         "position_date": position_date_col,
+        "publication_start": start_pub_col,
         "publication_end": end_pub_col,
         "holder": holder_col,
     }
@@ -84,16 +87,20 @@ def parse_amf_short_positions(actions: pd.DataFrame, source: pd.DataFrame, *, ob
     allowed = set(actions.get("isin", pd.Series(dtype=str)).astype(str).str.strip().str.upper())
     work = source.copy()
     work["_isin"] = work[isin_col].astype(str).str.strip().str.upper()
-    work = work.loc[work["_isin"].isin(allowed)].copy()
-    if work.empty:
-        return [], []
-
     work["_position_date"] = pd.to_datetime(work[position_date_col], errors="coerce", dayfirst=True)
-    work["_start_pub"] = pd.to_datetime(work[start_pub_col], errors="coerce", dayfirst=True) if start_pub_col else pd.NaT
+    work["_start_pub"] = pd.to_datetime(work[start_pub_col], errors="coerce", dayfirst=True)
     work["_end_pub"] = pd.to_datetime(work[end_pub_col], errors="coerce", dayfirst=True)
     work["_pct"] = work[pct_col].map(_pct)
     work["_holder"] = work[holder_col].astype(str).str.strip()
-    work = work.loc[work["_position_date"].notna() & work["_pct"].notna() & work["_holder"].ne("")].copy()
+    work = work.loc[
+        work["_isin"].isin(allowed)
+        & work["_position_date"].notna()
+        & work["_start_pub"].notna()
+        & work["_pct"].notna()
+        & work["_holder"].ne("")
+    ].copy()
+    if work.empty:
+        return [], []
 
     as_of_day = pd.Timestamp(now.date())
     active = work.loc[work["_end_pub"].isna() | (work["_end_pub"] >= as_of_day)].copy()
@@ -101,20 +108,23 @@ def parse_amf_short_positions(actions: pd.DataFrame, source: pd.DataFrame, *, ob
         return [], []
 
     # Defensive de-duplication: one active record per holder/issuer, keeping the
-    # latest position date (and publication start as a tie-breaker).
-    active["_start_pub_sort"] = active["_start_pub"].fillna(pd.Timestamp.min)
-    active = active.sort_values(["_isin", "_holder", "_position_date", "_start_pub_sort"])
+    # latest position date and publication start as a tie-breaker.
+    active = active.sort_values(["_isin", "_holder", "_position_date", "_start_pub"])
     active = active.groupby(["_isin", "_holder"], as_index=False, sort=False).tail(1)
 
     observations: list[dict] = []
     for isin, group in active.groupby("_isin"):
         position_sum = float(group["_pct"].sum())
         holder_count = int(group["_holder"].nunique())
-        latest = group["_position_date"].max()
+        latest_position = group["_position_date"].max()
+        latest_publication = group["_start_pub"].max()
+        publication_age_days = max(0, (now.date() - latest_publication.date()).days)
         values = {
             "amf_public_short_disclosed_sum_pct": round(position_sum, 6),
             "amf_public_short_holder_count": holder_count,
-            "amf_public_short_latest_position_date": latest.date().isoformat(),
+            "amf_public_short_latest_position_date": latest_position.date().isoformat(),
+            "amf_public_short_latest_publication_date": latest_publication.date().isoformat(),
+            "amf_public_short_days_since_latest_publication": publication_age_days,
             "amf_public_short_open_publication_count": int(len(group)),
             "amf_public_short_proxy_flag": 1,
             "amf_public_short_not_true_current_interest_flag": 1,
@@ -127,7 +137,7 @@ def parse_amf_short_positions(actions: pd.DataFrame, source: pd.DataFrame, *, ob
                 "value": value,
                 "source": "AMF Open Data - public net short disclosures",
                 "collected_at": now.isoformat(),
-                "as_of": now.date().isoformat(),
+                "as_of": latest_publication.date().isoformat(),
                 "evidence_level": "A",
                 "validation_status": "ISIN_MATCHED",
             })
