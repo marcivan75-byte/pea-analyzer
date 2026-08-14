@@ -22,14 +22,16 @@ class _Requests:
         if "investing.com" in url and url.endswith("-technical"):
             return _Response("<div>Weekly Strong Buy</div><div>Monthly Buy</div>")
         if "boursorama.com" in url and "/consensus/" in url:
-            return _Response("<div>Consensus des analystes : Achat</div><div>Objectif de cours moyen 150,50 €</div><div>Potentiel +12,5 %</div>")
+            return _Response("<div>Consensus des analystes : Achat</div><div>Objectif de cours 3 mois : 150,50 EUR</div><div>Potentiel : +12,5 %</div>")
         if "boursorama.com" in url:
-            return _Response("<div>PER 18,4</div><div>Rendement 3,2 %</div><div>Plus haut 52 semaines 145,0</div><div>Plus bas 52 semaines 112,0</div>")
+            return _Response("<div>rendement estimé 2026 3,2 %</div><div>PER estimé 2026 18,4</div><div>1 an +12,2% 145,0 112,0</div>")
         return _Response("",404)
 
 
 def test_signal_normalization_and_weekly_monthly_alignment():
     assert normalize_signal("Achat fort")=="STRONG_BUY"
+    assert normalize_signal("Renforcer")=="BUY"
+    assert normalize_signal("Alléger")=="SELL"
     assert normalize_signal("Vente forte")=="STRONG_SELL"
     technical=extract_investing_technical("<div>Weekly Strong Buy</div><div>Monthly Sell</div>")
     assert technical["investing_weekly_signal"]=="STRONG_BUY"
@@ -37,13 +39,23 @@ def test_signal_normalization_and_weekly_monthly_alignment():
     assert technical_alignment("STRONG_BUY","SELL")=="DIVERGENCE"
 
 
-def test_boursorama_action_extracts_only_observed_fields():
-    fields=extract_boursorama_action("Consensus Achat Objectif de cours 123,40 € Potentiel +8,2 % PER 15,5 Rendement 4,1 %")
+def test_boursorama_action_extracts_realistic_quote_and_consensus_formats():
+    html="""
+    Consensus Acheter
+    Objectif de cours 3 mois : 2 048,31 EUR Potentiel: 49,62%
+    rendement estimé 2026 0,90%
+    PER estimé 2026 32,38
+    1 an +126,75% 1 999,9600 683,4800
+    """
+    fields=extract_boursorama_action(html)
     assert fields["boursorama_consensus_signal"]=="BUY"
-    assert fields["boursorama_target_price"]==123.40
-    assert fields["boursorama_target_upside_pct"]==8.2
-    assert fields["boursorama_per"]==15.5
-    assert fields["boursorama_dividend_yield_pct"]==4.1
+    assert fields["boursorama_target_price"]==2048.31
+    assert fields["boursorama_target_currency"]=="EUR"
+    assert fields["boursorama_target_upside_pct"]==49.62
+    assert fields["boursorama_per"]==32.38
+    assert fields["boursorama_dividend_yield_pct"]==0.90
+    assert fields["boursorama_52w_high"]==1999.96
+    assert fields["boursorama_52w_low"]==683.48
 
 
 def test_postselection_enrichment_is_shadow_and_scoped_to_requested_isin():
@@ -58,6 +70,8 @@ def test_postselection_enrichment_is_shadow_and_scoped_to_requested_isin():
     assert row["investing_monthly_signal"]=="BUY"
     assert row["investing_weekly_monthly_alignment"]=="CONFIRMS_LONG"
     assert row["boursorama_consensus_signal"]=="BUY"
+    assert row["boursorama_per"]==18.4
+    assert row["boursorama_dividend_yield_pct"]==3.2
     assert row["postselection_confirmation"]=="CONFIRMS_LONG"
     assert row["postselection_decision_influence"]==0.0
     assert failures.empty
