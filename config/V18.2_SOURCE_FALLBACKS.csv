@@ -1,9 +1,14 @@
-﻿Data family;Primary;Fallback 1;Fallback 2;Fallback 3
-OHLCV;yfinance;Marketstack;Alpha Vantage;Issuer/Euronext
-FUNDAMENTALS_ACTIONS;yfinance;Alpha Vantage;Issuer;Zonebourse
-CONSENSUS_ACTIONS;Boursorama;Zonebourse;yfinance;Finnhub
-ETF_COSTS_AUM;ABC Bourse;Issuer/KID;Boursorama;
+Data family;Primary;Fallback 1;Fallback 2;Fallback 3
+OHLCV;yfinance;Marketstack declared not wired;Alpha Vantage declared not wired;Issuer/Euronext
+FUNDAMENTALS_ACTIONS;yfinance;Alpha Vantage declared not wired;Issuer;Zonebourse declared not wired
+CONSENSUS_ACTIONS;Finnhub full-universe;Boursorama postselection;Zonebourse declared not wired;yfinance
+EARNINGS_EPS_REVISIONS;Finnhub earnings calendar PIT snapshots;Issuer;;
+SHORT_INTEREST_ACTIONS;AMF disclosed net short positions;;;
+ACTION_MORNINGSTAR;Morningstar attributed/authorized snapshot;Morningstar official worklist;;
+ACTION_TECHNICAL_POSTSELECTION;Investing weekly/monthly;Internal OHLCV technicals;;
+ETF_COSTS_AUM;yfinance/Issuer structure;ABC Bourse declared not wired;Boursorama;Issuer/KID
+ETF_CATEGORY_RANK;Boursorama/Morningstar raw annual rank;;;
 ETF_MORNINGSTAR;Boursorama;Morningstar-authorized source;;
 NEWS_EVENTS;AMF/Issuer;Finnhub;GDELT;Boursorama/Zonebourse
-MACRO;FRED;;;
-ENERGY;EIA;;;
+MACRO;FRED;ECB/Eurostat target;market-implied C fallback;
+ENERGY;EIA declared not wired;;;
