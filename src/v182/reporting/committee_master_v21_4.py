@@ -6,6 +6,7 @@ import pandas as pd
 
 from v182.decision.committee_master import load_registry, decisions_from_scores, sector_ranking
 from v182.reporting import committee_master_gold_v1_1
+from v182.sources.postselection_market_sheets import enrich_postselection
 
 ROOT=Path(__file__).resolve().parents[3]
 HORIZONS=["CT","MT","LT","SHORT","TOP_DOWN"]
@@ -19,13 +20,24 @@ def _key(frame:pd.DataFrame)->pd.Series:
     return frame["horizon"].astype(str)+"|"+frame["isin"].astype(str)
 
 
+def _postselection_isins(decisions: pd.DataFrame) -> set[str]:
+    """Use only long preselected Action candidates for costly external sheet enrichment."""
+    mask=(
+        (decisions["asset_class"].astype(str)=="ACTION")
+        & decisions["horizon"].astype(str).isin(["CT","MT","LT"])
+        & decisions["decision"].astype(str).isin(["BUY_CANDIDATE","WATCH"])
+    )
+    return set(decisions.loc[mask,"isin"].astype(str))
+
+
 def run(root:Path=ROOT)->dict:
-    """Dual-track Action Committee: frozen reference + V21.4 challenger.
+    """Dual-track Action Committee plus V21.6.3 post-selection confirmations.
 
     The enriched V21.4 Action score is preserved and exported, but final Action
-    CT/MT/LT/SHORT/TOP_DOWN decisions are replaced by the frozen V21.0-weight
-    reference until the V21.4 challenger completes dedicated PIT/OOS validation.
-    ETF, TCT and Gold governance remain unchanged.
+    CT/MT/LT/SHORT/TOP_DOWN decisions use the frozen V21.0-weight reference until
+    the challenger completes dedicated PIT/OOS validation. Boursorama and
+    Investing are fetched only after BUY/WATCH preselection and cannot alter the
+    score or decision in this version.
     """
     summary=committee_master_gold_v1_1.run(root)
     outdir=root/"outputs"/"committee_master"; decisions_path=outdir/"COMMITTEE_DECISIONS.csv"
@@ -64,6 +76,24 @@ def run(root:Path=ROOT)->dict:
         rows.append({"key":key,"isin":row.get("isin"),"name":row.get("name"),"sector":row.get("sector"),"horizon":row.get("horizon"),"reference_score":ref.get("score"),"reference_coverage_pct":ref.get("coverage_pct"),"reference_decision":ref.get("decision"),"challenger_score":challenger_score,"challenger_coverage_pct":challenger_cov,"challenger_decision":row.get("decision"),"challenger_52w_score":row.get("action_52w_challenger_score"),"challenger_52w_decision":row.get("action_52w_challenger_decision"),"delta_score":(challenger_score-float(ref.get("score"))) if pd.notna(challenger_score) and pd.notna(ref.get("score")) else None})
 
     comparison=pd.DataFrame(rows); comparison.to_csv(outdir/"ACTION_REFERENCE_VS_CHALLENGER_V21_4.csv",sep=";",index=False,encoding="utf-8-sig")
+
+    # V21.6.3: only after final reference preselection, enrich BUY/WATCH Actions
+    # with Boursorama sheets and Investing weekly/monthly technical summaries.
+    # The merge is guarded so no score or decision can be changed by this layer.
+    shortlist=_postselection_isins(decisions)
+    postselection,postselection_failures=enrich_postselection(actions,shortlist)
+    postselection.to_csv(outdir/"POSTSELECTION_MARKET_SHEETS.csv",sep=";",index=False,encoding="utf-8-sig")
+    gaps=root/"outputs"/"gaps"; gaps.mkdir(parents=True,exist_ok=True)
+    if not postselection_failures.empty:
+        postselection_failures.to_csv(gaps/"V21_6_3_POSTSELECTION_MARKET_SHEETS_FAILURES.csv",sep=";",index=False,encoding="utf-8-sig")
+    score_guard=decisions["score"].copy(); decision_guard=decisions["decision"].copy()
+    if not postselection.empty:
+        decisions=decisions.merge(postselection,on="isin",how="left",validate="many_to_one",sort=False)
+    if not score_guard.reset_index(drop=True).equals(decisions["score"].reset_index(drop=True)):
+        raise RuntimeError("POSTSELECTION_SCORE_MUTATION_FORBIDDEN")
+    if not decision_guard.reset_index(drop=True).equals(decisions["decision"].reset_index(drop=True)):
+        raise RuntimeError("POSTSELECTION_DECISION_MUTATION_FORBIDDEN")
+
     decisions.to_csv(decisions_path,sep=";",index=False,encoding="utf-8-sig")
     sector_ranking(decisions).to_csv(outdir/"SECTOR_RANKING.csv",sep=";",index=False,encoding="utf-8-sig")
     challenger_view=decisions.copy(); mask=(challenger_view["asset_class"].astype(str)=="ACTION") & challenger_view["horizon"].astype(str).isin(HORIZONS)
@@ -77,12 +107,24 @@ def run(root:Path=ROOT)->dict:
     ref_buy=int((comparison["reference_decision"].astype(str)=="BUY_CANDIDATE").sum()) if not comparison.empty else 0
     chal_buy=int((comparison["challenger_decision"].astype(str)=="BUY_CANDIDATE").sum()) if not comparison.empty else 0
     summary["action_dual_track"]={"status":"ACTIVE_REFERENCE_PLUS_SHADOW_CHALLENGER","reference_version":reference_reg.get("version"),"challenger_version":challenger_reg.get("version"),"final_decision_source":"REFERENCE","comparison_rows":int(len(comparison)),"decision_divergences":divergences,"reference_buy_count":ref_buy,"challenger_buy_count":chal_buy,"performance_attribution":"NONE_TO_V21_4_CHALLENGER_UNTIL_DEDICATED_PIT_OOS_BACKTEST"}
+    summary["postselection_market_sheets"]={
+        "status":"ACTIVE_SHADOW_CONFIRMATION",
+        "shortlisted_isins":len(shortlist),
+        "enriched_isins":int(len(postselection)),
+        "source_failures":int(len(postselection_failures)),
+        "decision_influence":0.0,
+        "investing_timeframes":["WEEKLY","MONTHLY"],
+        "signals":["STRONG_BUY","BUY","NEUTRAL","SELL","STRONG_SELL"],
+        "positive_confirmation_can_create_buy":False,
+    }
     # Rebuild aggregate counts after reference replacement so SUMMARY matches the
     # decisions actually consumed by the Committee/performance tracker.
     summary["status_counts"]=decisions.groupby(["asset_class","horizon","status"],dropna=False).size().reset_index(name="count").to_dict("records")
     summary["decision_counts"]=decisions.groupby(["asset_class","horizon","decision"],dropna=False).size().reset_index(name="count").to_dict("records")
     summary.setdefault("outputs",{})["action_reference_vs_challenger"]="outputs/committee_master/ACTION_REFERENCE_VS_CHALLENGER_V21_4.csv"
     summary["outputs"]["sector_ranking_challenger"]="outputs/committee_master/SECTOR_RANKING_CHALLENGER_V21_4.csv"
+    summary["outputs"]["postselection_market_sheets"]="outputs/committee_master/POSTSELECTION_MARKET_SHEETS.csv"
     summary.setdefault("notes",[]).append("Actions use V21.0 frozen weights as final reference decision; V21.4 enriched scores and unvalidated positive/negative 52w overlays are challenger-only until PIT/OOS validation.")
+    summary["notes"].append("V21.6.3 Boursorama/Investing Action enrichment runs only after BUY/WATCH preselection. Weekly/monthly technical signals are visible to the Committee with zero decision influence until PIT/OOS validation.")
     (outdir/"SUMMARY.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2,default=str),encoding="utf-8")
     return summary
