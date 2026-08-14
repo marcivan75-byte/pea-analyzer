@@ -19,6 +19,7 @@ _SIGNAL_SCORE = {
     "STRONG_SELL": -2.0,
 }
 _NUM_TOKEN = r"[+\-−]?(?:\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d+)(?:[.,]\d+)?"
+_BOURSORAMA_BUCKETS = {1:"ACHETER",2:"RENFORCER",3:"CONSERVER",4:"ALLEGER",5:"VENDRE"}
 
 
 def _clean_text(html: str) -> str:
@@ -86,30 +87,87 @@ def extract_investing_technical(html: str) -> dict[str, str]:
     return {k: v for k, v in {"investing_weekly_signal": weekly, "investing_monthly_signal": monthly}.items() if v}
 
 
-def extract_boursorama_action(html: str) -> dict[str, object]:
-    """Extract only explicitly displayed Boursorama Action-sheet values."""
-    text = _clean_text(html)
-    out: dict[str, object] = {}
+def _boursorama_note_bucket(note: float) -> tuple[str, str]:
+    nearest=max(1,min(5,int(math.floor(note+0.5))))
+    bucket=_BOURSORAMA_BUCKETS[nearest]
+    signal="BUY" if nearest <= 2 else "NEUTRAL" if nearest == 3 else "SELL"
+    return bucket,signal
 
-    median = re.search(
-        r"Note m[eé]diane.{0,220}?(Acheter|Renforcer|Conserver|All[eé]ger|Vendre)",
-        text,
-        flags=re.IGNORECASE,
-    )
-    consensus = normalize_signal(median.group(1)) if median else _find_signal_near(text, "Consensus", radius=500)
-    if consensus:
-        out["boursorama_consensus_signal"] = consensus
 
-    target = re.search(
-        rf"objectif(?: de cours)?(?:\s+\d+\s+mois)?(?: moyen| median| médian)?\s*:?\s*({_NUM_TOKEN})\s*(EUR|USD|CHF|GBP|SEK|NOK|DKK|PLN|CZK|€)",
-        text,
-        flags=re.IGNORECASE,
+def _latest_ints_between(text: str, start_pattern: str, end_pattern: str) -> int | None:
+    match=re.search(start_pattern+r"(?P<body>.{0,220}?)"+end_pattern,text,flags=re.IGNORECASE)
+    if not match:
+        return None
+    values=re.findall(r"\b\d{1,4}\b",match.group("body"))
+    return int(values[-1]) if values else None
+
+
+def _extract_boursorama_consensus_detail(text: str) -> dict[str, object]:
+    out: dict[str, object]={}
+    current_note=re.search(
+        rf"Note m[eé]diane\*?\s+des analystes\s+au\s+\d{{2}}[./]\d{{2}}[./]\d{{4}}\s+({_NUM_TOKEN})",
+        text,flags=re.IGNORECASE,
     )
-    if target:
-        value = _number(target.group(1))
+    if current_note:
+        note=_number(current_note.group(1))
+        if note is not None and 1 <= note <= 5:
+            bucket,signal=_boursorama_note_bucket(note)
+            out["boursorama_consensus_note_median"]=note
+            out["boursorama_consensus_bucket"]=bucket
+            out["boursorama_consensus_signal"]=signal
+
+    count_specs=(
+        ("boursorama_acheter_n",r"1\.\s*Acheter",r"2\.\s*Renforcer"),
+        ("boursorama_renforcer_n",r"2\.\s*Renforcer",r"3\.\s*Conserver"),
+        ("boursorama_conserver_n",r"3\.\s*Conserver",r"4\.\s*All[eé]ger"),
+        ("boursorama_alleger_n",r"4\.\s*All[eé]ger",r"5\.\s*Vendre"),
+        ("boursorama_vendre_n",r"5\.\s*Vendre",r"Nombre d['’]analystes"),
+        ("boursorama_analyst_count",r"Nombre d['’]analystes",r"Note m[eé]diane"),
+    )
+    for field,start,end in count_specs:
+        value=_latest_ints_between(text,start,end)
         if value is not None:
-            out["boursorama_target_price"] = value
-            out["boursorama_target_currency"] = "EUR" if target.group(2) == "€" else target.group(2).upper()
+            out[field]=value
+
+    target_history=re.search(
+        r"Historique des objectifs? de cours m[eé]dian\s*\(en\s*(EUR|USD|CHF|GBP|SEK|NOK|DKK|PLN|CZK)\)(?P<body>.{1,500}?)(?=Potentiel\s*:)",
+        text,flags=re.IGNORECASE,
+    )
+    if target_history:
+        values=[_number(value) for value in re.findall(_NUM_TOKEN,target_history.group("body"))]
+        values=[value for value in values if value is not None]
+        if values:
+            out["boursorama_target_price"]=values[-1]
+            out["boursorama_target_currency"]=target_history.group(1).upper()
+    return out
+
+
+def extract_boursorama_action(html: str) -> dict[str, object]:
+    """Extract explicitly displayed Boursorama Action quote and consensus values."""
+    text = _clean_text(html)
+    out: dict[str, object] = _extract_boursorama_consensus_detail(text)
+
+    if "boursorama_consensus_signal" not in out:
+        median = re.search(
+            r"Note m[eé]diane.{0,220}?(Acheter|Renforcer|Conserver|All[eé]ger|Vendre)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        consensus = normalize_signal(median.group(1)) if median else _find_signal_near(text, "Consensus", radius=500)
+        if consensus:
+            out["boursorama_consensus_signal"] = consensus
+
+    if "boursorama_target_price" not in out:
+        target = re.search(
+            rf"objectif(?: de cours)?(?:\s+\d+\s+mois)?(?: moyen| median| médian)?\s*:?\s*({_NUM_TOKEN})\s*(EUR|USD|CHF|GBP|SEK|NOK|DKK|PLN|CZK|€)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if target:
+            value = _number(target.group(1))
+            if value is not None:
+                out["boursorama_target_price"] = value
+                out["boursorama_target_currency"] = "EUR" if target.group(2) == "€" else target.group(2).upper()
     potential = re.search(rf"potentiel\s*:?\s*({_NUM_TOKEN})\s*%", text, flags=re.IGNORECASE)
     if potential:
         value = _number(potential.group(1))
