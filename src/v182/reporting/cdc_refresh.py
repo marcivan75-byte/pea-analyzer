@@ -47,7 +47,7 @@ def run(root: Path = ROOT) -> dict:
 
     amf_observations, amf_failed = fetch_amf_short_positions(actions, url=AMF_CURRENT_RESOURCE_URL)
     actions, amf_rejected = apply_observations(actions, amf_observations)
-    counts["amf_observations"] = len(amf_observations)
+    counts["amf_public_short_proxy_observations"] = len(amf_observations)
     failures.extend(amf_failed)
     quarantine.extend(amf_rejected)
 
@@ -71,9 +71,16 @@ def run(root: Path = ROOT) -> dict:
         "governance": {
             "eps_revision_same_fiscal_period_pit_only": True,
             "first_eps_snapshot_has_no_revision": True,
+            "finnhub_exact_exchange_symbol_priority": True,
+            "finnhub_bare_alias_must_be_unique": True,
+            "finnhub_ambiguous_alias_policy": "QUARANTINE",
+            "amf_semantic": "OPEN_PUBLIC_DISCLOSURE_PROXY_NOT_TRUE_CURRENT_SHORT_INTEREST",
+            "amf_publication_end_required": True,
+            "amf_latest_active_record_per_holder": True,
             "amf_absence_never_imputed_to_zero": True,
             "amf_evidence_level": "A",
-            "new_cdc_fields_are_observed_inputs_not_new_optimised_weights": True,
+            "new_cdc_fields_are_observed_context_not_new_optimised_weights": True,
+            "cdc_decision_influence": 0.0,
         },
     }
     audit = root / "outputs" / "audit"
