@@ -11,96 +11,86 @@ from bs4 import BeautifulSoup
 from v182.sources.boursorama_resolver import resolve_boursorama_url
 from v182.sources.rate_limit import StartRateLimiter
 
-PERIODS = {
-    "1m": ("1 mois", "1m", "perf_1m_cat_rank_pctl"),
-    "3m": ("3 mois", "3m", "perf_3m_cat_rank_pctl"),
-    "6m": ("6 mois", "6m", "perf_6m_cat_rank_pctl"),
-    "1y": ("1 an", "1 année", "1y", "perf_1y_cat_rank_pctl"),
-    "3y": ("3 ans", "3 années", "3y", "perf_3y_cat_rank_pctl"),
-    "5y": ("5 ans", "5 années", "5y", "perf_5y_cat_rank_pctl"),
-}
 
+def extract_category_ranks(html: str) -> dict[str, int]:
+    """Extract Boursorama/Morningstar annual category ranks exactly as published.
 
-def _score(rank: int, total: int) -> float | None:
-    if rank < 1 or total < 1 or rank > total:
-        return None
-    if total == 1:
-        return 100.0
-    return max(0.0, min(100.0, 100.0 * (1.0 - (rank - 1.0) / (total - 1.0))))
-
-
-def extract_category_ranks(html: str) -> dict[str, dict[str, float | int]]:
-    """Extract only explicit category rank fractions located close to a period label."""
-    text = BeautifulSoup(html or "", "lxml").get_text(" ", strip=True).lower().replace(" ", " ")
+    Boursorama's performance-risk page displays five calendar-year columns and a
+    `Rang` row. The category population is not published beside that row, so the
+    collector deliberately keeps raw ranks and never invents a percentile.
+    """
+    text = BeautifulSoup(html or "", "lxml").get_text(" ", strip=True).replace(" ", " ")
     text = re.sub(r"\s+", " ", text)
-    out: dict[str, dict[str, float | int]] = {}
-    for period, aliases in PERIODS.items():
-        labels = aliases[:-1]
-        found = None
-        for label in labels:
-            escaped = re.escape(label)
-            patterns = (
-                rf"{escaped}.{{0,120}}?(?:classement|rang|cat[eé]gorie).{{0,50}}?(\d{{1,5}})\s*(?:/|sur)\s*(\d{{1,5}})",
-                rf"(?:classement|rang|cat[eé]gorie).{{0,50}}?(\d{{1,5}})\s*(?:/|sur)\s*(\d{{1,5}}).{{0,120}}?{escaped}",
-                rf"{escaped}.{{0,80}}?(\d{{1,5}})\s*(?:/|sur)\s*(\d{{1,5}}).{{0,50}}?cat[eé]gorie",
-            )
-            for pattern in patterns:
-                match = re.search(pattern, text, flags=re.IGNORECASE)
-                if match:
-                    rank, total = int(match.group(1)), int(match.group(2))
-                    percentile = _score(rank, total)
-                    if percentile is not None:
-                        found = {"rank": rank, "total": total, "score": round(percentile, 4)}
-                        break
-            if found:
-                break
-        if found:
-            out[period] = found
+    section = re.search(
+        r"PERFORMANCES ANNUELLES DES 5 DERNI[ÈE]RES ANN[ÉE]ES(?P<body>.{0,1800}?)(?:performance volatilit[eé]|MESURE DE RISQUE|Liste des trackers)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    body = section.group("body") if section else text
+    years = re.findall(r"\b(20\d{2})\b", body)
+    years = list(dict.fromkeys(years))[:5]
+    rank_match = re.search(r"\bRang\b\s*((?:\d{1,5}|-)\s+(?:\d{1,5}|-)\s+(?:\d{1,5}|-)\s+(?:\d{1,5}|-)\s+(?:\d{1,5}|-))", body, flags=re.IGNORECASE)
+    if not rank_match or len(years) < 1:
+        return {}
+    raw_ranks = re.findall(r"\d{1,5}|-", rank_match.group(1))
+    out: dict[str, int] = {}
+    for year, raw in zip(years, raw_ranks):
+        if raw == "-":
+            continue
+        rank = int(raw)
+        if rank >= 1:
+            out[year] = rank
     return out
 
 
-def _candidate_urls(source_url: str) -> list[str]:
-    base = str(source_url or "").strip()
-    if "boursorama.com" not in base:
-        return []
-    urls = [base]
-    if "/bourse/trackers/cours/" in base:
-        urls.extend([
-            base.replace("/bourse/trackers/cours/", "/bourse/trackers/performances/", 1),
-            base.replace("/bourse/trackers/cours/", "/bourse/trackers/caracteristiques/", 1),
-        ])
-    elif "/cours/" in base:
-        urls.extend([
-            base.replace("/cours/", "/performances/", 1),
-            base.replace("/cours/", "/caracteristiques/", 1),
-        ])
-    return list(dict.fromkeys(urls))
+def extract_morningstar_category(html: str) -> str | None:
+    text = BeautifulSoup(html or "", "lxml").get_text(" ", strip=True).replace(" ", " ")
+    text = re.sub(r"\s+", " ", text)
+    match = re.search(r"cat[eé]gorie morningstar\s+(.{2,120}?)(?=\s+(?:ouverture|cl[oô]ture|volume|dernier [eé]change|actif net|risque du fonds))", text, flags=re.IGNORECASE)
+    return match.group(1).strip() if match else None
 
 
-def _fetch_one(row: pd.Series, requests, limiter: StartRateLimiter) -> tuple[str, dict[str, dict], str | None]:
+def extract_rank_as_of(html: str) -> str | None:
+    text = BeautifulSoup(html or "", "lxml").get_text(" ", strip=True).replace(" ", " ")
+    match = re.search(r"Calcul fin de mois au\s+(\d{2}/\d{2}/\d{4})", text, flags=re.IGNORECASE)
+    if not match:
+        return None
+    try:
+        return pd.to_datetime(match.group(1), dayfirst=True).date().isoformat()
+    except (ValueError, TypeError):
+        return None
+
+
+def _performance_url(base: str) -> str:
+    clean = str(base or "").strip()
+    if "/bourse/trackers/cours/performances-risques/" in clean:
+        return clean
+    if "/bourse/trackers/cours/" in clean:
+        return clean.replace("/bourse/trackers/cours/", "/bourse/trackers/cours/performances-risques/", 1)
+    return clean
+
+
+def _fetch_one(row: pd.Series, requests, limiter: StartRateLimiter) -> tuple[str, dict[str, int], str | None, str | None, str | None]:
     isin = str(row.get("isin", "") or "").strip()
     headers = {
         "User-Agent": "Mozilla/5.0 (compatible; PEA-Analyzer/21.6.3; +data-quality)",
         "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.5",
     }
     resolved = resolve_boursorama_url(row, requests, limiter, headers)
-    urls = _candidate_urls(resolved or "")
-    if not urls:
-        return isin, {}, "BOURSORAMA_URL_NOT_RESOLVED"
-    last_reason = "RANK_NOT_FOUND"
-    for url in urls:
-        try:
-            limiter.wait()
-            response = requests.get(url, timeout=20, headers=headers)
-            if response.status_code >= 400:
-                last_reason = f"HTTP_{response.status_code}"
-                continue
-            ranks = extract_category_ranks(response.text)
-            if ranks:
-                return isin, ranks, None
-        except Exception as exc:
-            last_reason = type(exc).__name__
-    return isin, {}, last_reason
+    url = _performance_url(resolved or "")
+    if not url or "/bourse/trackers/" not in url:
+        return isin, {}, None, None, "BOURSORAMA_ETF_URL_NOT_RESOLVED"
+    try:
+        limiter.wait()
+        response = requests.get(url, timeout=20, headers=headers)
+        if response.status_code >= 400:
+            return isin, {}, None, None, f"HTTP_{response.status_code}"
+        ranks = extract_category_ranks(response.text)
+        if not ranks:
+            return isin, {}, extract_morningstar_category(response.text), extract_rank_as_of(response.text), "RANK_NOT_FOUND"
+        return isin, ranks, extract_morningstar_category(response.text), extract_rank_as_of(response.text), None
+    except Exception as exc:
+        return isin, {}, None, None, type(exc).__name__
 
 
 def _read_history(path: Path) -> pd.DataFrame:
@@ -112,9 +102,22 @@ def _read_history(path: Path) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def _mean_score(row: dict[str, dict]) -> float | None:
-    values = [float(v["score"]) for v in row.values() if isinstance(v, dict) and v.get("score") is not None and math.isfinite(float(v["score"]))]
-    return sum(values) / len(values) if values else None
+def _rank_summary(ranks: dict[str, int]) -> dict[str, float | int | str | None]:
+    if not ranks:
+        return {}
+    ordered = sorted(ranks.items(), key=lambda item: int(item[0]))
+    values = [rank for _, rank in ordered]
+    earliest_year, earliest_rank = ordered[0]
+    latest_year, latest_rank = ordered[-1]
+    return {
+        "latest_year": latest_year,
+        "latest_rank": latest_rank,
+        "mean_rank": round(sum(values) / len(values), 4),
+        "best_rank": min(values),
+        "worst_rank": max(values),
+        "annual_improvement": earliest_rank - latest_rank if len(values) >= 2 else None,
+        "earliest_year": earliest_year,
+    }
 
 
 def fetch_boursorama_etf_rankings(
@@ -135,15 +138,15 @@ def fetch_boursorama_etf_rankings(
         return [], [{"source": "Boursorama", "reason": "NO_ETF_CANDIDATES"}]
 
     limiter = StartRateLimiter(delay_seconds)
-    results: dict[str, dict[str, dict]] = {}
+    results: dict[str, tuple[dict[str, int], str | None, str | None]] = {}
     failures: list[dict] = []
     workers = max(1, min(int(max_workers), len(candidates)))
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = [executor.submit(_fetch_one, row, requests, limiter) for _, row in candidates.iterrows()]
         for future in as_completed(futures):
-            isin, ranks, reason = future.result()
+            isin, ranks, category, rank_as_of, reason = future.result()
             if ranks:
-                results[isin] = ranks
+                results[isin] = (ranks, category, rank_as_of)
             else:
                 failures.append({"isin": isin, "source": "Boursorama", "reason": reason or "RANK_NOT_FOUND"})
 
@@ -151,52 +154,61 @@ def fetch_boursorama_etf_rankings(
     history = _read_history(history_path)
     history_rows: list[dict] = []
     observations: list[dict] = []
-    for isin, ranks in sorted(results.items()):
-        current_mean = _mean_score(ranks)
-        previous_mean = None
-        if not history.empty and "isin" in history.columns and "rank_score_mean" in history.columns:
+    for isin, (ranks, category, rank_as_of) in sorted(results.items()):
+        summary = _rank_summary(ranks)
+        current_latest = int(summary["latest_rank"])
+        previous_latest = None
+        if not history.empty and "isin" in history.columns and "latest_rank" in history.columns:
             prior = history.loc[history["isin"].astype(str) == isin].copy()
             if not prior.empty:
                 prior = prior.sort_values("observed_at")
-                for value in reversed(prior["rank_score_mean"].tolist()):
+                for value in reversed(prior["latest_rank"].tolist()):
                     try:
-                        parsed = float(value)
+                        parsed = int(float(value))
                     except (TypeError, ValueError):
                         continue
-                    if math.isfinite(parsed):
-                        previous_mean = parsed
+                    if parsed >= 1:
+                        previous_latest = parsed
                         break
-        trend = None if current_mean is None or previous_mean is None else current_mean - previous_mean
+        run_improvement = None if previous_latest is None else previous_latest - current_latest
         values: dict[str, object] = {
-            "boursorama_category_rank_score_shadow": None if current_mean is None else round(current_mean, 4),
-            "boursorama_category_rank_trend_shadow": None if trend is None else round(trend, 4),
+            "boursorama_category_name": category,
+            "boursorama_category_rank_latest": current_latest,
+            "boursorama_category_rank_latest_year": summary.get("latest_year"),
+            "boursorama_category_rank_mean_5y": summary.get("mean_rank"),
+            "boursorama_category_rank_best_5y": summary.get("best_rank"),
+            "boursorama_category_rank_worst_5y": summary.get("worst_rank"),
+            "boursorama_category_rank_annual_improvement": summary.get("annual_improvement"),
+            "boursorama_category_rank_run_improvement": run_improvement,
+            "boursorama_category_rank_as_of": rank_as_of or now.date().isoformat(),
         }
-        for period, data in ranks.items():
-            field = PERIODS[period][-1]
-            values[field] = data["score"]
-            values[f"boursorama_rank_{period}"] = data["rank"]
-            values[f"boursorama_rank_total_{period}"] = data["total"]
+        for year, rank in ranks.items():
+            values[f"boursorama_category_rank_{year}"] = rank
         for field, value in values.items():
-            if value is None:
+            if value is None or value == "":
                 continue
             observations.append({
                 "universe": "ETF",
                 "isin": isin,
                 "field": field,
                 "value": value,
-                "source": "Boursorama ETF category ranking",
+                "source": "Boursorama / Morningstar ETF category rank",
                 "collected_at": now.isoformat(),
-                "as_of": now.date().isoformat(),
+                "as_of": rank_as_of or now.date().isoformat(),
                 "evidence_level": "B",
                 "validation_status": "AUTO_MATCH",
             })
         history_rows.append({
             "isin": isin,
             "observed_at": now.isoformat(),
-            "rank_score_mean": current_mean,
-            **{f"rank_{p}": d["rank"] for p, d in ranks.items()},
-            **{f"total_{p}": d["total"] for p, d in ranks.items()},
-            **{f"score_{p}": d["score"] for p, d in ranks.items()},
+            "rank_as_of": rank_as_of,
+            "category": category,
+            "latest_year": summary.get("latest_year"),
+            "latest_rank": current_latest,
+            "mean_rank": summary.get("mean_rank"),
+            "annual_improvement": summary.get("annual_improvement"),
+            "run_improvement": run_improvement,
+            **{f"rank_{year}": rank for year, rank in ranks.items()},
         })
 
     if history_rows:
