@@ -74,3 +74,20 @@ def test_cdc_context_is_visible_in_committee_without_mutating_score_or_decision(
     assert action["cdc_decision_influence"]==0.0
     assert etf["cdc_data_status"]=="NOT_APPLICABLE"
     assert etf["cdc_decision_influence"]==0.0
+
+
+def test_cdc_context_explicit_non_observe_token_stays_missing_not_available():
+    decisions=pd.DataFrame([
+        {"asset_class":"ACTION","horizon":"CT","isin":"FR2","score":72.0,"decision":"WATCH"},
+        {"asset_class":"GOLD","horizon":"STRATEGIC_6_24M","isin":"","score":60.0,"decision":"REVIEW"},
+    ])
+    actions=pd.DataFrame([{
+        "isin":"FR2",
+        "next_earnings_date_fh":"NON_OBSERVE",
+        "amf_public_short_disclosed_sum_pct":"N/A",
+    }])
+    out=_attach_cdc_context(decisions,actions)
+    assert out.iloc[0]["cdc_data_status"]=="MISSING"
+    assert out.iloc[1]["cdc_data_status"]=="NOT_APPLICABLE"
+    assert list(out["score"])==[72.0,60.0]
+    assert list(out["decision"])==["WATCH","REVIEW"]
