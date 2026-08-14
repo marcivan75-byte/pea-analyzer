@@ -153,6 +153,13 @@ jobs:
         run: python -m v182.audit.identity_hydration
       - name: Run unified Committee pipeline
         run: python -m v182.reporting.unified_runner
+      - name: Publish Android Investment Committee Control Center
+        if: always()
+        run: |
+          python -m v182.reporting.android_ci_control_center
+          if [ -f outputs/mobile/ANDROID_CI_CONTROL_CENTER.md ]; then
+            cat outputs/mobile/ANDROID_CI_CONTROL_CENTER.md >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Show unified summary
         if: always()
         run: |
@@ -204,6 +211,7 @@ jobs:
           name: committee-master-v21-6-3-study-${{ github.run_id }}
           path: |
             outputs/unified/
+            outputs/mobile/
             outputs/committee_master/
             outputs/etf_mt_v2081/
             outputs/gold_v1_1/
