@@ -55,8 +55,14 @@ def test_sector_rotation_requires_recovery_for_high_score():
     actions=pd.DataFrame({"isin":[f"A{i}" for i in range(6)],"sector_yf":["CATCH"]*3+["FALLING"]*3,"distance_high_52w_pct":[20,22,18,30,32,28],"catchup_52w_score":[80,85,75,50,50,50],"perf_1m_pct":[5,4,6,-8,-7,-9],"perf_3m_pct":[6,5,7,-15,-14,-16],"above_mm50":[True,True,True,False,False,False],"above_mm200":[True,True,False,False,False,False]}); _,sectors,_=build_rotation_observations(actions); catch=float(sectors.loc[sectors["sector"]=="CATCH","sector_rotation_score"].iloc[0]); falling=float(sectors.loc[sectors["sector"]=="FALLING","sector_rotation_score"].iloc[0]); assert catch>50; assert falling<=50
 
 
-def test_v21_4_action_weight_sets_sum_to_one_without_total_return_double_count():
+def test_v21_7_action_weight_sets_match_study_hardened_governance():
     cfg=json.loads((ROOT/"config"/"V21_ACTIONS_CRITERIA_REGISTRY.json").read_text())
     for horizon in ("CT","MT","LT","SHORT","TOP_DOWN"): assert abs(sum(cfg["weights"][horizon].values())-1.0)<1e-6
-    assert cfg["weights"]["MT"]["morningstar_action_score"]>0; assert cfg["weights"]["LT"]["dividend_gt4_score"]>0; assert cfg["weights"]["LT"]["target_upside_gt4_score"]>0
-    assert all("total_return_potential_score" not in cfg["weights"][h] for h in ("CT","MT","LT"))
+    for horizon in ("CT","MT","LT"):
+        assert "morningstar_action_score" not in cfg["weights"][horizon]
+        assert "dividend_gt4_score" not in cfg["weights"][horizon]
+        assert "target_upside_gt4_score" not in cfg["weights"][horizon]
+        assert "total_return_potential_score" not in cfg["weights"][horizon]
+    assert cfg["weights"]["MT"]["target_upside_pct_v21"]>0
+    assert cfg["weights"]["MT"]["dividend_yield_v21_pct"]>0
+    assert cfg["governance"]["positive_unvalidated_overlay_can_create_buy"] is False

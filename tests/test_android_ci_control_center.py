@@ -47,7 +47,7 @@ def test_android_control_center_contains_mobile_sections_and_market_overlays(tmp
     assert "TCT" in text
     assert "OR" in text
     assert "DATA QUALITY" in text
-    assert "BACKTEST / VALIDATION" in text
+    assert "BACKTEST PIT/OOS EXCEPTIONNEL" in text
     assert "GITHUB STATUS / INCIDENTS" in text
 
     result = run(tmp_path)

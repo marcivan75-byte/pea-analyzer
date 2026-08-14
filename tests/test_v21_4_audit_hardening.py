@@ -128,11 +128,17 @@ def test_performance_step_has_explicit_dependency_skip_status():
     out=_skip_dependency("stale decisions forbidden"); assert out["status"]=="SKIPPED_DEPENDENCY"; assert "stale" in out["reason"]
 
 
-def test_v21_4_registry_has_no_active_total_return_composite():
+def test_v21_7_registry_has_no_active_derived_or_unvalidated_overlays():
     cfg=json.loads((ROOT/"config"/"V21_ACTIONS_CRITERIA_REGISTRY.json").read_text())
     for h in ("CT","MT","LT"):
         assert "total_return_potential_score" not in cfg["weights"][h]
-        assert "target_upside_gt4_score" in cfg["weights"][h]
+        assert "target_upside_gt4_score" not in cfg["weights"][h]
+        assert "dividend_gt4_score" not in cfg["weights"][h]
+        assert "morningstar_action_score" not in cfg["weights"][h]
+        assert "sector_rotation_score" not in cfg["weights"][h]
+        assert "action_catchup_score" not in cfg["weights"][h]
+        assert cfg["weights"][h]["target_upside_pct_v21"]>0
+        assert cfg["weights"][h]["dividend_yield_v21_pct"]>0
 
 
 def test_action_reference_and_challenger_are_separate_and_normalized():
