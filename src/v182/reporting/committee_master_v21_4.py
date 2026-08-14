@@ -14,7 +14,9 @@ CDC_FIELDS=[
     "next_earnings_date_fh","next_earnings_hour_fh","earnings_days_to_event_fh",
     "eps_estimate_next_fh","eps_actual_fh","revenue_estimate_next_fh","revenue_actual_fh",
     "eps_estimate_revision_abs_fh","eps_estimate_revision_pct_fh",
-    "amf_short_position_pct","amf_short_holder_count","amf_short_latest_date","amf_short_disclosed_flag",
+    "amf_public_short_disclosed_sum_pct","amf_public_short_holder_count",
+    "amf_public_short_latest_position_date","amf_public_short_open_publication_count",
+    "amf_public_short_proxy_flag","amf_public_short_not_true_current_interest_flag",
 ]
 
 
@@ -106,8 +108,6 @@ def run(root:Path=ROOT)->dict:
 
     comparison=pd.DataFrame(rows); comparison.to_csv(outdir/"ACTION_REFERENCE_VS_CHALLENGER_V21_4.csv",sep=";",index=False,encoding="utf-8-sig")
 
-    # CDC is collected before scoring but must also be present in the final
-    # Committee file. Guard score/decision across this context-only join.
     score_guard=decisions["score"].copy(); decision_guard=decisions["decision"].copy()
     decisions=_attach_cdc_context(decisions,actions)
     if not score_guard.reset_index(drop=True).equals(decisions["score"].reset_index(drop=True)):
@@ -115,9 +115,6 @@ def run(root:Path=ROOT)->dict:
     if not decision_guard.reset_index(drop=True).equals(decisions["decision"].reset_index(drop=True)):
         raise RuntimeError("CDC_CONTEXT_DECISION_MUTATION_FORBIDDEN")
 
-    # V21.6.3: only after final reference preselection, enrich BUY/WATCH Actions
-    # with Boursorama sheets and Investing weekly/monthly technical summaries.
-    # The merge is guarded so no score or decision can be changed by this layer.
     shortlist=_postselection_isins(decisions)
     postselection,postselection_failures=enrich_postselection(actions,shortlist)
     postselection.to_csv(outdir/"POSTSELECTION_MARKET_SHEETS.csv",sep=";",index=False,encoding="utf-8-sig")
@@ -148,7 +145,7 @@ def run(root:Path=ROOT)->dict:
     if "cdc_data_status" in decisions.columns:
         cdc_available=int(decisions.loc[decisions["asset_class"].astype(str)=="ACTION","cdc_data_status"].eq("AVAILABLE").sum())
     summary["action_dual_track"]={"status":"ACTIVE_REFERENCE_PLUS_SHADOW_CHALLENGER","reference_version":reference_reg.get("version"),"challenger_version":challenger_reg.get("version"),"final_decision_source":"REFERENCE","comparison_rows":int(len(comparison)),"decision_divergences":divergences,"reference_buy_count":ref_buy,"challenger_buy_count":chal_buy,"performance_attribution":"NONE_TO_V21_4_CHALLENGER_UNTIL_DEDICATED_PIT_OOS_BACKTEST"}
-    summary["cdc_committee_context"]={"status":"ACTIVE_OBSERVED_CONTEXT","available_action_decision_rows":cdc_available,"fields":[field for field in CDC_FIELDS if field in actions.columns],"decision_influence":0.0,"score_mutation_forbidden":True,"decision_mutation_forbidden":True}
+    summary["cdc_committee_context"]={"status":"ACTIVE_OBSERVED_CONTEXT","available_action_decision_rows":cdc_available,"fields":[field for field in CDC_FIELDS if field in actions.columns],"decision_influence":0.0,"score_mutation_forbidden":True,"decision_mutation_forbidden":True,"amf_short_semantics":"OPEN_PUBLIC_DISCLOSURE_PROXY_NOT_TRUE_CURRENT_SHORT_INTEREST"}
     summary["postselection_market_sheets"]={
         "status":"ACTIVE_SHADOW_CONFIRMATION",
         "shortlisted_isins":len(shortlist),
@@ -159,15 +156,13 @@ def run(root:Path=ROOT)->dict:
         "signals":["STRONG_BUY","BUY","NEUTRAL","SELL","STRONG_SELL"],
         "positive_confirmation_can_create_buy":False,
     }
-    # Rebuild aggregate counts after reference replacement so SUMMARY matches the
-    # decisions actually consumed by the Committee/performance tracker.
     summary["status_counts"]=decisions.groupby(["asset_class","horizon","status"],dropna=False).size().reset_index(name="count").to_dict("records")
     summary["decision_counts"]=decisions.groupby(["asset_class","horizon","decision"],dropna=False).size().reset_index(name="count").to_dict("records")
     summary.setdefault("outputs",{})["action_reference_vs_challenger"]="outputs/committee_master/ACTION_REFERENCE_VS_CHALLENGER_V21_4.csv"
     summary["outputs"]["sector_ranking_challenger"]="outputs/committee_master/SECTOR_RANKING_CHALLENGER_V21_4.csv"
     summary["outputs"]["postselection_market_sheets"]="outputs/committee_master/POSTSELECTION_MARKET_SHEETS.csv"
     summary.setdefault("notes",[]).append("Actions use V21.0 frozen weights as final reference decision; V21.4 enriched scores and unvalidated positive/negative 52w overlays are challenger-only until PIT/OOS validation.")
-    summary["notes"].append("V21.6.3 Finnhub earnings/EPS revisions and AMF net-short fields are copied explicitly into Committee Action rows with zero score/decision influence.")
+    summary["notes"].append("V21.6.3 Finnhub earnings/EPS revisions and AMF open public-short-disclosure proxy fields are copied explicitly into Committee Action rows with zero score/decision influence. AMF disclosure data is not labelled true current short interest.")
     summary["notes"].append("V21.6.3 Boursorama/Investing Action enrichment runs only after BUY/WATCH preselection. Weekly/monthly technical signals are visible to the Committee with zero decision influence until PIT/OOS validation.")
     (outdir/"SUMMARY.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2,default=str),encoding="utf-8")
     return summary
