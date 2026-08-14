@@ -21,6 +21,13 @@ _SIGNAL_SCORE = {
 _NUM_TOKEN = r"[+\-−]?(?:\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d+)(?:[.,]\d+)?"
 _BOURSORAMA_BUCKETS = {1:"ACHETER",2:"RENFORCER",3:"CONSERVER",4:"ALLEGER",5:"VENDRE"}
 _INVESTING_SIGNAL_PATTERN = r"Strong Buy|Strong Sell|Achat fort|Acheter fort|Vente forte|Vendre fort|Neutral|Neutre|Buy|Sell|Achat|Acheter|Vente|Vendre"
+_POSTSELECTION_DATA_FIELDS = (
+    "boursorama_consensus_signal","boursorama_consensus_note_median","boursorama_consensus_bucket",
+    "boursorama_acheter_n","boursorama_renforcer_n","boursorama_conserver_n","boursorama_alleger_n","boursorama_vendre_n",
+    "boursorama_analyst_count","boursorama_target_price","boursorama_target_currency","boursorama_target_upside_pct",
+    "boursorama_per","boursorama_dividend_yield_pct","boursorama_52w_high","boursorama_52w_low",
+    "investing_weekly_signal","investing_monthly_signal",
+)
 
 
 def _clean_text(html: str) -> str:
@@ -82,11 +89,7 @@ def _find_signal_near(text: str, label: str, radius: int = 220) -> str | None:
 
 
 def _investing_timeframe_sequence(text: str) -> tuple[str | None, str | None]:
-    """Parse Investing's explicit Daily/Weekly/Monthly summary sequence first.
-
-    This prevents a proximity parser from swapping adjacent weekly and monthly
-    values when the flattened page contains all three timeframe labels together.
-    """
+    """Parse Investing's explicit Daily/Weekly/Monthly summary sequence first."""
     pattern = re.compile(
         rf"(?:Daily|Journalier)\s+(?P<daily>{_INVESTING_SIGNAL_PATTERN})"
         rf".{{0,120}}?(?:Weekly|Hebdomadaire)\s+(?P<weekly>{_INVESTING_SIGNAL_PATTERN})"
@@ -315,23 +318,14 @@ def _select_investing_candidate(candidates: list[tuple[int, str]], *, allow_uniq
 
 
 def _discover_investing_url(row: pd.Series, requests, limiter: StartRateLimiter, headers: dict[str, str]) -> str | None:
-    """Resolve an Investing equity URL without arbitrarily choosing an ADR/venue.
-
-    Explicit URLs win. ISIN search may accept a single result even when the page
-    omits identifying text. Ticker/name searches require a unique positive match;
-    equal-scoring venue/ADR candidates are left unresolved instead of guessed.
-    """
+    """Resolve an Investing equity URL without arbitrarily choosing an ADR/venue."""
     direct = _investing_url_from_row(row)
     if direct:
         return direct
     isin = str(row.get("isin", "") or "").strip()
     ticker = str(row.get("yahoo_ticker", row.get("ticker", "")) or "").strip()
     name = str(row.get("name", "") or "").strip()
-    queries = [
-        (isin, True),
-        (ticker.split(".",1)[0], False),
-        (name, False),
-    ]
+    queries = [(isin, True),(ticker.split(".",1)[0], False),(name, False)]
     for query, is_isin_query in queries:
         if not query:
             continue
@@ -392,6 +386,10 @@ def _shadow_confirmation(row: dict[str, object]) -> tuple[float | None, str]:
     return round(score, 4), label
 
 
+def _has_postselection_data(row: dict[str, object]) -> bool:
+    return any(row.get(field) is not None and row.get(field) != "" for field in _POSTSELECTION_DATA_FIELDS)
+
+
 def _fetch_action(row: pd.Series, requests, limiter: StartRateLimiter) -> tuple[dict[str, object], list[dict]]:
     isin = str(row.get("isin", "") or "").strip()
     result: dict[str, object] = {"isin": isin}
@@ -416,6 +414,8 @@ def _fetch_action(row: pd.Series, requests, limiter: StartRateLimiter) -> tuple[
                 failures.append({"isin": isin, "source": "Boursorama", "reason": type(exc).__name__, "detail": str(exc)[:160]})
         result.update(combined)
         result["boursorama_url"] = b_url
+        if not combined:
+            failures.append({"isin": isin, "source": "Boursorama", "reason": "FIELDS_NOT_OBSERVED"})
     else:
         failures.append({"isin": isin, "source": "Boursorama", "reason": "URL_NOT_RESOLVED"})
 
@@ -428,8 +428,11 @@ def _fetch_action(row: pd.Series, requests, limiter: StartRateLimiter) -> tuple[
             if response.status_code >= 400:
                 failures.append({"isin": isin, "source": "Investing", "reason": f"HTTP_{response.status_code}"})
             else:
-                result.update(extract_investing_technical(response.text))
+                technical = extract_investing_technical(response.text)
+                result.update(technical)
                 result["investing_url"] = i_url
+                if not technical:
+                    failures.append({"isin": isin, "source": "Investing", "reason": "TECHNICAL_SIGNALS_NOT_OBSERVED"})
         except Exception as exc:
             failures.append({"isin": isin, "source": "Investing", "reason": type(exc).__name__, "detail": str(exc)[:160]})
     else:
@@ -441,7 +444,7 @@ def _fetch_action(row: pd.Series, requests, limiter: StartRateLimiter) -> tuple[
     score, confirmation = _shadow_confirmation(result)
     result["postselection_confirmation_score_shadow"] = score
     result["postselection_confirmation"] = confirmation
-    result["postselection_data_status"] = "AVAILABLE" if score is not None or len(result) > 5 else "MISSING"
+    result["postselection_data_status"] = "AVAILABLE" if _has_postselection_data(result) else "MISSING"
     return result, failures
 
 
