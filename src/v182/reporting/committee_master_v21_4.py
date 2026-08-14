@@ -47,8 +47,10 @@ def _attach_cdc_context(decisions: pd.DataFrame, actions: pd.DataFrame) -> pd.Da
     available=[field for field in CDC_FIELDS if field in actions.columns]
     if not available:
         out=decisions.copy()
+        action_mask=out["asset_class"].astype(str)=="ACTION"
         out["cdc_decision_influence"]=0.0
-        out["cdc_data_status"]="MISSING"
+        out["cdc_data_status"]="NOT_APPLICABLE"
+        out.loc[action_mask,"cdc_data_status"]="MISSING"
         return out
     context=actions[["isin",*available]].drop_duplicates("isin").copy()
     out=decisions.merge(context,on="isin",how="left",validate="many_to_one",sort=False)
@@ -153,6 +155,7 @@ def run(root:Path=ROOT)->dict:
         "source_failures":int(len(postselection_failures)),
         "decision_influence":0.0,
         "investing_timeframes":["WEEKLY","MONTHLY"],
+        "investing_listing_resolution":"EXPLICIT_URL_OR_UNIQUE_IDENTITY_MATCH_NO_ARBITRARY_ADR_VENUE",
         "signals":["STRONG_BUY","BUY","NEUTRAL","SELL","STRONG_SELL"],
         "positive_confirmation_can_create_buy":False,
     }
@@ -163,6 +166,6 @@ def run(root:Path=ROOT)->dict:
     summary["outputs"]["postselection_market_sheets"]="outputs/committee_master/POSTSELECTION_MARKET_SHEETS.csv"
     summary.setdefault("notes",[]).append("Actions use V21.0 frozen weights as final reference decision; V21.4 enriched scores and unvalidated positive/negative 52w overlays are challenger-only until PIT/OOS validation.")
     summary["notes"].append("V21.6.3 Finnhub earnings/EPS revisions and AMF open public-short-disclosure proxy fields are copied explicitly into Committee Action rows with zero score/decision influence. AMF disclosure data is not labelled true current short interest.")
-    summary["notes"].append("V21.6.3 Boursorama/Investing Action enrichment runs only after BUY/WATCH preselection. Weekly/monthly technical signals are visible to the Committee with zero decision influence until PIT/OOS validation.")
+    summary["notes"].append("V21.6.3 Boursorama/Investing Action enrichment runs only after BUY/WATCH preselection. Investing listing ambiguity is rejected rather than choosing an ADR/venue arbitrarily; weekly/monthly signals remain zero-influence until PIT/OOS validation.")
     (outdir/"SUMMARY.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2,default=str),encoding="utf-8")
     return summary
