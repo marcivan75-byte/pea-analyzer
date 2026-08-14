@@ -29,13 +29,16 @@ def test_amf_aggregates_one_latest_open_publication_per_holder_and_never_calls_i
     assert fields["amf_public_short_disclosed_sum_pct"]==0.95
     assert fields["amf_public_short_holder_count"]==2
     assert fields["amf_public_short_latest_position_date"]=="2026-08-12"
+    assert fields["amf_public_short_latest_publication_date"]=="2026-08-13"
+    assert fields["amf_public_short_days_since_latest_publication"]==1
     assert fields["amf_public_short_open_publication_count"]==2
     assert fields["amf_public_short_proxy_flag"]==1
     assert fields["amf_public_short_not_true_current_interest_flag"]==1
     assert {row["isin"] for row in observations}=={"FR0000120073"}
+    assert {row["as_of"] for row in observations}=={"2026-08-13"}
 
 
-def test_amf_requires_publication_end_and_holder_columns_instead_of_guessing_current_state():
+def test_amf_requires_publication_dates_and_holder_columns_instead_of_guessing_current_state():
     actions=pd.DataFrame([{"isin":"FR0000120073"}])
     source=pd.DataFrame([{
         "ISIN":"FR0000120073",
@@ -46,6 +49,7 @@ def test_amf_requires_publication_end_and_holder_columns_instead_of_guessing_cur
     observations,failures=parse_amf_short_positions(actions,source,observed_at=datetime(2026,8,14,tzinfo=timezone.utc))
     assert observations==[]
     assert failures and failures[0]["reason"]=="REQUIRED_COLUMNS_NOT_FOUND"
+    assert "publication_start" in failures[0]["missing"]
     assert "publication_end" in failures[0]["missing"]
 
 
