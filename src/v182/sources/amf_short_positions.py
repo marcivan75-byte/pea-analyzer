@@ -54,7 +54,8 @@ def parse_amf_short_positions(actions: pd.DataFrame, source: pd.DataFrame, *, ob
     the holder has subsequently moved below the public-disclosure threshold.
     Absence from the public file is therefore never treated as zero exposure.
     Each observation is dated by the latest actual public disclosure retained for
-    that issuer, never artificially by the run date.
+    that issuer, never artificially by the run date. Both newest and oldest
+    retained-disclosure ages are exported so aggregate staleness stays visible.
     """
     now = observed_at or datetime.now(timezone.utc)
     if source.empty:
@@ -107,8 +108,6 @@ def parse_amf_short_positions(actions: pd.DataFrame, source: pd.DataFrame, *, ob
     if active.empty:
         return [], []
 
-    # Defensive de-duplication: one active record per holder/issuer, keeping the
-    # latest position date and publication start as a tie-breaker.
     active = active.sort_values(["_isin", "_holder", "_position_date", "_start_pub"])
     active = active.groupby(["_isin", "_holder"], as_index=False, sort=False).tail(1)
 
@@ -118,13 +117,17 @@ def parse_amf_short_positions(actions: pd.DataFrame, source: pd.DataFrame, *, ob
         holder_count = int(group["_holder"].nunique())
         latest_position = group["_position_date"].max()
         latest_publication = group["_start_pub"].max()
-        publication_age_days = max(0, (now.date() - latest_publication.date()).days)
+        oldest_publication = group["_start_pub"].min()
+        latest_age_days = max(0, (now.date() - latest_publication.date()).days)
+        max_retained_age_days = max(0, (now.date() - oldest_publication.date()).days)
         values = {
             "amf_public_short_disclosed_sum_pct": round(position_sum, 6),
             "amf_public_short_holder_count": holder_count,
             "amf_public_short_latest_position_date": latest_position.date().isoformat(),
             "amf_public_short_latest_publication_date": latest_publication.date().isoformat(),
-            "amf_public_short_days_since_latest_publication": publication_age_days,
+            "amf_public_short_days_since_latest_publication": latest_age_days,
+            "amf_public_short_oldest_retained_publication_date": oldest_publication.date().isoformat(),
+            "amf_public_short_max_days_since_retained_publication": max_retained_age_days,
             "amf_public_short_open_publication_count": int(len(group)),
             "amf_public_short_proxy_flag": 1,
             "amf_public_short_not_true_current_interest_flag": 1,
