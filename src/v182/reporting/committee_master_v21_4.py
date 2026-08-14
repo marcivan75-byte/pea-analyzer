@@ -16,7 +16,8 @@ CDC_FIELDS=[
     "eps_estimate_next_fh","eps_actual_fh","revenue_estimate_next_fh","revenue_actual_fh",
     "eps_estimate_revision_abs_fh","eps_estimate_revision_pct_fh",
     "amf_public_short_disclosed_sum_pct","amf_public_short_holder_count",
-    "amf_public_short_latest_position_date","amf_public_short_open_publication_count",
+    "amf_public_short_latest_position_date","amf_public_short_latest_publication_date",
+    "amf_public_short_days_since_latest_publication","amf_public_short_open_publication_count",
     "amf_public_short_proxy_flag","amf_public_short_not_true_current_interest_flag",
 ]
 
@@ -149,7 +150,7 @@ def run(root:Path=ROOT)->dict:
     if "cdc_data_status" in decisions.columns:
         cdc_available=int(decisions.loc[decisions["asset_class"].astype(str)=="ACTION","cdc_data_status"].eq("AVAILABLE").sum())
     summary["action_dual_track"]={"status":"ACTIVE_REFERENCE_PLUS_SHADOW_CHALLENGER","reference_version":reference_reg.get("version"),"challenger_version":challenger_reg.get("version"),"final_decision_source":"REFERENCE","comparison_rows":int(len(comparison)),"decision_divergences":divergences,"reference_buy_count":ref_buy,"challenger_buy_count":chal_buy,"performance_attribution":"NONE_TO_V21_4_CHALLENGER_UNTIL_DEDICATED_PIT_OOS_BACKTEST"}
-    summary["cdc_committee_context"]={"status":"ACTIVE_OBSERVED_CONTEXT","available_action_decision_rows":cdc_available,"fields":[field for field in CDC_FIELDS if field in actions.columns],"decision_influence":0.0,"score_mutation_forbidden":True,"decision_mutation_forbidden":True,"amf_short_semantics":"OPEN_PUBLIC_DISCLOSURE_PROXY_NOT_TRUE_CURRENT_SHORT_INTEREST"}
+    summary["cdc_committee_context"]={"status":"ACTIVE_OBSERVED_CONTEXT","available_action_decision_rows":cdc_available,"fields":[field for field in CDC_FIELDS if field in actions.columns],"decision_influence":0.0,"score_mutation_forbidden":True,"decision_mutation_forbidden":True,"amf_short_semantics":"OPEN_PUBLIC_DISCLOSURE_PROXY_NOT_TRUE_CURRENT_SHORT_INTEREST","amf_observation_as_of":"LATEST_RETAINED_PUBLIC_DISCLOSURE_DATE"}
     summary["postselection_market_sheets"]={
         "status":"ACTIVE_SHADOW_CONFIRMATION",
         "shortlisted_isins":len(shortlist),
@@ -167,7 +168,7 @@ def run(root:Path=ROOT)->dict:
     summary["outputs"]["sector_ranking_challenger"]="outputs/committee_master/SECTOR_RANKING_CHALLENGER_V21_4.csv"
     summary["outputs"]["postselection_market_sheets"]="outputs/committee_master/POSTSELECTION_MARKET_SHEETS.csv"
     summary.setdefault("notes",[]).append("Actions use V21.0 frozen weights as final reference decision; V21.4 enriched scores and unvalidated positive/negative 52w overlays are challenger-only until PIT/OOS validation.")
-    summary["notes"].append("V21.6.3 Finnhub earnings/EPS revisions and AMF open public-short-disclosure proxy fields are copied explicitly into Committee Action rows with zero score/decision influence. AMF disclosure data is not labelled true current short interest.")
+    summary["notes"].append("V21.6.3 Finnhub earnings/EPS revisions and AMF open public-short-disclosure proxy fields are copied explicitly into Committee Action rows with zero score/decision influence. AMF disclosure data is dated by the latest retained public-disclosure date, not by the run date, and is not labelled true current short interest.")
     summary["notes"].append("V21.6.3 Boursorama/Investing Action enrichment runs only after BUY/WATCH preselection. Investing listing ambiguity is rejected rather than choosing an ADR/venue arbitrarily; weekly/monthly signals remain zero-influence until PIT/OOS validation.")
     (outdir/"SUMMARY.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2,default=str),encoding="utf-8")
     return summary
