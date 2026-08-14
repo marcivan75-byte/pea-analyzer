@@ -8,6 +8,7 @@ import re
 import pandas as pd
 from bs4 import BeautifulSoup
 
+from v182.sources.boursorama_resolver import resolve_boursorama_url
 from v182.sources.rate_limit import StartRateLimiter
 
 _SIGNAL_SCORE = {
@@ -27,7 +28,7 @@ def _clean_text(html: str) -> str:
 def _number(value: str | None) -> float | None:
     if not value:
         return None
-    raw = value.replace(" ", "").replace("%", "").replace("€", "").replace(",", ".")
+    raw = re.sub(r"\s+", "", str(value)).replace("%", "").replace("€", "").replace(",", ".")
     try:
         number = float(raw)
         return number if math.isfinite(number) else None
@@ -36,7 +37,7 @@ def _number(value: str | None) -> float | None:
 
 
 def normalize_signal(value: str | None) -> str | None:
-    text = re.sub(r"\s+", " ", str(value or "").strip().upper().replace("É", "E").replace("È", "E"))
+    text = re.sub(r"\s+", " ", str(value or "").strip().upper().replace("É", "E").replace("È", "E").replace("À", "A"))
     aliases = {
         "STRONG BUY": "STRONG_BUY",
         "ACHAT FORT": "STRONG_BUY",
@@ -44,6 +45,7 @@ def normalize_signal(value: str | None) -> str | None:
         "BUY": "BUY",
         "ACHAT": "BUY",
         "ACHETER": "BUY",
+        "RENFORCER": "BUY",
         "NEUTRAL": "NEUTRAL",
         "NEUTRE": "NEUTRAL",
         "HOLD": "NEUTRAL",
@@ -51,6 +53,7 @@ def normalize_signal(value: str | None) -> str | None:
         "SELL": "SELL",
         "VENTE": "SELL",
         "VENDRE": "SELL",
+        "ALLEGER": "SELL",
         "STRONG SELL": "STRONG_SELL",
         "VENTE FORTE": "STRONG_SELL",
         "VENDRE FORT": "STRONG_SELL",
@@ -59,7 +62,7 @@ def normalize_signal(value: str | None) -> str | None:
 
 
 def _find_signal_near(text: str, label: str, radius: int = 220) -> str | None:
-    signal_pattern = r"(Strong Buy|Strong Sell|Buy|Sell|Neutral|Achat fort|Achat|Acheter|Neutre|Conserver|Vente forte|Vente|Vendre)"
+    signal_pattern = r"(Strong Buy|Strong Sell|Achat fort|Acheter fort|Vente forte|Vendre fort|Renforcer|Conserver|All[eé]ger|Neutral|Neutre|Buy|Sell|Achat|Acheter|Vente|Vendre)"
     for match in re.finditer(re.escape(label), text, flags=re.IGNORECASE):
         start = max(0, match.start() - radius)
         end = min(len(text), match.end() + radius)
@@ -83,50 +86,92 @@ def extract_investing_technical(html: str) -> dict[str, str]:
 
 
 def extract_boursorama_action(html: str) -> dict[str, object]:
+    """Extract only explicitly displayed Boursorama Action-sheet values.
+
+    The parser follows the labels visible on Boursorama quote/consensus pages,
+    including estimated-year PER/yield and the one-year high/low history row.
+    """
     text = _clean_text(html)
     out: dict[str, object] = {}
-    consensus = _find_signal_near(text, "Consensus", radius=300)
+    consensus = _find_signal_near(text, "Consensus", radius=360)
     if consensus:
         out["boursorama_consensus_signal"] = consensus
-    patterns = {
-        "boursorama_target_price": (
-            r"objectif(?: de cours)?(?: moyen| median| médian)?[^0-9]{0,60}([0-9][0-9\s.,]*)\s*€",
-            r"cours objectif[^0-9]{0,60}([0-9][0-9\s.,]*)\s*€",
-        ),
-        "boursorama_target_upside_pct": (
-            r"potentiel[^+\-0-9]{0,60}([+\-]?[0-9][0-9\s.,]*)\s*%",
-        ),
-        "boursorama_per": (
-            r"\bper\b[^0-9]{0,40}([0-9][0-9\s.,]*)",
-        ),
-        "boursorama_dividend_yield_pct": (
-            r"rendement[^0-9]{0,60}([0-9][0-9\s.,]*)\s*%",
-        ),
-        "boursorama_52w_high": (
-            r"(?:plus haut|haut)[^0-9]{0,30}(?:52 semaines|1 an)[^0-9]{0,30}([0-9][0-9\s.,]*)",
-            r"(?:52 semaines|1 an)[^0-9]{0,30}(?:plus haut|haut)[^0-9]{0,30}([0-9][0-9\s.,]*)",
-        ),
-        "boursorama_52w_low": (
-            r"(?:plus bas|bas)[^0-9]{0,30}(?:52 semaines|1 an)[^0-9]{0,30}([0-9][0-9\s.,]*)",
-            r"(?:52 semaines|1 an)[^0-9]{0,30}(?:plus bas|bas)[^0-9]{0,30}([0-9][0-9\s.,]*)",
-        ),
-    }
-    for field, field_patterns in patterns.items():
-        for pattern in field_patterns:
-            match = re.search(pattern, text, flags=re.IGNORECASE)
-            if match:
-                value = _number(match.group(1))
-                if value is not None:
-                    out[field] = value
-                    break
+
+    target = re.search(
+        r"objectif(?: de cours)?(?:\s+\d+\s+mois)?(?: moyen| median| médian)?\s*:?\s*([0-9][0-9\s.,]*)\s*(EUR|USD|CHF|GBP|SEK|NOK|DKK|PLN|CZK|€)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if target:
+        value = _number(target.group(1))
+        if value is not None:
+            out["boursorama_target_price"] = value
+            out["boursorama_target_currency"] = "EUR" if target.group(2) == "€" else target.group(2).upper()
+    potential = re.search(r"potentiel\s*:?\s*([+\-−]?[0-9][0-9\s.,]*)\s*%", text, flags=re.IGNORECASE)
+    if potential:
+        value = _number(potential.group(1).replace("−", "-"))
+        if value is not None:
+            out["boursorama_target_upside_pct"] = value
+
+    per_patterns = (
+        r"\bper\s+estim[eé]\s+\d{4}\s*(?:[^0-9\-]{0,50})?([0-9][0-9\s.,]*)",
+        r"\bper\b(?!\s+estim[eé]\s+\d{4})[^0-9]{0,30}([0-9][0-9\s.,]*)",
+    )
+    for pattern in per_patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            value = _number(match.group(1))
+            if value is not None and value < 500:
+                out["boursorama_per"] = value
+                break
+
+    yield_patterns = (
+        r"rendement\s+estim[eé]\s+\d{4}\s*(?:[^0-9\-]{0,50})?([0-9][0-9\s.,]*)\s*%",
+        r"\brendement\b[^0-9]{0,50}([0-9][0-9\s.,]*)\s*%",
+    )
+    for pattern in yield_patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            value = _number(match.group(1))
+            if value is not None and 0 <= value <= 100:
+                out["boursorama_dividend_yield_pct"] = value
+                break
+
+    one_year = re.search(
+        r"\b1\s+an\b\s*[+\-−]?\s*[0-9][0-9\s.,]*\s*%\s*([0-9][0-9\s.,]*)\s+([0-9][0-9\s.,]*)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if one_year:
+        high = _number(one_year.group(1))
+        low = _number(one_year.group(2))
+        if high is not None and low is not None:
+            out["boursorama_52w_high"] = high
+            out["boursorama_52w_low"] = low
+    else:
+        patterns = {
+            "boursorama_52w_high": (
+                r"(?:plus haut|haut)[^0-9]{0,30}(?:52 semaines|1 an)[^0-9]{0,30}([0-9][0-9\s.,]*)",
+                r"(?:52 semaines|1 an)[^0-9]{0,30}(?:plus haut|haut)[^0-9]{0,30}([0-9][0-9\s.,]*)",
+            ),
+            "boursorama_52w_low": (
+                r"(?:plus bas|bas)[^0-9]{0,30}(?:52 semaines|1 an)[^0-9]{0,30}([0-9][0-9\s.,]*)",
+                r"(?:52 semaines|1 an)[^0-9]{0,30}(?:plus bas|bas)[^0-9]{0,30}([0-9][0-9\s.,]*)",
+            ),
+        }
+        for field, field_patterns in patterns.items():
+            for pattern in field_patterns:
+                match = re.search(pattern, text, flags=re.IGNORECASE)
+                if match:
+                    value = _number(match.group(1))
+                    if value is not None:
+                        out[field] = value
+                        break
     return out
 
 
-def _boursorama_url(row: pd.Series) -> str | None:
-    for field in ("boursorama_url", "source_url"):
-        value = str(row.get(field, "") or "").strip()
-        if "boursorama.com" in value:
-            return value
+def _direct_boursorama_fallback(row: pd.Series) -> str | None:
+    """Use only a verified deterministic Paris fallback; other venues use ISIN search."""
     ticker = str(row.get("yahoo_ticker", "") or "").strip().upper()
     if ticker.endswith(".PA") and len(ticker) > 3:
         return f"https://www.boursorama.com/cours/1rP{ticker[:-3]}/"
@@ -221,7 +266,7 @@ def _fetch_action(row: pd.Series, requests, limiter: StartRateLimiter) -> tuple[
         "Accept-Language": "en-US,en;q=0.8,fr;q=0.6",
     }
 
-    b_url = _boursorama_url(row)
+    b_url = resolve_boursorama_url(row, requests, limiter, headers) or _direct_boursorama_fallback(row)
     if b_url:
         combined: dict[str, object] = {}
         for url in (b_url, _consensus_url(b_url)):
