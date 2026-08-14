@@ -34,7 +34,7 @@ def _status_token(value: str | None) -> str:
     text = str(value or "UNKNOWN").upper()
     if text in {"SUCCESS", "PASS", "SCORABLE", "ACTIVE_REFERENCE_SCORING", "ACTIVE_SHADOW_CONFIRMATION"}:
         return "[OK]"
-    if text.startswith("SKIPPED") or text in {"PARTIAL_SUCCESS", "WATCH", "REVIEW", "UNKNOWN", "MISSING", "NOT_RUN"}:
+    if text.startswith("SKIPPED") or text in {"PARTIAL_SUCCESS", "WATCH", "REVIEW", "UNKNOWN", "MISSING", "NOT_RUN", "NO_DATA", "WARN"}:
         return "[WARN]"
     if text in {"FAILED", "FAIL", "BLOCKED", "BLOCK_DATA", "BLOCKED_CONFIG"}:
         return "[FAIL]"
@@ -91,6 +91,26 @@ def _top_long_candidates(decisions: pd.DataFrame, limit: int = 5) -> list[str]:
     return rows
 
 
+def _backtest_lines(backtest: dict) -> list[str]:
+    if not backtest:
+        return ["- Aucun backtest exceptionnel exécuté sur ce run."]
+    lines = [
+        f"- Statut exceptionnel: {_status_token(backtest.get('status'))} {backtest.get('status', 'N/A')}",
+        f"- Final holdout ouvert: {backtest.get('holdout_policy', {}).get('final_holdout_opened', 'N/A')}",
+    ]
+    etf = backtest.get("etf_mt_38_core", {})
+    if etf:
+        lines.append(f"- ETF 38-PIT: {etf.get('status', 'N/A')} | historiques={etf.get('histories_loaded', 'N/A')} | mois scorés={etf.get('scored_months', 'N/A')}")
+        for metric in etf.get("metrics", []):
+            if metric.get("trades"):
+                lines.append(f"  - {metric.get('period')}: trades={metric.get('trades')} | win={metric.get('win_rate')} | expectancy={metric.get('expectancy_net')} | PF={metric.get('profit_factor_net')}")
+    action = backtest.get("actions_52w_rotation", {})
+    if action:
+        lines.append(f"- Actions 52w/rotation: {action.get('status', 'N/A')} | historiques={action.get('histories_loaded', 'N/A')} | observations mensuelles={action.get('monthly_observations', 'N/A')}")
+    lines.append("- Résultats = diagnostic, pas certification; univers survivant et historique structurel incomplet restent des limites.")
+    return lines
+
+
 def build_markdown(root: Path = ROOT) -> str:
     unified = _read_json(root / "outputs" / "unified" / "UNIFIED_SUMMARY_LATEST.json")
     committee = _read_json(root / "outputs" / "committee_master" / "SUMMARY.json")
@@ -98,6 +118,8 @@ def build_markdown(root: Path = ROOT) -> str:
     sectors = _read_csv(root / "outputs" / "V21_3_SECTOR_ROTATION.csv")
     governance = _read_json(root / "outputs" / "audit" / "CRITERIA_STUDY_GOVERNANCE.json")
     static_audit = _read_json(root / "outputs" / "audit" / "PYTHON_STATIC_AUDIT.json")
+    boursorama = _read_json(root / "outputs" / "audit" / "BOURSORAMA_IMPORT_MONITOR.json")
+    backtest = _read_json(root / "outputs" / "backtest" / "exceptional_pit_oos_2026_08_14" / "EXCEPTIONAL_PIT_OOS_SUMMARY.json")
     etf_mt = _read_json(root / "outputs" / "etf_mt_v2081" / "V20.8.1_ETF_MT_SUMMARY.json")
     gold = _read_json(root / "outputs" / "gold_v1_1" / "GOLD_V1_1_DECISION.json")
 
@@ -137,6 +159,17 @@ def build_markdown(root: Path = ROOT) -> str:
     lines.append("- Le score combine écart au plus haut 52 semaines, momentum 1 mois, accélération, breadth MM50/MM200 et inflexion relative.")
     lines.append("- Gouvernance V21.7: signal conservé en overlay/shadow à poids nul avant validation PIT/OOS.")
 
+    lines.extend(["", "## IMPORTS BOURSORAMA"])
+    if boursorama:
+        lines.append(f"- Statut: {_status_token(boursorama.get('status'))} {boursorama.get('status', 'N/A')}")
+        lines.append(f"- ETF rang catégorie: {boursorama.get('etf', {}).get('rank_success_isins', 'N/A')}/{boursorama.get('etf', {}).get('universe_rows', 'N/A')} ({boursorama.get('etf', {}).get('rank_coverage_pct', 'N/A')}%)")
+        lines.append(f"- Actions présélection Boursorama: {boursorama.get('actions_postselection', {}).get('boursorama_available_isins', 'N/A')}/{boursorama.get('actions_postselection', {}).get('shortlisted_isins', 'N/A')} ({boursorama.get('actions_postselection', {}).get('boursorama_coverage_pct', 'N/A')}%)")
+        lines.append(f"- HTTP 403/429: {boursorama.get('network', {}).get('http_403_or_429', 'N/A')} | transient HTTP: {boursorama.get('network', {}).get('transient_http', 'N/A')}")
+        for warning in boursorama.get("warnings", []):
+            lines.append(f"- Alerte: {warning}")
+    else:
+        lines.append("- Moniteur Boursorama non exécuté.")
+
     lines.extend(["", "## RUN COMPLET / MODULES"])
     ordered_steps = ["criteria_governance", "refresh", "cdc", "etf_structure", "etf_mt", "gold", "committee", "performance"]
     for name in ordered_steps:
@@ -173,10 +206,8 @@ def build_markdown(root: Path = ROOT) -> str:
     canonical = committee.get("canonical_actions", {}) if isinstance(committee.get("canonical_actions"), dict) else {}
     lines.append(f"- Univers Actions canonique: {canonical.get('canonical_rows', 'N/A')} / 1829")
 
-    lines.extend(["", "## BACKTEST / VALIDATION"])
-    lines.append("- Actions V21.7: challenger, aucune attribution de performance avant PIT/OOS dédié.")
-    lines.append("- ETF composite MT 43 = 38 dynamiques + 5 structurels: recherche uniquement jusqu’au backtest complet.")
-    lines.append("- Holdouts et règles anti-look-ahead restent inchangés.")
+    lines.extend(["", "## BACKTEST PIT/OOS EXCEPTIONNEL"])
+    lines.extend(_backtest_lines(backtest))
 
     lines.extend(["", "## GITHUB STATUS / INCIDENTS"])
     failed = []
@@ -191,6 +222,8 @@ def build_markdown(root: Path = ROOT) -> str:
         "## FICHIERS CLÉS",
         "- Comité: `outputs/committee_master/COMMITTEE_DECISIONS.csv`",
         "- Rotation sectorielle: `outputs/V21_3_SECTOR_ROTATION.csv`",
+        "- Boursorama monitor: `outputs/audit/BOURSORAMA_IMPORT_MONITOR.json`",
+        "- Backtest exceptionnel: `outputs/backtest/exceptional_pit_oos_2026_08_14/`",
         "- ETF MT: `outputs/etf_mt_v2081/`",
         "- Qualité: `outputs/audit/` et `outputs/data_audit/`",
         "- Control Center Android: `outputs/mobile/ANDROID_CI_CONTROL_CENTER.md`",
