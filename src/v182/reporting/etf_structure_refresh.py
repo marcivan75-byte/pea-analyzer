@@ -5,6 +5,7 @@ import json
 import pandas as pd
 
 from v182.io.frames import apply_observations, is_missing
+from v182.features.etf_rank_trajectory import update_etf_rank_trajectories
 from v182.sources.yfinance_funds import collect_fund_structure
 from v182.sources.boursorama_etf import fetch_boursorama_etf_rankings
 
@@ -55,11 +56,13 @@ def _changed(before,after)->bool:
 
 
 def run(root: Path=ROOT) -> dict:
-    """Enrich ETF structure and Boursorama category ranks before Committee scoring.
+    """Enrich ETF structure, source ranks and canonical rank trajectories.
 
-    Boursorama/Morningstar raw rank data is persisted as a shadow/confirmation
-    layer. It is visible to the Committee and its trend is historised, but it
-    does not change the exact V20.8.1 38-PIT MT score or historical attribution.
+    The full 268-field ETF referential is preserved. Boursorama/Morningstar raw
+    annual ranks stay a separate shadow source. Canonical rank_cat_1y/3y/5y are
+    snapshotted PIT and may emit 12/24/36m trajectory challengers when enough
+    history exists. No rank source or trajectory can modify the reference MT
+    decision before dedicated validation.
     """
     outputs=root/"outputs"
     source=outputs/"V18.2_PEA_ETF_MASTER_ENRICHED.csv"
@@ -92,16 +95,28 @@ def run(root: Path=ROOT) -> dict:
     rank_after=_snapshot(df,rank_observations)
     rank_changed=sum(_changed(rank_before.get(key),rank_after.get(key)) for key in rank_before)
 
+    trajectory_observations,trajectory_failures=update_etf_rank_trajectories(
+        df,
+        root/"state"/"boursorama"/"ETF_CANONICAL_CATEGORY_RANK_HISTORY.csv",
+    )
+    trajectory_before=_snapshot(df,trajectory_observations)
+    df,trajectory_quarantined=apply_observations(df,trajectory_observations)
+    trajectory_after=_snapshot(df,trajectory_observations)
+    trajectory_changed=sum(_changed(trajectory_before.get(key),trajectory_after.get(key)) for key in trajectory_before)
+
     df.to_csv(outputs/"V18.2_PEA_ETF_MASTER_ENRICHED.csv",sep=";",index=False,encoding="utf-8-sig")
     audit_dir=outputs/"audit"; audit_dir.mkdir(parents=True,exist_ok=True)
     gaps_dir=outputs/"gaps"; gaps_dir.mkdir(parents=True,exist_ok=True)
     merge_failures=[{**q,"source_stage":"PROVENANCE_MERGE"} for q in quarantined]
     rank_merge_failures=[{**q,"source_stage":"BOURSORAMA_PROVENANCE_MERGE"} for q in rank_quarantined]
-    failures=collector_failures+merge_failures+rank_failures+rank_merge_failures
+    trajectory_merge_failures=[{**q,"source_stage":"ETF_RANK_TRAJECTORY_PROVENANCE_MERGE"} for q in trajectory_quarantined]
+    failures=collector_failures+merge_failures+rank_failures+rank_merge_failures+trajectory_failures+trajectory_merge_failures
     if collector_failures or merge_failures:
         pd.DataFrame(collector_failures+merge_failures).to_csv(gaps_dir/"V21_ETF_FUND_STRUCTURE_FAILURES.csv",sep=";",index=False,encoding="utf-8-sig")
     if rank_failures or rank_merge_failures:
         pd.DataFrame(rank_failures+rank_merge_failures).to_csv(gaps_dir/"V21_ETF_BOURSORAMA_RANK_FAILURES.csv",sep=";",index=False,encoding="utf-8-sig")
+    if trajectory_failures or trajectory_merge_failures:
+        pd.DataFrame(trajectory_failures+trajectory_merge_failures).to_csv(gaps_dir/"V21_ETF_RANK_TRAJECTORY_FAILURES.csv",sep=";",index=False,encoding="utf-8-sig")
 
     coverage={}
     for field in ("diversification_direct_score","direct_sector_hhi","direct_top_holdings_concentration_pct","direct_holdings_count"):
@@ -112,6 +127,9 @@ def run(root: Path=ROOT) -> dict:
     rank_coverage=0.0
     if "boursorama_category_rank_latest" in df.columns:
         rank_coverage=round(float((~df["boursorama_category_rank_latest"].apply(is_missing)).mean()*100.0),2)
+    trajectory_coverage={}
+    for field in ("rank_cat_trajectory_12m","rank_cat_trajectory_24m","rank_cat_trajectory_36m"):
+        trajectory_coverage[field]=round(float((~df[field].apply(is_missing)).mean()*100.0),2) if field in df.columns else 0.0
     payload={
         "status":"SUCCESS",
         "generated_at_utc":datetime.now(timezone.utc).isoformat(),
@@ -127,10 +145,19 @@ def run(root: Path=ROOT) -> dict:
         "boursorama_rank_failures":len(rank_failures),
         "boursorama_rank_merge_quarantined":len(rank_quarantined),
         "boursorama_rank_coverage_pct":rank_coverage,
+        "canonical_rank_trajectory_observations":len(trajectory_observations),
+        "canonical_rank_trajectory_changed_cells":int(trajectory_changed),
+        "canonical_rank_trajectory_failures":len(trajectory_failures),
+        "canonical_rank_trajectory_merge_quarantined":len(trajectory_quarantined),
+        "canonical_rank_trajectory_coverage_pct":trajectory_coverage,
         "failures":len(failures),
         "coverage_pct":coverage,
         "governance":{
-            "mt_dynamic_38_unchanged":True,
+            "etf_referential_criteria_count":268,
+            "mt_target_composite_criteria_count":43,
+            "mt_dynamic_historical_subblock_count":38,
+            "mt_structural_target_count":5,
+            "mt_dynamic_38_historical_attribution_unchanged":True,
             "missing_structure_not_imputed":True,
             "provenance_merge_enabled":True,
             "yfinance_structure_evidence_level":"C",
@@ -141,7 +168,13 @@ def run(root: Path=ROOT) -> dict:
             "boursorama_category_rank_method":"RAW_MORNINGSTAR_ANNUAL_RANK_AS_PUBLISHED_NO_PERCENTILE_FABRICATION",
             "boursorama_category_rank_decision_influence":0.0,
             "boursorama_rank_history":"state/boursorama/ETF_CATEGORY_RANK_HISTORY.csv",
-            "boursorama_missing_rank_not_imputed":True,
+            "canonical_rank_history":"state/boursorama/ETF_CANONICAL_CATEGORY_RANK_HISTORY.csv",
+            "canonical_rank_semantic":"1_BEST_100_WORST",
+            "trajectory_positive_semantic":"IMPROVEMENT_PRIOR_MINUS_CURRENT",
+            "trajectory_first_snapshot_policy":"MISSING_NO_IMPUTATION",
+            "boursorama_raw_rank_not_substituted_for_canonical_rank_without_semantic_proof":True,
+            "rank_trajectory_decision_influence":0.0,
+            "boursorama_missing_rank_not_imputed":True
         },
     }
     (audit_dir/"V21_ETF_FUND_STRUCTURE.json").write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding="utf-8")
