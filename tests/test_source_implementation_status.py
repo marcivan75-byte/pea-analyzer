@@ -35,9 +35,11 @@ def test_declared_but_unwired_sources_are_not_misrepresented_as_active():
 def test_v2163_new_sources_are_wired_with_explicit_shadow_governance():
     root=Path(__file__).resolve().parents[1]
     status=pd.read_csv(root/"config"/"V21_SOURCE_IMPLEMENTATION_STATUS.csv",sep=";",dtype=str).fillna("").set_index("Source")
-    assert status.loc["AMF positions courtes nettes","Implementation_status"]=="ACTIVE_AUTOMATED"
+    assert status.loc["AMF public short disclosures","Implementation_status"]=="ACTIVE_AUTOMATED"
+    assert "not true current short interest" in status.loc["AMF public short disclosures","Governance_note"]
     assert status.loc["Boursorama ETF category ranking","Implementation_status"]=="ACTIVE_AUTOMATED_BEST_EFFORT"
     assert status.loc["Boursorama Action postselection","Implementation_status"]=="ACTIVE_POSTSELECTION_BEST_EFFORT"
     assert status.loc["Investing technical postselection","Implementation_status"]=="ACTIVE_POSTSELECTION_BEST_EFFORT"
     assert "decision influence 0.0" in status.loc["Boursorama ETF category ranking","Governance_note"]
     assert "decision influence 0.0" in status.loc["Investing technical postselection","Governance_note"]
+    assert "ambiguous bare symbols are quarantined" in status.loc["Finnhub","Governance_note"]
