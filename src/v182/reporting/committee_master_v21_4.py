@@ -10,6 +10,12 @@ from v182.sources.postselection_market_sheets import enrich_postselection
 
 ROOT=Path(__file__).resolve().parents[3]
 HORIZONS=["CT","MT","LT","SHORT","TOP_DOWN"]
+CDC_FIELDS=[
+    "next_earnings_date_fh","next_earnings_hour_fh","earnings_days_to_event_fh",
+    "eps_estimate_next_fh","eps_actual_fh","revenue_estimate_next_fh","revenue_actual_fh",
+    "eps_estimate_revision_abs_fh","eps_estimate_revision_pct_fh",
+    "amf_short_position_pct","amf_short_holder_count","amf_short_latest_date","amf_short_disclosed_flag",
+]
 
 
 def _read(path:Path)->pd.DataFrame:
@@ -30,14 +36,37 @@ def _postselection_isins(decisions: pd.DataFrame) -> set[str]:
     return set(decisions.loc[mask,"isin"].astype(str))
 
 
+def _attach_cdc_context(decisions: pd.DataFrame, actions: pd.DataFrame) -> pd.DataFrame:
+    """Attach observed CDC evidence to Action Committee rows without changing decisions.
+
+    The Action master is one row per ISIN. CDC fields remain raw observed context;
+    no score is derived here and the explicit influence column is fixed at zero.
+    """
+    available=[field for field in CDC_FIELDS if field in actions.columns]
+    if not available:
+        out=decisions.copy()
+        out["cdc_decision_influence"]=0.0
+        out["cdc_data_status"]="MISSING"
+        return out
+    context=actions[["isin",*available]].drop_duplicates("isin").copy()
+    out=decisions.merge(context,on="isin",how="left",validate="many_to_one",sort=False)
+    action_mask=out["asset_class"].astype(str)=="ACTION"
+    observed=out.loc[action_mask,available].notna().any(axis=1)
+    out["cdc_decision_influence"]=0.0
+    out["cdc_data_status"]="NOT_APPLICABLE"
+    out.loc[action_mask,"cdc_data_status"]="MISSING"
+    out.loc[observed.index[observed],"cdc_data_status"]="AVAILABLE"
+    return out
+
+
 def run(root:Path=ROOT)->dict:
-    """Dual-track Action Committee plus V21.6.3 post-selection confirmations.
+    """Dual-track Action Committee plus V21.6.3 CDC/post-selection confirmations.
 
     The enriched V21.4 Action score is preserved and exported, but final Action
     CT/MT/LT/SHORT/TOP_DOWN decisions use the frozen V21.0-weight reference until
-    the challenger completes dedicated PIT/OOS validation. Boursorama and
-    Investing are fetched only after BUY/WATCH preselection and cannot alter the
-    score or decision in this version.
+    the challenger completes dedicated PIT/OOS validation. CDC evidence is copied
+    to Committee rows with zero influence. Boursorama and Investing are fetched
+    only after BUY/WATCH preselection and cannot alter score or decision.
     """
     summary=committee_master_gold_v1_1.run(root)
     outdir=root/"outputs"/"committee_master"; decisions_path=outdir/"COMMITTEE_DECISIONS.csv"
@@ -77,6 +106,15 @@ def run(root:Path=ROOT)->dict:
 
     comparison=pd.DataFrame(rows); comparison.to_csv(outdir/"ACTION_REFERENCE_VS_CHALLENGER_V21_4.csv",sep=";",index=False,encoding="utf-8-sig")
 
+    # CDC is collected before scoring but must also be present in the final
+    # Committee file. Guard score/decision across this context-only join.
+    score_guard=decisions["score"].copy(); decision_guard=decisions["decision"].copy()
+    decisions=_attach_cdc_context(decisions,actions)
+    if not score_guard.reset_index(drop=True).equals(decisions["score"].reset_index(drop=True)):
+        raise RuntimeError("CDC_CONTEXT_SCORE_MUTATION_FORBIDDEN")
+    if not decision_guard.reset_index(drop=True).equals(decisions["decision"].reset_index(drop=True)):
+        raise RuntimeError("CDC_CONTEXT_DECISION_MUTATION_FORBIDDEN")
+
     # V21.6.3: only after final reference preselection, enrich BUY/WATCH Actions
     # with Boursorama sheets and Investing weekly/monthly technical summaries.
     # The merge is guarded so no score or decision can be changed by this layer.
@@ -106,7 +144,11 @@ def run(root:Path=ROOT)->dict:
     divergences=int((comparison["reference_decision"].astype(str)!=comparison["challenger_decision"].astype(str)).sum()) if not comparison.empty else 0
     ref_buy=int((comparison["reference_decision"].astype(str)=="BUY_CANDIDATE").sum()) if not comparison.empty else 0
     chal_buy=int((comparison["challenger_decision"].astype(str)=="BUY_CANDIDATE").sum()) if not comparison.empty else 0
+    cdc_available=0
+    if "cdc_data_status" in decisions.columns:
+        cdc_available=int(decisions.loc[decisions["asset_class"].astype(str)=="ACTION","cdc_data_status"].eq("AVAILABLE").sum())
     summary["action_dual_track"]={"status":"ACTIVE_REFERENCE_PLUS_SHADOW_CHALLENGER","reference_version":reference_reg.get("version"),"challenger_version":challenger_reg.get("version"),"final_decision_source":"REFERENCE","comparison_rows":int(len(comparison)),"decision_divergences":divergences,"reference_buy_count":ref_buy,"challenger_buy_count":chal_buy,"performance_attribution":"NONE_TO_V21_4_CHALLENGER_UNTIL_DEDICATED_PIT_OOS_BACKTEST"}
+    summary["cdc_committee_context"]={"status":"ACTIVE_OBSERVED_CONTEXT","available_action_decision_rows":cdc_available,"fields":[field for field in CDC_FIELDS if field in actions.columns],"decision_influence":0.0,"score_mutation_forbidden":True,"decision_mutation_forbidden":True}
     summary["postselection_market_sheets"]={
         "status":"ACTIVE_SHADOW_CONFIRMATION",
         "shortlisted_isins":len(shortlist),
@@ -125,6 +167,7 @@ def run(root:Path=ROOT)->dict:
     summary["outputs"]["sector_ranking_challenger"]="outputs/committee_master/SECTOR_RANKING_CHALLENGER_V21_4.csv"
     summary["outputs"]["postselection_market_sheets"]="outputs/committee_master/POSTSELECTION_MARKET_SHEETS.csv"
     summary.setdefault("notes",[]).append("Actions use V21.0 frozen weights as final reference decision; V21.4 enriched scores and unvalidated positive/negative 52w overlays are challenger-only until PIT/OOS validation.")
+    summary["notes"].append("V21.6.3 Finnhub earnings/EPS revisions and AMF net-short fields are copied explicitly into Committee Action rows with zero score/decision influence.")
     summary["notes"].append("V21.6.3 Boursorama/Investing Action enrichment runs only after BUY/WATCH preselection. Weekly/monthly technical signals are visible to the Committee with zero decision influence until PIT/OOS validation.")
     (outdir/"SUMMARY.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2,default=str),encoding="utf-8")
     return summary
