@@ -57,9 +57,9 @@ def _changed(before,after)->bool:
 def run(root: Path=ROOT) -> dict:
     """Enrich ETF structure and Boursorama category ranks before Committee scoring.
 
-    Boursorama rank data is persisted as a shadow/confirmation layer. It is
-    visible to the Committee and its trend is historised, but it does not change
-    the exact V20.8.1 38-PIT MT score or its historical performance attribution.
+    Boursorama/Morningstar raw rank data is persisted as a shadow/confirmation
+    layer. It is visible to the Committee and its trend is historised, but it
+    does not change the exact V20.8.1 38-PIT MT score or historical attribution.
     """
     outputs=root/"outputs"
     source=outputs/"V18.2_PEA_ETF_MASTER_ENRICHED.csv"
@@ -110,8 +110,8 @@ def run(root: Path=ROOT) -> dict:
         else:
             coverage[field]=0.0
     rank_coverage=0.0
-    if "boursorama_category_rank_score_shadow" in df.columns:
-        rank_coverage=round(float((~df["boursorama_category_rank_score_shadow"].apply(is_missing)).mean()*100.0),2)
+    if "boursorama_category_rank_latest" in df.columns:
+        rank_coverage=round(float((~df["boursorama_category_rank_latest"].apply(is_missing)).mean()*100.0),2)
     payload={
         "status":"SUCCESS",
         "generated_at_utc":datetime.now(timezone.utc).isoformat(),
@@ -138,6 +138,7 @@ def run(root: Path=ROOT) -> dict:
             "diversification_formula":"100*(1-direct_sector_hhi)",
             "top_holdings_concentration_kept_separate":True,
             "boursorama_category_rank_status":"SHADOW_CONFIRMATION",
+            "boursorama_category_rank_method":"RAW_MORNINGSTAR_ANNUAL_RANK_AS_PUBLISHED_NO_PERCENTILE_FABRICATION",
             "boursorama_category_rank_decision_influence":0.0,
             "boursorama_rank_history":"state/boursorama/ETF_CATEGORY_RANK_HISTORY.csv",
             "boursorama_missing_rank_not_imputed":True,
