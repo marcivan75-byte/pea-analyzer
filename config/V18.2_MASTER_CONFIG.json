@@ -39,6 +39,10 @@
     "status": "SHADOW_CONFIRMATION",
     "etf_full_referential_criteria_count": 268,
     "mt_historical_dynamic_pit_subblock_criteria_count": 38,
+    "mt_research_structural_criteria_count": 5,
+    "mt_research_composite_criteria_count": 43,
+    "mt_research_composite_weights": {"dynamic":0.69,"structural":0.31},
+    "mt_research_composite_status": "RESEARCH_ONLY_NOT_BACKTESTED_AS_FULL_COMPOSITE",
     "mt_full_model_is_not_limited_to_38_criteria": true,
     "mt_dynamic_38_unchanged": true,
     "missing_policy": "N_A_NO_NEUTRAL_IMPUTATION"
