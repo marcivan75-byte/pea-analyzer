@@ -1,13 +1,18 @@
-﻿ID;Source;Mode;Evidence;Freshness days;Universe;Coverage;Priority rank
-SRC001;Yahoo Finance / yfinance;NO_KEY_BULK;C;1;Actions+ETF;OHLCV, volumes, corporate information, estimates when exposed;1
-SRC002;Marketstack;API;B;1;Actions+ETF;OHLCV gap filling and validation;2
-SRC003;Alpha Vantage;API;B;1;Actions+ETF;OHLCV and fundamentals gap filling;3
-SRC004;Boursorama Bulk;PUBLIC_TABLE;B;7;Actions+ETF;Consensus, Morningstar, market and ETF tables;2
-SRC005;Zonebourse Bulk;PUBLIC_TABLE;B;7;Actions;Consensus, estimates and revisions;2
-SRC006;ABC Bourse Bulk;PUBLIC_TABLE;B;30;ETF;TER, AUM, benchmark, distribution, theme;2
-SRC007;Issuer / KID / Factsheet;OFFICIAL;A;90;Actions+ETF;Official structure and fundamentals;3
-SRC008;AMF / Euronext;OFFICIAL;A;1;Actions+ETF;Regulatory events and identity;2
-SRC009;Finnhub;API;B;1;Actions;Consensus, news and intermarket gaps;3
+ID;Source;Mode;Evidence;Freshness days;Universe;Coverage;Priority rank
+SRC001;Yahoo Finance / yfinance;NO_KEY_BULK;C;1;Actions+ETF;OHLCV volumes fundamentals metadata ETF structure estimates when exposed;1
+SRC002;Marketstack;DECLARED_API_NOT_WIRED;B;1;Actions+ETF;Declared OHLCV fallback only;9
+SRC003;Alpha Vantage;DECLARED_API_NOT_WIRED;B;1;Actions+ETF;Declared OHLCV and fundamentals fallback only;9
+SRC004;Boursorama ETF category ranking;PUBLIC_BEST_EFFORT;B;31;ETF;Morningstar category and annual raw category ranks with run-to-run history;2
+SRC005;Zonebourse Bulk;DECLARED_PUBLIC_NOT_WIRED;B;7;Actions;Declared consensus estimates and revisions fallback only;9
+SRC006;ABC Bourse Bulk;DECLARED_PUBLIC_NOT_WIRED;B;30;ETF;Declared TER AUM benchmark distribution theme fallback only;9
+SRC007;Issuer / KID / Factsheet;OFFICIAL_MANUAL_REFERENCE;A;90;Actions+ETF;Official structure and fundamentals snapshots;3
+SRC008;AMF positions courtes nettes;OFFICIAL_OPEN_DATA;A;1;Actions;Latest disclosed net short positions by ISIN absence remains missing not zero;1
+SRC009;Finnhub;API;B;1;Actions;Full-universe consensus recommendations price targets earnings calendar and PIT EPS-estimate snapshots;2
 SRC010;FRED;OFFICIAL_API;A;7;Actions+ETF;Macro Regime Score;2
-SRC011;EIA;OFFICIAL_API;A;7;Actions+ETF;Energy Transmission Score;2
-SRC012;GDELT;PUBLIC_API;C;1;Actions;Bulk news discovery;4
+SRC011;EIA;DECLARED_OFFICIAL_API_NOT_WIRED;A;7;Actions+ETF;Declared Energy Transmission Score source only;9
+SRC012;GDELT;PUBLIC_API;C;1;Actions;Bulk news discovery and sentiment inputs;4
+SRC013;Boursorama Action postselection;PUBLIC_BEST_EFFORT;B;1;Actions;BUY/WATCH-only consensus target valuation dividend and one-year range when explicitly observed;2
+SRC014;Investing technical postselection;PUBLIC_BEST_EFFORT;B;1;Actions;BUY/WATCH-only weekly and monthly technical summary Strong Buy Buy Neutral Sell Strong Sell;2
+SRC015;OpenFIGI;PUBLIC_API;B;30;ETF;ISIN to ticker/exchange mapping for ETF only;2
+SRC016;Morningstar authorized attributed snapshot;MANUAL_SNAPSHOT;B;30;Actions;Attributed stock rating snapshot no generic scraping;3
+SRC017;AMF / Euronext other regulatory;OFFICIAL_MANUAL_REFERENCE;A;1;Actions+ETF;Regulatory events and identity outside generic automated runtime;4
