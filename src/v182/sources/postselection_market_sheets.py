@@ -18,6 +18,7 @@ _SIGNAL_SCORE = {
     "SELL": -1.0,
     "STRONG_SELL": -2.0,
 }
+_NUM_TOKEN = r"[+\-−]?(?:\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d+)(?:[.,]\d+)?"
 
 
 def _clean_text(html: str) -> str:
@@ -28,7 +29,7 @@ def _clean_text(html: str) -> str:
 def _number(value: str | None) -> float | None:
     if not value:
         return None
-    raw = re.sub(r"\s+", "", str(value)).replace("%", "").replace("€", "").replace(",", ".")
+    raw = re.sub(r"\s+", "", str(value)).replace("%", "").replace("€", "").replace("−", "-").replace(",", ".")
     try:
         number = float(raw)
         return number if math.isfinite(number) else None
@@ -86,19 +87,21 @@ def extract_investing_technical(html: str) -> dict[str, str]:
 
 
 def extract_boursorama_action(html: str) -> dict[str, object]:
-    """Extract only explicitly displayed Boursorama Action-sheet values.
-
-    The parser follows the labels visible on Boursorama quote/consensus pages,
-    including estimated-year PER/yield and the one-year high/low history row.
-    """
+    """Extract only explicitly displayed Boursorama Action-sheet values."""
     text = _clean_text(html)
     out: dict[str, object] = {}
-    consensus = _find_signal_near(text, "Consensus", radius=360)
+
+    median = re.search(
+        r"Note m[eé]diane.{0,220}?(Acheter|Renforcer|Conserver|All[eé]ger|Vendre)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    consensus = normalize_signal(median.group(1)) if median else _find_signal_near(text, "Consensus", radius=500)
     if consensus:
         out["boursorama_consensus_signal"] = consensus
 
     target = re.search(
-        r"objectif(?: de cours)?(?:\s+\d+\s+mois)?(?: moyen| median| médian)?\s*:?\s*([0-9][0-9\s.,]*)\s*(EUR|USD|CHF|GBP|SEK|NOK|DKK|PLN|CZK|€)",
+        rf"objectif(?: de cours)?(?:\s+\d+\s+mois)?(?: moyen| median| médian)?\s*:?\s*({_NUM_TOKEN})\s*(EUR|USD|CHF|GBP|SEK|NOK|DKK|PLN|CZK|€)",
         text,
         flags=re.IGNORECASE,
     )
@@ -107,27 +110,27 @@ def extract_boursorama_action(html: str) -> dict[str, object]:
         if value is not None:
             out["boursorama_target_price"] = value
             out["boursorama_target_currency"] = "EUR" if target.group(2) == "€" else target.group(2).upper()
-    potential = re.search(r"potentiel\s*:?\s*([+\-−]?[0-9][0-9\s.,]*)\s*%", text, flags=re.IGNORECASE)
+    potential = re.search(rf"potentiel\s*:?\s*({_NUM_TOKEN})\s*%", text, flags=re.IGNORECASE)
     if potential:
-        value = _number(potential.group(1).replace("−", "-"))
+        value = _number(potential.group(1))
         if value is not None:
             out["boursorama_target_upside_pct"] = value
 
     per_patterns = (
-        r"\bper\s+estim[eé]\s+\d{4}\s*(?:[^0-9\-]{0,50})?([0-9][0-9\s.,]*)",
-        r"\bper\b(?!\s+estim[eé]\s+\d{4})[^0-9]{0,30}([0-9][0-9\s.,]*)",
+        rf"\bper\s+estim[eé]\s+\d{{4}}\s*(?:[^0-9+\-−]{{0,50}})?({_NUM_TOKEN})",
+        rf"\bper\b(?!\s+estim[eé]\s+\d{{4}})[^0-9+\-−]{{0,30}}({_NUM_TOKEN})",
     )
     for pattern in per_patterns:
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
             value = _number(match.group(1))
-            if value is not None and value < 500:
+            if value is not None and -500 < value < 500:
                 out["boursorama_per"] = value
                 break
 
     yield_patterns = (
-        r"rendement\s+estim[eé]\s+\d{4}\s*(?:[^0-9\-]{0,50})?([0-9][0-9\s.,]*)\s*%",
-        r"\brendement\b[^0-9]{0,50}([0-9][0-9\s.,]*)\s*%",
+        rf"rendement\s+estim[eé]\s+\d{{4}}\s*(?:[^0-9+\-−]{{0,50}})?({_NUM_TOKEN})\s*%",
+        rf"\brendement\b[^0-9+\-−]{{0,50}}({_NUM_TOKEN})\s*%",
     )
     for pattern in yield_patterns:
         match = re.search(pattern, text, flags=re.IGNORECASE)
@@ -138,7 +141,7 @@ def extract_boursorama_action(html: str) -> dict[str, object]:
                 break
 
     one_year = re.search(
-        r"\b1\s+an\b\s*[+\-−]?\s*[0-9][0-9\s.,]*\s*%\s*([0-9][0-9\s.,]*)\s+([0-9][0-9\s.,]*)",
+        rf"\b1\s+an\b\s*{_NUM_TOKEN}\s*%\s*({_NUM_TOKEN})\s+({_NUM_TOKEN})",
         text,
         flags=re.IGNORECASE,
     )
@@ -151,12 +154,12 @@ def extract_boursorama_action(html: str) -> dict[str, object]:
     else:
         patterns = {
             "boursorama_52w_high": (
-                r"(?:plus haut|haut)[^0-9]{0,30}(?:52 semaines|1 an)[^0-9]{0,30}([0-9][0-9\s.,]*)",
-                r"(?:52 semaines|1 an)[^0-9]{0,30}(?:plus haut|haut)[^0-9]{0,30}([0-9][0-9\s.,]*)",
+                rf"(?:plus haut|haut)[^0-9+\-−]{{0,30}}(?:52 semaines|1 an)[^0-9+\-−]{{0,30}}({_NUM_TOKEN})",
+                rf"(?:52 semaines|1 an)[^0-9+\-−]{{0,30}}(?:plus haut|haut)[^0-9+\-−]{{0,30}}({_NUM_TOKEN})",
             ),
             "boursorama_52w_low": (
-                r"(?:plus bas|bas)[^0-9]{0,30}(?:52 semaines|1 an)[^0-9]{0,30}([0-9][0-9\s.,]*)",
-                r"(?:52 semaines|1 an)[^0-9]{0,30}(?:plus bas|bas)[^0-9]{0,30}([0-9][0-9\s.,]*)",
+                rf"(?:plus bas|bas)[^0-9+\-−]{{0,30}}(?:52 semaines|1 an)[^0-9+\-−]{{0,30}}({_NUM_TOKEN})",
+                rf"(?:52 semaines|1 an)[^0-9+\-−]{{0,30}}(?:plus bas|bas)[^0-9+\-−]{{0,30}}({_NUM_TOKEN})",
             ),
         }
         for field, field_patterns in patterns.items():
