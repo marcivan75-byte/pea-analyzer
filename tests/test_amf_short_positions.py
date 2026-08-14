@@ -17,7 +17,7 @@ def test_amf_aggregates_one_latest_open_publication_per_holder_and_never_calls_i
     ])
     source=pd.DataFrame([
         {"ISIN":"FR0000120073","Position courte nette":"0,40%","Date de début de position":"12/08/2026","Date de début de publication":"13/08/2026","Date de fin de publication":"","Nom du détenteur":"Fund A"},
-        {"ISIN":"FR0000120073","Position courte nette":"0,55%","Date de début de position":"12/08/2026","Date de début de publication":"13/08/2026","Date de fin de publication":"","Nom du détenteur":"Fund B"},
+        {"ISIN":"FR0000120073","Position courte nette":"0,55%","Date de début de position":"12/08/2026","Date de début de publication":"12/08/2026","Date de fin de publication":"","Nom du détenteur":"Fund B"},
         # Older active record for Fund B must not be double counted.
         {"ISIN":"FR0000120073","Position courte nette":"0,60%","Date de début de position":"10/08/2026","Date de début de publication":"11/08/2026","Date de fin de publication":"","Nom du détenteur":"Fund B"},
         # Closed historical publication must be excluded.
@@ -31,6 +31,8 @@ def test_amf_aggregates_one_latest_open_publication_per_holder_and_never_calls_i
     assert fields["amf_public_short_latest_position_date"]=="2026-08-12"
     assert fields["amf_public_short_latest_publication_date"]=="2026-08-13"
     assert fields["amf_public_short_days_since_latest_publication"]==1
+    assert fields["amf_public_short_oldest_retained_publication_date"]=="2026-08-12"
+    assert fields["amf_public_short_max_days_since_retained_publication"]==2
     assert fields["amf_public_short_open_publication_count"]==2
     assert fields["amf_public_short_proxy_flag"]==1
     assert fields["amf_public_short_not_true_current_interest_flag"]==1
