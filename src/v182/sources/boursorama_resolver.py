@@ -26,10 +26,10 @@ def extract_boursorama_instrument_url(
 ) -> str | None:
     """Extract an instrument quote URL from a Boursorama search result page.
 
-    Candidate links are restricted to Action/ETF quote routes. ISIN is the
-    strongest discriminator; ticker and name are secondary context. A unique
-    unscored quote result is accepted only when the caller explicitly searched
-    by ISIN, never for a broad ticker/name search.
+    Candidate links are restricted to Action/ETF quote routes. Only instrument
+    identity evidence contributes to ranking: ISIN first, then ticker and name.
+    URL route type is deliberately not a score because it is not identity proof.
+    A unique unscored result is accepted only for an explicit ISIN search.
     """
     soup = BeautifulSoup(html or "", "lxml")
     isin_u = str(isin or "").strip().upper()
@@ -48,25 +48,24 @@ def extract_boursorama_instrument_url(
             score += 30
         if name_u and len(name_u) >= 4 and name_u in context:
             score += 20
-        if "/bourse/trackers/cours/" in href.lower():
-            score += 2
         candidates.append((score, urljoin("https://www.boursorama.com", href.split("?", 1)[0])))
     if not candidates:
         return None
     candidates.sort(key=lambda item: item[0], reverse=True)
-    best_score, best_url = candidates[0]
-    if best_score <= 0 and (isin_u or ticker_u or name_u):
+    best_score = candidates[0][0]
+    if best_score <= 0:
         if allow_single_unscored and len(candidates) == 1:
-            return best_url
+            return candidates[0][1]
         return None
-    return best_url
+    best = [url for score, url in candidates if score == best_score]
+    return best[0] if len(best) == 1 else None
 
 
 def resolve_boursorama_url(row, requests, limiter, headers: dict[str, str] | None = None) -> str | None:
     """Resolve a Boursorama Action/ETF URL with ISIN-first public search.
 
-    Explicit stored Boursorama URLs win. Search failure is non-fatal and callers
-    must keep the observation missing rather than fabricate a market prefix.
+    Explicit stored Boursorama URLs win. Search failure or identity ambiguity is
+    non-fatal; callers keep the observation missing rather than guess a listing.
     """
     for field in ("boursorama_url", "source_url"):
         value = str(row.get(field, "") or "").strip()
