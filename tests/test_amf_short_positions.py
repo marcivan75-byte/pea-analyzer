@@ -1,0 +1,37 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import pandas as pd
+
+from v182.sources.amf_short_positions import parse_amf_short_positions
+
+
+def _fields(observations: list[dict]) -> dict[str, object]:
+    return {row["field"]:row["value"] for row in observations}
+
+
+def test_amf_aggregates_latest_disclosed_positions_and_never_imputes_absence_to_zero():
+    actions=pd.DataFrame([
+        {"isin":"FR0000120073"},
+        {"isin":"FR0000120271"},
+    ])
+    source=pd.DataFrame([
+        {"ISIN":"FR0000120073","Position courte nette":"0,40%","Date de la position":"12/08/2026","Détenteur":"Fund A"},
+        {"ISIN":"FR0000120073","Position courte nette":"0,55%","Date de la position":"12/08/2026","Détenteur":"Fund B"},
+        {"ISIN":"FR0000120073","Position courte nette":"0,60%","Date de la position":"10/08/2026","Détenteur":"Fund C"},
+    ])
+    observations,failures=parse_amf_short_positions(actions,source,observed_at=datetime(2026,8,14,tzinfo=timezone.utc))
+    assert not failures
+    fields=_fields(observations)
+    assert fields["amf_short_position_pct"]==0.95
+    assert fields["amf_short_holder_count"]==2
+    assert fields["amf_short_latest_date"]=="2026-08-12"
+    assert fields["amf_short_disclosed_flag"]==1
+    assert {row["isin"] for row in observations}=={"FR0000120073"}
+
+
+def test_amf_empty_dataset_is_reported_not_imputed():
+    actions=pd.DataFrame([{"isin":"FR0000120073"}])
+    observations,failures=parse_amf_short_positions(actions,pd.DataFrame())
+    assert observations==[]
+    assert failures[0]["reason"]=="EMPTY_DATASET"
