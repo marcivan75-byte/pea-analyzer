@@ -2,10 +2,6 @@ name: Exceptional PIT/OOS isolated one-shot
 
 on:
   workflow_dispatch:
-  push:
-    branches: [agent/v21-6-3-cdc-postselection]
-    paths:
-      - ".github/workflows/pit_oos_only.yml"
 
 concurrency:
   group: pit-oos-isolated-${{ github.ref }}
@@ -79,8 +75,8 @@ jobs:
               raise RuntimeError('NO_ACTION_HISTORY_DOWNLOADED')
           PY
 
-      - name: Run exceptional PIT/OOS only
-        run: python -m v182.backtest.exceptional_pit_oos
+      - name: Run governed exceptional PIT/OOS only
+        run: python -m v182.backtest.pit_oos_governed
 
       - name: Show PIT/OOS summary
         if: always()
