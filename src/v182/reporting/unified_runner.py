@@ -10,6 +10,7 @@ from v182.audit import criteria_study_governance
 from v182.reporting import run as enrichment_run
 from v182.reporting import cdc_refresh, etf_structure_refresh, etf_mt_v2081_run, committee_master_v21_4, committee_performance_v21_4
 from v182.decision import gold_v1_1
+from v182.risk import stop_loss_policy
 
 logger=logging.getLogger(__name__)
 ROOT=Path(__file__).resolve().parents[3]
@@ -42,7 +43,7 @@ def _criteria_governance_gate(root: Path) -> dict:
 
 
 def run(root:Path=ROOT)->dict:
-    """Runtime with criterion-study gate, CDC, ETF rank history and postselection confirmation."""
+    """Runtime with criterion-study gate, CDC, ETF rank history, stop-loss governance and postselection confirmation."""
     outdir=root/"outputs"/"unified"; outdir.mkdir(parents=True,exist_ok=True); run_id=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
     steps={}
     steps["criteria_governance"]=_safe_step("criteria_governance",lambda:_criteria_governance_gate(root))
@@ -68,11 +69,17 @@ def run(root:Path=ROOT)->dict:
     else:
         steps["committee"]=_skip_dependency("Requires PASS criterion-study governance and SUCCESS refresh + CDC + ETF structure/rank stages.")
     if steps["committee"]["status"]=="SUCCESS":
+        steps["stop_loss"]=_safe_step("stop_loss",lambda:stop_loss_policy.run(root))
+    else:
+        steps["stop_loss"]=_skip_dependency("Requires SUCCESS current Committee decisions before stop-loss plans can be attached.")
+    if steps["committee"]["status"]=="SUCCESS" and steps["stop_loss"]["status"]=="SUCCESS":
         steps["performance"]=_safe_step("performance",lambda:committee_performance_v21_4.run(root))
     else:
-        steps["performance"]=_skip_dependency("Requires SUCCESS current Committee; stale decisions are forbidden for virtual transactions.")
+        steps["performance"]=_skip_dependency("Requires SUCCESS current Committee and stop-loss governance; stale or unprotected virtual transactions are forbidden.")
     outputs={
         "decisions":"outputs/committee_master/COMMITTEE_DECISIONS.csv",
+        "stop_loss_plan":"outputs/committee_master/STOP_LOSS_PLAN.csv",
+        "stop_loss_audit":"outputs/audit/STOP_LOSS_GOVERNANCE.json",
         "postselection_market_sheets":"outputs/committee_master/POSTSELECTION_MARKET_SHEETS.csv",
         "postselection_failures":"outputs/gaps/V21_6_3_POSTSELECTION_MARKET_SHEETS_FAILURES.csv",
         "sector_ranking":"outputs/committee_master/SECTOR_RANKING.csv",
@@ -127,6 +134,7 @@ def run(root:Path=ROOT)->dict:
             "Boursorama and Investing Action sheets are fetched only after preselection; ambiguous instrument matches are rejected and all postselection signals have zero decision influence until PIT/OOS validation.",
             "Every collection publishes retained-value provenance plus missing/partial/available data.",
             "Dynamic available-criterion weights renormalize to 100% while minimum coverage gates remain active.",
+            "Stop-loss governance is explicit in Committee outputs: Actions TCT/CT/MT/LT use the existing 6/8/12/18% assumptions and ETF MT preserves the V20.8.1 18% hard stop. Gap/slippage risk means no realized-loss cap is guaranteed.",
             "Virtual BUYs execute no earlier than the next observed run and one consolidated position is allowed per ISIN.",
             "T1/T2 are ACTION TCT only.",
             "No real orders are emitted."
