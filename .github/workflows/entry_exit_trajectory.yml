@@ -1,0 +1,46 @@
+name: ETF entry-exit trajectory study
+
+on:
+  push:
+    branches: [agent/v21-6-3-cdc-postselection]
+    paths:
+      - "src/v182/backtest/etf_entry_exit_trajectory.py"
+      - ".github/workflows/entry_exit_trajectory.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: etf-entry-exit-trajectory-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  trajectory-study:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+      - name: Run trajectory study without take-profit or stop
+        run: python -m v182.backtest.etf_entry_exit_trajectory
+      - name: Show study summary
+        if: always()
+        run: |
+          if [ -f outputs/research/etf_entry_exit_trajectory_2026_08_15/ETF_ENTRY_EXIT_TRAJECTORY_SUMMARY.json ]; then
+            cat outputs/research/etf_entry_exit_trajectory_2026_08_15/ETF_ENTRY_EXIT_TRAJECTORY_SUMMARY.json
+          fi
+      - name: Upload trajectory results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: etf-entry-exit-trajectory-${{ github.run_id }}
+          path: outputs/research/etf_entry_exit_trajectory_2026_08_15/
+          if-no-files-found: warn
+          retention-days: 30
