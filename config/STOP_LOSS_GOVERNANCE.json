@@ -1,0 +1,35 @@
+{
+  "version": "V1_2026_08_15",
+  "mode": "VIRTUAL_AND_DECISION_SUPPORT_ONLY_NO_REAL_ORDERS",
+  "single_position_per_isin": true,
+  "action_stop_loss_pct": {
+    "TCT": 6.0,
+    "CT": 8.0,
+    "MT": 12.0,
+    "LT": 18.0
+  },
+  "etf_stop_loss_pct": {
+    "MT": 18.0
+  },
+  "execution": {
+    "reference": "OBSERVED_CLOSE",
+    "trigger": "CLOSE_AT_OR_BELOW_STOP_LEVEL",
+    "virtual_exit": "NEXT_AVAILABLE_OBSERVED_EXECUTION",
+    "gap_and_slippage_can_exceed_stop": true,
+    "loss_cap_guaranteed": false
+  },
+  "governance": {
+    "threshold_source": "EXISTING_COMMITTEE_VIRTUAL_MONEY_MANAGEMENT_AND_V20_8_ETF_MT_EXIT_POLICY",
+    "no_weight_change": true,
+    "no_threshold_optimization_integration_step": true,
+    "t1_t2_scope": "ACTION_TCT_ONLY",
+    "etf_full_referential_criteria_count": 268,
+    "historical_90_91_attribution": "V20.8.1_38_DYNAMIC_PIT_SUBBLOCK_ONLY",
+    "real_orders_enabled": false
+  },
+  "notes": [
+    "Action stop percentages preserve the existing virtual-money-management assumptions: TCT 6%, CT 8%, MT 12%, LT 18%.",
+    "ETF MT preserves the existing V20.8.1 hard stop of 18% on observed close.",
+    "A stop-loss limits intended loss under observable execution but cannot guarantee a maximum realized loss because market gaps, suspended trading and slippage can cross the stop level."
+  ]
+}
