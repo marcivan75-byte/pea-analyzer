@@ -1,0 +1,99 @@
+name: Exceptional PIT/OOS isolated one-shot
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [agent/v21-6-3-cdc-postselection]
+    paths:
+      - ".github/workflows/pit_oos_only.yml"
+
+concurrency:
+  group: pit-oos-isolated-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  pit-oos-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      PYTHONUNBUFFERED: "1"
+      ALLOW_EXCEPTIONAL_PIT_OOS_ONCE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Verify Top-Down mixed-type fix
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          from v182.features.topdown_features import _distinct_text_values
+          values = pd.Series(["France", 12.0, None, " Germany ", float("nan"), "N/A", "France"])
+          assert _distinct_text_values(values) == ["France", "Germany"]
+          print("Top-Down mixed country/sector normalization: OK")
+          PY
+
+      - name: Prepare Action histories required by PIT/OOS
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+          from v182.sources.yfinance_bulk import download_history
+
+          root = Path('.')
+          src = root / 'inputs' / 'V18.2_PEA_ACTIONS_MASTER.csv'
+          frame = None
+          for sep in (';', ',', '\t'):
+              try:
+                  candidate = pd.read_csv(src, sep=sep, encoding='utf-8-sig', low_memory=False)
+                  if len(candidate.columns) > 1:
+                      frame = candidate
+                      break
+              except Exception:
+                  pass
+          if frame is None or 'yahoo_ticker' not in frame.columns:
+              raise RuntimeError('ACTION_INPUT_OR_YAHOO_TICKER_MISSING')
+          tickers = sorted({str(x).strip() for x in frame['yahoo_ticker'].dropna() if str(x).strip() and str(x).strip().lower() not in {'nan','none','<na>'}})
+          print(f'Action histories requested: {len(tickers)}')
+          result = download_history(
+              tickers,
+              str(root / 'data' / 'cache' / 'actions'),
+              period='max',
+              interval='1d',
+              batch_size=30,
+              auto_adjust=True,
+              include_actions=False,
+          )
+          print(f'Action histories successful={len(result.successful)} failed={len(result.failed)} requested={result.requested}')
+          if not result.successful:
+              raise RuntimeError('NO_ACTION_HISTORY_DOWNLOADED')
+          PY
+
+      - name: Run exceptional PIT/OOS only
+        run: python -m v182.backtest.exceptional_pit_oos
+
+      - name: Show PIT/OOS summary
+        if: always()
+        run: |
+          if [ -f outputs/backtest/exceptional_pit_oos_2026_08_14/EXCEPTIONAL_PIT_OOS_SUMMARY.json ]; then
+            cat outputs/backtest/exceptional_pit_oos_2026_08_14/EXCEPTIONAL_PIT_OOS_SUMMARY.json
+          fi
+
+      - name: Upload PIT/OOS results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exceptional-pit-oos-isolated-${{ github.run_id }}
+          path: outputs/backtest/exceptional_pit_oos_2026_08_14/
+          if-no-files-found: warn
+          retention-days: 30
