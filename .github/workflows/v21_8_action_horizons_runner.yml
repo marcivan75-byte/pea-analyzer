@@ -27,8 +27,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e .
+          pip install pytest
       - name: Focused unit tests
-        run: pytest -q tests/test_action_entry_exit_horizons_v21_8.py
+        run: python -m pytest -q tests/test_action_entry_exit_horizons_v21_8.py
       - name: Run Action TCT CT MT trajectory study
         run: python -m v182.backtest.action_entry_exit_horizons_v21_8
       - name: Show summary and aggregates
