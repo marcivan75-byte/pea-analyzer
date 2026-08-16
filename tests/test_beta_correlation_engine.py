@@ -12,16 +12,30 @@ def _prices(returns: pd.Series, start: float = 100.0) -> pd.Series:
     return start * (1.0 + returns).cumprod()
 
 
-def test_repository_risk_config_is_strict_shadow():
+def test_repository_risk_config_is_strict_context_only():
     root = Path(__file__).resolve().parents[1]
-    cfg = json.loads((root / "config" / "BETA_CORRELATION_RISK_ENGINE.json").read_text(encoding="utf-8"))
+    cfg = json.loads(
+        (root / "config" / "BETA_CORRELATION_RISK_ENGINE.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    benchmark = cfg["benchmark"]
     governance = cfg["governance"]
     validation = cfg["economic_validation"]
+
     assert cfg["enabled"] is True
-    assert validation["status"] == "VALIDATED_KEEP_SHADOW"
+    assert cfg["version"] == "RISK_V1_1_ROBUST_CONTEXT_ONLY_2026_08_16"
+    assert benchmark["label"] == "PEA_ACTION_ROBUST_EQUAL_WEIGHT_PROXY_V2"
+    assert benchmark["winsor_tail"] == 0.05
+    assert benchmark["min_daily_fraction"] == 0.20
+    assert benchmark["max_abs_daily_return"] == 0.15
+    assert benchmark["fail_closed"] is True
+    assert validation["status"] == "ROBUST_VALIDATED_CONTEXT_ONLY_KEEP_ALL_SIZING_SHADOW"
     assert validation["beta_only_position_sizing"] == "REJECTED_KEEP_SHADOW"
-    assert validation["workflow_run_id"] == 31939903983
+    assert validation["regime_v1_1_sizing"] == "REJECTED_KEEP_SHADOW"
+    assert validation["regime_v1_2_sizing"] == "REJECTED_KEEP_SHADOW"
     assert validation["post_result_threshold_tuning_forbidden"] is True
+    assert validation["no_v1_3_pnl_retuning"] is True
     assert governance["decision_influence"] == 0.0
     assert governance["score_influence"] == 0.0
     assert governance["sizing_execution_influence"] == 0.0
@@ -29,27 +43,39 @@ def test_repository_risk_config_is_strict_shadow():
     assert governance["positive_signal_can_create_buy"] is False
     assert governance["negative_signal_can_force_sell"] is False
     assert governance["stop_loss_formula_link_forbidden"] is True
-    assert governance["promotion_requirement"] == "NEW_PRE_REGISTERED_DEDICATED_PIT_OOS_MARGINAL_UPLIFT_FOR_ANY_FUTURE_HYPOTHESIS"
     assert governance["real_orders_enabled"] is False
 
 
-def test_validation_status_persists_negative_promotion_decision():
+def test_robust_validation_status_rejects_all_mechanical_sizing():
     root = Path(__file__).resolve().parents[1]
-    status = json.loads((root / "config" / "BETA_RISK_VALIDATION_STATUS.json").read_text(encoding="utf-8"))
-    assert status["source_workflow_run_id"] == 31939903983
+    status = json.loads(
+        (root / "config" / "BETA_RISK_ROBUST_VALIDATION_STATUS.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    policy = status["production_policy"]
+
+    assert status["status"] == "ROBUST_VALIDATED_CONTEXT_ONLY_KEEP_ALL_SIZING_SHADOW"
     assert status["final_holdout_opened"] is False
-    assert status["verdict"] == "KEEP_BETA_SIZING_SHADOW"
-    assert status["validation_oos"]["pass"] is False
-    assert status["diagnostic_oos"]["pass"] is False
-    assert status["validation_oos"]["risk_adjusted_improvement"] < 0
-    assert status["validation_oos"]["expectancy_retention"] < 0.95
-    assert status["diagnostic_oos"]["beta_sized"]["expectancy"] < 0
-    assert status["production_policy"]["beta_only_position_sizing_promoted"] is False
-    assert status["production_policy"]["decision_influence"] == 0.0
-    assert status["production_policy"]["score_influence"] == 0.0
-    assert status["production_policy"]["sizing_execution_influence"] == 0.0
-    assert status["production_policy"]["stop_loss_influence"] == 0.0
-    assert status["production_policy"]["real_orders_enabled"] is False
+    assert status["benchmark"]["status"] == "PASS"
+    assert status["benchmark"]["fail_closed"] is True
+    assert status["beta_only_sizing"]["status"] == "REJECTED_KEEP_SHADOW"
+    assert status["regime_v1_1"]["status"] == "REJECTED_KEEP_SHADOW"
+    assert status["regime_v1_2"]["status"] == "REJECTED_KEEP_SHADOW"
+    assert status["beta_only_sizing"]["validation_oos"]["risk_adjusted_improvement"] < 0
+    assert status["beta_only_sizing"]["diagnostic_oos"]["adjusted_expectancy"] < 0
+    assert status["regime_v1_1"]["validation_oos"]["risk_adjusted_improvement"] < 0
+    assert status["regime_v1_2"]["validation_oos"]["risk_adjusted_improvement"] < 0
+    assert status["regime_v1_2"]["diagnostic_oos"]["risk_adjusted_improvement"] < 0
+    assert policy["beta_only_position_sizing_promoted"] is False
+    assert policy["regime_v1_1_sizing_promoted"] is False
+    assert policy["regime_v1_2_sizing_promoted"] is False
+    assert policy["decision_influence"] == 0.0
+    assert policy["score_influence"] == 0.0
+    assert policy["sizing_execution_influence"] == 0.0
+    assert policy["stop_loss_influence"] == 0.0
+    assert policy["real_orders_enabled"] is False
+    assert status["future_research_policy"]["no_v1_3_pnl_retuning"] is True
 
 
 def test_beta_exact_linear_relationship():
@@ -98,11 +124,33 @@ def test_overlay_never_mutates_score_decision_or_stop():
     benchmark = pd.Series(rng.normal(0.0003, 0.01, len(idx)), index=idx)
     action_prices = _prices(1.2 * benchmark)
     etf_prices = _prices(0.8 * benchmark + rng.normal(0, 0.002, len(idx)))
-    decisions = pd.DataFrame([
-        {"asset_class": "ACTION", "horizon": "MT", "isin": "A", "name": "AI Semi", "decision": "BUY_CANDIDATE", "score": 86.0},
-        {"asset_class": "ETF", "horizon": "MT", "isin": "E", "name": "World ETF", "decision": "WATCH", "score": 82.0},
-    ])
-    action_meta = {"A": {"yahoo_ticker": "AAA", "sector_yf": "Technology", "industry_yf": "Semiconductors"}}
+    decisions = pd.DataFrame(
+        [
+            {
+                "asset_class": "ACTION",
+                "horizon": "MT",
+                "isin": "A",
+                "name": "AI Semi",
+                "decision": "BUY_CANDIDATE",
+                "score": 86.0,
+            },
+            {
+                "asset_class": "ETF",
+                "horizon": "MT",
+                "isin": "E",
+                "name": "World ETF",
+                "decision": "WATCH",
+                "score": 82.0,
+            },
+        ]
+    )
+    action_meta = {
+        "A": {
+            "yahoo_ticker": "AAA",
+            "sector_yf": "Technology",
+            "industry_yf": "Semiconductors",
+        }
+    }
     etf_meta = {
         "E": {
             "yahoo_ticker": "EEE",
@@ -111,7 +159,14 @@ def test_overlay_never_mutates_score_decision_or_stop():
             "direct_top_holdings_concentration_pct": 30,
         }
     }
-    out, _ = engine.apply_risk_overlay(decisions, action_meta, etf_meta, {"AAA": action_prices}, {"EEE": etf_prices}, benchmark)
+    out, _ = engine.apply_risk_overlay(
+        decisions,
+        action_meta,
+        etf_meta,
+        {"AAA": action_prices},
+        {"EEE": etf_prices},
+        benchmark,
+    )
     assert out["decision"].tolist() == decisions["decision"].tolist()
     assert out["score"].tolist() == decisions["score"].tolist()
     assert set(out["risk_score_decision_influence"]) == {0.0}
@@ -123,23 +178,27 @@ def test_portfolio_stress_is_systematic_component_only():
     idx = pd.date_range("2024-01-01", periods=320, freq="B")
     rng = np.random.default_rng(4)
     benchmark = pd.Series(rng.normal(0, 0.01, len(idx)), index=idx)
-    rows = pd.DataFrame([
-        {
-            "isin": "A",
-            "decision": "BUY_CANDIDATE",
-            "risk_beta_252d": 1.5,
-            "risk_downside_beta_252d": 1.5,
-            "risk_engine_tags": "AI_TECH|GROWTH|LIQUIDITY",
-        },
-        {
-            "isin": "B",
-            "decision": "BUY_CANDIDATE",
-            "risk_beta_252d": 0.5,
-            "risk_downside_beta_252d": 0.5,
-            "risk_engine_tags": "GOLD_PRECIOUS|GEOPOLITICS",
-        },
-    ])
-    summary = engine.portfolio_summary(rows, {"A": 1.5 * benchmark, "B": 0.5 * benchmark}, benchmark, [-10, -20])
+    rows = pd.DataFrame(
+        [
+            {
+                "isin": "A",
+                "decision": "BUY_CANDIDATE",
+                "risk_beta_252d": 1.5,
+                "risk_downside_beta_252d": 1.5,
+                "risk_engine_tags": "AI_TECH|GROWTH|LIQUIDITY",
+            },
+            {
+                "isin": "B",
+                "decision": "BUY_CANDIDATE",
+                "risk_beta_252d": 0.5,
+                "risk_downside_beta_252d": 0.5,
+                "risk_engine_tags": "GOLD_PRECIOUS|GEOPOLITICS",
+            },
+        ]
+    )
+    summary = engine.portfolio_summary(
+        rows, {"A": 1.5 * benchmark, "B": 0.5 * benchmark}, benchmark, [-10, -20]
+    )
     assert abs(summary["portfolio_downside_beta_252d"] - 1.0) < 1e-12
     assert summary["systematic_stress_scenarios_pct"]["-10.0"] == -10.0
     assert "NOT_TOTAL_LOSS_FORECAST" in summary["stress_scenario_semantic"]
@@ -149,11 +208,24 @@ def test_run_degrades_safely_without_benchmark(tmp_path, monkeypatch):
     root = Path(tmp_path)
     (root / "config").mkdir()
     (root / "outputs" / "committee_master").mkdir(parents=True)
-    config = {"version": "TEST", "benchmark": {"min_sessions": 126, "min_constituents": 20}}
-    (root / "config" / "BETA_CORRELATION_RISK_ENGINE.json").write_text(json.dumps(config), encoding="utf-8")
-    pd.DataFrame([
-        {"asset_class": "ACTION", "horizon": "MT", "isin": "A", "decision": "BUY_CANDIDATE", "score": 80}
-    ]).to_csv(
+    config = {
+        "version": "TEST",
+        "benchmark": {"min_sessions": 126, "min_constituents": 20},
+    }
+    (root / "config" / "BETA_CORRELATION_RISK_ENGINE.json").write_text(
+        json.dumps(config), encoding="utf-8"
+    )
+    pd.DataFrame(
+        [
+            {
+                "asset_class": "ACTION",
+                "horizon": "MT",
+                "isin": "A",
+                "decision": "BUY_CANDIDATE",
+                "score": 80,
+            }
+        ]
+    ).to_csv(
         root / "outputs" / "committee_master" / "COMMITTEE_DECISIONS.csv",
         sep=";",
         index=False,
