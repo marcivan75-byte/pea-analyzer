@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from v182.decision import ipo_radar_v1_4 as v14
 from v182.sources import euronext_ipo_news_v1_4 as news
 
 
@@ -58,10 +59,7 @@ def test_candidate_enrichment_is_shadow_only_and_does_not_create_scores(monkeypa
     monkeypatch.setattr(
         news.requests,
         "get",
-        lambda *args, **kwargs: SimpleNamespace(
-            text=POLAR_HTML,
-            raise_for_status=lambda: None,
-        ),
+        lambda *args, **kwargs: SimpleNamespace(text=POLAR_HTML, raise_for_status=lambda: None),
     )
     candidate = news.enrich_candidate({"name": "Polar Resources AS", "source": "EURONEXT"})
     assert candidate["euronext_news_discovery_status"] == "SUCCESS"
@@ -77,3 +75,17 @@ def test_non_euronext_candidate_is_not_enriched(monkeypatch) -> None:
     monkeypatch.setattr(news, "_article_urls", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not query")))
     candidate = {"name": "US IPO Inc", "source": "FINNHUB"}
     assert news.enrich_candidate(candidate) == candidate
+
+
+def test_v1_4_collector_survives_v1_3_runtime_reinstall() -> None:
+    original = v14._BASE_EURONEXT
+    try:
+        v14.v13.euronext_ipo_v1_3.collect_euronext_v1_3 = original
+        v14.v13.install_v1_3()
+        v14.install_v1_4()
+        # v13.run() executes this reinstall. It must resolve to the patched V1.4 collector.
+        v14.v13.install_v1_3()
+        assert v14.legacy.collect_euronext is v14.collect_euronext_v1_4
+    finally:
+        v14.v13.euronext_ipo_v1_3.collect_euronext_v1_3 = original
+        v14.v13.install_v1_3()
