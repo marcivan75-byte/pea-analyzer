@@ -34,6 +34,10 @@ def collect_euronext_v1_4(start, end, timeout: int = 20):
 
 def install_v1_4() -> None:
     v13.install_v1_3()
+    # v13.run() calls install_v1_3() again. Patch the module-level collector too,
+    # so the later reinstall still resolves to the V1.4 wrapper rather than
+    # silently reverting to the V1.3 showcase-only collector.
+    v13.euronext_ipo_v1_3.collect_euronext_v1_3 = collect_euronext_v1_4
     legacy.collect_euronext = collect_euronext_v1_4
 
 
