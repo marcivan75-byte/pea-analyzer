@@ -1,4 +1,4 @@
-name: Committee Master V21.4 full audit validation
+name: Committee Master V21.7.0 full audit validation
 
 on:
   pull_request:
@@ -47,6 +47,7 @@ jobs:
           g=json.loads(Path("config/GOLD_V1_1_102_CRITERIA.json").read_text())
           t=json.loads(Path("config/TCT_V24_1_7_SHADOW.json").read_text())
           mm=json.loads(Path("config/COMMITTEE_VIRTUAL_MONEY_MANAGEMENT.json").read_text())
+          sr=json.loads(Path("config/SECTOR_ROTATION_V2_SHADOW.json").read_text())
           integrity=json.loads(Path("config/FULL_REFERENTIAL_INTEGRITY.json").read_text())
           master=json.loads(Path("config/V18.2_MASTER_CONFIG.json").read_text())
           assert a["criteria_count"] == 633 == integrity["actions"]["criteria_count"]
@@ -85,7 +86,18 @@ jobs:
           assert mm["entry_execution_rule"] == "NEXT_RUN_OBSERVED_PRICE_AFTER_SIGNAL_DATE"
           assert mm["single_position_per_isin"] is True
           assert mm["max_instrument_exposure_pct"] <= mm["max_position_pct"]
-          print("V21.4 integrity OK: 1829/633 Actions, 102/268 ETF, exact TCT, Gold 102/11, bias-safe virtual book")
+          assert sr["version"] == "SECTOR_ROTATION_V2.0_SHADOW"
+          assert sr["mode"] == "SHADOW_ONLY"
+          assert sr["governance"]["changes_action_scores"] is False
+          assert sr["governance"]["changes_etf_scores"] is False
+          assert sr["governance"]["can_trigger_orders"] is False
+          assert sr["governance"]["can_trigger_sales"] is False
+          assert sr["governance"]["pit_required"] is True
+          assert sr["governance"]["oos_validation_required_before_activation"] is True
+          for key in ("RLS","AVCR","RARS_OPPORTUNITY","DQS"):
+              assert abs(sum(sr["score_weights"][key].values())-1.0) < 1e-9
+          assert sr["valuation_thresholds"]["promising_but_overvalued_avcr_min"] < sr["valuation_thresholds"]["no_chase_avcr_min"]
+          print("V21.7.0 integrity OK: 1829/633 Actions, 102/268 ETF, exact TCT, Gold 102/11, Sector Rotation V2 shadow, bias-safe virtual book")
           PY
       - name: Full pytest suite
         run: pytest -q
