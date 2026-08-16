@@ -9,12 +9,12 @@ import os
 from v182.reporting import run as enrichment_run
 from v182.reporting import etf_structure_refresh, etf_mt_v2081_run, committee_master_v21_4, committee_performance_v21_4, sector_rotation_v2_shadow_run, ipo_dd_gaps_run
 from v182.decision import gold_v1_1, ipo_outcomes_v1
-from v182.decision import ipo_radar_stabilized_v1_1 as ipo_radar_v1
+from v182.decision import ipo_radar_v1_2 as ipo_radar_v1
 
 logger=logging.getLogger(__name__)
 ROOT=Path(__file__).resolve().parents[3]
-SOFTWARE_VERSION="21.7.0"
-PROCESS_VERSION="UNIFIED_V21_7_0_SECTOR_ROTATION_V2_IPO_V1_1_SHADOW"
+SOFTWARE_VERSION="21.7.1"
+PROCESS_VERSION="UNIFIED_V21_7_1_SECTOR_ROTATION_V2_IPO_V1_2_SHADOW"
 
 
 def _safe_step(name:str,func)->dict:
@@ -85,6 +85,8 @@ def run(root:Path=ROOT)->dict:
         "ipo_sec_dd":"outputs/ipo_radar/IPO_SEC_DD_STATUS.csv",
         "ipo_alerts":"outputs/ipo_radar/IPO_ALERTS.csv",
         "ipo_committee_brief":"outputs/ipo_radar/IPO_COMMITTEE_BRIEF.json",
+        "ipo_deep_dd_evidence":"outputs/ipo_radar/IPO_DEEP_DD_EVIDENCE.csv",
+        "ipo_deep_dd_brief":"outputs/ipo_radar/IPO_DEEP_DD_BRIEF.json",
         "ipo_dd_gaps":"outputs/ipo_radar/IPO_DD_GAPS.csv",
         "ipo_validation":"outputs/ipo_radar/IPO_VALIDATION_STATUS.json",
         "ipo_outcomes":"state/ipo_radar/IPO_OUTCOMES.csv"
@@ -97,7 +99,7 @@ def run(root:Path=ROOT)->dict:
         "etf_mt_challenger":"V20.8.2 missing-data dynamic shadow",
         "tct":"V24.1.8 baseline + exact V24.1.7 T1/T2 shadow",
         "gold":"V1.1 shadow",
-        "ipo":"IPO_RADAR_V1.1 stabilized shadow/advisory + identity quarantine + actionable DD worklist + forward outcome attribution; no automatic BUY",
+        "ipo":"IPO_RADAR_V1.2 deep-DD shadow/advisory: V1.1 identity quarantine + prospectus Inline XBRL + offer terms + real post-IPO balance-sheet reconstruction when net proceeds are evidenced; no automatic BUY",
         "sector_rotation":"V1 baseline + V2.0 multi-factor shadow; V2 decision influence = 0"
     }
     payload={
@@ -108,7 +110,8 @@ def run(root:Path=ROOT)->dict:
             "New/unvalidated Action factors, including 52-week overlays, remain challenger-only until dedicated PIT/OOS validation.",
             "Sector Rotation V2 is SHADOW_ONLY: it cannot change Action/ETF scores, create BUYs, create SELLs, or emit orders before dedicated PIT/OOS validation.",
             "Sector Rotation V2 explicitly separates rotation opportunity from valuation/correction risk and publishes PROMISING_BUT_OVERVALUED / NO_CHASE warnings.",
-            "IPO Radar V1.1 discovers IPOs through redundant calendars, reconciles same-symbol/date US events across providers, quarantines material issuer-name conflicts, publishes candidate-specific due-diligence actions using effective 60/40 final-score weights, preserves full PIT evidence and measures forward post-listing outcomes; it cannot create a BUY before dedicated PIT/OOS validation.",
+            "IPO Radar V1.2 remains SHADOW_ONLY. It preserves V1.1 identity quarantine and due-diligence coverage controls, prefers prospectus Inline XBRL over Company Facts for pre-IPO financial evidence, reconstructs post-IPO balance-sheet quality only when net proceeds are evidenced, and keeps absolute valuation diagnostics separate from the peer-relative valuation criterion.",
+            "IPO Radar V1.2 can conservatively trigger the existing insufficient-12-month-liquidity hard block only when even the upper-bound post-IPO runway before planned uses of proceeds is below one year.",
             "Every collection publishes retained-value provenance plus missing/partial/available data.",
             "Per-field retained provenance governs evidence/freshness merge decisions and persists across runs.",
             "Dynamic available-criterion weights renormalize to 100% while minimum coverage gates remain active.",

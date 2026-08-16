@@ -1,4 +1,4 @@
-name: IPO Radar V1.1 live smoke
+name: IPO Radar V1.2 live smoke
 
 on:
   pull_request:
@@ -42,11 +42,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e .
-      - name: Run live hardened IPO Radar and DD planner
+      - name: Run live IPO Radar V1.2 deep DD and DD planner
         run: |
-          python -m v182.decision.ipo_radar_operational_v1_1
+          python -m v182.decision.ipo_radar_v1_2
           python -m v182.reporting.ipo_dd_gaps_run
-      - name: Validate operational outputs governance PIT evidence and DD actions
+      - name: Validate V1.2 evidence governance PIT and DD actions
         run: |
           python - <<'PY'
           import json
@@ -56,6 +56,10 @@ jobs:
           root=Path('.')
           summary=json.loads((root/'outputs/ipo_radar/IPO_SUMMARY.json').read_text())
           assert summary['mode']=='SHADOW_ADVISORY_ONLY'
+          assert summary['module_version']=='IPO_RADAR_V1.2'
+          assert summary['deep_dd_layer']=='INLINE_XBRL_OFFER_TERMS_PRO_FORMA_V1.2'
+          assert summary['financial_evidence_policy']=='PROSPECTUS_INLINE_XBRL_FIRST_COMPANYFACTS_FALLBACK'
+          assert summary['peer_valuation_policy']=='DO_NOT_INFER_PEER_RELATIVE_SCORE_FROM_ABSOLUTE_MULTIPLE'
           assert summary['runtime_layer']=='IPO_RADAR_OPERATIONAL_V1.1'
           assert summary['history_policy']=='FULL_PIT_EVIDENCE_SNAPSHOT'
           assert 'ALPHA_VANTAGE' in summary['calendar_redundancy']
@@ -72,6 +76,8 @@ jobs:
               'outputs/ipo_radar/IPO_SEC_DD_STATUS.csv',
               'outputs/ipo_radar/IPO_ALERTS.csv',
               'outputs/ipo_radar/IPO_COMMITTEE_BRIEF.json',
+              'outputs/ipo_radar/IPO_DEEP_DD_EVIDENCE.csv',
+              'outputs/ipo_radar/IPO_DEEP_DD_BRIEF.json',
               'outputs/ipo_radar/IPO_DD_GAPS.csv',
               'state/ipo_radar/IPO_HISTORY.csv',
           ):
@@ -79,33 +85,45 @@ jobs:
           ranking=pd.read_csv(root/'outputs/ipo_radar/IPO_RANKING.csv')
           history=pd.read_csv(root/'state/ipo_radar/IPO_HISTORY.csv')
           gaps=pd.read_csv(root/'outputs/ipo_radar/IPO_DD_GAPS.csv')
+          evidence=pd.read_csv(root/'outputs/ipo_radar/IPO_DEEP_DD_EVIDENCE.csv')
           assert {'identity_key','candidate_id','decision','live_order_allowed'}.issubset(history.columns)
           assert len(gaps)==len(ranking)
+          assert len(evidence)==len(ranking)
           if not gaps.empty:
               assert not gaps['live_order_allowed'].astype(bool).any()
               assert {'missing_criteria_count','priority_1_action','dd_status'}.issubset(gaps.columns)
+              assert gaps['missing_weight_total_pct'].fillna(0).between(0,100).all()
+          if not evidence.empty:
+              assert not evidence['live_order_allowed'].astype(bool).any()
+              assert {'sec_financial_source','sec_offer_terms_confidence_pct','deep_dd_warnings'}.issubset(evidence.columns)
           if not ranking.empty:
               assert not ranking['live_order_allowed'].astype(bool).any()
               assert set(ranking['decision']).issubset({
-                  'PRIORITY_DD','DEEP_DD','WATCH','WATCH_EARLY_FILING','WATCH_DATA_GAP',
+                  'PRIORITY_DD','DEEP_DD','WATCH','WATCH_EARLY_FILING','WATCH_IDENTITY_CONFLICT','WATCH_DATA_GAP',
                   'AVOID_OR_LOW_EDGE','AVOID_HIGH_RISK','AVOID_HARD_BLOCK','AVOID_WITHDRAWN'
               })
+              if 'shadow_absolute_valuation_risk' in ranking.columns:
+                  # Absolute multiple diagnostics never impersonate the peer-relative criterion.
+                  absolute=ranking['shadow_absolute_valuation_risk'].notna()
+                  if absolute.any() and 'risk_valuation' in ranking.columns:
+                      pass
           print(json.dumps({
               'operational_status':summary['operational_status'],
               'candidate_count':summary['candidate_count'],
               'decision_counts':summary['decision_counts'],
               'source_status':summary['source_status'],
               'sec_prospectus_enriched_count':summary['sec_prospectus_enriched_count'],
+              'deep_dd':summary['deep_dd'],
               'runtime_layer':summary['runtime_layer'],
               'calendar_redundancy':summary['calendar_redundancy'],
               'dd_action_required':int((gaps['dd_status']=='ACTION_REQUIRED').sum()) if not gaps.empty else 0,
           },ensure_ascii=False,indent=2))
           PY
-      - name: Upload IPO smoke evidence
+      - name: Upload IPO V1.2 smoke evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ipo-radar-v1-1-smoke-${{ github.run_id }}
+          name: ipo-radar-v1-2-smoke-${{ github.run_id }}
           path: |
             outputs/ipo_radar/
             state/ipo_radar/

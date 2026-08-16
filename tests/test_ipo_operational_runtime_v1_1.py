@@ -21,8 +21,8 @@ def _config() -> dict:
     return json.loads((ROOT / "config" / "IPO_RADAR_V1.json").read_text(encoding="utf-8"))
 
 
-def test_unified_runner_routes_to_stabilized_runtime_explicitly() -> None:
-    assert unified_runner.ipo_radar_v1.__name__.endswith("ipo_radar_stabilized_v1_1")
+def test_unified_runner_routes_to_deep_v1_2_runtime_explicitly() -> None:
+    assert unified_runner.ipo_radar_v1.__name__.endswith("ipo_radar_v1_2")
 
 
 def test_date_parser_handles_european_dates_without_ambiguous_pandas_first_pass() -> None:
