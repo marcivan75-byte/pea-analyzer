@@ -1,0 +1,101 @@
+name: Beta risk PIT OOS validation
+
+on:
+  pull_request:
+    paths:
+      - "config/BETA_RISK_PIT_OOS_PROTOCOL.json"
+      - "src/v182/backtest/risk_beta_pit_oos.py"
+      - "src/v182/risk/beta_metrics.py"
+      - "tests/test_risk_beta_pit_oos.py"
+      - ".github/workflows/risk_beta_pit_oos.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: beta-risk-pit-oos-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate-beta-risk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+
+      - name: Compile and focused tests
+        run: |
+          python -m compileall -q src tests
+          ruff check src/v182/backtest/risk_beta_pit_oos.py tests/test_risk_beta_pit_oos.py
+          pytest -q tests/test_risk_beta_pit_oos.py tests/test_beta_correlation_engine.py
+
+      - name: Prepare Action histories for common benchmark
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+          from v182.sources.yfinance_bulk import download_history
+
+          root = Path('.')
+          src = root / 'inputs' / 'V18.2_PEA_ACTIONS_MASTER.csv'
+          frame = None
+          for sep in (';', ',', '\t'):
+              try:
+                  candidate = pd.read_csv(src, sep=sep, encoding='utf-8-sig', low_memory=False)
+                  if len(candidate.columns) > 1:
+                      frame = candidate
+                      break
+              except Exception:
+                  pass
+          if frame is None or 'yahoo_ticker' not in frame.columns:
+              raise RuntimeError('ACTION_INPUT_OR_YAHOO_TICKER_MISSING')
+          tickers = sorted({
+              str(x).strip()
+              for x in frame['yahoo_ticker'].dropna()
+              if str(x).strip() and str(x).strip().lower() not in {'nan', 'none', '<na>'}
+          })
+          print(f'Action histories requested: {len(tickers)}')
+          result = download_history(
+              tickers,
+              str(root / 'data' / 'cache' / 'actions'),
+              period='max',
+              interval='1d',
+              batch_size=30,
+              auto_adjust=True,
+              include_actions=False,
+          )
+          print(f'Action histories successful={len(result.successful)} failed={len(result.failed)} requested={result.requested}')
+          if len(result.successful) < 20:
+              raise RuntimeError('INSUFFICIENT_ACTION_HISTORY_FOR_COMMON_BENCHMARK')
+          PY
+
+      - name: Run locked beta risk PIT OOS diagnostic
+        run: python -m v182.backtest.risk_beta_pit_oos
+
+      - name: Show verdict
+        if: always()
+        run: |
+          if [ -f outputs/backtest/beta_risk_pit_oos_2026_08_16/BETA_RISK_PIT_OOS_SUMMARY.json ]; then
+            cat outputs/backtest/beta_risk_pit_oos_2026_08_16/BETA_RISK_PIT_OOS_SUMMARY.json
+          fi
+
+      - name: Upload beta risk PIT OOS results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: beta-risk-pit-oos-${{ github.run_id }}
+          path: outputs/backtest/beta_risk_pit_oos_2026_08_16/
+          if-no-files-found: warn
+          retention-days: 30
