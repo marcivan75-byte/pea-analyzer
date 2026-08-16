@@ -6,9 +6,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_ipo_v1_3_governance_keeps_shadow_and_existing_weights() -> None:
+def test_ipo_v1_4_governance_keeps_shadow_and_existing_weights() -> None:
     config = json.loads((ROOT / "config" / "IPO_RADAR_V1.json").read_text(encoding="utf-8"))
-    assert config["version"] == "IPO_RADAR_V1.3"
+    assert config["version"] == "IPO_RADAR_V1.4"
     assert config["mode"] == "SHADOW_ADVISORY_ONLY"
     assert config["net_score_weights"] == {"opportunity": 0.60, "risk_inverse": 0.40}
     assert abs(sum(config["opportunity_weights"].values()) - 100.0) < 1e-9
@@ -19,7 +19,9 @@ def test_ipo_v1_3_governance_keeps_shadow_and_existing_weights() -> None:
     assert config["governance"]["promotion_requires_dedicated_pit_oos_backtest"] is True
     assert config["governance"]["automatic_v1_2_criteria_shadow_until_pit_oos"] is True
     assert config["governance"]["automatic_v1_3_peer_valuation_shadow_until_pit_oos"] is True
+    assert config["governance"]["automatic_v1_4_euronext_news_shadow_until_pit_oos"] is True
     assert config["governance"]["peer_data_failure_can_create_score"] is False
+    assert config["governance"]["euronext_news_can_create_score"] is False
     assert config["governance"]["pea_eligibility_policy"] == "NEVER_INFER_FINAL_ELIGIBILITY_FROM_LISTING_EXCHANGE_OR_ISIN_PREFIX_ONLY"
 
 
@@ -46,3 +48,15 @@ def test_ipo_v1_3_real_peer_and_euronext_evidence_fail_closed() -> None:
     assert evidence["same_basis_required"] is True
     assert evidence["peer_api_failure_policy"] == "LEAVE_CRITERION_MISSING_NO_PENALTY_NO_BONUS"
     assert evidence["absolute_multiple_cannot_populate_peer_score"] is True
+
+
+def test_ipo_v1_4_euronext_regulated_news_is_factual_shadow_only() -> None:
+    config = json.loads((ROOT / "config" / "IPO_RADAR_V1.json").read_text(encoding="utf-8"))
+    evidence = config["v1_4_euronext_regulated_news"]
+    assert evidence["enabled"] is True
+    assert evidence["source_of_truth"] == "OFFICIAL_EURONEXT_COMPANY_NEWS_PAGE"
+    assert evidence["currency_policy"] == "PRESERVE_LOCAL_CURRENCY_NO_CROSS_CURRENCY_SCORING"
+    assert evidence["score_influence"] == 0.0
+    assert evidence["decision_influence"] == 0.0
+    assert evidence["can_create_buy"] is False
+    assert evidence["promotion_requires_pit_oos"] is True
