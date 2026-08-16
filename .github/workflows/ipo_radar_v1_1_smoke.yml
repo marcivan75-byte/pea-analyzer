@@ -63,7 +63,7 @@ jobs:
           assert summary['mode']=='SHADOW_ADVISORY_ONLY'
           assert summary['live_orders_enabled'] is False
           assert summary['can_create_buy'] is False
-          assert summary['regulated_news_layer']=='EURONEXT_GDELT_DISCOVERY_OFFICIAL_PAGE_FACTS_V1.4'
+          assert summary['regulated_news_layer']=='EURONEXT_ISIN_LISTVIEW_PRIMARY_GDELT_FALLBACK_OFFICIAL_PAGE_FACTS_V1.4'
           assert summary['regulated_news_policy']=='SHADOW_FACTS_ONLY_NO_ACTIVE_SCORE_NO_BUY'
           assert summary['regulated_news_evidence']['active_score_influence']==0.0
           assert calibration['promotion_ready'] is False
@@ -83,7 +83,17 @@ jobs:
               assert not ranking['live_order_allowed'].astype(bool).any()
           if not news.empty:
               assert not news['live_order_allowed'].astype(bool).any()
-              assert {'euronext_news_discovery_status','euronext_news_demand_signal_shadow','euronext_news_evidence_policy'}.issubset(news.columns)
+              required={
+                  'euronext_news_discovery_status','euronext_news_discovery_method','euronext_news_listview_url',
+                  'euronext_news_demand_signal_shadow','euronext_news_evidence_policy'
+              }
+              assert required.issubset(news.columns)
+              successful=news[news['euronext_news_discovery_status'].fillna('').astype(str).str.endswith('SUCCESS')]
+              if not successful.empty:
+                  assert successful['euronext_news_discovery_method'].isin({'EURONEXT_ISIN_LISTVIEW','GDELT_FALLBACK'}).all()
+              direct=news[news['euronext_news_discovery_status'].fillna('')=='DIRECT_SUCCESS']
+              if not direct.empty:
+                  assert direct['euronext_news_listview_url'].str.contains('live.euronext.com',na=False).all()
               active_score_columns={'opportunity_bookbuilding_demand','risk_dilution_secondary','opportunity_insider_alignment'}
               assert active_score_columns.isdisjoint(set(news.columns))
           print(json.dumps({
