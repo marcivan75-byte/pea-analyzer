@@ -1,0 +1,37 @@
+from_theme;to_theme;economic_link;initial_strength;lag_min_days;lag_max_days;status;governance
+AI;AI_COMPUTE;AI workload demand drives accelerator demand;0.95;0;90;RESEARCH_BASELINE;lag and strength require PIT validation
+AI_COMPUTE;SEMIS;accelerator demand supports semiconductor revenue;0.90;0;90;RESEARCH_BASELINE;no score influence before validation
+SEMIS;SEMI_EQUIP;capacity and technology transitions support fab equipment;0.75;30;270;RESEARCH_BASELINE;cycle-dependent
+AI_COMPUTE;MEMORY;accelerated computing increases high bandwidth memory demand;0.80;0;180;RESEARCH_BASELINE;cycle-dependent
+AI_COMPUTE;SERVERS;accelerators require server/system deployment;0.90;0;120;RESEARCH_BASELINE;validate through capex/orders
+SERVERS;DATA_CENTERS;server deployment requires data-center capacity;0.85;30;270;RESEARCH_BASELINE;capacity pipeline effective dates required
+DATA_CENTERS;COOLING;higher compute density increases thermal-management demand;0.85;30;365;RESEARCH_BASELINE;second-order beneficiary
+DATA_CENTERS;POWER_INFRA;data-center growth increases electrical infrastructure demand;0.90;30;365;RESEARCH_BASELINE;second-order beneficiary
+POWER_INFRA;GRID;new loads require grid investment and connection capacity;0.85;90;540;RESEARCH_BASELINE;second-order beneficiary
+GRID;TRANSFORMERS;grid capex drives transformer and switchgear backlog;0.90;30;365;RESEARCH_BASELINE;validate backlog transmission
+DATA_CENTERS;NUCLEAR;large baseload demand may support nuclear contracting/investment;0.45;180;1095;HYPOTHESIS_ONLY;weak/long-lag link must not create signal alone
+DATA_CENTERS;OIL_GAS;power demand may increase gas-fired generation in constrained grids;0.30;90;730;HYPOTHESIS_ONLY;macro/regional confirmation required
+AI;SOFTWARE;AI adoption can support software monetization/productivity;0.70;30;365;RESEARCH_BASELINE;separate hype from ARR/bookings
+CLOUD;AI;cloud infrastructure enables enterprise AI adoption;0.75;0;180;RESEARCH_BASELINE;bidirectional economic relationship not double-counted
+AI;CYBER;AI/cloud adoption can raise cyber-security requirements;0.55;60;540;RESEARCH_BASELINE;requires budget evidence
+RESHORING;AUTOMATION;reindustrialization supports automation capex;0.80;90;730;RESEARCH_BASELINE;validate through orders/PMI
+RESHORING;ROBOTICS;labor/capex constraints support robotics adoption;0.70;90;730;RESEARCH_BASELINE;validate through orders
+ELECTRIFICATION;GRID;electrification raises grid investment requirements;0.90;90;1095;RESEARCH_BASELINE;structural link
+EV;BATTERIES;EV production drives battery demand;0.90;0;270;RESEARCH_BASELINE;price wars can break profit transmission
+BATTERIES;LITHIUM;battery demand affects lithium demand;0.80;0;270;RESEARCH_BASELINE;supply response critical
+ELECTRIFICATION;COPPER;grid/electrification investment increases copper intensity;0.75;90;1095;RESEARCH_BASELINE;commodity supply must confirm
+DEFENSE;MISSILES;rearmament budgets support missiles and munitions;0.90;30;730;RESEARCH_BASELINE;distinguish budgets from awards
+DEFENSE;LAND_DEFENSE;rearmament supports land systems procurement;0.85;30;730;RESEARCH_BASELINE;distinguish budgets from awards
+DEFENSE;RADAR_EW;modernization supports sensors/electronic warfare;0.80;30;730;RESEARCH_BASELINE;technology mix matters
+DEFENSE;DRONES;modern conflict demand supports unmanned systems;0.75;0;540;RESEARCH_BASELINE;crowding/valuation warning still applies
+DEFENSE;CYBER;geopolitical stress can support cyber budgets;0.55;30;540;RESEARCH_BASELINE;requires budget confirmation
+OIL_GAS;OIL_SERVICES;upstream cash flow/capex supports service activity;0.75;90;540;RESEARCH_BASELINE;discipline can weaken link
+OIL_GAS;LNG;gas balances and contracting support LNG investment;0.60;180;1095;RESEARCH_BASELINE;long project lags
+NUCLEAR;URANIUM;reactor utilization/buildout supports uranium demand;0.75;90;1095;RESEARCH_BASELINE;contracting and inventories required
+NUCLEAR;ENRICHMENT;nuclear fleet/buildout supports enrichment demand;0.75;90;1095;RESEARCH_BASELINE;capacity constraints required
+RENEWABLES;GRID;renewable interconnection supports grid capex;0.80;90;1095;RESEARCH_BASELINE;project cancellations must be included
+GLP1;PHARMA;GLP-1 adoption supports drug revenue/pipeline;0.90;0;365;RESEARCH_BASELINE;company exposure mapping required
+GLP1;MEDTECH;GLP-1 can create mixed second-order effects on procedures;0.20;180;1095;HYPOTHESIS_ONLY;direction must be learned, not assumed
+LUXURY;TRAVEL;tourism recovery can co-move with luxury demand;0.40;0;180;HYPOTHESIS_ONLY;common-driver relationship rather than causal default
+COPPER;MATERIALS;copper cycle influences mining/materials earnings;0.65;0;180;RESEARCH_BASELINE;company cost curve required
+GOLD;MATERIALS;gold regime can affect producers/royalties differently;0.45;0;180;RESEARCH_BASELINE;consume dedicated Gold module where available
