@@ -1,0 +1,56 @@
+{
+  "version": "SECTOR_ROTATION_V2_PIT_OOS_1_0_2026_08_16",
+  "locked_before_results": true,
+  "scope": "SECTOR_ROTATION_V2_SHADOW",
+  "primary_horizon_days": 60,
+  "secondary_horizons_days": [20, 120],
+  "periods": {
+    "VALIDATION_OOS": {
+      "start": "2026-09-01",
+      "end": "2026-12-31"
+    },
+    "DIAGNOSTIC_OOS": {
+      "start": "2027-01-01",
+      "end": "2027-04-30"
+    },
+    "final_holdout_start": "2027-05-01"
+  },
+  "eligibility": {
+    "minimum_dqs": 80.0,
+    "minimum_sectors_per_snapshot": 6,
+    "minimum_v1_coverage": 0.8,
+    "minimum_forward_return_coverage": 0.8,
+    "minimum_snapshot_spacing_days": 10
+  },
+  "ranking": {
+    "top_k": 3,
+    "baseline_v1": "V21_3_SECTOR_ROTATION_SCORE",
+    "baseline_no_rotation": "EQUAL_WEIGHT_ALL_ELIGIBLE_SECTORS"
+  },
+  "promotion_gates": {
+    "minimum_independent_snapshots_each_period": 8,
+    "minimum_v2_vs_v1_mean_return_pp": 0.5,
+    "minimum_v2_vs_neutral_mean_return_pp": 0.75,
+    "maximum_positive_rate_degradation_pp": 5.0,
+    "maximum_mean_mae_degradation_pp": 1.0,
+    "maximum_p10_return_degradation_pp": 1.0
+  },
+  "warnings": {
+    "leader_rls_min": 70.0,
+    "minimum_flagged_leaders_total": 8,
+    "minimum_unflagged_leaders_total": 12,
+    "minimum_return_risk_separation_pp": 1.0,
+    "minimum_mae_risk_separation_pp": 1.5,
+    "separation_logic": "RETURN_OR_MAE"
+  },
+  "governance": {
+    "final_holdout_locked": true,
+    "no_parameter_optimization_after_results": true,
+    "no_score_weight_changes": true,
+    "no_threshold_retuning": true,
+    "no_real_orders": true,
+    "promotion_requires_followup_final_holdout_protocol": true,
+    "current_universe_reconstruction_not_promotion_eligible": true,
+    "synthetic_tests_validate_code_only_not_economic_performance": true
+  }
+}
