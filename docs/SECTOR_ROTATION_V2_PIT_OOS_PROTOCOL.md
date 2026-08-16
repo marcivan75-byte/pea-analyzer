@@ -6,6 +6,8 @@ Ce protocole transforme le module `SECTOR_ROTATION_V2` déjà fusionné en expé
 
 Il ne cherche pas à reconstruire rétrospectivement des signaux V2 qui n'ont jamais été observés en temps réel. Une reconstruction à partir de l'univers, des révisions, des news ou des constituants actuels ne constitue pas une preuve de promotion.
 
+Le protocole est verrouillé sur la version exacte `SECTOR_ROTATION_V2.0_SHADOW`. Une version ultérieure peut continuer à être historisée, mais ses observations sont exclues de cette expérience afin d'interdire le mélange de modèles dans un même OOS.
+
 ## Preuves figées à chaque run
 
 Chaque snapshot conserve désormais :
@@ -30,6 +32,10 @@ Pour chaque secteur et snapshot :
 4. le panier sectoriel est égal-pondéré par offset de séance ;
 5. rendement J+60, MAE et MFE sont calculés ;
 6. au moins 3 constituants et 70 % de couverture prix sont requis.
+
+La couverture prix est calculée sur la totalité des constituants figés. Un instrument sans ticker ou sans trajectoire J+60 exploitable reste donc dans le dénominateur et ne peut pas améliorer artificiellement la couverture.
+
+Un secteur dont le résultat J+60 n'est pas encore mature est conservé dans les observations avec rendement/MAE/MFE manquants. Il reste ainsi dans le dénominateur de couverture future au lieu de disparaître du test.
 
 Les mêmes résultats sectoriels servent à comparer V2, V1 et la baseline neutre. Le résultat économique n'est donc pas redéfini selon le modèle testé.
 
@@ -61,6 +67,8 @@ Même si tous les gates passent, `promotion_ready` reste `false` : le holdout fi
 
 Le warning `PROMISING_BUT_OVERVALUED` est évalué séparément parmi les leaders `RLS >= 70` et `DQS >= 80`.
 
+Les observations du warning sont prises uniquement sur les mêmes dates indépendantes espacées d'au moins 10 jours ; les alertes quotidiennes corrélées ne sont pas comptées comme autant de preuves distinctes.
+
 Il faut au minimum :
 
 - 8 leaders flaggés ;
@@ -75,6 +83,7 @@ Le protocole interdit :
 
 - le retuning des seuils après lecture des résultats ;
 - l'optimisation des poids sur ces mêmes périodes ;
+- le mélange d'observations provenant de versions différentes du modèle ;
 - toute modification automatique des scores Actions ou ETF ;
 - tout BUY/SELL ou ordre réel ;
 - toute promotion fondée sur des tests synthétiques ;
