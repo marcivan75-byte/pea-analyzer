@@ -86,8 +86,13 @@ def collect_recent_registrations(start: date, end: date, user_agent: str, timeou
         if key not in dedup or row["filed"] > dedup[key]["filed"]:
             dedup[key] = row
     output = sorted(dedup.values(), key=lambda row: row["filed"], reverse=True)
-    status = "SUCCESS" if not errors else "PARTIAL" if output else "FAILED"
-    return output, {"source": "SEC_EDGAR", "status": status, "count": len(output), "detail": "|".join(errors)[:300]}
+    listed_ciks, listed_status = collect_listed_ciks(user_agent, timeout)
+    before_filter = len(output)
+    if listed_ciks:
+        output = [row for row in output if str(int(row["cik"])) not in listed_ciks]
+    status = "SUCCESS" if not errors and listed_status["status"] == "SUCCESS" else "PARTIAL" if output else "FAILED"
+    detail_parts = errors + [f"listed_filter={listed_status['status']}", f"filtered_listed={before_filter-len(output)}"]
+    return output, {"source": "SEC_EDGAR", "status": status, "count": len(output), "detail": "|".join(detail_parts)[:300]}
 
 
 def collect_listed_ciks(user_agent: str, timeout: int = 20) -> tuple[set[str], dict]:
@@ -320,7 +325,7 @@ def financial_scores(companyfacts: dict) -> dict:
         "sec_cash": cash, "sec_assets": assets, "sec_liabilities": liabilities, "sec_cash_runway_years_pre_ipo": None,
     }
     if len(revenue) >= 2 and revenue[-2]["val"]:
-        growth = (float(revenue[-1]["val"]) / float(revenue[-2]["val"]) - 1.0) * 100.0
+        growth = round((float(revenue[-1]["val"]) / float(revenue[-2]["val"]) - 1.0) * 100.0, 6)
         result["sec_revenue_growth_pct"], result["opportunity_revenue_growth"] = round(growth, 2), _growth_score(growth)
     if revenue and gross and revenue[-1]["val"]:
         margin = float(gross[-1]["val"]) / float(revenue[-1]["val"]) * 100.0
