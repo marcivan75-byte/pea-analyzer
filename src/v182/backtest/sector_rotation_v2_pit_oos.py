@@ -278,12 +278,15 @@ def evaluate_governed_validation(observations: pd.DataFrame, protocol: dict[str,
     evaluation = prepared.loc[prepared["period"].isin(["VALIDATION_OOS", "DIAGNOSTIC_OOS"])].copy()
 
     all_snapshot_rows: list[dict[str, Any]] = []
+    warning_source_parts: list[pd.DataFrame] = []
     period_summaries: dict[str, dict[str, Any]] = {}
     spacing_days = int(protocol["eligibility"]["minimum_snapshot_spacing_days"])
     for period in ("VALIDATION_OOS", "DIAGNOSTIC_OOS"):
         source = evaluation.loc[evaluation["period"].eq(period)].copy()
         available_dates = sorted(source["as_of"].drop_duplicates().tolist())
         selected_dates = _select_spaced_dates(available_dates, spacing_days)
+        if selected_dates:
+            warning_source_parts.append(source.loc[source["as_of"].isin(selected_dates)].copy())
         rows = []
         for timestamp in selected_dates:
             snapshot = _portfolio_snapshot(source.loc[source["as_of"].eq(timestamp)], protocol)
@@ -295,7 +298,8 @@ def evaluate_governed_validation(observations: pd.DataFrame, protocol: dict[str,
         period_summaries[period] = _period_summary(metrics_frame, protocol)
 
     snapshot_metrics = pd.DataFrame(all_snapshot_rows)
-    warning_metrics = _warning_metrics(evaluation, protocol)
+    warning_source = pd.concat(warning_source_parts, ignore_index=True) if warning_source_parts else evaluation.iloc[0:0].copy()
+    warning_metrics = _warning_metrics(warning_source, protocol)
     warning_gate = _warning_gate(warning_metrics, protocol)
     periods_pass = all(summary.get("pass", False) for summary in period_summaries.values())
     pre_holdout_pass = bool(periods_pass and warning_gate["pass"])
