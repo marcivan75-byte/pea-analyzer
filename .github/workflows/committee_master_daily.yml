@@ -47,6 +47,13 @@ jobs:
           key: gold-v11-history-${{ github.run_id }}
           restore-keys: |
             gold-v11-history-
+      - name: Restore IPO radar history
+        uses: actions/cache/restore@v4
+        with:
+          path: state/ipo_radar/
+          key: ipo-radar-v1-${{ github.run_id }}
+          restore-keys: |
+            ipo-radar-v1-
       - name: Restore field provenance
         uses: actions/cache/restore@v4
         with:
@@ -91,6 +98,7 @@ jobs:
           integrity=json.loads(Path("config/FULL_REFERENTIAL_INTEGRITY.json").read_text())
           tct=json.loads(Path("config/TCT_V24_1_7_SHADOW.json").read_text())
           mm=json.loads(Path("config/COMMITTEE_VIRTUAL_MONEY_MANAGEMENT.json").read_text())
+          ipo=json.loads(Path("config/IPO_RADAR_V1.json").read_text())
           assert a["criteria_count"] == 633 == integrity["actions"]["criteria_count"]
           assert integrity["actions"]["universe_count"] == 1829
           assert e["criteria_count"] == 268 == integrity["etf"]["criteria_count"]
@@ -117,7 +125,11 @@ jobs:
           assert g["governance"]["contribution_blocks"] == 11
           assert mm["entry_execution_rule"] == "NEXT_RUN_OBSERVED_PRICE_AFTER_SIGNAL_DATE"
           assert mm["single_position_per_isin"] is True
-          print(f"V21.6.2 integrity OK: Actions 1829/633 (materialized identity-only={materialized.materialized_missing_count}), ETF 102/268, TCT, Gold, bias-safe virtual book")
+          assert abs(sum(ipo["opportunity_weights"].values())-100.0) < 1e-9
+          assert abs(sum(ipo["risk_weights"].values())-100.0) < 1e-9
+          assert ipo["governance"]["can_create_buy"] is False
+          assert ipo["governance"]["t1_t2_forbidden"] is True
+          print(f"V21.6.2 integrity OK: Actions 1829/633 (materialized identity-only={materialized.materialized_missing_count}), ETF 102/268, TCT, Gold, IPO Radar V1, bias-safe virtual book")
           PY
       - name: Publish Action identity hydration worklist
         run: python -m v182.audit.identity_hydration
@@ -131,6 +143,10 @@ jobs:
         if: always()
         run: |
           if [ -f outputs/committee_master/SUMMARY.json ]; then cat outputs/committee_master/SUMMARY.json; fi
+      - name: Show IPO radar summary
+        if: always()
+        run: |
+          if [ -f outputs/ipo_radar/IPO_SUMMARY.json ]; then cat outputs/ipo_radar/IPO_SUMMARY.json; fi
       - name: Show V21.4 performance summary
         if: always()
         run: |
@@ -147,6 +163,12 @@ jobs:
         with:
           path: state/GOLD_V1_1_SHADOW_HISTORY.csv
           key: gold-v11-history-${{ github.run_id }}
+      - name: Save IPO radar history
+        if: ${{ always() && hashFiles('state/ipo_radar/**') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: state/ipo_radar/
+          key: ipo-radar-v1-${{ github.run_id }}
       - name: Save field provenance
         if: ${{ always() && hashFiles('state/provenance/**') != '' }}
         uses: actions/cache/save@v4
@@ -169,6 +191,7 @@ jobs:
             outputs/committee_master/
             outputs/etf_mt_v2081/
             outputs/gold_v1_1/
+            outputs/ipo_radar/
             outputs/data_audit/
             outputs/performance/
             outputs/audit/
@@ -178,6 +201,7 @@ jobs:
             outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
             state/TCT_V24_1_7_T1_STATE.json
             state/GOLD_V1_1_SHADOW_HISTORY.csv
+            state/ipo_radar/
             state/provenance/
             state/committee_performance_v21_4/
           if-no-files-found: warn
