@@ -5,7 +5,9 @@ on:
     paths:
       - "config/BETA_RISK_REGIME_PREVALENCE_AUDIT_V1_1.json"
       - "config/BETA_RISK_REGIME_PIT_OOS_PROTOCOL_V1_2.json"
+      - "src/v182/risk/beta_metrics.py"
       - "src/v182/backtest/risk_beta_regime_v12_pit_oos.py"
+      - "tests/test_beta_benchmark_qc.py"
       - "tests/test_risk_beta_regime_v12_pit_oos.py"
       - ".github/workflows/risk_beta_regime_v12_pit_oos.yml"
   workflow_dispatch:
@@ -38,8 +40,8 @@ jobs:
       - name: Compile and focused tests
         run: |
           python -m compileall -q src tests
-          ruff check src/v182/backtest/risk_beta_regime_v12_pit_oos.py tests/test_risk_beta_regime_v12_pit_oos.py
-          pytest -q tests/test_risk_beta_regime_v12_pit_oos.py tests/test_risk_beta_regime_pit_oos.py tests/test_beta_correlation_engine.py tests/test_risk_beta_pit_oos.py
+          ruff check src/v182/risk/beta_metrics.py src/v182/backtest/risk_beta_regime_v12_pit_oos.py tests/test_beta_benchmark_qc.py tests/test_risk_beta_regime_v12_pit_oos.py
+          pytest -q tests/test_beta_benchmark_qc.py tests/test_risk_beta_regime_v12_pit_oos.py tests/test_risk_beta_regime_pit_oos.py tests/test_beta_correlation_engine.py tests/test_risk_beta_pit_oos.py
 
       - name: Prepare Action histories for common benchmark
         run: |
