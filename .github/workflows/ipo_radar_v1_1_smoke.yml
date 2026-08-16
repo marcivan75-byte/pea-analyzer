@@ -29,6 +29,8 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"
       SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+      FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+      ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -52,11 +54,13 @@ jobs:
           assert summary['mode']=='SHADOW_ADVISORY_ONLY'
           assert summary['runtime_layer']=='IPO_RADAR_OPERATIONAL_V1.1'
           assert summary['history_policy']=='FULL_PIT_EVIDENCE_SNAPSHOT'
+          assert 'ALPHA_VANTAGE' in summary['calendar_redundancy']
           assert summary['live_orders_enabled'] is False
           assert summary['can_create_buy'] is False
           assert summary['operational_status'] in {'SUCCESS','DEGRADED'}
           statuses={row['source']:row['status'] for row in summary['source_status']}
           assert 'SEC_EDGAR' in statuses
+          assert 'ALPHA_VANTAGE' in statuses
           assert any(status in {'SUCCESS','PARTIAL'} for status in statuses.values())
           for relative in (
               'outputs/ipo_radar/IPO_RANKING.csv',
@@ -83,6 +87,7 @@ jobs:
               'source_status':summary['source_status'],
               'sec_prospectus_enriched_count':summary['sec_prospectus_enriched_count'],
               'runtime_layer':summary['runtime_layer'],
+              'calendar_redundancy':summary['calendar_redundancy'],
           },ensure_ascii=False,indent=2))
           PY
       - name: Upload IPO smoke evidence
