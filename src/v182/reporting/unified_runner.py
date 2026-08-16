@@ -8,7 +8,8 @@ import os
 
 from v182.reporting import run as enrichment_run
 from v182.reporting import etf_structure_refresh, etf_mt_v2081_run, committee_master_v21_4, committee_performance_v21_4, sector_rotation_v2_shadow_run
-from v182.decision import gold_v1_1, ipo_radar_v1, ipo_outcomes_v1
+from v182.decision import gold_v1_1, ipo_outcomes_v1
+from v182.decision import ipo_radar_operational_v1_1 as ipo_radar_v1
 
 logger=logging.getLogger(__name__)
 ROOT=Path(__file__).resolve().parents[3]
