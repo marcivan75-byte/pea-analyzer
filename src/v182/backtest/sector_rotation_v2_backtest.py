@@ -45,15 +45,6 @@ def _prepare_signals(signals: pd.DataFrame) -> pd.DataFrame:
     return s
 
 
-def _aligned_index(prices: pd.DataFrame, sector: str, as_of: pd.Timestamp) -> int | None:
-    g = prices.loc[prices["sector"].astype(str) == str(sector)]
-    if g.empty:
-        return None
-    dates = g["date"].to_numpy()
-    idx = int(np.searchsorted(dates, np.datetime64(as_of.to_datetime64()), side="left"))
-    return idx if idx < len(g) else None
-
-
 def _forward_path_metrics(group: pd.DataFrame, start_idx: int, horizon: int) -> dict[str, float | None]:
     if start_idx >= len(group):
         return {"forward_return_pct": None, "mae_pct": None, "mfe_pct": None}
@@ -132,8 +123,10 @@ def evaluate_signals(
             for key, value in metrics.items():
                 base[f"{key}_{h}d"] = value
             if benchmark_groups:
-                # Prefer a benchmark row named MARKET; otherwise a same-sector benchmark may be supplied.
-                bg = benchmark_groups.get("MARKET") or benchmark_groups.get(sector)
+                # Prefer a benchmark series named MARKET; otherwise allow a same-sector benchmark.
+                bg = benchmark_groups.get("MARKET")
+                if bg is None:
+                    bg = benchmark_groups.get(sector)
                 if bg is not None and not bg.empty:
                     bdates = bg["date"].to_numpy()
                     bstart = int(np.searchsorted(bdates, np.datetime64(signal["as_of"].to_datetime64()), side="left"))
