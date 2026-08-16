@@ -49,6 +49,8 @@ def _basket_metrics(
     as_of: pd.Timestamp,
     close_by_ticker: dict[str, pd.Series],
     protocol: dict[str, Any],
+    *,
+    expected_constituents: int | None = None,
 ) -> dict[str, Any] | None:
     horizon = int(protocol["primary_horizon_days"])
     outcome_cfg = protocol["outcomes"]
@@ -73,7 +75,8 @@ def _basket_metrics(
         paths.append(normalized)
         used.append(ticker)
 
-    total = len(unique_tickers)
+    expected = int(expected_constituents) if expected_constituents is not None else len(unique_tickers)
+    total = max(len(unique_tickers), expected)
     coverage = float(len(used) / total) if total else 0.0
     if len(used) < int(outcome_cfg["minimum_constituents"]):
         return None
@@ -108,6 +111,18 @@ def build_outcome_observations(
     members["as_of"] = pd.to_datetime(members["as_of"], errors="coerce", utc=True)
     signals = signals.dropna(subset=["sector", "as_of", "model_version"])
     members = members.dropna(subset=["sector", "as_of", "model_version"])
+
+    model_version_lock = protocol.get("model_version_lock")
+    signals_excluded_version_mismatch = 0
+    members_excluded_version_mismatch = 0
+    if model_version_lock:
+        locked = str(model_version_lock)
+        signal_match = signals["model_version"].astype(str).eq(locked)
+        member_match = members["model_version"].astype(str).eq(locked)
+        signals_excluded_version_mismatch = int((~signal_match).sum())
+        members_excluded_version_mismatch = int((~member_match).sum())
+        signals = signals.loc[signal_match].copy()
+        members = members.loc[member_match].copy()
 
     final_holdout = pd.Timestamp(protocol["periods"]["final_holdout_start"], tz="UTC")
     holdout_signals_locked = int(signals["as_of"].ge(final_holdout).sum())
@@ -152,7 +167,13 @@ def build_outcome_observations(
             rows.append(row)
             continue
         tickers = group.get("yahoo_ticker", pd.Series(dtype=object)).dropna().astype(str).tolist()
-        metrics = _basket_metrics(tickers, signal["as_of"], close_by_ticker, protocol)
+        metrics = _basket_metrics(
+            tickers,
+            signal["as_of"],
+            close_by_ticker,
+            protocol,
+            expected_constituents=int(len(group)),
+        )
         if metrics is None:
             immature_or_low_coverage += 1
             row["outcome_status"] = "IMMATURE_OR_LOW_PRICE_COVERAGE"
@@ -171,6 +192,9 @@ def build_outcome_observations(
     observations = pd.DataFrame(rows)
     diagnostic = {
         "status": "OK" if mature_observations else "NO_MATURE_OUTCOMES",
+        "model_version_lock": model_version_lock,
+        "signals_excluded_version_mismatch": signals_excluded_version_mismatch,
+        "members_excluded_version_mismatch": members_excluded_version_mismatch,
         "signals_in_protocol_pre_holdout": int(len(signals)),
         "mature_observations": mature_observations,
         "missing_membership": missing_membership,
