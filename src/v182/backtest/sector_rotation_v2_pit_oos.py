@@ -252,6 +252,26 @@ def _warning_gate(warning: dict[str, Any], protocol: dict[str, Any]) -> dict[str
 
 
 def evaluate_governed_validation(observations: pd.DataFrame, protocol: dict[str, Any]) -> GovernedValidationResult:
+    if observations.empty:
+        summary = {
+            "status": "WAIT_FOR_PIT_HISTORY",
+            "protocol_version": protocol.get("version"),
+            "primary_horizon_days": int(protocol["primary_horizon_days"]),
+            "holdout_locked": True,
+            "holdout_rows_ignored": 0,
+            "periods": {
+                "VALIDATION_OOS": {"status": "INSUFFICIENT_HISTORY", "pass": False},
+                "DIAGNOSTIC_OOS": {"status": "INSUFFICIENT_HISTORY", "pass": False},
+            },
+            "warning_gate": {"pass": False, "sample_ok": False, "risk_separation_ok": False},
+            "pre_holdout_pass": False,
+            "promotion_ready": False,
+            "decision_influence": 0.0,
+            "automatic_weight_change_allowed": False,
+            "automatic_threshold_retuning_allowed": False,
+        }
+        return GovernedValidationResult(snapshot_metrics=pd.DataFrame(), summary=summary)
+
     prepared = _prepare_observations(observations, protocol)
     prepared["period"] = prepared["as_of"].apply(lambda value: _period_name(value, protocol))
     holdout_rows = int(prepared["period"].eq("FINAL_HOLDOUT_LOCKED").sum())
