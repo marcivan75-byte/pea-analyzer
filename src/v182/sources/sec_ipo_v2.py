@@ -99,10 +99,7 @@ def _collect_efts(start: date, end: date, user_agent: str, timeout: int) -> tupl
         rows = _parse_efts_hits(payload, start, end)
         total = ((payload.get("hits") or {}).get("total") or {})
         total_value = total.get("value") if isinstance(total, dict) else total
-        return rows, {
-            "status": "SUCCESS",
-            "detail": f"hits={len(rows)}|reported_total={total_value}",
-        }
+        return rows, {"status": "SUCCESS", "detail": f"hits={len(rows)}|reported_total={total_value}"}
     except (requests.RequestException, ValueError, TypeError) as exc:
         return [], {"status": "FAILED", "detail": f"{type(exc).__name__}:{str(exc)[:120]}"}
 
@@ -112,6 +109,8 @@ def _collect_daily(start: date, end: date, user_agent: str, timeout: int) -> tup
     access_errors: list[str] = []
     missing_days = 0
     successful_days = 0
+    consecutive_forbidden = 0
+    stopped_early = False
     for day in _dates(start, end):
         url = (
             f"https://www.sec.gov/Archives/edgar/daily-index/{day.year}/"
@@ -121,23 +120,33 @@ def _collect_daily(start: date, end: date, user_agent: str, timeout: int) -> tup
             response = requests.get(url, headers=_headers(user_agent), timeout=timeout)
             if response.status_code == 404:
                 missing_days += 1
+                consecutive_forbidden = 0
+                continue
+            if response.status_code == 403:
+                access_errors.append(f"{day:%Y%m%d}:HTTP_403")
+                consecutive_forbidden += 1
+                if consecutive_forbidden >= 2:
+                    stopped_early = True
+                    break
                 continue
             if response.status_code != 200:
                 access_errors.append(f"{day:%Y%m%d}:HTTP_{response.status_code}")
+                consecutive_forbidden = 0
                 continue
+            consecutive_forbidden = 0
             successful_days += 1
             rows.extend(parse_form_index(response.text))
         except requests.RequestException as exc:
             access_errors.append(f"{day:%Y%m%d}:{type(exc).__name__}")
+            consecutive_forbidden = 0
         time.sleep(0.12)
-    return rows, {
-        "status": "SUCCESS" if successful_days else "FAILED",
-        "detail": (
-            f"daily_success={successful_days}|daily_missing={missing_days}|"
-            f"access_errors={len(access_errors)}|"
-            + "|".join(access_errors[:4])
-        )[:300],
-    }
+    detail = (
+        f"daily_success={successful_days}|daily_missing={missing_days}|"
+        f"access_errors={len(access_errors)}|stopped_after_repeated_403={stopped_early}"
+    )
+    if access_errors:
+        detail += "|" + "|".join(access_errors[:4])
+    return rows, {"status": "SUCCESS" if successful_days else "FAILED", "detail": detail[:350]}
 
 
 def _deduplicate(rows: list[dict], start: date, end: date) -> list[dict]:
@@ -176,9 +185,11 @@ def collect_recent_registrations(
     route = "EFTS"
     rows = efts_rows
     route_status = efts_status
+    fallback_detail = ""
     if efts_status["status"] != "SUCCESS":
         rows, route_status = _collect_daily(start, end, user_agent, timeout)
         route = "DAILY_INDEX"
+        fallback_detail = f"efts={efts_status.get('detail', '')}|"
 
     output = _deduplicate(rows, start, end)
     listed_ciks, listed_status = collect_listed_ciks(user_agent, timeout)
@@ -195,15 +206,10 @@ def collect_recent_registrations(
         status = "SUCCESS"
 
     detail = (
-        f"route={route}|{route_status.get('detail','')}|"
+        f"route={route}|{fallback_detail}{route_status.get('detail','')}|"
         f"listed_filter={listed_status.get('status')}|filtered_listed={filtered_listed}"
     )
-    return output, {
-        "source": "SEC_EDGAR",
-        "status": status,
-        "count": len(output),
-        "detail": detail[:500],
-    }
+    return output, {"source": "SEC_EDGAR", "status": status, "count": len(output), "detail": detail[:600]}
 
 
 __all__ = [
