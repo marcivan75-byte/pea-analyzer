@@ -112,3 +112,12 @@ def test_duplicate_pit_sector_snapshot_is_rejected():
     duplicate = pd.concat([frame, frame.iloc[[0]]], ignore_index=True)
     with pytest.raises(ValueError, match="DUPLICATE_VALIDATION_OBSERVATION"):
         evaluate_governed_validation(duplicate, deepcopy(BASE_PROTOCOL))
+
+
+def test_warning_sample_uses_only_independent_spaced_snapshots():
+    rows = _passing_observations().to_dict("records")
+    rows.extend(_snapshot("2026-09-02"))
+    rows.extend(_snapshot("2027-01-05"))
+    result = evaluate_governed_validation(pd.DataFrame(rows), BASE_PROTOCOL)
+    assert result.summary["warning_gate"]["flagged_n"] == 8
+    assert result.summary["warning_gate"]["unflagged_n"] == 12
