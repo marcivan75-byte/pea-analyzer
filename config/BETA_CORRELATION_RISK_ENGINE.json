@@ -1,0 +1,66 @@
+{
+  "version": "RISK_V1_0_SHADOW_2026_08_16",
+  "enabled": true,
+  "stage": "AFTER_COMMITTEE_BEFORE_STOP_LOSS_SHADOW",
+  "benchmark": {
+    "mode": "ACTION_EQUAL_WEIGHT_PROXY",
+    "label": "PEA_ACTION_EQUAL_WEIGHT_PROXY",
+    "min_sessions": 126,
+    "min_constituents": 20,
+    "common_benchmark_required_for_cross_asset_comparison": true
+  },
+  "windows_days": [63, 126, 252],
+  "directional_beta": {
+    "enabled": true,
+    "upside": true,
+    "downside": true,
+    "ratio": true
+  },
+  "reliability": {
+    "r2_enabled": true,
+    "high_min": 0.60,
+    "medium_min": 0.35,
+    "low_min": 0.15,
+    "nonstationarity_span_warning": 0.30
+  },
+  "stress": {
+    "tail_quantile": 0.10,
+    "min_tail_sessions": 12,
+    "scenarios_pct": [-5, -10, -20, -30],
+    "semantic": "SYSTEMATIC_COMPONENT_NOT_TOTAL_LOSS_FORECAST"
+  },
+  "overlap": {
+    "method": "MAX_PAIRWISE_126D_RETURN_CORRELATION_70_PLUS_ENGINE_TAG_JACCARD_30",
+    "exact_holdings_overlap": "NOT_COMPUTED_SOURCE_NOT_PERSISTED",
+    "exact_holdings_overlap_required_before_promotion": true
+  },
+  "sector_overlay": {
+    "enabled": true,
+    "beta_acceleration": "BETA_63D_MINUS_BETA_252D",
+    "merge_existing_sector_rotation": true,
+    "correction_warning_shadow_only": true
+  },
+  "economic_engines": {
+    "enabled": true,
+    "multi_tag": true,
+    "purpose": "DETECT_NOMINAL_DIVERSIFICATION_WITH_SHARED_MACRO_DRIVERS"
+  },
+  "governance": {
+    "decision_influence": 0.0,
+    "score_influence": 0.0,
+    "sizing_execution_influence": 0.0,
+    "stop_loss_influence": 0.0,
+    "positive_signal_can_create_buy": false,
+    "negative_signal_can_force_sell": false,
+    "stop_loss_formula_link_forbidden": true,
+    "promotion_requirement": "DEDICATED_PIT_OOS_MARGINAL_UPLIFT",
+    "minimum_promotion_metrics": [
+      "expectancy",
+      "max_drawdown",
+      "loss_tail",
+      "win_rate",
+      "risk_adjusted_return"
+    ],
+    "real_orders_enabled": false
+  }
+}

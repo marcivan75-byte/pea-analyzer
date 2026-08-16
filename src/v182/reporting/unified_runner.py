@@ -10,12 +10,12 @@ from v182.audit import criteria_study_governance
 from v182.reporting import run as enrichment_run
 from v182.reporting import cdc_refresh, etf_structure_refresh, etf_mt_v2081_run, committee_master_v21_4, committee_performance_v21_4
 from v182.decision import gold_v1_1
-from v182.risk import stop_loss_policy
+from v182.risk import beta_correlation_engine, stop_loss_policy
 
 logger=logging.getLogger(__name__)
 ROOT=Path(__file__).resolve().parents[3]
 SOFTWARE_VERSION="21.6.3"
-PROCESS_VERSION="UNIFIED_V21_6_3_CDC_POSTSELECTION_CRITERIA_STUDY"
+PROCESS_VERSION="UNIFIED_V21_6_3_CDC_POSTSELECTION_CRITERIA_STUDY_RISK_V1_SHADOW"
 
 
 def _safe_step(name:str,func)->dict:
@@ -43,7 +43,7 @@ def _criteria_governance_gate(root: Path) -> dict:
 
 
 def run(root:Path=ROOT)->dict:
-    """Runtime with criterion-study gate, CDC, ETF rank history, stop-loss governance and postselection confirmation."""
+    """Runtime with criterion-study gate, CDC, risk shadow, stop-loss governance and postselection confirmation."""
     outdir=root/"outputs"/"unified"; outdir.mkdir(parents=True,exist_ok=True); run_id=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
     steps={}
     steps["criteria_governance"]=_safe_step("criteria_governance",lambda:_criteria_governance_gate(root))
@@ -69,8 +69,10 @@ def run(root:Path=ROOT)->dict:
     else:
         steps["committee"]=_skip_dependency("Requires PASS criterion-study governance and SUCCESS refresh + CDC + ETF structure/rank stages.")
     if steps["committee"]["status"]=="SUCCESS":
+        steps["beta_correlation_risk"]=_safe_step("beta_correlation_risk",lambda:beta_correlation_engine.run(root))
         steps["stop_loss"]=_safe_step("stop_loss",lambda:stop_loss_policy.run(root))
     else:
+        steps["beta_correlation_risk"]=_skip_dependency("Requires SUCCESS current Committee decisions before risk context can be attached.")
         steps["stop_loss"]=_skip_dependency("Requires SUCCESS current Committee decisions before stop-loss plans can be attached.")
     if steps["committee"]["status"]=="SUCCESS" and steps["stop_loss"]["status"]=="SUCCESS":
         steps["performance"]=_safe_step("performance",lambda:committee_performance_v21_4.run(root))
@@ -78,6 +80,10 @@ def run(root:Path=ROOT)->dict:
         steps["performance"]=_skip_dependency("Requires SUCCESS current Committee and stop-loss governance; stale or unprotected virtual transactions are forbidden.")
     outputs={
         "decisions":"outputs/committee_master/COMMITTEE_DECISIONS.csv",
+        "beta_correlation_risk_rows":"outputs/risk/BETA_CORRELATION_RISK_ROWS.csv",
+        "portfolio_risk_summary":"outputs/risk/PORTFOLIO_RISK_SUMMARY.json",
+        "sector_beta_risk_overlay":"outputs/risk/SECTOR_BETA_RISK_OVERLAY.csv",
+        "beta_correlation_risk_audit":"outputs/audit/BETA_CORRELATION_RISK_ENGINE.json",
         "stop_loss_plan":"outputs/committee_master/STOP_LOSS_PLAN.csv",
         "stop_loss_audit":"outputs/audit/STOP_LOSS_GOVERNANCE.json",
         "postselection_market_sheets":"outputs/committee_master/POSTSELECTION_MARKET_SHEETS.csv",
@@ -116,7 +122,8 @@ def run(root:Path=ROOT)->dict:
         "etf_category_rank_challenger":"rank_cat_1y/3y/5y + PIT 12/24/36m trajectories, zero decision influence until validation",
         "etf_mt_challenger":"V20.8.2 missing-data dynamic shadow",
         "tct":"V24.1.8 baseline + exact V24.1.7 T1/T2 shadow",
-        "gold":"V1.1 shadow"
+        "gold":"V1.1 shadow",
+        "beta_correlation_risk":"RISK_V1.0 shadow: common beta, downside/upside beta, R2, stress correlation, economic-engine overlap and sector beta acceleration; zero score/decision/sizing/stop influence until PIT/OOS promotion"
     }
     payload={
         "version":PROCESS_VERSION,"software_version":SOFTWARE_VERSION,"run_id":run_id,"generated_at_utc":datetime.now(timezone.utc).isoformat(),"status":overall,"live_orders_enabled":False,"steps":steps,"persisted_outputs":existing,"decision_tracks":decision_tracks,
@@ -134,6 +141,9 @@ def run(root:Path=ROOT)->dict:
             "Boursorama and Investing Action sheets are fetched only after preselection; ambiguous instrument matches are rejected and all postselection signals have zero decision influence until PIT/OOS validation.",
             "Every collection publishes retained-value provenance plus missing/partial/available data.",
             "Dynamic available-criterion weights renormalize to 100% while minimum coverage gates remain active.",
+            "Beta/correlation RISK_V1.0 is a shadow context layer. It cannot mutate score or decision, cannot execute its sizing multiplier, and cannot modify stop-loss policy before dedicated PIT/OOS marginal-uplift validation.",
+            "Risk stress scenarios estimate the systematic component using downside beta; they are not forecasts or guaranteed caps of total portfolio loss.",
+            "Exact ETF holdings overlap is not fabricated when holdings are not persisted; the current overlap score is an explicitly labelled return-correlation plus economic-engine proxy.",
             "Stop-loss governance is explicit in Committee outputs: Actions TCT/CT/MT/LT use the existing 6/8/12/18% assumptions and ETF MT preserves the V20.8.1 18% hard stop. Gap/slippage risk means no realized-loss cap is guaranteed.",
             "Virtual BUYs execute no earlier than the next observed run and one consolidated position is allowed per ISIN.",
             "T1/T2 are ACTION TCT only.",
