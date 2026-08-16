@@ -1,12 +1,17 @@
 {
-  "version": "RISK_V1_0_SHADOW_2026_08_16",
+  "version": "RISK_V1_1_ROBUST_CONTEXT_ONLY_2026_08_16",
   "enabled": true,
   "stage": "AFTER_COMMITTEE_BEFORE_STOP_LOSS_SHADOW",
   "benchmark": {
-    "mode": "ACTION_EQUAL_WEIGHT_PROXY",
-    "label": "PEA_ACTION_EQUAL_WEIGHT_PROXY",
+    "mode": "ACTION_ROBUST_EQUAL_WEIGHT_PROXY_V2",
+    "label": "PEA_ACTION_ROBUST_EQUAL_WEIGHT_PROXY_V2",
+    "method": "DAILY_5_95_WINSORIZED_EQUAL_WEIGHT_MEAN_OF_AVAILABLE_ACTION_RETURNS",
     "min_sessions": 126,
     "min_constituents": 20,
+    "min_daily_fraction": 0.20,
+    "winsor_tail": 0.05,
+    "max_abs_daily_return": 0.15,
+    "fail_closed": true,
     "common_benchmark_required_for_cross_asset_comparison": true
   },
   "windows_days": [63, 126, 252],
@@ -46,14 +51,27 @@
     "purpose": "DETECT_NOMINAL_DIVERSIFICATION_WITH_SHARED_MACRO_DRIVERS"
   },
   "economic_validation": {
-    "status": "VALIDATED_KEEP_SHADOW",
+    "status": "ROBUST_VALIDATED_CONTEXT_ONLY_KEEP_ALL_SIZING_SHADOW",
+    "validation_status_file": "config/BETA_RISK_ROBUST_VALIDATION_STATUS.json",
     "beta_only_position_sizing": "REJECTED_KEEP_SHADOW",
-    "protocol": "BETA_RISK_PIT_OOS_V1_0_2026_08_16",
-    "workflow_run_id": 31939903983,
-    "validated_at_utc": "2026-08-16T09:52:00Z",
-    "validation_status_file": "config/BETA_RISK_VALIDATION_STATUS.json",
-    "reason": "FAILED_EXPECTANCY_RETENTION_AND_RISK_ADJUSTED_UPLIFT_IN_BOTH_OOS_PERIODS",
-    "post_result_threshold_tuning_forbidden": true
+    "regime_v1_1_sizing": "REJECTED_KEEP_SHADOW",
+    "regime_v1_2_sizing": "REJECTED_KEEP_SHADOW",
+    "workflow_runs": {
+      "beta_only": 31948279034,
+      "regime_v1_1": 31948278958,
+      "regime_v1_2": 31948279056
+    },
+    "benchmark_qc": "PASS_ROBUST_V2",
+    "old_raw_benchmark": "SUPERSEDED_DATA_QUALITY_FAILURE",
+    "post_result_threshold_tuning_forbidden": true,
+    "no_v1_3_pnl_retuning": true
+  },
+  "reporting": {
+    "android_control_center": true,
+    "portfolio_diversification_warning": true,
+    "benchmark_quality_visibility": true,
+    "stress_scenario_visibility": true,
+    "sizing_rejection_visibility": true
   },
   "governance": {
     "decision_influence": 0.0,
@@ -63,7 +81,7 @@
     "positive_signal_can_create_buy": false,
     "negative_signal_can_force_sell": false,
     "stop_loss_formula_link_forbidden": true,
-    "promotion_requirement": "NEW_PRE_REGISTERED_DEDICATED_PIT_OOS_MARGINAL_UPLIFT_FOR_ANY_FUTURE_HYPOTHESIS",
+    "promotion_requirement": "NEW_INDEPENDENT_PRE_REGISTERED_PIT_OOS_MARGINAL_UPLIFT_FOR_ANY_FUTURE_HYPOTHESIS",
     "minimum_promotion_metrics": [
       "expectancy",
       "max_drawdown",

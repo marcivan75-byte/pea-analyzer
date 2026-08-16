@@ -40,18 +40,24 @@ def _metadata_map(paths: list[Path]) -> dict[str, dict]:
 
 
 def _metadata_maps(root: Path) -> tuple[dict[str, dict], dict[str, dict]]:
-    actions = _metadata_map([
-        root / "outputs" / "V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv",
-        root / "inputs" / "V18.2_PEA_ACTIONS_MASTER.csv",
-    ])
-    etfs = _metadata_map([
-        root / "outputs" / "V18.2_PEA_ETF_MASTER_ENRICHED.csv",
-        root / "inputs" / "V18.2_PEA_ETF_MASTER.csv",
-    ])
+    actions = _metadata_map(
+        [
+            root / "outputs" / "V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv",
+            root / "inputs" / "V18.2_PEA_ACTIONS_MASTER.csv",
+        ]
+    )
+    etfs = _metadata_map(
+        [
+            root / "outputs" / "V18.2_PEA_ETF_MASTER_ENRICHED.csv",
+            root / "inputs" / "V18.2_PEA_ETF_MASTER.csv",
+        ]
+    )
     return actions, etfs
 
 
-def _context(row: pd.Series, action_meta: dict[str, dict], etf_meta: dict[str, dict]) -> dict:
+def _context(
+    row: pd.Series, action_meta: dict[str, dict], etf_meta: dict[str, dict]
+) -> dict:
     isin = str(row.get("isin") or "")
     asset_class = str(row.get("asset_class") or "").upper()
     if asset_class == "ACTION":
@@ -73,7 +79,12 @@ def _return_map(
         context = _context(row, action_meta, etf_meta)
         ticker = clean_text(context.get("yahoo_ticker") or row.get("yahoo_ticker"))
         asset_class = str(row.get("asset_class") or "").upper()
-        prices = action_prices.get(ticker) if asset_class == "ACTION" else etf_prices.get(ticker) if asset_class == "ETF" else None
+        if asset_class == "ACTION":
+            prices = action_prices.get(ticker)
+        elif asset_class == "ETF":
+            prices = etf_prices.get(ticker)
+        else:
+            prices = None
         if prices is not None:
             returns = to_returns(prices)
             if not returns.empty:
@@ -132,14 +143,19 @@ def apply_risk_overlay(
     out = decisions.copy()
     score_guard = out["score"].copy() if "score" in out.columns else None
     decision_guard = out["decision"].copy() if "decision" in out.columns else None
-    returns_by_isin = _return_map(out, action_meta, etf_meta, action_prices, etf_prices)
+    returns_by_isin = _return_map(
+        out, action_meta, etf_meta, action_prices, etf_prices
+    )
     contexts: list[dict] = []
     metrics_rows: list[dict] = []
     for _, row in out.iterrows():
         context = _context(row, action_meta, etf_meta)
         contexts.append(context)
         returns = returns_by_isin.get(str(row.get("isin") or ""))
-        if returns is None or str(row.get("asset_class") or "").upper() not in {"ACTION", "ETF"}:
+        if returns is None or str(row.get("asset_class") or "").upper() not in {
+            "ACTION",
+            "ETF",
+        }:
             metrics_rows.append({"status": "NOT_APPLICABLE_OR_MISSING_HISTORY"})
         else:
             metrics_rows.append(compute_beta_metrics(returns, benchmark))
@@ -168,9 +184,18 @@ def apply_risk_overlay(
     concentrations: list[float | None] = []
     sector_hhis: list[float | None] = []
     for row_dict, context in zip(out.to_dict("records"), contexts):
-        sector = clean_text(context.get("sector_yf") or context.get("sector") or context.get("sector_bucket") or row_dict.get("sector"))
+        sector = clean_text(
+            context.get("sector_yf")
+            or context.get("sector")
+            or context.get("sector_bucket")
+            or row_dict.get("sector")
+        )
         industry = clean_text(context.get("industry_yf") or context.get("industry"))
-        category = clean_text(context.get("category") or context.get("morningstar_category") or context.get("boursorama_category"))
+        category = clean_text(
+            context.get("category")
+            or context.get("morningstar_category")
+            or context.get("boursorama_category")
+        )
         name = clean_text(row_dict.get("name") or context.get("name"))
         sectors.append(sector)
         tags.append("|".join(economic_engine_tags(sector, industry, category, name)))
@@ -187,23 +212,23 @@ def apply_risk_overlay(
     scores = [_risk_score(row) for _, row in out.iterrows()]
     out["risk_score_0_100_shadow"] = scores
     out["risk_verdict"] = [_verdict(score) for score in scores]
-    multipliers: list[float | None] = []
-    for _, row in out.iterrows():
-        beta = num(row.get("risk_downside_beta_252d")) or num(row.get("risk_beta_252d"))
-        if beta is None:
-            multipliers.append(None)
-            continue
-        overlap = num(row.get("risk_economic_overlap_score")) or 0.0
-        beta_factor = 1.0 / max(1.0, beta)
-        overlap_factor = 1.0 - 0.25 * min(1.0, overlap / 100.0)
-        multipliers.append(round(max(0.50, min(1.00, beta_factor * overlap_factor)), 4))
-    out["risk_position_multiplier_shadow"] = multipliers
+
+    # Three independent OOS tests rejected mechanical beta-based position sizing.
+    # Keep the legacy column for downstream schema compatibility, but never emit
+    # a candidate multiplier that could be mistaken for an execution instruction.
+    out["risk_position_multiplier_shadow"] = pd.NA
+    out["risk_position_multiplier_status"] = "REJECTED_KEEP_SHADOW_NO_ACTIVE_FORMULA"
     out["risk_score_decision_influence"] = 0.0
     out["risk_sizing_execution_influence"] = 0.0
     out["risk_stop_loss_influence"] = 0.0
-    if score_guard is not None and not score_guard.reset_index(drop=True).equals(out["score"].reset_index(drop=True)):
+
+    if score_guard is not None and not score_guard.reset_index(drop=True).equals(
+        out["score"].reset_index(drop=True)
+    ):
         raise RuntimeError("RISK_OVERLAY_SCORE_MUTATION_FORBIDDEN")
-    if decision_guard is not None and not decision_guard.reset_index(drop=True).equals(out["decision"].reset_index(drop=True)):
+    if decision_guard is not None and not decision_guard.reset_index(drop=True).equals(
+        out["decision"].reset_index(drop=True)
+    ):
         raise RuntimeError("RISK_OVERLAY_DECISION_MUTATION_FORBIDDEN")
     return out, returns_by_isin
 
@@ -214,7 +239,10 @@ def run(root: Path = ROOT) -> dict:
     if not config_path.exists():
         return {"status": "BLOCKED_CONFIG_MISSING", "decision_influence": 0.0}
     if not decisions_path.exists():
-        return {"status": "BLOCKED_COMMITTEE_DECISIONS_MISSING", "decision_influence": 0.0}
+        return {
+            "status": "BLOCKED_COMMITTEE_DECISIONS_MISSING",
+            "decision_influence": 0.0,
+        }
     cfg = json.loads(config_path.read_text(encoding="utf-8"))
     decisions = _read_csv(decisions_path)
     action_meta, etf_meta = _metadata_maps(root)
@@ -225,6 +253,9 @@ def run(root: Path = ROOT) -> dict:
         action_prices,
         min_sessions=int(benchmark_cfg.get("min_sessions", 126)),
         min_constituents=int(benchmark_cfg.get("min_constituents", 20)),
+        min_daily_fraction=float(benchmark_cfg.get("min_daily_fraction", 0.20)),
+        winsor_tail=float(benchmark_cfg.get("winsor_tail", 0.05)),
+        max_abs_daily_return=float(benchmark_cfg.get("max_abs_daily_return", 0.15)),
     )
     outdir = root / "outputs" / "risk"
     audit_dir = root / "outputs" / "audit"
@@ -236,6 +267,7 @@ def run(root: Path = ROOT) -> dict:
             "version": cfg.get("version"),
             "generated_at_utc": _now(),
             "benchmark": benchmark_diag,
+            "benchmark_failure_policy": "FAIL_CLOSED_NO_DECISION_OR_SIZING_INFLUENCE",
             "decision_influence": 0.0,
             "sizing_execution_influence": 0.0,
             "stop_loss_influence": 0.0,
@@ -245,20 +277,39 @@ def run(root: Path = ROOT) -> dict:
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         return payload
-    enriched, returns_by_isin = apply_risk_overlay(decisions, action_meta, etf_meta, action_prices, etf_prices, benchmark)
+
+    enriched, returns_by_isin = apply_risk_overlay(
+        decisions, action_meta, etf_meta, action_prices, etf_prices, benchmark
+    )
     enriched.to_csv(decisions_path, sep=";", index=False, encoding="utf-8-sig")
     risk_columns = [
         field
         for field in enriched.columns
-        if field in {"asset_class", "horizon", "isin", "name", "decision", "score"} or field.startswith("risk_")
+        if field in {"asset_class", "horizon", "isin", "name", "decision", "score"}
+        or field.startswith("risk_")
     ]
-    enriched[risk_columns].to_csv(outdir / "BETA_CORRELATION_RISK_ROWS.csv", sep=";", index=False, encoding="utf-8-sig")
-    scenarios = [float(value) for value in cfg.get("stress", {}).get("scenarios_pct", [-5, -10, -20, -30])]
+    enriched[risk_columns].to_csv(
+        outdir / "BETA_CORRELATION_RISK_ROWS.csv",
+        sep=";",
+        index=False,
+        encoding="utf-8-sig",
+    )
+    scenarios = [
+        float(value)
+        for value in cfg.get("stress", {}).get("scenarios_pct", [-5, -10, -20, -30])
+    ]
     portfolio = portfolio_summary(enriched, returns_by_isin, benchmark, scenarios)
-    (outdir / "PORTFOLIO_RISK_SUMMARY.json").write_text(json.dumps(portfolio, ensure_ascii=False, indent=2), encoding="utf-8")
+    (outdir / "PORTFOLIO_RISK_SUMMARY.json").write_text(
+        json.dumps(portfolio, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     sectors = sector_overlay(enriched, root)
     if not sectors.empty:
-        sectors.to_csv(outdir / "SECTOR_BETA_RISK_OVERLAY.csv", sep=";", index=False, encoding="utf-8-sig")
+        sectors.to_csv(
+            outdir / "SECTOR_BETA_RISK_OVERLAY.csv",
+            sep=";",
+            index=False,
+            encoding="utf-8-sig",
+        )
     valid = pd.to_numeric(enriched.get("risk_beta_252d"), errors="coerce").notna()
     payload = {
         "status": "SUCCESS",
@@ -274,11 +325,13 @@ def run(root: Path = ROOT) -> dict:
         "score_influence": 0.0,
         "sizing_execution_influence": 0.0,
         "stop_loss_influence": 0.0,
-        "shadow_position_multiplier_produced": True,
+        "shadow_position_multiplier_produced": False,
+        "position_sizing_status": "REJECTED_KEEP_SHADOW_NO_ACTIVE_FORMULA",
         "exact_holdings_overlap": "NOT_COMPUTED_SOURCE_NOT_PERSISTED",
         "overlap_proxy": "MAX_PAIRWISE_126D_RETURN_CORRELATION_70_PLUS_ENGINE_TAG_JACCARD_30",
         "stress_semantic": "SYSTEMATIC_SENSITIVITY_ESTIMATE_NOT_TOTAL_LOSS_FORECAST",
-        "promotion_gate": "PIT_OOS_MARGINAL_UPLIFT_REQUIRED_BEFORE_ANY_DECISION_OR_SIZING_INFLUENCE",
+        "economic_validation_status": "ROBUST_VALIDATED_CONTEXT_ONLY_KEEP_ALL_SIZING_SHADOW",
+        "validation_status_file": "config/BETA_RISK_ROBUST_VALIDATION_STATUS.json",
         "real_orders_enabled": False,
         "outputs": {
             "rows": "outputs/risk/BETA_CORRELATION_RISK_ROWS.csv",
