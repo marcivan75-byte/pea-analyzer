@@ -7,7 +7,7 @@ import json
 import pandas as pd
 
 from v182.features.instrument_theme_v2 import build_mapping_worklist, load_instrument_theme_mapping
-from v182.features.sector_rotation_v2 import append_history, build_sector_rotation_v2, load_config
+from v182.features.sector_rotation_v2_final import append_history, build_sector_rotation_v2, load_config
 from v182.reporting.sector_rotation_v2_compare import write_comparison
 from v182.reporting.sector_rotation_v2_report import write_shadow_report
 
