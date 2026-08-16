@@ -1,0 +1,26 @@
+family;metric_group;preferred_source;fallback_source;current_status;pit_policy;refresh;notes
+MARKET;OHLCV_BREADTH;yfinance;existing cached OHLCV;ACTIVE_EXISTING;timestamped observation only;DAILY;Already available through governed enrichment
+MARKET;RELATIVE_STRENGTH;yfinance;internal calculation;ACTIVE_EXISTING;computed only from data available at as_of;DAILY;Cross-sector percentile normalization
+MARKET;VOLUME;yfinance;internal calculation;ACTIVE_EXISTING;computed only from data available at as_of;DAILY;Crowding input is shadow-only
+FUNDAMENTALS;REVENUE_GROWTH;yfinance;issuer data;ACTIVE_EXISTING;retain publication availability timestamp when available;EARNINGS;Missing values reduce DQS
+FUNDAMENTALS;EARNINGS_GROWTH;yfinance;issuer data;ACTIVE_EXISTING;retain publication availability timestamp when available;EARNINGS;Missing values reduce DQS
+CONSENSUS;EPS_REVISIONS;Finnhub;yfinance consensus;ACTIVE_EXISTING;never backfill with later consensus;DAILY;Use only observation known at as_of
+MACRO;RATES_INFLATION_GROWTH;FRED;official series;ACTIVE_EXISTING;vintage-safe reconstruction required for historical backtest;RELEASE;V2 engine accepts sector_macro_score when collector is wired
+NEWS;CATALYSTS;GDELT;issuer/official news;ACTIVE_EXISTING;published_at must be <= as_of;DAILY;V2 engine accepts sector_catalyst_score when aggregator is wired
+ENERGY;OIL_GAS_POWER;EIA;FRED;PLANNED_V2_COLLECTOR;release timestamp required;RELEASE;Sector-specific Energy/Nuclear/Grid drivers
+VALUATION;PE_PB_PS;yfinance;issuer/market data;ACTIVE_EXISTING;point-in-time values only;DAILY;Relative cross-sector risk currently available
+VALUATION;HISTORICAL_PERCENTILE;internal PIT store;none;PLANNED_PIT_HISTORY;no current multiple projected backward;WEEKLY;Required for full valuation_vs_history component
+FLOWS;ETF_SECTOR_FLOWS;fund flow source;price-volume proxy;PLANNED_SOURCE;historical availability required;DAILY;Until implemented RLS flow family remains missing and score shrinks toward neutral
+SEMICONDUCTORS;ORDERS_INVENTORIES_CAPEX;issuer reports/public statistics;news proxy;PLANNED_SECTOR_DRIVER;publication timestamp required;WEEKLY;Never infer unavailable book-to-bill data
+SOFTWARE;ARR_BOOKINGS_NRR;issuer reports;consensus/news proxy;PLANNED_SECTOR_DRIVER;publication timestamp required;EARNINGS;Use only companies actually reporting the metric
+DATA_CENTERS;CAPEX_CAPACITY_POWER;issuer/hyperscaler reports;news proxy;PLANNED_SECTOR_DRIVER;publication timestamp required;WEEKLY;Supports second-order AI propagation
+ELECTRICAL_GRID;UTILITY_CAPEX_BACKLOG;issuer/utility reports;EIA/news proxy;PLANNED_SECTOR_DRIVER;publication timestamp required;WEEKLY;Supports data-center/electrification propagation
+DEFENSE;BUDGETS_ORDERS_BACKLOG;official budgets/issuer reports;news proxy;PLANNED_SECTOR_DRIVER;publication timestamp required;WEEKLY;Separate announced budgets from awarded contracts
+BANKS;NIM_CREDIT_COST_RISK;issuer/ECB;FRED;PLANNED_SECTOR_DRIVER;publication timestamp required;RELEASE;Bank-specific valuation and risk model
+PHARMA_BIOTECH;PIPELINE_BINARY_EVENTS;regulators/issuer;news proxy;PLANNED_SECTOR_DRIVER;event timestamp required;EVENT;Binary-event risk separated from ordinary valuation
+AUTOMOTIVE;REGISTRATIONS_INVENTORY_PRICING;official registration data/issuer;news proxy;PLANNED_SECTOR_DRIVER;publication timestamp required;MONTHLY;Price-war warning requires margin confirmation
+LUXURY;CHINA_VOLUME_PRICING;issuer/macro;news proxy;PLANNED_SECTOR_DRIVER;publication timestamp required;MONTHLY;Differentiate price-led from volume-led growth
+METALS_MINING;INVENTORY_SUPPLY_COST;official/commodity data;market data;PLANNED_SECTOR_DRIVER;release timestamp required;DAILY_WEEKLY;Commodity signal cannot automatically validate every miner
+THEMES;INSTRUMENT_THEME_MAPPING;curated governed mapping;issuer descriptions;PLANNED_MAPPING;mapping version and effective dates required;MONTHLY;Needed for confluence and second-order beneficiaries
+ETF;HOLDINGS_THEME_PURITY;issuer holdings;fund metadata;PLANNED_MAPPING;holdings effective date required;WEEKLY_MONTHLY;No current holdings projected backward
+PORTFOLIO;COMMON_DRIVER_EXPOSURE;internal mapping;correlation proxy;PLANNED_V2_1;mapping effective date required;DAILY;Hidden concentration warning

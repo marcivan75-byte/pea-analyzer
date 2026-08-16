@@ -1,4 +1,4 @@
-name: Committee Master V21.6.2 hardened unified scoring
+name: Committee Master V21.7.0 + Sector Rotation V2 Shadow
 
 on:
   workflow_dispatch:
@@ -54,6 +54,13 @@ jobs:
           key: ipo-radar-v1-${{ github.run_id }}
           restore-keys: |
             ipo-radar-v1-
+      - name: Restore Sector Rotation V2 shadow history
+        uses: actions/cache/restore@v4
+        with:
+          path: state/sector_rotation_v2/
+          key: sector-rotation-v2-${{ github.run_id }}
+          restore-keys: |
+            sector-rotation-v2-
       - name: Restore field provenance
         uses: actions/cache/restore@v4
         with:
@@ -99,6 +106,7 @@ jobs:
           tct=json.loads(Path("config/TCT_V24_1_7_SHADOW.json").read_text())
           mm=json.loads(Path("config/COMMITTEE_VIRTUAL_MONEY_MANAGEMENT.json").read_text())
           ipo=json.loads(Path("config/IPO_RADAR_V1.json").read_text())
+          sr=json.loads(Path("config/SECTOR_ROTATION_V2_SHADOW.json").read_text())
           assert a["criteria_count"] == 633 == integrity["actions"]["criteria_count"]
           assert integrity["actions"]["universe_count"] == 1829
           assert e["criteria_count"] == 268 == integrity["etf"]["criteria_count"]
@@ -129,7 +137,16 @@ jobs:
           assert abs(sum(ipo["risk_weights"].values())-100.0) < 1e-9
           assert ipo["governance"]["can_create_buy"] is False
           assert ipo["governance"]["t1_t2_forbidden"] is True
-          print(f"V21.6.2 integrity OK: Actions 1829/633 (materialized identity-only={materialized.materialized_missing_count}), ETF 102/268, TCT, Gold, IPO Radar V1, bias-safe virtual book")
+          assert sr["mode"] == "SHADOW_ONLY"
+          assert sr["governance"]["changes_action_scores"] is False
+          assert sr["governance"]["changes_etf_scores"] is False
+          assert sr["governance"]["can_trigger_orders"] is False
+          assert sr["governance"]["can_trigger_sales"] is False
+          assert abs(sum(sr["score_weights"]["RLS"].values())-1.0) < 1e-9
+          assert abs(sum(sr["score_weights"]["AVCR"].values())-1.0) < 1e-9
+          assert abs(sum(sr["score_weights"]["RARS_OPPORTUNITY"].values())-1.0) < 1e-9
+          assert abs(sum(sr["score_weights"]["DQS"].values())-1.0) < 1e-9
+          print(f"V21.7.0 integrity OK: Actions 1829/633 (materialized identity-only={materialized.materialized_missing_count}), ETF 102/268, TCT, Gold, IPO Radar V1, Sector Rotation V2 shadow, bias-safe virtual book")
           PY
       - name: Publish Action identity hydration worklist
         run: python -m v182.audit.identity_hydration
@@ -147,6 +164,10 @@ jobs:
         if: always()
         run: |
           if [ -f outputs/ipo_radar/IPO_SUMMARY.json ]; then cat outputs/ipo_radar/IPO_SUMMARY.json; fi
+      - name: Show Sector Rotation V2 shadow summary
+        if: always()
+        run: |
+          if [ -f outputs/audit/V2_SECTOR_ROTATION_SHADOW.json ]; then cat outputs/audit/V2_SECTOR_ROTATION_SHADOW.json; fi
       - name: Show V21.4 performance summary
         if: always()
         run: |
@@ -169,6 +190,12 @@ jobs:
         with:
           path: state/ipo_radar/
           key: ipo-radar-v1-${{ github.run_id }}
+      - name: Save Sector Rotation V2 shadow history
+        if: ${{ always() && hashFiles('state/sector_rotation_v2/**') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: state/sector_rotation_v2/
+          key: sector-rotation-v2-${{ github.run_id }}
       - name: Save field provenance
         if: ${{ always() && hashFiles('state/provenance/**') != '' }}
         uses: actions/cache/save@v4
@@ -181,17 +208,18 @@ jobs:
         with:
           path: state/committee_performance_v21_4/
           key: committee-performance-v214-${{ github.run_id }}
-      - name: Upload complete Committee V21.6.2 results
+      - name: Upload complete Committee V21.7.0 results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: committee-master-v21-6-2-${{ github.run_id }}
+          name: committee-master-v21-7-0-${{ github.run_id }}
           path: |
             outputs/unified/
             outputs/committee_master/
             outputs/etf_mt_v2081/
             outputs/gold_v1_1/
             outputs/ipo_radar/
+            outputs/sector_rotation/
             outputs/data_audit/
             outputs/performance/
             outputs/audit/
@@ -202,6 +230,7 @@ jobs:
             state/TCT_V24_1_7_T1_STATE.json
             state/GOLD_V1_1_SHADOW_HISTORY.csv
             state/ipo_radar/
+            state/sector_rotation_v2/
             state/provenance/
             state/committee_performance_v21_4/
           if-no-files-found: warn
