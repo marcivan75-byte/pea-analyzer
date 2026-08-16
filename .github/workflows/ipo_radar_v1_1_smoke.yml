@@ -5,6 +5,7 @@ on:
     paths:
       - "config/IPO_RADAR_V1.json"
       - "src/v182/decision/ipo_*.py"
+      - "src/v182/reporting/ipo_dd_gaps_run.py"
       - "src/v182/sources/sec_ipo*.py"
       - "src/v182/sources/__init__.py"
       - "tests/test_ipo_*.py"
@@ -14,6 +15,7 @@ on:
     paths:
       - "config/IPO_RADAR_V1.json"
       - "src/v182/decision/ipo_*.py"
+      - "src/v182/reporting/ipo_dd_gaps_run.py"
       - "src/v182/sources/sec_ipo*.py"
       - "src/v182/sources/__init__.py"
       - ".github/workflows/ipo_radar_v1_1_smoke.yml"
@@ -40,9 +42,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e .
-      - name: Run live hardened IPO Radar only
-        run: python -m v182.decision.ipo_radar_operational_v1_1
-      - name: Validate operational outputs governance and PIT evidence
+      - name: Run live hardened IPO Radar and DD planner
+        run: |
+          python -m v182.decision.ipo_radar_operational_v1_1
+          python -m v182.reporting.ipo_dd_gaps_run
+      - name: Validate operational outputs governance PIT evidence and DD actions
         run: |
           python - <<'PY'
           import json
@@ -68,12 +72,18 @@ jobs:
               'outputs/ipo_radar/IPO_SEC_DD_STATUS.csv',
               'outputs/ipo_radar/IPO_ALERTS.csv',
               'outputs/ipo_radar/IPO_COMMITTEE_BRIEF.json',
+              'outputs/ipo_radar/IPO_DD_GAPS.csv',
               'state/ipo_radar/IPO_HISTORY.csv',
           ):
               assert (root/relative).exists(), relative
           ranking=pd.read_csv(root/'outputs/ipo_radar/IPO_RANKING.csv')
           history=pd.read_csv(root/'state/ipo_radar/IPO_HISTORY.csv')
+          gaps=pd.read_csv(root/'outputs/ipo_radar/IPO_DD_GAPS.csv')
           assert {'identity_key','candidate_id','decision','live_order_allowed'}.issubset(history.columns)
+          assert len(gaps)==len(ranking)
+          if not gaps.empty:
+              assert not gaps['live_order_allowed'].astype(bool).any()
+              assert {'missing_criteria_count','priority_1_action','dd_status'}.issubset(gaps.columns)
           if not ranking.empty:
               assert not ranking['live_order_allowed'].astype(bool).any()
               assert set(ranking['decision']).issubset({
@@ -88,6 +98,7 @@ jobs:
               'sec_prospectus_enriched_count':summary['sec_prospectus_enriched_count'],
               'runtime_layer':summary['runtime_layer'],
               'calendar_redundancy':summary['calendar_redundancy'],
+              'dd_action_required':int((gaps['dd_status']=='ACTION_REQUIRED').sum()) if not gaps.empty else 0,
           },ensure_ascii=False,indent=2))
           PY
       - name: Upload IPO smoke evidence
