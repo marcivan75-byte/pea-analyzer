@@ -27,11 +27,12 @@ L'horizon principal est fixé à 60 séances.
 Pour chaque secteur et snapshot :
 
 1. les constituants figés au jour du signal sont repris ;
-2. leur historique OHLCV auto-ajusté est utilisé uniquement après la date du signal ;
-3. chaque trajectoire est normalisée à 1 à l'entrée ;
-4. le panier sectoriel est égal-pondéré par offset de séance ;
-5. rendement J+60, MAE et MFE sont calculés ;
-6. au moins 3 constituants et 70 % de couverture prix sont requis.
+2. le point d'entrée est la première clôture de séance strictement postérieure à la date du signal ; la clôture ayant servi au calcul du signal n'est jamais réutilisée comme prix d'entrée ;
+3. l'historique OHLCV auto-ajusté est utilisé uniquement pour la trajectoire future ;
+4. chaque trajectoire est normalisée à 1 à l'entrée ;
+5. le panier sectoriel est égal-pondéré par offset de séance ;
+6. rendement J+60, MAE et MFE sont calculés ;
+7. au moins 3 constituants et 70 % de couverture prix sont requis.
 
 La couverture prix est calculée sur la totalité des constituants figés. Un instrument sans ticker ou sans trajectoire J+60 exploitable reste donc dans le dénominateur et ne peut pas améliorer artificiellement la couverture.
 
@@ -84,6 +85,7 @@ Le protocole interdit :
 - le retuning des seuils après lecture des résultats ;
 - l'optimisation des poids sur ces mêmes périodes ;
 - le mélange d'observations provenant de versions différentes du modèle ;
+- l'utilisation de la clôture du jour du signal comme prix d'entrée OOS ;
 - toute modification automatique des scores Actions ou ETF ;
 - tout BUY/SELL ou ordre réel ;
 - toute promotion fondée sur des tests synthétiques ;
