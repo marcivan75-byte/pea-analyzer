@@ -1,0 +1,128 @@
+{
+  "version": "BETA_RISK_ROBUST_VALIDATION_STATUS_V1_1_2026_08_16",
+  "status": "ROBUST_VALIDATED_CONTEXT_ONLY_KEEP_ALL_SIZING_SHADOW",
+  "validated_at_utc": "2026-08-16T13:01:21Z",
+  "scope": "ETF_MT_V20_8_1_38_DYNAMIC_PIT_CORE",
+  "final_holdout_start": "2026-02-10",
+  "final_holdout_opened": false,
+  "benchmark": {
+    "status": "PASS",
+    "label": "PEA_ACTION_ROBUST_EQUAL_WEIGHT_PROXY_V2",
+    "method": "DAILY_5_95_WINSORIZED_EQUAL_WEIGHT_MEAN_OF_AVAILABLE_ACTION_RETURNS",
+    "winsor_tail": 0.05,
+    "required_daily_fraction": 0.20,
+    "required_daily_constituents": 223,
+    "eligible_constituents_observed_range": [1112, 1115],
+    "sessions": 6841,
+    "median_observed_daily_constituents": 740.0,
+    "max_abs_daily_return_observed": 0.09768714116579452,
+    "p99_abs_daily_return_observed": 0.025004571447366546,
+    "allowed_max_abs_daily_return": 0.15,
+    "fail_closed": true,
+    "supersedes": "PEA_ACTION_EQUAL_WEIGHT_PROXY_RAW_MEAN",
+    "superseded_reason": "RAW_CROSS_SECTIONAL_MEAN_ALLOWED_BAD_YAHOO_OBSERVATIONS_TO_CONTAMINATE_CUMULATIVE_MARKET_RETURNS"
+  },
+  "sample": {
+    "raw_trades": 149,
+    "trades_after_single_position_guard": 118,
+    "overlapping_signals_blocked": 31,
+    "validation_oos_trades": 37,
+    "diagnostic_oos_trades": 19
+  },
+  "beta_only_sizing": {
+    "status": "REJECTED_KEEP_SHADOW",
+    "workflow_run_id": 31948279034,
+    "validation_oos": {
+      "baseline_expectancy": 0.03719302,
+      "adjusted_expectancy": 0.03085681,
+      "baseline_risk_adjusted_mean_std": 1.73550752,
+      "adjusted_risk_adjusted_mean_std": 1.67057178,
+      "risk_adjusted_improvement": -0.037416,
+      "expectancy_retention": 0.82964,
+      "pass": false
+    },
+    "diagnostic_oos": {
+      "baseline_expectancy": 0.0045744,
+      "adjusted_expectancy": -0.00072713,
+      "baseline_risk_adjusted_mean_std": 0.0524724,
+      "adjusted_risk_adjusted_mean_std": -0.00856302,
+      "risk_adjusted_improvement": -1.163191,
+      "expectancy_retention": -0.158956,
+      "pass": false
+    }
+  },
+  "regime_v1_1": {
+    "status": "REJECTED_KEEP_SHADOW",
+    "workflow_run_id": 31948278958,
+    "triggered_trades_total": 1,
+    "validation_oos": {
+      "triggered_trades": 1,
+      "baseline_expectancy": 0.03719304,
+      "adjusted_expectancy": 0.03691303,
+      "risk_adjusted_improvement": -0.008021,
+      "expectancy_retention": 0.992471,
+      "pass": false
+    },
+    "diagnostic_oos": {
+      "triggered_trades": 0,
+      "risk_adjusted_improvement": 0.0,
+      "expectancy_retention": 1.0,
+      "pass": false
+    },
+    "reason": "STRUCTURALLY_TOO_SPARSE_AND_NO_RISK_ADJUSTED_UPLIFT"
+  },
+  "regime_v1_2": {
+    "status": "REJECTED_KEEP_SHADOW",
+    "workflow_run_id": 31948279056,
+    "design_basis": "NO_PNL_PREVALENCE_AUDIT_V1_1",
+    "triggered_trades_total": 19,
+    "validation_oos": {
+      "triggered_trades": 7,
+      "baseline_expectancy": 0.03719302,
+      "adjusted_expectancy": 0.03517246,
+      "baseline_risk_adjusted_mean_std": 1.73550692,
+      "adjusted_risk_adjusted_mean_std": 1.65077932,
+      "risk_adjusted_improvement": -0.04882,
+      "expectancy_retention": 0.945674,
+      "pass": false
+    },
+    "diagnostic_oos": {
+      "triggered_trades": 3,
+      "baseline_expectancy": 0.0045744,
+      "adjusted_expectancy": 0.00272577,
+      "baseline_risk_adjusted_mean_std": 0.0524724,
+      "adjusted_risk_adjusted_mean_std": 0.03157571,
+      "risk_adjusted_improvement": -0.398242,
+      "expectancy_retention": 0.595875,
+      "pass": false
+    },
+    "reason": "SUFFICIENT_TRIGGER_PREVALENCE_BUT_FAILED_EXPECTANCY_AND_RISK_ADJUSTED_UPLIFT_IN_BOTH_OOS_PERIODS"
+  },
+  "research_conclusion": "Three mechanically distinct beta-based exposure-reduction hypotheses fail to improve OOS risk-adjusted performance on the historical ETF MT 38-dynamic PIT core. Beta remains useful for observability, stress testing, concentration and diversification diagnostics, but not as an automatic sizing rule.",
+  "production_policy": {
+    "risk_context_reporting_enabled": true,
+    "benchmark_qc_required": true,
+    "benchmark_failure_policy": "FAIL_CLOSED_TO_NO_RISK_OVERLAY_INFLUENCE",
+    "beta_only_position_sizing_promoted": false,
+    "regime_v1_1_sizing_promoted": false,
+    "regime_v1_2_sizing_promoted": false,
+    "decision_influence": 0.0,
+    "score_influence": 0.0,
+    "sizing_execution_influence": 0.0,
+    "stop_loss_influence": 0.0,
+    "positive_signal_can_create_buy": false,
+    "negative_signal_can_force_sell": false,
+    "real_orders_enabled": false
+  },
+  "future_research_policy": {
+    "no_v1_3_pnl_retuning": true,
+    "new_hypotheses_require_independent_pre_registration": true,
+    "priority": "IMPROVE_DATA_QUALITY_AND_PORTFOLIO_OBSERVABILITY_BEFORE_ANY_NEW_SIZING_HYPOTHESIS"
+  },
+  "limitations": [
+    "Current-universe survivorship bias remains in the Action benchmark and ETF universe.",
+    "Economic validation covers the historical ETF MT 38-dynamic PIT core, not the full 43-criterion composite or 268-criterion ETF referential.",
+    "Sequence max drawdown is based on trade outcomes in signal order, not a timestamped multi-position portfolio NAV.",
+    "Exact ETF holdings overlap remains non-promotable until sufficient PIT holdings snapshots exist."
+  ]
+}
