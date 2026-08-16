@@ -94,7 +94,7 @@ def load_cached_prices(cache_dir: Path) -> dict[str, pd.Series]:
             combined.setdefault(ticker, []).append(series)
     out: dict[str, pd.Series] = {}
     for ticker, parts in combined.items():
-        series = pd.concat(parts).sort_index()
+        series = pd.concat(parts, sort=False).sort_index()
         series = series[~series.index.duplicated(keep="last")].dropna()
         if not series.empty:
             out[ticker] = series
@@ -124,7 +124,7 @@ def build_common_benchmark(
             "eligible_constituents": len(eligible),
             "required_constituents": min_constituents,
         }
-    matrix = pd.concat(eligible, axis=1).sort_index()
+    matrix = pd.concat(eligible, axis=1, sort=False).sort_index()
     min_daily = max(3, int(math.ceil(min_constituents * 0.5)))
     benchmark = matrix.mean(axis=1, skipna=True).where(matrix.notna().sum(axis=1) >= min_daily).dropna()
     if benchmark.notna().sum() < min_sessions:
@@ -144,7 +144,7 @@ def build_common_benchmark(
 
 
 def _pair(asset: pd.Series, benchmark: pd.Series, window: int | None = None) -> pd.DataFrame:
-    pair = pd.concat([asset, benchmark], axis=1, keys=["asset", "benchmark"]).dropna()
+    pair = pd.concat([asset, benchmark], axis=1, keys=["asset", "benchmark"], sort=False).dropna()
     return pair.tail(window) if window else pair
 
 
