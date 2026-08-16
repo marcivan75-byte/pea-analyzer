@@ -13,6 +13,7 @@ from v182.features.theme_propagation_v2 import load_transmission_graph, propagat
 from v182.features.theme_rotation_auto_v2 import build_theme_rotation_shadow, load_auto_theme_rules
 from v182.reporting.sector_rotation_v2_compare import write_comparison
 from v182.reporting.sector_rotation_v2_report import write_shadow_report
+from v182.reporting.sector_rotation_v2_validation_run import run as run_pit_oos_validation
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -27,6 +28,20 @@ def _read_master(root: Path, asset: str) -> tuple[pd.DataFrame, str]:
 
 def _load_history(path: Path) -> pd.DataFrame | None:
     return pd.read_csv(path, sep=";", encoding="utf-8-sig", low_memory=False) if path.exists() else None
+
+
+def _run_validation_safely(root: Path) -> dict:
+    try:
+        return run_pit_oos_validation(root)
+    except Exception as exc:
+        return {
+            "status": "VALIDATION_RUNTIME_ERROR",
+            "error": type(exc).__name__,
+            "detail": str(exc)[:500],
+            "promotion_ready": False,
+            "decision_influence": 0.0,
+            "live_orders_enabled": False,
+        }
 
 
 def run(root: Path = ROOT) -> dict:
@@ -108,6 +123,7 @@ def run(root: Path = ROOT) -> dict:
     pd.concat([action_worklist, etf_worklist], ignore_index=True).to_csv(
         mapping_worklist_path, sep=";", index=False, encoding="utf-8-sig"
     )
+    pit_oos_validation = _run_validation_safely(root)
 
     summary = dict(result.diagnostic)
     summary.update(
@@ -134,6 +150,7 @@ def run(root: Path = ROOT) -> dict:
             "theme_summary": theme_summary,
             "theme_committee_report": theme_committee,
             "theme_propagation_summary": propagation_summary,
+            "pit_oos_validation": pit_oos_validation,
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
             "decision_influence": 0.0,
             "live_orders_enabled": False,
