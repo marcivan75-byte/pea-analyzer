@@ -21,6 +21,14 @@ POLAR_HTML = """
 </body></html>
 """
 
+PRODUCT_HTML = """
+<html><body>
+<h2>Regulated news</h2>
+<a href="/en/products/equities/company-news/2026-07-02-polar-private-placement-successfully-completed">Private placement successfully completed</a>
+<a href="/en/products/equities/company-news/2026-07-03-polar-mandatory-notification-trade">Mandatory notification of trade</a>
+</body></html>
+"""
+
 
 def test_parse_euronext_regulated_news_extracts_shadow_facts() -> None:
     result = news.parse_regulated_news(POLAR_HTML, "https://live.euronext.com/en/products/equities/company-news/example")
@@ -70,6 +78,29 @@ def test_official_isin_listview_keeps_only_ipo_relevant_company_news(monkeypatch
     assert all("mandatory-notification" not in url for url in urls)
 
 
+def test_official_product_page_resolves_regulated_news_from_isin_and_market(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_get(url: str, **kwargs):
+        calls.append(url)
+        assert url.endswith("NO0013756361-MERK")
+        return SimpleNamespace(text=PRODUCT_HTML, raise_for_status=lambda: None)
+
+    monkeypatch.setattr(news.requests, "get", fake_get)
+    candidate = {
+        "isin": "NO0013756361",
+        "euronext_location": "Oslo",
+        "exchange": "Euronext Growth",
+    }
+    urls, error, product_url = news._official_product_page_urls(candidate)
+    assert error is None
+    assert product_url.endswith("NO0013756361-MERK")
+    assert calls == [product_url]
+    assert urls == [
+        "https://live.euronext.com/en/products/equities/company-news/2026-07-02-polar-private-placement-successfully-completed"
+    ]
+
+
 def test_gdelt_fallback_keeps_only_official_euronext_company_news(monkeypatch) -> None:
     articles = [
         {"url": "https://live.euronext.com/en/products/equities/company-news/2026-07-02-polar-offering"},
@@ -85,7 +116,8 @@ def test_gdelt_fallback_keeps_only_official_euronext_company_news(monkeypatch) -
 def test_direct_discovery_is_primary_and_shadow_only(monkeypatch) -> None:
     url = "https://live.euronext.com/en/products/equities/company-news/2026-07-02-polar-offering"
     monkeypatch.setattr(news, "_official_listview_urls", lambda *args, **kwargs: ([url], None, "https://live.euronext.com/listview"))
-    monkeypatch.setattr(news, "_article_urls", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fallback must not run")))
+    monkeypatch.setattr(news, "_official_product_page_urls", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("product fallback must not run")))
+    monkeypatch.setattr(news, "_article_urls", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("GDELT fallback must not run")))
     monkeypatch.setattr(
         news.requests,
         "get",
@@ -102,9 +134,37 @@ def test_direct_discovery_is_primary_and_shadow_only(monkeypatch) -> None:
     assert "live_order_allowed" not in candidate
 
 
-def test_gdelt_is_only_fallback_when_direct_discovery_has_no_match(monkeypatch) -> None:
+def test_product_page_is_second_official_tier_before_gdelt(monkeypatch) -> None:
     url = "https://live.euronext.com/en/products/equities/company-news/2026-07-02-polar-offering"
     monkeypatch.setattr(news, "_official_listview_urls", lambda *args, **kwargs: ([], None, "https://live.euronext.com/listview"))
+    monkeypatch.setattr(
+        news,
+        "_official_product_page_urls",
+        lambda *args, **kwargs: ([url], None, "https://live.euronext.com/en/product/equities/NO0013756361-MERK"),
+    )
+    monkeypatch.setattr(news, "_article_urls", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("GDELT fallback must not run")))
+    monkeypatch.setattr(
+        news.requests,
+        "get",
+        lambda *args, **kwargs: SimpleNamespace(text=POLAR_HTML, raise_for_status=lambda: None),
+    )
+    candidate = news.enrich_candidate({
+        "name": "Polar Resources AS",
+        "isin": "NO0013756361",
+        "source": "EURONEXT",
+        "euronext_location": "Oslo",
+        "exchange": "Euronext Growth",
+    })
+    assert candidate["euronext_news_discovery_status"] == "PRODUCT_PAGE_SUCCESS"
+    assert candidate["euronext_news_discovery_method"] == "EURONEXT_PRODUCT_PAGE"
+    assert candidate["euronext_news_product_url"].endswith("NO0013756361-MERK")
+    assert candidate["euronext_news_fetch_success_count"] == 1
+
+
+def test_gdelt_is_only_fallback_when_both_official_paths_have_no_match(monkeypatch) -> None:
+    url = "https://live.euronext.com/en/products/equities/company-news/2026-07-02-polar-offering"
+    monkeypatch.setattr(news, "_official_listview_urls", lambda *args, **kwargs: ([], None, "https://live.euronext.com/listview"))
+    monkeypatch.setattr(news, "_official_product_page_urls", lambda *args, **kwargs: ([], None, "https://live.euronext.com/product"))
     monkeypatch.setattr(news, "_article_urls", lambda *args, **kwargs: ([url], None))
     monkeypatch.setattr(
         news.requests,
