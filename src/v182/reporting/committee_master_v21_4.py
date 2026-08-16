@@ -6,6 +6,7 @@ import pandas as pd
 
 from v182.decision.committee_master import load_registry, decisions_from_scores, sector_ranking
 from v182.reporting import committee_master_gold_v1_1
+from v182.reporting.sector_rotation_v2_committee_bridge import build_committee_sector_rotation_v2_status
 
 ROOT=Path(__file__).resolve().parents[3]
 HORIZONS=["CT","MT","LT","SHORT","TOP_DOWN"]
@@ -25,6 +26,8 @@ def run(root:Path=ROOT)->dict:
     The enriched V21.4 Action score is preserved and exported, but final Action
     CT/MT/LT/SHORT/TOP_DOWN decisions are replaced by the frozen V21.0-weight
     reference until the V21.4 challenger completes dedicated PIT/OOS validation.
+    Sector Rotation V2 is surfaced to the Committee as a diagnostic bridge only:
+    it cannot alter Action/ETF scores or final decisions before governed promotion.
     ETF, TCT and Gold governance remain unchanged.
     """
     summary=committee_master_gold_v1_1.run(root)
@@ -32,6 +35,7 @@ def run(root:Path=ROOT)->dict:
     actions_path=root/"outputs"/"V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv"
     if not decisions_path.exists() or not actions_path.exists():
         summary["action_dual_track"]={"status":"BLOCKED_INPUT"}
+        summary["sector_rotation_v2"]=build_committee_sector_rotation_v2_status(root)
         return summary
     decisions=_read(decisions_path); actions=_read(actions_path)
     reference_reg=load_registry(root/"config"/"V21_ACTIONS_REFERENCE_V21_0.json")
@@ -77,12 +81,18 @@ def run(root:Path=ROOT)->dict:
     ref_buy=int((comparison["reference_decision"].astype(str)=="BUY_CANDIDATE").sum()) if not comparison.empty else 0
     chal_buy=int((comparison["challenger_decision"].astype(str)=="BUY_CANDIDATE").sum()) if not comparison.empty else 0
     summary["action_dual_track"]={"status":"ACTIVE_REFERENCE_PLUS_SHADOW_CHALLENGER","reference_version":reference_reg.get("version"),"challenger_version":challenger_reg.get("version"),"final_decision_source":"REFERENCE","comparison_rows":int(len(comparison)),"decision_divergences":divergences,"reference_buy_count":ref_buy,"challenger_buy_count":chal_buy,"performance_attribution":"NONE_TO_V21_4_CHALLENGER_UNTIL_DEDICATED_PIT_OOS_BACKTEST"}
+    summary["sector_rotation_v2"]=build_committee_sector_rotation_v2_status(root)
     # Rebuild aggregate counts after reference replacement so SUMMARY matches the
     # decisions actually consumed by the Committee/performance tracker.
     summary["status_counts"]=decisions.groupby(["asset_class","horizon","status"],dropna=False).size().reset_index(name="count").to_dict("records")
     summary["decision_counts"]=decisions.groupby(["asset_class","horizon","decision"],dropna=False).size().reset_index(name="count").to_dict("records")
     summary.setdefault("outputs",{})["action_reference_vs_challenger"]="outputs/committee_master/ACTION_REFERENCE_VS_CHALLENGER_V21_4.csv"
     summary["outputs"]["sector_ranking_challenger"]="outputs/committee_master/SECTOR_RANKING_CHALLENGER_V21_4.csv"
+    summary["outputs"]["sector_rotation_v2_shadow"]="outputs/sector_rotation/V2_SECTOR_ROTATION_SHADOW.csv"
+    summary["outputs"]["sector_rotation_v2_pit_oos_status"]="outputs/audit/V2_SECTOR_ROTATION_PIT_OOS_STATUS.json"
+    summary["outputs"]["sector_rotation_v2_pit_oos_observations"]="outputs/sector_rotation/V2_PIT_OOS_OBSERVATIONS.csv"
+    summary["outputs"]["sector_rotation_v2_pit_oos_metrics"]="outputs/sector_rotation/V2_PIT_OOS_SNAPSHOT_METRICS.csv"
     summary.setdefault("notes",[]).append("Actions use V21.0 frozen weights as final reference decision; V21.4 enriched scores and unvalidated positive/negative 52w overlays are challenger-only until PIT/OOS validation.")
+    summary["notes"].append("Sector Rotation V2 is integrated into Committee reporting as SHADOW diagnostics only: PIT/OOS status, valuation/correction warnings and frozen-outcome evidence are visible, with zero influence on final Action/ETF decisions until governed promotion.")
     (outdir/"SUMMARY.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2,default=str),encoding="utf-8")
     return summary

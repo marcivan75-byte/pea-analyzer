@@ -13,8 +13,8 @@ from v182.decision import ipo_radar_v1_2 as ipo_radar_v1
 
 logger=logging.getLogger(__name__)
 ROOT=Path(__file__).resolve().parents[3]
-SOFTWARE_VERSION="21.7.2"
-PROCESS_VERSION="UNIFIED_V21_7_2_SECTOR_ROTATION_V2_IPO_V1_2_PIT_CALIBRATION_SHADOW"
+SOFTWARE_VERSION="21.7.3"
+PROCESS_VERSION="UNIFIED_V21_7_3_SECTOR_ROTATION_V2_PIT_OOS_COMMITTEE_BRIDGE"
 
 
 def _safe_step(name:str,func)->dict:
@@ -32,6 +32,16 @@ def _skip_dependency(reason:str)->dict:
 
 def _exit_code(payload:dict)->int:
     return 0 if payload.get("status")=="SUCCESS" else 1
+
+
+def _sector_validation_from_step(step:dict)->dict:
+    if step.get("status")!="SUCCESS":
+        return {"status":"UNAVAILABLE","promotion_ready":False,"decision_influence":0.0}
+    result=step.get("result") if isinstance(step.get("result"),dict) else {}
+    validation=result.get("pit_oos_validation") if isinstance(result.get("pit_oos_validation"),dict) else {}
+    if not validation:
+        return {"status":"WAIT_FOR_PIT_HISTORY","promotion_ready":False,"decision_influence":0.0}
+    return validation
 
 
 def run(root:Path=ROOT)->dict:
@@ -60,6 +70,7 @@ def run(root:Path=ROOT)->dict:
         steps["performance"]=_skip_dependency("Requires SUCCESS refresh and SUCCESS current Committee; stale decisions are forbidden for virtual transactions.")
     outputs={
         "decisions":"outputs/committee_master/COMMITTEE_DECISIONS.csv",
+        "committee_summary":"outputs/committee_master/SUMMARY.json",
         "sector_ranking":"outputs/committee_master/SECTOR_RANKING.csv",
         "sector_ranking_challenger":"outputs/committee_master/SECTOR_RANKING_CHALLENGER_V21_4.csv",
         "action_reference_vs_challenger":"outputs/committee_master/ACTION_REFERENCE_VS_CHALLENGER_V21_4.csv",
@@ -72,7 +83,11 @@ def run(root:Path=ROOT)->dict:
         "sector_rotation_v1":"outputs/V21_3_SECTOR_ROTATION.csv",
         "sector_rotation_v2":"outputs/sector_rotation/V2_SECTOR_ROTATION_SHADOW.csv",
         "sector_rotation_v2_audit":"outputs/audit/V2_SECTOR_ROTATION_SHADOW.json",
+        "sector_rotation_v2_pit_oos_status":"outputs/audit/V2_SECTOR_ROTATION_PIT_OOS_STATUS.json",
+        "sector_rotation_v2_pit_oos_observations":"outputs/sector_rotation/V2_PIT_OOS_OBSERVATIONS.csv",
+        "sector_rotation_v2_pit_oos_metrics":"outputs/sector_rotation/V2_PIT_OOS_SNAPSHOT_METRICS.csv",
         "sector_rotation_v2_history":"state/sector_rotation_v2/SECTOR_ROTATION_V2_HISTORY.csv",
+        "sector_rotation_v2_constituents":"state/sector_rotation_v2/SECTOR_ROTATION_V2_CONSTITUENTS.csv",
         "performance_workbook":"outputs/performance/COMMITTEE_BUY_PERFORMANCE.xlsx",
         "etf_mt_ranking":"outputs/etf_mt_v2081/V20.8.1_ETF_MT_RANKING.csv",
         "etf_mt_summary":"outputs/etf_mt_v2081/V20.8.1_ETF_MT_SUMMARY.json",
@@ -93,6 +108,7 @@ def run(root:Path=ROOT)->dict:
         "ipo_outcomes":"state/ipo_radar/IPO_OUTCOMES.csv"
     }
     existing={k:v for k,v in outputs.items() if (root/v).exists()}; failed=[k for k,v in steps.items() if v["status"]=="FAILED"]; skipped=[k for k,v in steps.items() if v["status"].startswith("SKIPPED")]; overall="SUCCESS" if not failed and not skipped else "PARTIAL_SUCCESS"
+    sector_validation=_sector_validation_from_step(steps["sector_rotation_v2"])
     decision_tracks={
         "actions_final":"V21.0 frozen-weight reference on current 1829 universe",
         "actions_challenger":"V21.4 enriched shadow challenger",
@@ -101,15 +117,19 @@ def run(root:Path=ROOT)->dict:
         "tct":"V24.1.8 baseline + exact V24.1.7 T1/T2 shadow",
         "gold":"V1.1 shadow",
         "ipo":"IPO_RADAR_V1.2 deep-DD + PIT-safe outcome calibration shadow/advisory; no automatic BUY",
-        "sector_rotation":"V1 baseline + V2.0 multi-factor shadow; V2 decision influence = 0"
+        "sector_rotation":"V1 baseline + V2.0 multi-factor shadow + locked PIT/OOS validator; Committee diagnostic bridge active; V2 decision influence = 0"
     }
     payload={
         "version":PROCESS_VERSION,"software_version":SOFTWARE_VERSION,"run_id":run_id,"generated_at_utc":datetime.now(timezone.utc).isoformat(),"status":overall,"live_orders_enabled":False,"steps":steps,"persisted_outputs":existing,"decision_tracks":decision_tracks,
+        "sector_rotation_v2_validation":sector_validation,
         "governance":[
             "Runtime/software version is distinct from model versions; decision_tracks is the authoritative model-version map.",
             "Missing canonical Action ISINs are materialized as identity-only rows; no ticker/name/market data are invented.",
             "New/unvalidated Action factors, including 52-week overlays, remain challenger-only until dedicated PIT/OOS validation.",
             "Sector Rotation V2 is SHADOW_ONLY: it cannot change Action/ETF scores, create BUYs, create SELLs, or emit orders before dedicated PIT/OOS validation.",
+            "Sector Rotation V2 is integrated into Committee and unified reporting only as diagnostics: current PIT/OOS status, valuation/correction warnings and frozen evidence are visible with decision influence fixed at zero.",
+            "Sector Rotation V2 economic outcomes use frozen constituents and the first trading-session close strictly after the signal date; same-day close execution is forbidden.",
+            "Sector Rotation V2 final holdout remains locked and model-version drift cannot be mixed into the registered V2.0 OOS evidence.",
             "Sector Rotation V2 explicitly separates rotation opportunity from valuation/correction risk and publishes PROMISING_BUT_OVERVALUED / NO_CHASE warnings.",
             "IPO Radar V1.2 remains SHADOW_ONLY. It preserves V1.1 identity quarantine and due-diligence coverage controls, prefers prospectus Inline XBRL over Company Facts for pre-IPO financial evidence, reconstructs post-IPO balance-sheet quality only when net proceeds are evidenced, and keeps absolute valuation diagnostics separate from the peer-relative valuation criterion.",
             "IPO outcome calibration uses the last evidence snapshot strictly before the actual first trading calendar date; same-day snapshots are excluded to prevent look-ahead.",
