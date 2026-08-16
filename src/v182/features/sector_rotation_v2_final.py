@@ -104,7 +104,6 @@ def _harden_scores(row: pd.Series, cfg: dict[str, Any]) -> dict[str, Any]:
     rls, rls_coverage = core._weighted_available(rls_components, cfg["score_weights"]["RLS"])
 
     breadth = _neutral_if_missing(breadth_optional)
-    growth = _neutral_if_missing(growth_optional)
     sqs = _neutral_if_missing(_mean_optional((breadth_optional, growth_optional, eps_revision)))
 
     cts_inputs: list[float] = []
