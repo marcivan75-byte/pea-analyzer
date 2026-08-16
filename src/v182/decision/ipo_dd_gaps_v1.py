@@ -35,6 +35,7 @@ RISK_ACTIONS = {
 }
 
 CATEGORY_PRIORITY = {
+    "IDENTITY": 0,
     "VALUATION": 1,
     "FINANCIALS": 2,
     "PROSPECTUS": 3,
@@ -47,6 +48,18 @@ CATEGORY_PRIORITY = {
     "ACCOUNTING": 10,
 }
 
+# Some criteria are scored from derived runtime signals without copying the
+# signal into the criterion-prefixed column. The DD planner must respect the
+# exact same effective availability semantics as the scoring engine.
+OPPORTUNITY_EFFECTIVE_FIELDS = {
+    "bookbuilding_demand": ("opportunity_bookbuilding_demand", "bookbuilding_demand"),
+    "float_liquidity": ("opportunity_float_liquidity", "float_liquidity"),
+}
+RISK_EFFECTIVE_FIELDS = {
+    "small_float_liquidity": ("risk_small_float_liquidity", "small_float_liquidity"),
+    "deal_instability": ("risk_deal_instability", "deal_instability"),
+}
+
 
 def _missing(value: object) -> bool:
     if value is None:
@@ -57,33 +70,56 @@ def _missing(value: object) -> bool:
     return text in {"", "nan", "none", "na", "n/a"}
 
 
-def _candidate_tasks(row: dict, opportunity_weights: dict[str, float], risk_weights: dict[str, float]) -> list[dict]:
+def _criterion_available(row: dict, dimension: str, criterion: str) -> bool:
+    if dimension == "OPPORTUNITY":
+        fields = OPPORTUNITY_EFFECTIVE_FIELDS.get(criterion, (f"opportunity_{criterion}",))
+    else:
+        fields = RISK_EFFECTIVE_FIELDS.get(criterion, (f"risk_{criterion}",))
+    return any(not _missing(row.get(field)) for field in fields)
+
+
+def _candidate_tasks(
+    row: dict,
+    opportunity_weights: dict[str, float],
+    risk_weights: dict[str, float],
+    net_weights: dict[str, float],
+) -> list[dict]:
     tasks: list[dict] = []
+    opportunity_multiplier = float(net_weights["opportunity"])
+    risk_multiplier = float(net_weights["risk_inverse"])
     for criterion, weight in opportunity_weights.items():
-        field = f"opportunity_{criterion}"
-        if _missing(row.get(field)):
+        if not _criterion_available(row, "OPPORTUNITY", criterion):
             category, action = OPPORTUNITY_ACTIONS[criterion]
+            dimension_weight = float(weight)
             tasks.append({
                 "dimension": "OPPORTUNITY",
                 "criterion": criterion,
-                "field": field,
-                "weight_pct": float(weight),
+                "field": f"opportunity_{criterion}",
+                "dimension_weight_pct": dimension_weight,
+                "effective_weight_pct": dimension_weight * opportunity_multiplier,
                 "category": category,
                 "action": action,
             })
     for criterion, weight in risk_weights.items():
-        field = f"risk_{criterion}"
-        if _missing(row.get(field)):
+        if not _criterion_available(row, "RISK", criterion):
             category, action = RISK_ACTIONS[criterion]
+            dimension_weight = float(weight)
             tasks.append({
                 "dimension": "RISK",
                 "criterion": criterion,
-                "field": field,
-                "weight_pct": float(weight),
+                "field": f"risk_{criterion}",
+                "dimension_weight_pct": dimension_weight,
+                "effective_weight_pct": dimension_weight * risk_multiplier,
                 "category": category,
                 "action": action,
             })
-    tasks.sort(key=lambda item: (-item["weight_pct"], CATEGORY_PRIORITY.get(item["category"], 99), item["criterion"]))
+    tasks.sort(
+        key=lambda item: (
+            -item["effective_weight_pct"],
+            CATEGORY_PRIORITY.get(item["category"], 99),
+            item["criterion"],
+        )
+    )
     return tasks
 
 
@@ -91,21 +127,26 @@ def build_gap_worklist(ranking: pd.DataFrame, config: dict) -> pd.DataFrame:
     columns = [
         "candidate_id", "identity_key", "name", "symbol", "exchange", "expected_date", "decision",
         "net_ipo_score", "opportunity_score", "risk_score", "opportunity_coverage_pct", "risk_coverage_pct",
-        "missing_criteria_count", "missing_weight_total_pct", "priority_1_category", "priority_1_criterion",
-        "priority_1_weight_pct", "priority_1_action", "priority_2_category", "priority_2_criterion",
-        "priority_2_weight_pct", "priority_2_action", "priority_3_category", "priority_3_criterion",
-        "priority_3_weight_pct", "priority_3_action", "all_missing_criteria", "all_required_actions",
-        "dd_status", "live_order_allowed",
+        "missing_criteria_count", "missing_weight_total_pct", "effective_covered_weight_pct",
+        "blocking_issue", "blocking_action",
+        "priority_1_category", "priority_1_criterion", "priority_1_weight_pct", "priority_1_dimension_weight_pct", "priority_1_action",
+        "priority_2_category", "priority_2_criterion", "priority_2_weight_pct", "priority_2_dimension_weight_pct", "priority_2_action",
+        "priority_3_category", "priority_3_criterion", "priority_3_weight_pct", "priority_3_dimension_weight_pct", "priority_3_action",
+        "all_missing_criteria", "all_required_actions", "dd_status", "live_order_allowed",
     ]
     if ranking.empty:
         return pd.DataFrame(columns=columns)
     records: list[dict] = []
     opportunity_weights = config["opportunity_weights"]
     risk_weights = config["risk_weights"]
+    net_weights = config["net_score_weights"]
     for _, series in ranking.iterrows():
         row = series.to_dict()
-        tasks = _candidate_tasks(row, opportunity_weights, risk_weights)
-        missing_weight = sum(task["weight_pct"] for task in tasks)
+        tasks = _candidate_tasks(row, opportunity_weights, risk_weights, net_weights)
+        missing_weight = min(100.0, sum(task["effective_weight_pct"] for task in tasks))
+        identity_conflict = bool(row.get("identity_name_conflict") is True or str(row.get("identity_name_conflict", "")).strip().lower() == "true")
+        blocking_issue = "IDENTITY_CONFLICT" if identity_conflict else ""
+        blocking_action = "Réconcilier l'identité de l'émetteur entre les sources avant toute conclusion de due diligence" if identity_conflict else ""
         record = {
             "candidate_id": row.get("candidate_id"),
             "identity_key": row.get("identity_key"),
@@ -121,9 +162,12 @@ def build_gap_worklist(ranking: pd.DataFrame, config: dict) -> pd.DataFrame:
             "risk_coverage_pct": row.get("risk_coverage_pct"),
             "missing_criteria_count": len(tasks),
             "missing_weight_total_pct": round(missing_weight, 2),
+            "effective_covered_weight_pct": round(100.0 - missing_weight, 2),
+            "blocking_issue": blocking_issue,
+            "blocking_action": blocking_action,
             "all_missing_criteria": "|".join(f"{task['dimension']}:{task['criterion']}" for task in tasks),
-            "all_required_actions": "|".join(dict.fromkeys(task["action"] for task in tasks)),
-            "dd_status": "COMPLETE" if not tasks else "ACTION_REQUIRED",
+            "all_required_actions": "|".join(dict.fromkeys(([blocking_action] if blocking_action else []) + [task["action"] for task in tasks])),
+            "dd_status": "COMPLETE" if not tasks and not blocking_issue else "ACTION_REQUIRED",
             "live_order_allowed": False,
         }
         for index in range(3):
@@ -131,11 +175,19 @@ def build_gap_worklist(ranking: pd.DataFrame, config: dict) -> pd.DataFrame:
             prefix = f"priority_{index + 1}"
             record[f"{prefix}_category"] = task["category"] if task else ""
             record[f"{prefix}_criterion"] = task["criterion"] if task else ""
-            record[f"{prefix}_weight_pct"] = task["weight_pct"] if task else None
+            record[f"{prefix}_weight_pct"] = round(task["effective_weight_pct"], 2) if task else None
+            record[f"{prefix}_dimension_weight_pct"] = task["dimension_weight_pct"] if task else None
             record[f"{prefix}_action"] = task["action"] if task else ""
         records.append(record)
     frame = pd.DataFrame(records).reindex(columns=columns)
-    decision_order = {"PRIORITY_DD": 0, "DEEP_DD": 1, "WATCH": 2, "WATCH_EARLY_FILING": 3, "WATCH_DATA_GAP": 4}
+    decision_order = {
+        "PRIORITY_DD": 0,
+        "DEEP_DD": 1,
+        "WATCH": 2,
+        "WATCH_EARLY_FILING": 3,
+        "WATCH_IDENTITY_CONFLICT": 4,
+        "WATCH_DATA_GAP": 5,
+    }
     frame["_decision_rank"] = frame["decision"].map(decision_order).fillna(9)
     frame = frame.sort_values(
         ["_decision_rank", "missing_weight_total_pct", "expected_date"],
@@ -158,4 +210,5 @@ def write_gap_worklist(root: Path, config: dict) -> dict:
         "candidate_count": int(len(frame)),
         "action_required_count": int(len(actionable)),
         "complete_count": int((frame["dd_status"] == "COMPLETE").sum()) if not frame.empty else 0,
+        "max_missing_effective_weight_pct": round(float(frame["missing_weight_total_pct"].max()), 2) if not frame.empty else 0.0,
     }
