@@ -23,6 +23,7 @@ def collect_euronext_v1_4(start, end, timeout: int = 20):
     news_success = 0
     news_matches = 0
     direct_matches = 0
+    product_matches = 0
     fallback_matches = 0
     for row in rows:
         candidate = euronext_ipo_news_v1_4.enrich_candidate(dict(row), timeout=min(timeout, 15))
@@ -31,6 +32,8 @@ def collect_euronext_v1_4(start, end, timeout: int = 20):
             news_matches += 1
         if discovery == "DIRECT_SUCCESS":
             direct_matches += 1
+        if discovery == "PRODUCT_PAGE_SUCCESS":
+            product_matches += 1
         if discovery == "GDELT_FALLBACK_SUCCESS":
             fallback_matches += 1
         if int(candidate.get("euronext_news_fetch_success_count") or 0) > 0:
@@ -39,9 +42,10 @@ def collect_euronext_v1_4(start, end, timeout: int = 20):
     status = dict(status)
     status["regulated_news_matched_count"] = news_matches
     status["regulated_news_direct_matched_count"] = direct_matches
+    status["regulated_news_product_matched_count"] = product_matches
     status["regulated_news_fallback_matched_count"] = fallback_matches
     status["regulated_news_enriched_count"] = news_success
-    status["regulated_news_policy"] = "EURONEXT_ISIN_LISTVIEW_PRIMARY_GDELT_FALLBACK_SHADOW_FACTS_V1.4"
+    status["regulated_news_policy"] = "EURONEXT_ISIN_LISTVIEW_THEN_PRODUCT_PAGE_THEN_GDELT_SHADOW_FACTS_V1.4"
     return enriched, status
 
 
@@ -63,8 +67,9 @@ def _write_news_evidence(root: Path) -> dict:
         "candidate_id", "identity_key", "name", "symbol", "isin", "exchange", "expected_date", "decision",
         "euronext_showcase_url", "euronext_icb_code", "euronext_icb_name", "euronext_ipo_type",
         "euronext_news_discovery_status", "euronext_news_discovery_method", "euronext_news_listview_url",
-        "euronext_news_direct_error", "euronext_news_discovery_error", "euronext_news_count",
-        "euronext_news_urls", "euronext_news_fetch_success_count", "euronext_news_fetch_errors",
+        "euronext_news_product_url", "euronext_news_direct_error", "euronext_news_product_error",
+        "euronext_news_discovery_error", "euronext_news_count", "euronext_news_urls",
+        "euronext_news_fetch_success_count", "euronext_news_fetch_errors",
         "euronext_news_gross_proceeds_local", "euronext_news_gross_proceeds_currency",
         "euronext_news_gross_proceeds_evidence", "euronext_news_offer_price_local",
         "euronext_news_offer_price_currency", "euronext_news_offer_price_evidence",
@@ -84,6 +89,7 @@ def _write_news_evidence(root: Path) -> dict:
     evidence.to_csv(output_path, index=False)
     matched = 0
     direct = 0
+    product = 0
     fallback = 0
     fetched = 0
     strong = 0
@@ -92,6 +98,7 @@ def _write_news_evidence(root: Path) -> dict:
         statuses = evidence["euronext_news_discovery_status"].fillna("").astype(str)
         matched = int(statuses.map(_discovery_success).sum())
         direct = int((statuses == "DIRECT_SUCCESS").sum())
+        product = int((statuses == "PRODUCT_PAGE_SUCCESS").sum())
         fallback = int((statuses == "GDELT_FALLBACK_SUCCESS").sum())
         fetched = int((pd.to_numeric(evidence["euronext_news_fetch_success_count"], errors="coerce").fillna(0) > 0).sum())
         strong = int((evidence["euronext_news_demand_signal_shadow"].fillna("") == "STRONG_DEMAND").sum())
@@ -100,6 +107,7 @@ def _write_news_evidence(root: Path) -> dict:
         "evidence": "outputs/ipo_radar/IPO_EURONEXT_NEWS_EVIDENCE_V1_4.csv",
         "matched_candidate_count": matched,
         "direct_matched_candidate_count": direct,
+        "product_page_matched_candidate_count": product,
         "fallback_matched_candidate_count": fallback,
         "fetched_candidate_count": fetched,
         "strong_demand_shadow_count": strong,
@@ -113,7 +121,7 @@ def run(root: Path = ROOT) -> dict:
     summary = v13.run(root)
     news = _write_news_evidence(root)
     summary["module_version"] = "IPO_RADAR_V1.4"
-    summary["regulated_news_layer"] = "EURONEXT_ISIN_LISTVIEW_PRIMARY_GDELT_FALLBACK_OFFICIAL_PAGE_FACTS_V1.4"
+    summary["regulated_news_layer"] = "EURONEXT_ISIN_LISTVIEW_THEN_PRODUCT_PAGE_THEN_GDELT_OFFICIAL_FACTS_V1.4"
     summary["regulated_news_policy"] = "SHADOW_FACTS_ONLY_NO_ACTIVE_SCORE_NO_BUY"
     summary["regulated_news_evidence"] = news
     summary.setdefault("outputs", {})["euronext_news_evidence_v1_4"] = news["evidence"]
