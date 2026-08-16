@@ -9,7 +9,7 @@ import os
 from v182.reporting import run as enrichment_run
 from v182.reporting import etf_structure_refresh, etf_mt_v2081_run, committee_master_v21_4, committee_performance_v21_4, sector_rotation_v2_shadow_run, ipo_dd_gaps_run
 from v182.decision import gold_v1_1, ipo_outcomes_v1
-from v182.decision import ipo_radar_operational_v1_1 as ipo_radar_v1
+from v182.decision import ipo_radar_stabilized_v1_1 as ipo_radar_v1
 
 logger=logging.getLogger(__name__)
 ROOT=Path(__file__).resolve().parents[3]
@@ -97,7 +97,7 @@ def run(root:Path=ROOT)->dict:
         "etf_mt_challenger":"V20.8.2 missing-data dynamic shadow",
         "tct":"V24.1.8 baseline + exact V24.1.7 T1/T2 shadow",
         "gold":"V1.1 shadow",
-        "ipo":"IPO_RADAR_V1.1 shadow/advisory + actionable DD worklist + forward outcome attribution; no automatic BUY",
+        "ipo":"IPO_RADAR_V1.1 stabilized shadow/advisory + identity quarantine + actionable DD worklist + forward outcome attribution; no automatic BUY",
         "sector_rotation":"V1 baseline + V2.0 multi-factor shadow; V2 decision influence = 0"
     }
     payload={
@@ -108,7 +108,7 @@ def run(root:Path=ROOT)->dict:
             "New/unvalidated Action factors, including 52-week overlays, remain challenger-only until dedicated PIT/OOS validation.",
             "Sector Rotation V2 is SHADOW_ONLY: it cannot change Action/ETF scores, create BUYs, create SELLs, or emit orders before dedicated PIT/OOS validation.",
             "Sector Rotation V2 explicitly separates rotation opportunity from valuation/correction risk and publishes PROMISING_BUT_OVERVALUED / NO_CHASE warnings.",
-            "IPO Radar V1.1 discovers IPOs through redundant calendars, publishes candidate-specific missing-criterion due-diligence actions, preserves full PIT evidence and measures forward post-listing outcomes; it cannot create a BUY before dedicated PIT/OOS validation.",
+            "IPO Radar V1.1 discovers IPOs through redundant calendars, reconciles same-symbol/date US events across providers, quarantines material issuer-name conflicts, publishes candidate-specific due-diligence actions using effective 60/40 final-score weights, preserves full PIT evidence and measures forward post-listing outcomes; it cannot create a BUY before dedicated PIT/OOS validation.",
             "Every collection publishes retained-value provenance plus missing/partial/available data.",
             "Per-field retained provenance governs evidence/freshness merge decisions and persists across runs.",
             "Dynamic available-criterion weights renormalize to 100% while minimum coverage gates remain active.",
