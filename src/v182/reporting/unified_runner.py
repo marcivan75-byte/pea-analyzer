@@ -18,13 +18,13 @@ from v182.reporting import (
     sector_rotation_v2_shadow_run,
 )
 from v182.decision import gold_v1_1, ipo_outcomes_v1_2
-from v182.decision import ipo_radar_v1_2 as ipo_radar_v1
+from v182.decision import ipo_radar_v1_3 as ipo_radar_v1
 from v182.risk import beta_correlation_engine
 
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[3]
-SOFTWARE_VERSION = "21.7.4"
-PROCESS_VERSION = "UNIFIED_V21_7_4_SECTOR_ROTATION_V2_PIT_OOS_RISK_V1_1_CONTEXT_ONLY"
+SOFTWARE_VERSION = "21.7.5"
+PROCESS_VERSION = "UNIFIED_V21_7_5_SECTOR_ROTATION_V2_PIT_OOS_RISK_V1_1_CONTEXT_ONLY_IPO_V1_3"
 
 
 def _safe_step(name: str, func) -> dict:
@@ -154,6 +154,7 @@ def run(root: Path = ROOT) -> dict:
         "ipo_committee_brief": "outputs/ipo_radar/IPO_COMMITTEE_BRIEF.json",
         "ipo_deep_dd_evidence": "outputs/ipo_radar/IPO_DEEP_DD_EVIDENCE.csv",
         "ipo_deep_dd_brief": "outputs/ipo_radar/IPO_DEEP_DD_BRIEF.json",
+        "ipo_v1_3_evidence": "outputs/ipo_radar/IPO_V1_3_EVIDENCE.csv",
         "ipo_dd_gaps": "outputs/ipo_radar/IPO_DD_GAPS.csv",
         "ipo_validation": "outputs/ipo_radar/IPO_VALIDATION_STATUS.json",
         "ipo_calibration": "outputs/ipo_radar/IPO_CALIBRATION_STATUS.json",
@@ -172,7 +173,7 @@ def run(root: Path = ROOT) -> dict:
         "etf_mt_challenger": "V20.8.2 missing-data dynamic shadow",
         "tct": "V24.1.8 baseline + exact V24.1.7 T1/T2 shadow",
         "gold": "V1.1 shadow",
-        "ipo": "IPO_RADAR_V1.2 deep-DD + PIT-safe outcome calibration shadow/advisory; no automatic BUY",
+        "ipo": "IPO_RADAR_V1.3 official Euronext evidence + same-basis real-peer valuation + V1.2 deep-DD/PIT-safe calibration; shadow/advisory; no automatic BUY",
         "sector_rotation": "V1 baseline + V2.0 multi-factor shadow + locked PIT/OOS validator; Committee diagnostic bridge active; V2 decision influence = 0",
         "risk_context": "RISK_V1.1 robust beta/correlation/diversification context-only; score/decision/sizing/stop influence = 0",
     }
@@ -201,11 +202,13 @@ def run(root: Path = ROOT) -> dict:
             "RISK V1.1 is CONTEXT_ONLY: beta, downside beta, R2, stress correlation, overlap and economic-driver concentration cannot change scores or decisions.",
             "Three beta-based sizing hypotheses were rejected OOS; no active risk position multiplier is emitted and stop-loss linkage is forbidden.",
             "RISK V1.1 benchmark failure degrades safely to zero score/decision/sizing/stop influence rather than blocking the Committee.",
-            "IPO Radar V1.2 remains SHADOW_ONLY. It preserves V1.1 identity quarantine and due-diligence coverage controls, prefers prospectus Inline XBRL over Company Facts for pre-IPO financial evidence, reconstructs post-IPO balance-sheet quality only when net proceeds are evidenced, and keeps absolute valuation diagnostics separate from the peer-relative valuation criterion.",
+            "IPO Radar V1.3 remains SHADOW_ONLY. It preserves V1.1 identity quarantine and V1.2 due-diligence/PIT-safe calibration, prefers prospectus Inline XBRL for pre-IPO financial evidence, and adds official Euronext showcase evidence without inferring PEA eligibility.",
+            "IPO V1.3 peer-relative valuation is populated only from real Finnhub industry peers when at least three valid annual price-to-sales multiples exist on the same basis as the prospectus-derived candidate multiple; API or evidence failure leaves the criterion missing with no bonus or penalty.",
+            "Absolute valuation diagnostics cannot populate the peer-relative criterion and TTM peer multiples cannot be mixed with annual prospectus multiples.",
             "IPO outcome calibration uses the last evidence snapshot strictly before the actual first trading calendar date; same-day snapshots are excluded to prevent look-ahead.",
             "IPO post-listing performance is measured from the prospectus IPO price when available, otherwise the last pre-listing price-range midpoint, with first-close fallback for calibration only.",
             "IPO score buckets, drawdowns and forward returns are observational evidence only; they cannot reweight or promote the model without a dedicated PIT/OOS audit.",
-            "IPO Radar V1.2 can conservatively trigger the existing insufficient-12-month-liquidity hard block only when even the upper-bound post-IPO runway before planned uses of proceeds is below one year.",
+            "IPO Radar V1.3 can conservatively trigger the existing insufficient-12-month-liquidity hard block only when even the upper-bound post-IPO runway before planned uses of proceeds is below one year.",
             "Every collection publishes retained-value provenance plus missing/partial/available data.",
             "Per-field retained provenance governs evidence/freshness merge decisions and persists across runs.",
             "Dynamic available-criterion weights renormalize to 100% while minimum coverage gates remain active.",
