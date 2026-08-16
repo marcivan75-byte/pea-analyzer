@@ -60,14 +60,14 @@ def run(root: Path = ROOT) -> dict:
     mapping_worklist_path = gapsdir / "SECTOR_ROTATION_V2_THEME_MAPPING_WORKLIST.csv"
 
     result.sectors.to_csv(snapshot_path, sep=";", index=False, encoding="utf-8-sig")
-    append_history(result.sectors, history_path)
-
     comparison = write_comparison(
         root / "outputs" / "V21_3_SECTOR_ROTATION.csv",
         snapshot_path,
         comparison_path,
         comparison_audit_path,
     )
+    comparison_snapshot = pd.read_csv(comparison_path, sep=";", encoding="utf-8-sig", low_memory=False)
+    append_history(comparison_snapshot, history_path)
     committee_report = write_shadow_report(result.sectors, committee_dir)
 
     rules = load_auto_theme_rules(root / "config" / "SECTOR_ROTATION_V2_AUTO_THEME_RULES.csv")
@@ -107,6 +107,7 @@ def run(root: Path = ROOT) -> dict:
             "source_etfs": etf_source,
             "snapshot_path": str(snapshot_path.relative_to(root)),
             "history_path": str(history_path.relative_to(root)),
+            "history_includes_v1_baseline": True,
             "comparison_path": str(comparison_path.relative_to(root)),
             "committee_shadow_path": str(committee_dir.relative_to(root)),
             "theme_snapshot_path": str(theme_snapshot_path.relative_to(root)),
