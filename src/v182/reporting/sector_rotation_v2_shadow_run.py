@@ -8,10 +8,12 @@ import pandas as pd
 
 from v182.features.instrument_theme_v2 import build_mapping_worklist, load_instrument_theme_mapping
 from v182.features.sector_rotation_v2_final import append_history, build_sector_rotation_v2, load_config
+from v182.features.sector_rotation_v2_membership import append_membership_history, build_membership_snapshot
 from v182.features.theme_propagation_v2 import load_transmission_graph, propagate_theme_scores
 from v182.features.theme_rotation_auto_v2 import build_theme_rotation_shadow, load_auto_theme_rules
 from v182.reporting.sector_rotation_v2_compare import write_comparison
 from v182.reporting.sector_rotation_v2_report import write_shadow_report
+from v182.reporting.sector_rotation_v2_validation_run import run as run_pit_oos_validation
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -28,6 +30,20 @@ def _load_history(path: Path) -> pd.DataFrame | None:
     return pd.read_csv(path, sep=";", encoding="utf-8-sig", low_memory=False) if path.exists() else None
 
 
+def _run_validation_safely(root: Path) -> dict:
+    try:
+        return run_pit_oos_validation(root)
+    except Exception as exc:
+        return {
+            "status": "VALIDATION_RUNTIME_ERROR",
+            "error": type(exc).__name__,
+            "detail": str(exc)[:500],
+            "promotion_ready": False,
+            "decision_influence": 0.0,
+            "live_orders_enabled": False,
+        }
+
+
 def run(root: Path = ROOT) -> dict:
     cfg = load_config(root / "config" / "SECTOR_ROTATION_V2_SHADOW.json")
     actions, action_source = _read_master(root, "ACTIONS")
@@ -41,6 +57,7 @@ def run(root: Path = ROOT) -> dict:
         directory.mkdir(parents=True, exist_ok=True)
 
     history_path = statedir / "SECTOR_ROTATION_V2_HISTORY.csv"
+    membership_history_path = statedir / "SECTOR_ROTATION_V2_CONSTITUENTS.csv"
     theme_history_path = statedir / "THEME_ROTATION_V2_HISTORY.csv"
     history = _load_history(history_path)
     theme_history = _load_history(theme_history_path)
@@ -60,14 +77,21 @@ def run(root: Path = ROOT) -> dict:
     mapping_worklist_path = gapsdir / "SECTOR_ROTATION_V2_THEME_MAPPING_WORKLIST.csv"
 
     result.sectors.to_csv(snapshot_path, sep=";", index=False, encoding="utf-8-sig")
-    append_history(result.sectors, history_path)
-
     comparison = write_comparison(
         root / "outputs" / "V21_3_SECTOR_ROTATION.csv",
         snapshot_path,
         comparison_path,
         comparison_audit_path,
     )
+    comparison_snapshot = pd.read_csv(comparison_path, sep=";", encoding="utf-8-sig", low_memory=False)
+    append_history(comparison_snapshot, history_path)
+    membership_snapshot = build_membership_snapshot(
+        actions,
+        result.sectors["sector"].tolist(),
+        as_of=as_of,
+        model_version=str(cfg.get("version", "SECTOR_ROTATION_V2")),
+    )
+    append_membership_history(membership_snapshot, membership_history_path)
     committee_report = write_shadow_report(result.sectors, committee_dir)
 
     rules = load_auto_theme_rules(root / "config" / "SECTOR_ROTATION_V2_AUTO_THEME_RULES.csv")
@@ -99,6 +123,7 @@ def run(root: Path = ROOT) -> dict:
     pd.concat([action_worklist, etf_worklist], ignore_index=True).to_csv(
         mapping_worklist_path, sep=";", index=False, encoding="utf-8-sig"
     )
+    pit_oos_validation = _run_validation_safely(root)
 
     summary = dict(result.diagnostic)
     summary.update(
@@ -107,6 +132,9 @@ def run(root: Path = ROOT) -> dict:
             "source_etfs": etf_source,
             "snapshot_path": str(snapshot_path.relative_to(root)),
             "history_path": str(history_path.relative_to(root)),
+            "history_includes_v1_baseline": True,
+            "membership_history_path": str(membership_history_path.relative_to(root)),
+            "membership_snapshot_rows": int(len(membership_snapshot)),
             "comparison_path": str(comparison_path.relative_to(root)),
             "committee_shadow_path": str(committee_dir.relative_to(root)),
             "theme_snapshot_path": str(theme_snapshot_path.relative_to(root)),
@@ -122,6 +150,7 @@ def run(root: Path = ROOT) -> dict:
             "theme_summary": theme_summary,
             "theme_committee_report": theme_committee,
             "theme_propagation_summary": propagation_summary,
+            "pit_oos_validation": pit_oos_validation,
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
             "decision_influence": 0.0,
             "live_orders_enabled": False,
