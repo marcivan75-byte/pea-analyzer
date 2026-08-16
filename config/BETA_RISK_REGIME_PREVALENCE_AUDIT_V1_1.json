@@ -1,0 +1,59 @@
+{
+  "version": "BETA_RISK_REGIME_PREVALENCE_AUDIT_V1_1_2026_08_16",
+  "source_workflow_run_id": 31947576553,
+  "source_artifact_id": 9263829249,
+  "source_head_sha": "98db32086d5114cea6d6771001d5f0875b796367",
+  "sample_trades": 118,
+  "outcome_fields_used_for_design": false,
+  "forbidden_design_fields": [
+    "gross_return",
+    "net_return",
+    "exit_reason",
+    "risk_adjusted_net_return",
+    "regime_adjusted_net_return"
+  ],
+  "condition_prevalence_all_118": {
+    "downside_beta_252d_ge_1_30": 54,
+    "r2_252d_ge_0_35": 57,
+    "beta_acceleration_ge_0_30": 37,
+    "benchmark_21d_le_0": 12,
+    "benchmark_63d_le_0": 17,
+    "high_downside_and_reliable": 36,
+    "high_downside_and_reliable_and_at_least_one_regime_signal": 7,
+    "high_downside_and_reliable_and_at_least_two_regime_signals": 2,
+    "all_five_v1_1": 0
+  },
+  "condition_prevalence_validation_oos_37": {
+    "downside_beta_252d_ge_1_30": 12,
+    "r2_252d_ge_0_35": 8,
+    "high_downside_and_reliable": 0,
+    "high_downside_and_at_least_one_regime_signal": 6,
+    "high_downside_and_at_least_two_regime_signals": 3
+  },
+  "condition_prevalence_diagnostic_oos_19": {
+    "downside_beta_252d_ge_1_30": 6,
+    "r2_252d_ge_0_35": 0,
+    "high_downside_and_reliable": 0,
+    "high_downside_and_at_least_one_regime_signal": 3,
+    "high_downside_and_at_least_two_regime_signals": 0
+  },
+  "diagnosis": "R2 reliability and high downside beta do not overlap in either OOS period. Requiring both makes V1.1 structurally inactive rather than economically selective.",
+  "v1_2_design_rule": {
+    "mandatory": "downside_beta_252d >= 1.30",
+    "additional_confirmation": "at least one of beta_acceleration >= 0.30, benchmark_21d <= 0, benchmark_63d <= 0",
+    "r2": "reported as context but removed as mandatory gate",
+    "expected_trigger_prevalence_without_using_outcomes": {
+      "development": 7,
+      "validation_oos": 6,
+      "diagnostic_oos": 3,
+      "total": 16
+    }
+  },
+  "governance": {
+    "prevalence_only_design": true,
+    "no_pnl_used_to_choose_v1_2_logic": true,
+    "v1_1_thresholds_not_retuned": true,
+    "v1_2_is_a_new_pre_registered_hypothesis": true,
+    "final_holdout_opened": false
+  }
+}
