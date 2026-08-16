@@ -2,6 +2,7 @@
   "version": "SECTOR_ROTATION_V2_PIT_OOS_1_0_2026_08_16",
   "locked_before_results": true,
   "scope": "SECTOR_ROTATION_V2_SHADOW",
+  "model_version_lock": "SECTOR_ROTATION_V2.0_SHADOW",
   "primary_horizon_days": 60,
   "secondary_horizons_days": [20, 120],
   "periods": {
@@ -51,6 +52,7 @@
     "no_real_orders": true,
     "promotion_requires_followup_final_holdout_protocol": true,
     "current_universe_reconstruction_not_promotion_eligible": true,
-    "synthetic_tests_validate_code_only_not_economic_performance": true
+    "synthetic_tests_validate_code_only_not_economic_performance": true,
+    "model_version_drift_invalidates_mixed_evidence": true
   }
 }
