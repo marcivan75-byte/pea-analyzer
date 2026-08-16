@@ -134,31 +134,45 @@ def build_outcome_observations(
     rows: list[dict[str, Any]] = []
     missing_membership = 0
     immature_or_low_coverage = 0
+    mature_observations = 0
     for _, signal in signals.iterrows():
+        row = signal.to_dict()
+        row[f"forward_return_pct_{horizon}d"] = np.nan
+        row[f"mae_pct_{horizon}d"] = np.nan
+        row[f"mfe_pct_{horizon}d"] = np.nan
+        row["constituent_price_coverage"] = 0.0
+        row["constituents_total"] = 0
+        row["constituents_used"] = 0
+
         key = (str(signal["sector"]), signal["as_of"], str(signal["model_version"]))
         group = member_groups.get(key)
         if group is None or group.empty:
             missing_membership += 1
+            row["outcome_status"] = "MISSING_FROZEN_MEMBERSHIP"
+            rows.append(row)
             continue
         tickers = group.get("yahoo_ticker", pd.Series(dtype=object)).dropna().astype(str).tolist()
         metrics = _basket_metrics(tickers, signal["as_of"], close_by_ticker, protocol)
         if metrics is None:
             immature_or_low_coverage += 1
+            row["outcome_status"] = "IMMATURE_OR_LOW_PRICE_COVERAGE"
+            rows.append(row)
             continue
-        row = signal.to_dict()
         row[f"forward_return_pct_{horizon}d"] = metrics["forward_return_pct"]
         row[f"mae_pct_{horizon}d"] = metrics["mae_pct"]
         row[f"mfe_pct_{horizon}d"] = metrics["mfe_pct"]
         row["constituent_price_coverage"] = metrics["constituent_price_coverage"]
         row["constituents_total"] = metrics["constituents_total"]
         row["constituents_used"] = metrics["constituents_used"]
+        row["outcome_status"] = "MATURE"
+        mature_observations += 1
         rows.append(row)
 
     observations = pd.DataFrame(rows)
     diagnostic = {
-        "status": "OK" if not observations.empty else "NO_MATURE_OUTCOMES",
+        "status": "OK" if mature_observations else "NO_MATURE_OUTCOMES",
         "signals_in_protocol_pre_holdout": int(len(signals)),
-        "mature_observations": int(len(observations)),
+        "mature_observations": mature_observations,
         "missing_membership": missing_membership,
         "immature_or_low_coverage": immature_or_low_coverage,
         "holdout_signals_locked": holdout_signals_locked,
