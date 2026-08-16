@@ -7,11 +7,9 @@ import pandas as pd
 
 from v182.backtest.exceptional_pit_oos import (
     HOLDOUT_START,
-    ROUND_TRIP_COST_BPS,
     _naive_index,
     _profit_factor,
     _wilson_lower,
-    etf_core_backtest,
     _simulate_etf_trade,
     _read_csv,
     _read_json,
