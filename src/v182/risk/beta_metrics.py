@@ -115,31 +115,91 @@ def build_common_benchmark(
     *,
     min_sessions: int = 126,
     min_constituents: int = 20,
+    min_daily_fraction: float = 0.20,
+    winsor_tail: float = 0.05,
+    max_abs_daily_return: float = 0.15,
 ) -> tuple[pd.Series | None, dict]:
+    """Build a robust equal-weight PEA Action market proxy.
+
+    The previous raw cross-sectional mean allowed a small number of bad Yahoo
+    observations to contaminate the common beta benchmark. This version uses a
+    5/95 cross-sectional winsorized mean, requires meaningful daily breadth,
+    and fails closed if the resulting broad-market daily move remains
+    implausibly large. These are data-quality controls, not alpha parameters.
+    """
     eligible = {ticker: to_returns(prices) for ticker, prices in action_prices.items()}
-    eligible = {ticker: returns for ticker, returns in eligible.items() if returns.notna().sum() >= min_sessions}
-    if len(eligible) < min_constituents:
+    eligible = {
+        ticker: returns
+        for ticker, returns in eligible.items()
+        if returns.notna().sum() >= min_sessions
+    }
+    eligible_count = len(eligible)
+    if eligible_count < min_constituents:
         return None, {
             "status": "INSUFFICIENT_BENCHMARK_CONSTITUENTS",
-            "eligible_constituents": len(eligible),
+            "eligible_constituents": eligible_count,
             "required_constituents": min_constituents,
         }
+    if not 0.0 <= winsor_tail < 0.50:
+        raise ValueError("winsor_tail must be in [0, 0.5)")
+    if not 0.0 < min_daily_fraction <= 1.0:
+        raise ValueError("min_daily_fraction must be in (0, 1]")
+
     matrix = pd.concat(eligible, axis=1, sort=False).sort_index()
-    min_daily = max(3, int(math.ceil(min_constituents * 0.5)))
-    benchmark = matrix.mean(axis=1, skipna=True).where(matrix.notna().sum(axis=1) >= min_daily).dropna()
+    counts = matrix.notna().sum(axis=1)
+    min_daily = max(min_constituents, int(math.ceil(eligible_count * min_daily_fraction)))
+    valid_dates = counts >= min_daily
+    matrix = matrix.loc[valid_dates]
+    counts = counts.loc[valid_dates]
+    if matrix.empty:
+        return None, {
+            "status": "INSUFFICIENT_DAILY_BREADTH",
+            "eligible_constituents": eligible_count,
+            "required_daily_constituents": min_daily,
+        }
+
+    lower = matrix.quantile(winsor_tail, axis=1)
+    upper = matrix.quantile(1.0 - winsor_tail, axis=1)
+    robust_matrix = matrix.clip(lower=lower, upper=upper, axis=0)
+    benchmark = robust_matrix.mean(axis=1, skipna=True).dropna()
+
     if benchmark.notna().sum() < min_sessions:
         return None, {
             "status": "INSUFFICIENT_BENCHMARK_SESSIONS",
             "sessions": int(benchmark.notna().sum()),
             "required_sessions": min_sessions,
-            "eligible_constituents": len(eligible),
+            "eligible_constituents": eligible_count,
+            "required_daily_constituents": min_daily,
         }
+
+    max_abs = float(benchmark.abs().max())
+    p99_abs = float(benchmark.abs().quantile(0.99))
+    if not math.isfinite(max_abs) or max_abs > max_abs_daily_return:
+        return None, {
+            "status": "BENCHMARK_QC_FAILED_EXTREME_DAILY_RETURN",
+            "eligible_constituents": eligible_count,
+            "sessions": int(len(benchmark)),
+            "max_abs_daily_return": max_abs,
+            "allowed_max_abs_daily_return": max_abs_daily_return,
+            "p99_abs_daily_return": p99_abs,
+            "required_daily_constituents": min_daily,
+            "min_observed_daily_constituents": int(counts.min()),
+        }
+
     return benchmark, {
         "status": "OK",
-        "label": "PEA_ACTION_EQUAL_WEIGHT_PROXY",
-        "eligible_constituents": len(eligible),
+        "label": "PEA_ACTION_ROBUST_EQUAL_WEIGHT_PROXY_V2",
+        "eligible_constituents": eligible_count,
         "sessions": int(benchmark.notna().sum()),
-        "method": "DAILY_EQUAL_WEIGHT_MEAN_OF_AVAILABLE_ACTION_RETURNS",
+        "method": "DAILY_5_95_WINSORIZED_EQUAL_WEIGHT_MEAN_OF_AVAILABLE_ACTION_RETURNS",
+        "winsor_tail": winsor_tail,
+        "required_daily_fraction": min_daily_fraction,
+        "required_daily_constituents": min_daily,
+        "min_observed_daily_constituents": int(counts.min()),
+        "median_observed_daily_constituents": float(counts.median()),
+        "max_abs_daily_return": max_abs,
+        "p99_abs_daily_return": p99_abs,
+        "allowed_max_abs_daily_return": max_abs_daily_return,
     }
 
 
@@ -237,7 +297,11 @@ def compute_beta_metrics(
 
 def economic_engine_tags(*values: object) -> list[str]:
     text = " " + " ".join(clean_text(value).lower() for value in values if clean_text(value)) + " "
-    tags = [tag for tag, patterns in ENGINE_PATTERNS.items() if any(pattern in text for pattern in patterns)] or ["OTHER"]
+    tags = [
+        tag
+        for tag, patterns in ENGINE_PATTERNS.items()
+        if any(pattern in text for pattern in patterns)
+    ] or ["OTHER"]
     macro: list[str] = []
     for tag in tags:
         macro.extend(MACRO_LINKS.get(tag, ()))
