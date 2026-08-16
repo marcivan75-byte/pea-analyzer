@@ -46,7 +46,7 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import pandas as pd
-          from v182.sources.yfinance_bulk import download_history
+          import yfinance as yf
 
           root = Path('.')
           src = root / 'inputs' / 'V18.2_PEA_ACTIONS_MASTER.csv'
@@ -66,18 +66,36 @@ jobs:
               for x in frame['yahoo_ticker'].dropna()
               if str(x).strip() and str(x).strip().lower() not in {'nan', 'none', '<na>'}
           })
+          cache = root / 'data' / 'cache' / 'actions'
+          cache.mkdir(parents=True, exist_ok=True)
+          batch_size = 200
+          written = 0
           print(f'Action histories requested: {len(tickers)}')
-          result = download_history(
-              tickers,
-              str(root / 'data' / 'cache' / 'actions'),
-              period='max',
-              interval='1d',
-              batch_size=100,
-              auto_adjust=True,
-              include_actions=False,
-          )
-          print(f'Action histories successful={len(result.successful)} failed={len(result.failed)} requested={result.requested}')
-          if len(result.successful) < 20:
+          for start in range(0, len(tickers), batch_size):
+              batch = tickers[start:start + batch_size]
+              try:
+                  data = yf.download(
+                      tickers=batch,
+                      period='max',
+                      interval='1d',
+                      group_by='ticker',
+                      auto_adjust=True,
+                      actions=False,
+                      threads=True,
+                      progress=False,
+                      timeout=30,
+                  )
+              except Exception as exc:
+                  print(f'Batch {start} failed: {type(exc).__name__}: {exc}')
+                  continue
+              if data is None or data.empty:
+                  print(f'Batch {start} empty')
+                  continue
+              data.to_parquet(cache / f'history_{start:05d}.parquet')
+              written += 1
+              print(f'Batch {start}: cached {len(batch)} requested tickers')
+          print(f'Action history batch files written: {written}')
+          if written < 1:
               raise RuntimeError('INSUFFICIENT_ACTION_HISTORY_FOR_COMMON_BENCHMARK')
           PY
 
