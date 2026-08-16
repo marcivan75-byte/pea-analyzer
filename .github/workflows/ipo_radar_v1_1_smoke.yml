@@ -38,9 +38,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e .
-      - name: Run live IPO Radar only
-        run: python -m v182.decision.ipo_radar_v1
-      - name: Validate operational outputs and governance
+      - name: Run live hardened IPO Radar only
+        run: python -m v182.decision.ipo_radar_operational_v1_1
+      - name: Validate operational outputs governance and PIT evidence
         run: |
           python - <<'PY'
           import json
@@ -50,6 +50,8 @@ jobs:
           root=Path('.')
           summary=json.loads((root/'outputs/ipo_radar/IPO_SUMMARY.json').read_text())
           assert summary['mode']=='SHADOW_ADVISORY_ONLY'
+          assert summary['runtime_layer']=='IPO_RADAR_OPERATIONAL_V1.1'
+          assert summary['history_policy']=='FULL_PIT_EVIDENCE_SNAPSHOT'
           assert summary['live_orders_enabled'] is False
           assert summary['can_create_buy'] is False
           assert summary['operational_status'] in {'SUCCESS','DEGRADED'}
@@ -66,6 +68,8 @@ jobs:
           ):
               assert (root/relative).exists(), relative
           ranking=pd.read_csv(root/'outputs/ipo_radar/IPO_RANKING.csv')
+          history=pd.read_csv(root/'state/ipo_radar/IPO_HISTORY.csv')
+          assert {'identity_key','candidate_id','decision','live_order_allowed'}.issubset(history.columns)
           if not ranking.empty:
               assert not ranking['live_order_allowed'].astype(bool).any()
               assert set(ranking['decision']).issubset({
@@ -78,6 +82,7 @@ jobs:
               'decision_counts':summary['decision_counts'],
               'source_status':summary['source_status'],
               'sec_prospectus_enriched_count':summary['sec_prospectus_enriched_count'],
+              'runtime_layer':summary['runtime_layer'],
           },ensure_ascii=False,indent=2))
           PY
       - name: Upload IPO smoke evidence
