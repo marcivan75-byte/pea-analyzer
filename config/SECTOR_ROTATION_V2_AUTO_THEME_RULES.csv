@@ -15,21 +15,21 @@ ASSET_MGMT;industry_yf;Asset Management;contains;95;DIRECT_INDUSTRY;Direct asset
 BIOTECH;industry_yf;Biotechnology;contains;95;DIRECT_INDUSTRY;Direct biotechnology industry
 PHARMA;industry_yf;Drug Manufacturers;contains;95;DIRECT_INDUSTRY;Direct drug manufacturer industries
 MEDTECH;industry_yf;Medical Devices;contains;95;DIRECT_INDUSTRY;Direct medical-device industry
-MEDTECH;industry_yf;Diagnostics & Research;contains;90;DIRECT_INDUSTRY;Diagnostics and research mapped to medtech/diagnostics
+MEDTECH;industry_yf;Diagnostics & Research;contains;90;DIRECT_INDUSTRY;Diagnostics and research mapped to medtech diagnostics
 LUXURY;industry_yf;Luxury Goods;contains;95;DIRECT_INDUSTRY;Direct luxury-goods industry
 AUTOMOTIVE;industry_yf;Auto Manufacturers;contains;95;DIRECT_INDUSTRY;Direct auto manufacturer industry
 AUTO_PARTS;industry_yf;Auto Parts;contains;95;DIRECT_INDUSTRY;Direct auto-parts industry
 COPPER;industry_yf;Copper;contains;95;DIRECT_INDUSTRY;Direct copper-mining industry
 GOLD;industry_yf;Gold;contains;95;DIRECT_INDUSTRY;Direct gold-mining industry
 SILVER;industry_yf;Silver;contains;95;DIRECT_INDUSTRY;Direct silver-mining industry
-CONSTRUCTION;industry_yf;Engineering & Construction;contains;90;DIRECT_INDUSTRY;Direct engineering/construction industry
-CONSTRUCTION;industry_yf;Building Products & Equipment;contains;85;DIRECT_INDUSTRY;Construction equipment/products
+CONSTRUCTION;industry_yf;Engineering & Construction;contains;90;DIRECT_INDUSTRY;Direct engineering and construction industry
+CONSTRUCTION;industry_yf;Building Products & Equipment;contains;85;DIRECT_INDUSTRY;Construction equipment and products
 TRAVEL;industry_yf;Travel Services;contains;90;DIRECT_INDUSTRY;Direct travel-services industry
 TRAVEL;industry_yf;Lodging;contains;85;DIRECT_INDUSTRY;Hospitality exposure
 TRAVEL;industry_yf;Airlines;contains;85;DIRECT_INDUSTRY;Air-travel exposure
 TELECOM;industry_yf;Telecom Services;contains;95;DIRECT_INDUSTRY;Direct telecom industry
-ELECTRIFICATION;industry_yf;Electrical Equipment & Parts;contains;85;DIRECT_INDUSTRY;Broad electrification tag, not automatically grid-specific
-BATTERIES;industry_yf;Electrical Equipment & Parts;contains;60;LOW_CONFIDENCE_DISABLED;Too broad for battery exposure; retained as explicit non-active hypothesis
+ELECTRIFICATION;industry_yf;Electrical Equipment & Parts;contains;85;DIRECT_INDUSTRY;Broad electrification tag not automatically grid-specific
+BATTERIES;industry_yf;Electrical Equipment & Parts;contains;60;LOW_CONFIDENCE_DISABLED;Too broad for battery exposure retained as explicit non-active hypothesis
 AI;industry_yf;Software;contains;40;LOW_CONFIDENCE_DISABLED;Software label alone is insufficient evidence of AI exposure
 DATA_CENTERS;industry_yf;Information Technology Services;contains;40;LOW_CONFIDENCE_DISABLED;IT services label alone is insufficient evidence of data-center exposure
 GRID;industry_yf;Electrical Equipment & Parts;contains;55;LOW_CONFIDENCE_DISABLED;Electrical equipment alone is insufficient for grid-specific exposure
