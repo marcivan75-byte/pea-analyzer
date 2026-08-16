@@ -61,7 +61,7 @@ def _basket_metrics(
         close = close_by_ticker.get(ticker)
         if close is None or close.empty:
             continue
-        start_idx = int(close.index.searchsorted(as_of, side="left"))
+        start_idx = int(close.index.searchsorted(as_of, side="right"))
         end_idx = start_idx + horizon
         if start_idx >= len(close) or end_idx >= len(close):
             continue
