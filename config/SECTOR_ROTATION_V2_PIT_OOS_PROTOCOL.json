@@ -5,14 +5,8 @@
   "primary_horizon_days": 60,
   "secondary_horizons_days": [20, 120],
   "periods": {
-    "VALIDATION_OOS": {
-      "start": "2026-09-01",
-      "end": "2026-12-31"
-    },
-    "DIAGNOSTIC_OOS": {
-      "start": "2027-01-01",
-      "end": "2027-04-30"
-    },
+    "VALIDATION_OOS": {"start": "2026-09-01", "end": "2026-12-31"},
+    "DIAGNOSTIC_OOS": {"start": "2027-01-01", "end": "2027-04-30"},
     "final_holdout_start": "2027-05-01"
   },
   "eligibility": {
@@ -42,6 +36,12 @@
     "minimum_return_risk_separation_pp": 1.0,
     "minimum_mae_risk_separation_pp": 1.5,
     "separation_logic": "RETURN_OR_MAE"
+  },
+  "outcomes": {
+    "minimum_constituent_price_coverage": 0.7,
+    "minimum_constituents": 3,
+    "price_source": "YFINANCE_AUTO_ADJUSTED_OHLCV_CACHE",
+    "basket_method": "FROZEN_CONSTITUENTS_EQUAL_WEIGHT_BY_TRADING_SESSION_OFFSET"
   },
   "governance": {
     "final_holdout_locked": true,
