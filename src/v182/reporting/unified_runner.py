@@ -7,13 +7,14 @@ import logging
 import os
 
 from v182.reporting import run as enrichment_run
-from v182.reporting import etf_structure_refresh, etf_mt_v2081_run, committee_master_v21_4, committee_performance_v21_4, sector_rotation_v2_shadow_run
-from v182.decision import gold_v1_1, ipo_radar_v1
+from v182.reporting import etf_structure_refresh, etf_mt_v2081_run, committee_master_v21_4, committee_performance_v21_4, sector_rotation_v2_shadow_run, ipo_dd_gaps_run
+from v182.decision import gold_v1_1, ipo_outcomes_v1
+from v182.decision import ipo_radar_operational_v1_1 as ipo_radar_v1
 
 logger=logging.getLogger(__name__)
 ROOT=Path(__file__).resolve().parents[3]
 SOFTWARE_VERSION="21.7.0"
-PROCESS_VERSION="UNIFIED_V21_7_0_SECTOR_ROTATION_V2_SHADOW"
+PROCESS_VERSION="UNIFIED_V21_7_0_SECTOR_ROTATION_V2_IPO_V1_1_SHADOW"
 
 
 def _safe_step(name:str,func)->dict:
@@ -30,12 +31,10 @@ def _skip_dependency(reason:str)->dict:
 
 
 def _exit_code(payload:dict)->int:
-    """Scheduled/CLI runs must fail visibly when the full process is not complete."""
     return 0 if payload.get("status")=="SUCCESS" else 1
 
 
 def run(root:Path=ROOT)->dict:
-    """V21.7.0 runtime: full governed process plus isolated Sector Rotation V2 shadow."""
     outdir=root/"outputs"/"unified"; outdir.mkdir(parents=True,exist_ok=True); run_id=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
     steps={}
     steps["refresh"]=_safe_step("refresh",enrichment_run.run)
@@ -43,6 +42,12 @@ def run(root:Path=ROOT)->dict:
     steps["etf_mt"]=_safe_step("etf_mt",etf_mt_v2081_run.run)
     steps["gold"]=_safe_step("gold",lambda:gold_v1_1.run(root,os.environ.get("FRED_API_KEY")))
     steps["ipo_radar"]=_safe_step("ipo_radar",lambda:ipo_radar_v1.run(root))
+    if steps["ipo_radar"]["status"]=="SUCCESS":
+        steps["ipo_dd_gaps"]=_safe_step("ipo_dd_gaps",lambda:ipo_dd_gaps_run.run(root))
+        steps["ipo_outcomes"]=_safe_step("ipo_outcomes",lambda:ipo_outcomes_v1.run(root))
+    else:
+        steps["ipo_dd_gaps"]=_skip_dependency("Requires SUCCESS current IPO Radar ranking before due-diligence worklist generation.")
+        steps["ipo_outcomes"]=_skip_dependency("Requires SUCCESS current IPO Radar snapshot before post-listing outcome attribution.")
     if steps["refresh"]["status"]=="SUCCESS":
         steps["sector_rotation_v2"]=_safe_step("sector_rotation_v2",lambda:sector_rotation_v2_shadow_run.run(root))
         steps["committee"]=_safe_step("committee",lambda:committee_master_v21_4.run(root))
@@ -54,10 +59,47 @@ def run(root:Path=ROOT)->dict:
     else:
         steps["performance"]=_skip_dependency("Requires SUCCESS refresh and SUCCESS current Committee; stale decisions are forbidden for virtual transactions.")
     outputs={
-        "decisions":"outputs/committee_master/COMMITTEE_DECISIONS.csv","sector_ranking":"outputs/committee_master/SECTOR_RANKING.csv","sector_ranking_challenger":"outputs/committee_master/SECTOR_RANKING_CHALLENGER_V21_4.csv","action_reference_vs_challenger":"outputs/committee_master/ACTION_REFERENCE_VS_CHALLENGER_V21_4.csv","criteria_coverage":"outputs/committee_master/CRITERIA_COVERAGE.csv","effective_weights":"outputs/committee_master/EFFECTIVE_WEIGHTS_100.xlsx","tct_baseline":"outputs/committee_master/TCT_BASELINE_V24_1_8.csv","tct_shadow":"outputs/committee_master/TCT_SHADOW_V24_1_7.csv","collection_audit_latest":"outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx","provenance":"state/provenance/OBSERVATION_PROVENANCE.csv","sector_rotation_v1":"outputs/V21_3_SECTOR_ROTATION.csv","sector_rotation_v2":"outputs/sector_rotation/V2_SECTOR_ROTATION_SHADOW.csv","sector_rotation_v2_audit":"outputs/audit/V2_SECTOR_ROTATION_SHADOW.json","sector_rotation_v2_history":"state/sector_rotation_v2/SECTOR_ROTATION_V2_HISTORY.csv","performance_workbook":"outputs/performance/COMMITTEE_BUY_PERFORMANCE.xlsx","etf_mt_ranking":"outputs/etf_mt_v2081/V20.8.1_ETF_MT_RANKING.csv","etf_mt_summary":"outputs/etf_mt_v2081/V20.8.1_ETF_MT_SUMMARY.json","gold_decision":"outputs/gold_v1_1/GOLD_V1_1_DECISION.json","gold_criteria":"outputs/gold_v1_1/GOLD_V1_1_CRITERIA.csv","gold_sources":"outputs/gold_v1_1/GOLD_V1_1_SOURCE_STATUS.csv","ipo_ranking":"outputs/ipo_radar/IPO_RANKING.csv","ipo_summary":"outputs/ipo_radar/IPO_SUMMARY.json","ipo_sources":"outputs/ipo_radar/IPO_SOURCE_STATUS.csv"
+        "decisions":"outputs/committee_master/COMMITTEE_DECISIONS.csv",
+        "sector_ranking":"outputs/committee_master/SECTOR_RANKING.csv",
+        "sector_ranking_challenger":"outputs/committee_master/SECTOR_RANKING_CHALLENGER_V21_4.csv",
+        "action_reference_vs_challenger":"outputs/committee_master/ACTION_REFERENCE_VS_CHALLENGER_V21_4.csv",
+        "criteria_coverage":"outputs/committee_master/CRITERIA_COVERAGE.csv",
+        "effective_weights":"outputs/committee_master/EFFECTIVE_WEIGHTS_100.xlsx",
+        "tct_baseline":"outputs/committee_master/TCT_BASELINE_V24_1_8.csv",
+        "tct_shadow":"outputs/committee_master/TCT_SHADOW_V24_1_7.csv",
+        "collection_audit_latest":"outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx",
+        "provenance":"state/provenance/OBSERVATION_PROVENANCE.csv",
+        "sector_rotation_v1":"outputs/V21_3_SECTOR_ROTATION.csv",
+        "sector_rotation_v2":"outputs/sector_rotation/V2_SECTOR_ROTATION_SHADOW.csv",
+        "sector_rotation_v2_audit":"outputs/audit/V2_SECTOR_ROTATION_SHADOW.json",
+        "sector_rotation_v2_history":"state/sector_rotation_v2/SECTOR_ROTATION_V2_HISTORY.csv",
+        "performance_workbook":"outputs/performance/COMMITTEE_BUY_PERFORMANCE.xlsx",
+        "etf_mt_ranking":"outputs/etf_mt_v2081/V20.8.1_ETF_MT_RANKING.csv",
+        "etf_mt_summary":"outputs/etf_mt_v2081/V20.8.1_ETF_MT_SUMMARY.json",
+        "gold_decision":"outputs/gold_v1_1/GOLD_V1_1_DECISION.json",
+        "gold_criteria":"outputs/gold_v1_1/GOLD_V1_1_CRITERIA.csv",
+        "gold_sources":"outputs/gold_v1_1/GOLD_V1_1_SOURCE_STATUS.csv",
+        "ipo_ranking":"outputs/ipo_radar/IPO_RANKING.csv",
+        "ipo_summary":"outputs/ipo_radar/IPO_SUMMARY.json",
+        "ipo_sources":"outputs/ipo_radar/IPO_SOURCE_STATUS.csv",
+        "ipo_sec_dd":"outputs/ipo_radar/IPO_SEC_DD_STATUS.csv",
+        "ipo_alerts":"outputs/ipo_radar/IPO_ALERTS.csv",
+        "ipo_committee_brief":"outputs/ipo_radar/IPO_COMMITTEE_BRIEF.json",
+        "ipo_dd_gaps":"outputs/ipo_radar/IPO_DD_GAPS.csv",
+        "ipo_validation":"outputs/ipo_radar/IPO_VALIDATION_STATUS.json",
+        "ipo_outcomes":"state/ipo_radar/IPO_OUTCOMES.csv"
     }
     existing={k:v for k,v in outputs.items() if (root/v).exists()}; failed=[k for k,v in steps.items() if v["status"]=="FAILED"]; skipped=[k for k,v in steps.items() if v["status"].startswith("SKIPPED")]; overall="SUCCESS" if not failed and not skipped else "PARTIAL_SUCCESS"
-    decision_tracks={"actions_final":"V21.0 frozen-weight reference on current 1829 universe","actions_challenger":"V21.4 enriched shadow challenger","etf_mt_reference":"V20.8.1 exact 38-PIT core","etf_mt_challenger":"V20.8.2 missing-data dynamic shadow","tct":"V24.1.8 baseline + exact V24.1.7 T1/T2 shadow","gold":"V1.1 shadow","ipo":"IPO_RADAR_V1.0 shadow/advisory; no automatic BUY","sector_rotation":"V1 baseline + V2.0 multi-factor shadow; V2 decision influence = 0"}
+    decision_tracks={
+        "actions_final":"V21.0 frozen-weight reference on current 1829 universe",
+        "actions_challenger":"V21.4 enriched shadow challenger",
+        "etf_mt_reference":"V20.8.1 exact 38-PIT core",
+        "etf_mt_challenger":"V20.8.2 missing-data dynamic shadow",
+        "tct":"V24.1.8 baseline + exact V24.1.7 T1/T2 shadow",
+        "gold":"V1.1 shadow",
+        "ipo":"IPO_RADAR_V1.1 shadow/advisory + actionable DD worklist + forward outcome attribution; no automatic BUY",
+        "sector_rotation":"V1 baseline + V2.0 multi-factor shadow; V2 decision influence = 0"
+    }
     payload={
         "version":PROCESS_VERSION,"software_version":SOFTWARE_VERSION,"run_id":run_id,"generated_at_utc":datetime.now(timezone.utc).isoformat(),"status":overall,"live_orders_enabled":False,"steps":steps,"persisted_outputs":existing,"decision_tracks":decision_tracks,
         "governance":[
@@ -66,6 +108,7 @@ def run(root:Path=ROOT)->dict:
             "New/unvalidated Action factors, including 52-week overlays, remain challenger-only until dedicated PIT/OOS validation.",
             "Sector Rotation V2 is SHADOW_ONLY: it cannot change Action/ETF scores, create BUYs, create SELLs, or emit orders before dedicated PIT/OOS validation.",
             "Sector Rotation V2 explicitly separates rotation opportunity from valuation/correction risk and publishes PROMISING_BUT_OVERVALUED / NO_CHASE warnings.",
+            "IPO Radar V1.1 discovers IPOs through redundant calendars, publishes candidate-specific missing-criterion due-diligence actions, preserves full PIT evidence and measures forward post-listing outcomes; it cannot create a BUY before dedicated PIT/OOS validation.",
             "Every collection publishes retained-value provenance plus missing/partial/available data.",
             "Per-field retained provenance governs evidence/freshness merge decisions and persists across runs.",
             "Dynamic available-criterion weights renormalize to 100% while minimum coverage gates remain active.",
@@ -74,7 +117,6 @@ def run(root:Path=ROOT)->dict:
             "A partial unified run returns a non-zero CLI exit code so GitHub cannot display false green success.",
             "T1/T2 are ACTION TCT only.",
             "ETF MT 90.91% historical OOS attribution belongs only to exact V20.8.1 38-PIT core.",
-            "IPO Radar V1.0 is discovery and due-diligence only; it cannot create a BUY before dedicated PIT/OOS validation.",
             "No real orders are emitted."
         ]
     }

@@ -1,79 +1,17 @@
 {
-  "version": "IPO_RADAR_V1.0",
+  "version": "IPO_RADAR_V1.1",
   "mode": "SHADOW_ADVISORY_ONLY",
   "lookahead_days": 180,
+  "sec_discovery_lookback_days": 45,
+  "sec_max_enrichments_per_run": 15,
+  "sec_user_agent_fallback": "PEA-Analyzer/1.1 marcivan75-byte@users.noreply.github.com",
   "minimum_scored_weight_pct": 60.0,
   "high_confidence_weight_pct": 75.0,
-  "net_score_weights": {
-    "opportunity": 0.60,
-    "risk_inverse": 0.40
-  },
-  "opportunity_weights": {
-    "revenue_growth": 14.0,
-    "gross_margin_quality": 8.0,
-    "operating_leverage": 7.0,
-    "market_growth": 8.0,
-    "competitive_moat": 8.0,
-    "balance_sheet_post_ipo": 8.0,
-    "use_of_proceeds_quality": 7.0,
-    "valuation_vs_peers": 14.0,
-    "bookbuilding_demand": 8.0,
-    "insider_alignment": 6.0,
-    "underwriter_quality": 5.0,
-    "float_liquidity": 7.0
-  },
-  "risk_weights": {
-    "loss_cash_burn": 14.0,
-    "valuation": 13.0,
-    "dilution_secondary": 10.0,
-    "governance_dual_class": 9.0,
-    "lockup_overhang": 7.0,
-    "customer_concentration": 8.0,
-    "regulatory_legal": 8.0,
-    "execution_model": 8.0,
-    "cyclicality_macro": 6.0,
-    "accounting_controls": 7.0,
-    "small_float_liquidity": 6.0,
-    "deal_instability": 4.0
-  },
-  "decision_thresholds": {
-    "priority_dd": {
-      "net_min": 75.0,
-      "opportunity_min": 75.0,
-      "risk_max": 35.0,
-      "coverage_min": 75.0
-    },
-    "deep_dd": {
-      "net_min": 65.0,
-      "opportunity_min": 65.0,
-      "risk_max": 50.0,
-      "coverage_min": 65.0
-    },
-    "watch": {
-      "net_min": 55.0,
-      "risk_max": 65.0
-    },
-    "avoid_risk_min": 75.0
-  },
-  "hard_block_flags": [
-    "going_concern",
-    "auditor_qualification_material",
-    "fraud_or_accounting_restatement_unresolved",
-    "sanctions_or_listing_ineligibility",
-    "insufficient_12m_liquidity_post_offering"
-  ],
-  "source_priority": {
-    "SEC_EDGAR": 100,
-    "EURONEXT": 95,
-    "NASDAQ": 90,
-    "FINNHUB": 75
-  },
-  "governance": {
-    "live_orders_enabled": false,
-    "can_create_buy": false,
-    "promotion_requires_dedicated_pit_oos_backtest": true,
-    "missing_criteria_policy": "AVAILABLE_CRITERIA_RENORMALIZED_TO_100_PERCENT_WITH_MINIMUM_COVERAGE_GATE",
-    "pea_eligibility_policy": "NEVER_INFER_FINAL_ELIGIBILITY_FROM_LISTING_EXCHANGE_ONLY",
-    "t1_t2_forbidden": true
-  }
+  "net_score_weights": {"opportunity": 0.60, "risk_inverse": 0.40},
+  "opportunity_weights": {"revenue_growth": 14.0, "gross_margin_quality": 8.0, "operating_leverage": 7.0, "market_growth": 8.0, "competitive_moat": 8.0, "balance_sheet_post_ipo": 8.0, "use_of_proceeds_quality": 7.0, "valuation_vs_peers": 14.0, "bookbuilding_demand": 8.0, "insider_alignment": 6.0, "underwriter_quality": 5.0, "float_liquidity": 7.0},
+  "risk_weights": {"loss_cash_burn": 14.0, "valuation": 13.0, "dilution_secondary": 10.0, "governance_dual_class": 9.0, "lockup_overhang": 7.0, "customer_concentration": 8.0, "regulatory_legal": 8.0, "execution_model": 8.0, "cyclicality_macro": 6.0, "accounting_controls": 7.0, "small_float_liquidity": 6.0, "deal_instability": 4.0},
+  "decision_thresholds": {"priority_dd": {"net_min": 75.0, "opportunity_min": 75.0, "risk_max": 35.0, "coverage_min": 75.0, "market_readiness_min": 60.0}, "deep_dd": {"net_min": 65.0, "opportunity_min": 65.0, "risk_max": 50.0, "coverage_min": 65.0, "market_readiness_min": 50.0}, "watch": {"net_min": 55.0, "risk_max": 65.0}, "avoid_risk_min": 75.0},
+  "hard_block_flags": ["going_concern", "auditor_qualification_material", "fraud_or_accounting_restatement_unresolved", "sanctions_or_listing_ineligibility", "insufficient_12m_liquidity_post_offering"],
+  "source_priority": {"SEC_EDGAR": 100, "EURONEXT": 95, "NASDAQ": 90, "ALPHA_VANTAGE": 85, "FINNHUB": 75},
+  "governance": {"live_orders_enabled": false, "can_create_buy": false, "promotion_requires_dedicated_pit_oos_backtest": true, "missing_criteria_policy": "AVAILABLE_CRITERIA_RENORMALIZED_TO_100_PERCENT_WITH_MINIMUM_COVERAGE_GATE", "sec_text_scoring_policy": "DETERMINISTIC_CONSERVATIVE_HEURISTICS_WITH_EVIDENCE_FIELDS", "early_sec_filing_policy": "WATCH_ONLY_UNTIL_MARKET_READINESS_GATE", "pea_eligibility_policy": "NEVER_INFER_FINAL_ELIGIBILITY_FROM_LISTING_EXCHANGE_OR_ISIN_PREFIX_ONLY", "source_redundancy_policy": "NASDAQ_ALPHA_VANTAGE_FINNHUB_EURONEXT_WITH_SEC_DD_WHEN_REACHABLE", "t1_t2_forbidden": true}
 }
