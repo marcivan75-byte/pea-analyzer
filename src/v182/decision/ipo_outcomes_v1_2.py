@@ -214,6 +214,16 @@ def _decision_stats(frame: pd.DataFrame, return_col: str) -> dict[str, dict]:
     return output
 
 
+def _spearman_without_scipy(scores: pd.Series, returns: pd.Series) -> float | None:
+    sample = pd.DataFrame({"score": scores, "return": returns}).dropna()
+    if len(sample) < 10:
+        return None
+    score_rank = sample["score"].rank(method="average")
+    return_rank = sample["return"].rank(method="average")
+    value = score_rank.corr(return_rank)
+    return None if pd.isna(value) else round(float(value), 4)
+
+
 def validation_summary_v1_2(outcomes: pd.DataFrame, generated_at: str) -> dict:
     if outcomes.empty:
         return {
@@ -233,12 +243,7 @@ def validation_summary_v1_2(outcomes: pd.DataFrame, generated_at: str) -> dict:
     d20 = d20_offer.where(d20_offer.notna(), d20_first)
     d60 = d60_offer.where(d60_offer.notna(), d60_first)
     scores = _numeric_series(outcomes, "net_ipo_score_pre_listing")
-    corr = pd.DataFrame({"score": scores, "return": d20}).dropna()
-    spearman = None
-    if len(corr) >= 10:
-        value = corr["score"].corr(corr["return"], method="spearman")
-        if pd.notna(value):
-            spearman = round(float(value), 4)
+    spearman = _spearman_without_scipy(scores, d20)
     d20_count = int(d20.notna().sum())
     d60_count = int(d60.notna().sum())
     return {
