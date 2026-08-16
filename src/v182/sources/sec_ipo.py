@@ -12,14 +12,13 @@ import requests
 SEC_FORMS_DISCOVERY = {"S-1", "F-1"}
 SEC_FORMS_PROSPECTUS = {"S-1", "S-1/A", "F-1", "F-1/A", "424B4", "424B3"}
 SEC_FORM_PRIORITY = {"424B4": 6, "424B3": 5, "S-1/A": 4, "F-1/A": 4, "S-1": 3, "F-1": 3}
-
 TIER1_UNDERWRITERS = (
-    "goldman sachs", "morgan stanley", "j.p. morgan", "jp morgan", "bofa securities",
-    "bank of america securities", "citigroup", "barclays", "ubs securities", "deutsche bank securities",
+    "goldman sachs", "morgan stanley", "j.p. morgan", "jp morgan", "bofa securities", "bank of america securities",
+    "citigroup", "barclays", "ubs securities", "deutsche bank securities",
 )
 TIER2_UNDERWRITERS = (
-    "jefferies", "wells fargo securities", "rbc capital markets", "evercore isi", "piper sandler",
-    "william blair", "stifel", "needham", "canaccord genuity", "raymond james",
+    "jefferies", "wells fargo securities", "rbc capital markets", "evercore isi", "piper sandler", "william blair",
+    "stifel", "needham", "canaccord genuity", "raymond james",
 )
 
 
@@ -40,16 +39,14 @@ def _quarter(value: date) -> int:
     return (value.month - 1) // 3 + 1
 
 
-def _quarter_starts(start: date, end: date) -> list[tuple[int, int]]:
+def _quarters(start: date, end: date) -> list[tuple[int, int]]:
     result: list[tuple[int, int]] = []
-    year = start.year
-    quarter = _quarter(start)
+    year, quarter = start.year, _quarter(start)
     while (year, quarter) <= (end.year, _quarter(end)):
         result.append((year, quarter))
         quarter += 1
         if quarter > 4:
-            quarter = 1
-            year += 1
+            year, quarter = year + 1, 1
     return result
 
 
@@ -61,19 +58,20 @@ def parse_form_index(text: str, forms: set[str] | None = None) -> list[dict]:
         if len(parts) < 5:
             continue
         form, company, cik, filed, filename = parts[0], parts[1], parts[-3], parts[-2], parts[-1]
-        if form not in wanted or not cik.isdigit() or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", filed):
-            continue
-        rows.append({"form": form, "company": company.strip(), "cik": cik, "filed": filed, "filename": filename})
+        if form in wanted and cik.isdigit() and re.fullmatch(r"\d{4}-\d{2}-\d{2}", filed):
+            rows.append({"form": form, "company": company.strip(), "cik": cik, "filed": filed, "filename": filename})
     return rows
 
 
 def collect_recent_registrations(start: date, end: date, user_agent: str, timeout: int = 20) -> tuple[list[dict], dict]:
     rows: list[dict] = []
     errors: list[str] = []
-    for year, quarter in _quarter_starts(start, end):
-        url = f"https://www.sec.gov/Archives/edgar/full-index/{year}/QTR{quarter}/form.idx"
+    for year, quarter in _quarters(start, end):
         try:
-            response = requests.get(url, headers=_headers(user_agent, "www.sec.gov"), timeout=timeout)
+            response = requests.get(
+                f"https://www.sec.gov/Archives/edgar/full-index/{year}/QTR{quarter}/form.idx",
+                headers=_headers(user_agent, "www.sec.gov"), timeout=timeout,
+            )
             response.raise_for_status()
             rows.extend(parse_form_index(response.text))
         except Exception as exc:
@@ -96,15 +94,12 @@ def collect_listed_ciks(user_agent: str, timeout: int = 20) -> tuple[set[str], d
     try:
         response = requests.get(
             "https://www.sec.gov/files/company_tickers_exchange.json",
-            headers=_headers(user_agent, "www.sec.gov"),
-            timeout=timeout,
+            headers=_headers(user_agent, "www.sec.gov"), timeout=timeout,
         )
         response.raise_for_status()
         payload = response.json()
-        fields = payload.get("fields") or []
-        data = payload.get("data") or []
-        cik_index = fields.index("cik")
-        exchange_index = fields.index("exchange")
+        fields, data = payload.get("fields") or [], payload.get("data") or []
+        cik_index, exchange_index = fields.index("cik"), fields.index("exchange")
         listed = {str(int(row[cik_index])) for row in data if len(row) > exchange_index and str(row[exchange_index] or "").strip()}
         return listed, {"source": "SEC_LISTED_CIK", "status": "SUCCESS", "count": len(listed)}
     except Exception as exc:
@@ -113,42 +108,26 @@ def collect_listed_ciks(user_agent: str, timeout: int = 20) -> tuple[set[str], d
 
 def registration_candidates(rows: Iterable[dict], listed_ciks: set[str] | None = None) -> list[dict]:
     listed = listed_ciks or set()
-    candidates: list[dict] = []
+    result: list[dict] = []
     for row in rows:
         cik = str(int(row["cik"]))
         if cik in listed:
             continue
-        candidates.append(
-            {
-                "candidate_id": f"SEC:{cik}",
-                "identity_key": f"CIK:{cik}",
-                "name": row["company"],
-                "symbol": "",
-                "exchange": "SEC_PRIVATE",
-                "expected_date": "",
-                "status": "filed",
-                "price_range": "",
-                "price_low": None,
-                "price_high": None,
-                "price_mid": None,
-                "number_of_shares": None,
-                "offer_value": None,
-                "issuer_country": "",
-                "sources": "SEC_EDGAR",
-                "source_count": 1,
-                "sec_cik": cik,
-                "sec_initial_form": row["form"],
-                "sec_initial_filing_date": row["filed"],
-            }
-        )
-    return candidates
+        result.append({
+            "candidate_id": f"SEC:{cik}", "identity_key": f"CIK:{cik}", "name": row["company"], "symbol": "",
+            "exchange": "SEC_PRIVATE", "expected_date": "", "status": "filed", "price_range": "", "price_low": None,
+            "price_high": None, "price_mid": None, "number_of_shares": None, "offer_value": None, "issuer_country": "",
+            "sources": "SEC_EDGAR", "source_count": 1, "sec_cik": cik, "sec_initial_form": row["form"],
+            "sec_initial_filing_date": row["filed"],
+        })
+    return result
 
 
 def match_registration(candidate: dict, registrations: list[dict]) -> dict | None:
     cik = str(candidate.get("sec_cik") or "").strip()
     if cik:
         normalized = str(int(cik))
-        matches = [row for row in registrations if str(int(row.get("cik"))) == normalized]
+        matches = [row for row in registrations if str(int(row["cik"])) == normalized]
         return max(matches, key=lambda row: row["filed"]) if matches else None
     target = _norm_name(candidate.get("name"))
     if not target:
@@ -156,14 +135,8 @@ def match_registration(candidate: dict, registrations: list[dict]) -> dict | Non
     exact = [row for row in registrations if _norm_name(row.get("company")) == target]
     if exact:
         return max(exact, key=lambda row: row["filed"])
-    scored: list[tuple[float, dict]] = []
-    for row in registrations:
-        other = _norm_name(row.get("company"))
-        if not other:
-            continue
-        ratio = SequenceMatcher(None, target, other).ratio()
-        if ratio >= 0.94:
-            scored.append((ratio, row))
+    scored = [(SequenceMatcher(None, target, _norm_name(row.get("company"))).ratio(), row) for row in registrations]
+    scored = [item for item in scored if item[0] >= 0.94]
     if not scored:
         return None
     scored.sort(key=lambda item: (item[0], item[1]["filed"]), reverse=True)
@@ -174,15 +147,13 @@ def match_registration(candidate: dict, registrations: list[dict]) -> dict | Non
 
 def _recent_filing(submissions: dict) -> dict | None:
     recent = (submissions.get("filings") or {}).get("recent") or {}
-    forms = recent.get("form") or []
-    dates = recent.get("filingDate") or []
-    accessions = recent.get("accessionNumber") or []
-    docs = recent.get("primaryDocument") or []
-    candidates: list[dict] = []
-    for idx, form in enumerate(forms):
-        if form not in SEC_FORMS_PROSPECTUS or idx >= len(dates) or idx >= len(accessions) or idx >= len(docs):
-            continue
-        candidates.append({"form": form, "filing_date": dates[idx], "accession": accessions[idx], "primary_document": docs[idx]})
+    forms, dates = recent.get("form") or [], recent.get("filingDate") or []
+    accessions, docs = recent.get("accessionNumber") or [], recent.get("primaryDocument") or []
+    candidates = [
+        {"form": form, "filing_date": dates[idx], "accession": accessions[idx], "primary_document": docs[idx]}
+        for idx, form in enumerate(forms)
+        if form in SEC_FORMS_PROSPECTUS and idx < len(dates) and idx < len(accessions) and idx < len(docs)
+    ]
     if not candidates:
         return None
     candidates.sort(key=lambda row: (row["filing_date"], SEC_FORM_PRIORITY.get(row["form"], 0)), reverse=True)
@@ -208,8 +179,7 @@ def _snippet(text: str, anchor: str, length: int = 10000) -> str:
 def _lockup_days(text: str) -> int | None:
     lower = text.lower()
     for match in re.finditer(r"lock[- ]?up", lower):
-        sample = lower[match.start():match.start() + 1800]
-        values = [int(value) for value in re.findall(r"\b(\d{2,3})\s+days?\b", sample)]
+        values = [int(value) for value in re.findall(r"\b(\d{2,3})\s+days?\b", lower[match.start():match.start() + 1800])]
         plausible = [value for value in values if 30 <= value <= 730]
         if plausible:
             return max(plausible)
@@ -224,9 +194,7 @@ def _underwriter_score(text: str) -> tuple[float | None, list[str]]:
         return 90.0, tier1[:5]
     if tier2:
         return 75.0, tier2[:5]
-    if "underwriter" in lower or "underwriting" in lower:
-        return 55.0, []
-    return None, []
+    return (55.0, []) if "underwriter" in lower or "underwriting" in lower else (None, [])
 
 
 def _use_of_proceeds_score(text: str) -> float | None:
@@ -256,7 +224,6 @@ def prospectus_text_scores(text: str) -> dict:
     selling_secondary = any(term in lower for term in ("selling stockholders", "selling shareholders")) and any(term in lower for term in ("will not receive any proceeds", "we will not receive proceeds"))
     lockup_days = _lockup_days(text)
     underwriter_score, underwriters = _underwriter_score(text)
-    hard_flags = ["going_concern"] if going_concern else []
     return {
         "opportunity_use_of_proceeds_quality": _use_of_proceeds_score(text),
         "opportunity_underwriter_quality": underwriter_score,
@@ -267,15 +234,11 @@ def prospectus_text_scores(text: str) -> dict:
         "risk_regulatory_legal": 78.0 if regulatory_material else 25.0,
         "risk_accounting_controls": 85.0 if material_weakness else 22.0,
         "risk_dilution_secondary": 80.0 if selling_secondary else 45.0 if "dilution" in lower else None,
-        "hard_flags": "|".join(hard_flags),
-        "sec_lockup_days": lockup_days,
-        "sec_underwriters_detected": "|".join(underwriters),
-        "sec_flag_going_concern": going_concern,
-        "sec_flag_material_weakness": material_weakness,
-        "sec_flag_dual_class": dual_class,
-        "sec_flag_customer_concentration": customer_concentration,
-        "sec_flag_regulatory_material": regulatory_material,
-        "sec_flag_secondary_selling": selling_secondary,
+        "hard_flags": "going_concern" if going_concern else "",
+        "sec_lockup_days": lockup_days, "sec_underwriters_detected": "|".join(underwriters),
+        "sec_flag_going_concern": going_concern, "sec_flag_material_weakness": material_weakness,
+        "sec_flag_dual_class": dual_class, "sec_flag_customer_concentration": customer_concentration,
+        "sec_flag_regulatory_material": regulatory_material, "sec_flag_secondary_selling": selling_secondary,
     }
 
 
@@ -298,8 +261,7 @@ def _concept_units(companyfacts: dict, concepts: tuple[str, ...]) -> list[dict]:
 def _annual_values(companyfacts: dict, concepts: tuple[str, ...]) -> list[dict]:
     selected: dict[str, dict] = {}
     for item in _concept_units(companyfacts, concepts):
-        value = item.get("val")
-        end = item.get("end")
+        value, end = item.get("val"), item.get("end")
         if not isinstance(value, (int, float)) or not end:
             continue
         annual = item.get("fp") == "FY"
@@ -307,9 +269,9 @@ def _annual_values(companyfacts: dict, concepts: tuple[str, ...]) -> list[dict]:
         if start:
             try:
                 span = (date.fromisoformat(end) - date.fromisoformat(start)).days
-                annual = annual or 250 <= span <= 460
             except ValueError:
-                pass
+                continue
+            annual = annual or 250 <= span <= 460
         if not annual:
             continue
         prior = selected.get(end)
@@ -352,23 +314,14 @@ def financial_scores(companyfacts: dict) -> dict:
     assets = _latest_instant(companyfacts, ("Assets",))
     liabilities = _latest_instant(companyfacts, ("Liabilities",))
     result: dict[str, float | None] = {
-        "opportunity_revenue_growth": None,
-        "opportunity_gross_margin_quality": None,
-        "opportunity_operating_leverage": None,
-        "opportunity_balance_sheet_post_ipo": None,
-        "risk_loss_cash_burn": None,
-        "sec_revenue_growth_pct": None,
-        "sec_latest_revenue": float(revenue[-1]["val"]) if revenue else None,
-        "sec_latest_gross_margin_pct": None,
-        "sec_cash": cash,
-        "sec_assets": assets,
-        "sec_liabilities": liabilities,
-        "sec_cash_runway_years_pre_ipo": None,
+        "opportunity_revenue_growth": None, "opportunity_gross_margin_quality": None, "opportunity_operating_leverage": None,
+        "opportunity_balance_sheet_post_ipo": None, "risk_loss_cash_burn": None, "sec_revenue_growth_pct": None,
+        "sec_latest_revenue": float(revenue[-1]["val"]) if revenue else None, "sec_latest_gross_margin_pct": None,
+        "sec_cash": cash, "sec_assets": assets, "sec_liabilities": liabilities, "sec_cash_runway_years_pre_ipo": None,
     }
     if len(revenue) >= 2 and revenue[-2]["val"]:
         growth = (float(revenue[-1]["val"]) / float(revenue[-2]["val"]) - 1.0) * 100.0
-        result["sec_revenue_growth_pct"] = round(growth, 2)
-        result["opportunity_revenue_growth"] = _growth_score(growth)
+        result["sec_revenue_growth_pct"], result["opportunity_revenue_growth"] = round(growth, 2), _growth_score(growth)
     if revenue and gross and revenue[-1]["val"]:
         margin = float(gross[-1]["val"]) / float(revenue[-1]["val"]) * 100.0
         result["sec_latest_gross_margin_pct"] = round(margin, 2)
@@ -402,10 +355,13 @@ def enrich_candidate(candidate: dict, registration: dict, user_agent: str, timeo
     output["sec_cik"] = cik
     status = {"candidate_id": candidate.get("candidate_id"), "cik": cik, "status": "FAILED"}
     try:
-        submissions_url = f"https://data.sec.gov/submissions/CIK{int(cik):010d}.json"
-        response = requests.get(submissions_url, headers=_headers(user_agent), timeout=timeout)
+        response = requests.get(f"https://data.sec.gov/submissions/CIK{int(cik):010d}.json", headers=_headers(user_agent), timeout=timeout)
         response.raise_for_status()
-        filing = _recent_filing(response.json())
+        submissions = response.json()
+        output["sec_sic"] = submissions.get("sic")
+        output["sec_sic_description"] = submissions.get("sicDescription")
+        output["sec_state_of_incorporation"] = submissions.get("stateOfIncorporation")
+        filing = _recent_filing(submissions)
         if not filing:
             status.update({"status": "NO_PROSPECTUS", "detail": "No current S-1/F-1/424B prospectus"})
             return output, status
@@ -414,17 +370,9 @@ def enrich_candidate(candidate: dict, registration: dict, user_agent: str, timeo
         filing_response.raise_for_status()
         text = _clean_html(filing_response.text)
         output.update(prospectus_text_scores(text))
-        output.update({
-            "sec_form": filing["form"],
-            "sec_filing_date": filing["filing_date"],
-            "sec_accession": filing["accession"],
-            "sec_prospectus_url": url,
-            "sec_prospectus_chars": len(text),
-            "sec_analysis_status": "PROSPECTUS_PARSED",
-        })
+        output.update({"sec_form": filing["form"], "sec_filing_date": filing["filing_date"], "sec_accession": filing["accession"], "sec_prospectus_url": url, "sec_prospectus_chars": len(text), "sec_analysis_status": "PROSPECTUS_PARSED"})
         time.sleep(0.12)
-        facts_url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{int(cik):010d}.json"
-        facts_response = requests.get(facts_url, headers=_headers(user_agent), timeout=timeout)
+        facts_response = requests.get(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{int(cik):010d}.json", headers=_headers(user_agent), timeout=timeout)
         if facts_response.ok:
             output.update(financial_scores(facts_response.json()))
             output["sec_companyfacts_status"] = "SUCCESS"
