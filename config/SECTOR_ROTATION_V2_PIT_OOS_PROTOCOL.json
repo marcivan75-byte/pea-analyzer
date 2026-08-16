@@ -41,6 +41,7 @@
   "outcomes": {
     "minimum_constituent_price_coverage": 0.7,
     "minimum_constituents": 3,
+    "entry_rule": "FIRST_TRADING_SESSION_STRICTLY_AFTER_SIGNAL_DATE",
     "price_source": "YFINANCE_AUTO_ADJUSTED_OHLCV_CACHE",
     "basket_method": "FROZEN_CONSTITUENTS_EQUAL_WEIGHT_BY_TRADING_SESSION_OFFSET"
   },
@@ -53,6 +54,7 @@
     "promotion_requires_followup_final_holdout_protocol": true,
     "current_universe_reconstruction_not_promotion_eligible": true,
     "synthetic_tests_validate_code_only_not_economic_performance": true,
-    "model_version_drift_invalidates_mixed_evidence": true
+    "model_version_drift_invalidates_mixed_evidence": true,
+    "same_day_close_execution_forbidden": true
   }
 }
