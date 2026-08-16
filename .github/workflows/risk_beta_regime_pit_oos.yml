@@ -1,0 +1,92 @@
+name: Regime-aware beta risk PIT OOS validation
+
+on:
+  pull_request:
+    paths:
+      - "config/BETA_RISK_REGIME_PIT_OOS_PROTOCOL.json"
+      - "src/v182/backtest/risk_beta_regime_pit_oos.py"
+      - "tests/test_risk_beta_regime_pit_oos.py"
+      - ".github/workflows/risk_beta_regime_pit_oos.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: regime-beta-risk-pit-oos-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate-regime-beta-risk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+      - name: Compile and focused tests
+        run: |
+          python -m compileall -q src tests
+          ruff check src/v182/backtest/risk_beta_regime_pit_oos.py tests/test_risk_beta_regime_pit_oos.py
+          pytest -q tests/test_risk_beta_regime_pit_oos.py tests/test_beta_correlation_engine.py tests/test_risk_beta_pit_oos.py
+      - name: Prepare Action histories for common benchmark
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+          import yfinance as yf
+          root = Path('.')
+          src = root / 'inputs' / 'V18.2_PEA_ACTIONS_MASTER.csv'
+          frame = None
+          for sep in (';', ',', '\t'):
+              try:
+                  candidate = pd.read_csv(src, sep=sep, encoding='utf-8-sig', low_memory=False)
+                  if len(candidate.columns) > 1:
+                      frame = candidate
+                      break
+              except Exception:
+                  pass
+          if frame is None or 'yahoo_ticker' not in frame.columns:
+              raise RuntimeError('ACTION_INPUT_OR_YAHOO_TICKER_MISSING')
+          tickers = sorted({str(x).strip() for x in frame['yahoo_ticker'].dropna() if str(x).strip() and str(x).strip().lower() not in {'nan','none','<na>'}})
+          cache = root / 'data' / 'cache' / 'actions'
+          cache.mkdir(parents=True, exist_ok=True)
+          written = 0
+          for start in range(0, len(tickers), 200):
+              batch = tickers[start:start + 200]
+              try:
+                  data = yf.download(tickers=batch, period='max', interval='1d', group_by='ticker', auto_adjust=True, actions=False, threads=True, progress=False, timeout=30)
+              except Exception as exc:
+                  print(f'Batch {start} failed: {type(exc).__name__}: {exc}')
+                  continue
+              if data is None or data.empty:
+                  continue
+              data.to_parquet(cache / f'history_{start:05d}.parquet')
+              written += 1
+          print(f'Action history batch files written: {written}')
+          if written < 1:
+              raise RuntimeError('INSUFFICIENT_ACTION_HISTORY_FOR_COMMON_BENCHMARK')
+          PY
+      - name: Run locked regime-aware beta risk PIT OOS diagnostic
+        run: python -m v182.backtest.risk_beta_regime_pit_oos
+      - name: Show verdict
+        if: always()
+        run: |
+          if [ -f outputs/backtest/beta_risk_regime_pit_oos_2026_08_16/BETA_RISK_REGIME_PIT_OOS_SUMMARY.json ]; then
+            cat outputs/backtest/beta_risk_regime_pit_oos_2026_08_16/BETA_RISK_REGIME_PIT_OOS_SUMMARY.json
+          fi
+      - name: Upload regime beta risk results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regime-beta-risk-pit-oos-${{ github.run_id }}
+          path: outputs/backtest/beta_risk_regime_pit_oos_2026_08_16/
+          if-no-files-found: warn
+          retention-days: 30
