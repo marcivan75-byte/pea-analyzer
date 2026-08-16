@@ -8,7 +8,7 @@ import os
 
 from v182.reporting import run as enrichment_run
 from v182.reporting import etf_structure_refresh, etf_mt_v2081_run, committee_master_v21_4, committee_performance_v21_4
-from v182.decision import gold_v1_1, ipo_radar_v1
+from v182.decision import gold_v1_1, ipo_radar_v1, ipo_outcomes_v1
 
 logger=logging.getLogger(__name__)
 ROOT=Path(__file__).resolve().parents[3]
@@ -43,6 +43,10 @@ def run(root:Path=ROOT)->dict:
     steps["etf_mt"]=_safe_step("etf_mt",etf_mt_v2081_run.run)
     steps["gold"]=_safe_step("gold",lambda:gold_v1_1.run(root,os.environ.get("FRED_API_KEY")))
     steps["ipo_radar"]=_safe_step("ipo_radar",lambda:ipo_radar_v1.run(root))
+    if steps["ipo_radar"]["status"]=="SUCCESS":
+        steps["ipo_outcomes"]=_safe_step("ipo_outcomes",lambda:ipo_outcomes_v1.run(root))
+    else:
+        steps["ipo_outcomes"]=_skip_dependency("Requires SUCCESS current IPO Radar snapshot before post-listing outcome attribution.")
     if steps["refresh"]["status"]=="SUCCESS":
         steps["committee"]=_safe_step("committee",lambda:committee_master_v21_4.run(root))
     else:
@@ -74,7 +78,9 @@ def run(root:Path=ROOT)->dict:
         "ipo_sources":"outputs/ipo_radar/IPO_SOURCE_STATUS.csv",
         "ipo_sec_dd":"outputs/ipo_radar/IPO_SEC_DD_STATUS.csv",
         "ipo_alerts":"outputs/ipo_radar/IPO_ALERTS.csv",
-        "ipo_committee_brief":"outputs/ipo_radar/IPO_COMMITTEE_BRIEF.json"
+        "ipo_committee_brief":"outputs/ipo_radar/IPO_COMMITTEE_BRIEF.json",
+        "ipo_validation":"outputs/ipo_radar/IPO_VALIDATION_STATUS.json",
+        "ipo_outcomes":"state/ipo_radar/IPO_OUTCOMES.csv"
     }
     existing={k:v for k,v in outputs.items() if (root/v).exists()}; failed=[k for k,v in steps.items() if v["status"]=="FAILED"]; skipped=[k for k,v in steps.items() if v["status"].startswith("SKIPPED")]; overall="SUCCESS" if not failed and not skipped else "PARTIAL_SUCCESS"
     decision_tracks={
@@ -84,7 +90,7 @@ def run(root:Path=ROOT)->dict:
         "etf_mt_challenger":"V20.8.2 missing-data dynamic shadow",
         "tct":"V24.1.8 baseline + exact V24.1.7 T1/T2 shadow",
         "gold":"V1.1 shadow",
-        "ipo":"IPO_RADAR_V1.1 SEC-enriched shadow/advisory; no automatic BUY"
+        "ipo":"IPO_RADAR_V1.1 SEC-enriched shadow/advisory + forward outcome attribution; no automatic BUY"
     }
     payload={
         "version":PROCESS_VERSION,"software_version":SOFTWARE_VERSION,"run_id":run_id,"generated_at_utc":datetime.now(timezone.utc).isoformat(),"status":overall,"live_orders_enabled":False,"steps":steps,"persisted_outputs":existing,"decision_tracks":decision_tracks,
@@ -100,7 +106,7 @@ def run(root:Path=ROOT)->dict:
             "A partial unified run returns a non-zero CLI exit code so GitHub cannot display false green success.",
             "T1/T2 are ACTION TCT only.",
             "ETF MT 90.91% historical OOS attribution belongs only to exact V20.8.1 38-PIT core.",
-            "IPO Radar V1.1 can discover SEC S-1/F-1 filings early, parse prospectus risk evidence, and issue due-diligence alerts; it cannot create a BUY before dedicated PIT/OOS validation.",
+            "IPO Radar V1.1 can discover SEC S-1/F-1 filings early, parse prospectus risk evidence, issue due-diligence alerts, and measure forward post-listing outcomes; it cannot create a BUY before dedicated PIT/OOS validation.",
             "No real orders are emitted."
         ]
     }
