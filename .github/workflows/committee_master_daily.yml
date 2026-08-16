@@ -1,4 +1,4 @@
-name: Committee Master V21.7.3 + Sector Rotation V2 PIT/OOS Shadow
+name: Committee Master V21.7.4 + Sector Rotation V2 PIT/OOS + RISK V1.1
 
 on:
   workflow_dispatch:
@@ -108,6 +108,8 @@ jobs:
           ipo=json.loads(Path("config/IPO_RADAR_V1.json").read_text())
           sr=json.loads(Path("config/SECTOR_ROTATION_V2_SHADOW.json").read_text())
           srp=json.loads(Path("config/SECTOR_ROTATION_V2_PIT_OOS_PROTOCOL.json").read_text())
+          risk=json.loads(Path("config/BETA_CORRELATION_RISK_ENGINE.json").read_text())
+          risk_validation=json.loads(Path("config/BETA_RISK_ROBUST_VALIDATION_STATUS.json").read_text())
           assert a["criteria_count"] == 633 == integrity["actions"]["criteria_count"]
           assert integrity["actions"]["universe_count"] == 1829
           assert e["criteria_count"] == 268 == integrity["etf"]["criteria_count"]
@@ -157,7 +159,20 @@ jobs:
           assert srp["governance"]["no_threshold_retuning"] is True
           assert srp["governance"]["no_real_orders"] is True
           assert srp["governance"]["final_holdout_locked"] is True
-          print(f"V21.7.3 integrity OK: Actions 1829/633 (materialized identity-only={materialized.materialized_missing_count}), ETF 102/268, TCT, Gold, IPO Radar V1, Sector Rotation V2 PIT/OOS shadow, bias-safe virtual book")
+          assert risk["enabled"] is True
+          assert risk["benchmark"]["label"] == "PEA_ACTION_ROBUST_EQUAL_WEIGHT_PROXY_V2"
+          assert risk["benchmark"]["fail_closed"] is True
+          assert risk["governance"]["decision_influence"] == 0.0
+          assert risk["governance"]["score_influence"] == 0.0
+          assert risk["governance"]["sizing_execution_influence"] == 0.0
+          assert risk["governance"]["stop_loss_influence"] == 0.0
+          assert risk["governance"]["real_orders_enabled"] is False
+          assert risk_validation["status"] == "ROBUST_VALIDATED_CONTEXT_ONLY_KEEP_ALL_SIZING_SHADOW"
+          assert risk_validation["final_holdout_opened"] is False
+          assert risk_validation["production_policy"]["beta_only_position_sizing_promoted"] is False
+          assert risk_validation["production_policy"]["regime_v1_1_sizing_promoted"] is False
+          assert risk_validation["production_policy"]["regime_v1_2_sizing_promoted"] is False
+          print(f"V21.7.4 integrity OK: Actions 1829/633 (materialized identity-only={materialized.materialized_missing_count}), ETF 102/268, TCT, Gold, IPO Radar, Sector Rotation V2 PIT/OOS shadow, RISK V1.1 context-only, bias-safe virtual book")
           PY
       - name: Publish Action identity hydration worklist
         run: python -m v182.audit.identity_hydration
@@ -183,6 +198,16 @@ jobs:
         if: always()
         run: |
           if [ -f outputs/audit/V2_SECTOR_ROTATION_PIT_OOS_STATUS.json ]; then cat outputs/audit/V2_SECTOR_ROTATION_PIT_OOS_STATUS.json; fi
+      - name: Show RISK V1.1 audit
+        if: always()
+        run: |
+          if [ -f outputs/audit/BETA_CORRELATION_RISK_ENGINE.json ]; then cat outputs/audit/BETA_CORRELATION_RISK_ENGINE.json; fi
+      - name: Publish RISK V1.1 Android summary
+        if: always()
+        run: |
+          if [ -f outputs/mobile/RISK_V1_1_CONTROL_CENTER.md ]; then
+            cat outputs/mobile/RISK_V1_1_CONTROL_CENTER.md >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Show V21.4 performance summary
         if: always()
         run: |
@@ -223,11 +248,11 @@ jobs:
         with:
           path: state/committee_performance_v21_4/
           key: committee-performance-v214-${{ github.run_id }}
-      - name: Upload complete Committee V21.7.3 results
+      - name: Upload complete Committee V21.7.4 results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: committee-master-v21-7-3-${{ github.run_id }}
+          name: committee-master-v21-7-4-${{ github.run_id }}
           path: |
             outputs/unified/
             outputs/committee_master/
@@ -235,6 +260,8 @@ jobs:
             outputs/gold_v1_1/
             outputs/ipo_radar/
             outputs/sector_rotation/
+            outputs/risk/
+            outputs/mobile/
             outputs/data_audit/
             outputs/performance/
             outputs/audit/
