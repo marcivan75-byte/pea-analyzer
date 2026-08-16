@@ -1,10 +1,10 @@
 {
-  "version": "IPO_RADAR_V1.3",
+  "version": "IPO_RADAR_V1.4",
   "mode": "SHADOW_ADVISORY_ONLY",
   "lookahead_days": 180,
   "sec_discovery_lookback_days": 45,
   "sec_max_enrichments_per_run": 15,
-  "sec_user_agent_fallback": "PEA-Analyzer/1.3 marcivan75-byte@users.noreply.github.com",
+  "sec_user_agent_fallback": "PEA-Analyzer/1.4 marcivan75-byte@users.noreply.github.com",
   "minimum_scored_weight_pct": 60.0,
   "high_confidence_weight_pct": 75.0,
   "net_score_weights": {"opportunity": 0.60, "risk_inverse": 0.40},
@@ -35,12 +35,26 @@
     "peer_api_failure_policy": "LEAVE_CRITERION_MISSING_NO_PENALTY_NO_BONUS",
     "absolute_multiple_cannot_populate_peer_score": true
   },
+  "v1_4_euronext_regulated_news": {
+    "enabled": true,
+    "discovery": "GDELT_DOMAIN_FILTER_TO_LIVE_EURONEXT_COMPANY_NEWS",
+    "source_of_truth": "OFFICIAL_EURONEXT_COMPANY_NEWS_PAGE",
+    "timespan": "90d",
+    "maximum_pages_per_candidate": 8,
+    "fields": ["gross_proceeds_local", "offer_price_local", "new_shares", "issued_shares", "cornerstone_amount_local", "demand_signal", "primary_secondary_retail_flags", "management_commitment", "prospectus_or_information_document_references", "document_urls"],
+    "currency_policy": "PRESERVE_LOCAL_CURRENCY_NO_CROSS_CURRENCY_SCORING",
+    "score_influence": 0.0,
+    "decision_influence": 0.0,
+    "can_create_buy": false,
+    "promotion_requires_pit_oos": true
+  },
   "governance": {
     "live_orders_enabled": false,
     "can_create_buy": false,
     "promotion_requires_dedicated_pit_oos_backtest": true,
     "automatic_v1_2_criteria_shadow_until_pit_oos": true,
     "automatic_v1_3_peer_valuation_shadow_until_pit_oos": true,
+    "automatic_v1_4_euronext_news_shadow_until_pit_oos": true,
     "missing_criteria_policy": "AVAILABLE_CRITERIA_RENORMALIZED_TO_100_PERCENT_WITH_MINIMUM_COVERAGE_GATE",
     "sec_text_scoring_policy": "DETERMINISTIC_CONSERVATIVE_HEURISTICS_WITH_EVIDENCE_FIELDS",
     "sec_financial_scoring_policy": "INLINE_XBRL_PROSPECTUS_PREFERRED_COMPANYFACTS_FALLBACK",
@@ -48,8 +62,10 @@
     "pea_eligibility_policy": "NEVER_INFER_FINAL_ELIGIBILITY_FROM_LISTING_EXCHANGE_OR_ISIN_PREFIX_ONLY",
     "source_redundancy_policy": "NASDAQ_ALPHA_VANTAGE_FINNHUB_EURONEXT_WITH_SEC_DD_WHEN_REACHABLE",
     "euronext_detail_policy": "OFFICIAL_SHOWCASE_ONLY_NO_PEA_INFERENCE",
+    "euronext_regulated_news_policy": "OFFICIAL_FACTS_SHADOW_ONLY_NO_ACTIVE_SCORE",
     "peer_valuation_policy": "REAL_PEERS_SAME_BASIS_MIN_3_OTHERWISE_MISSING",
     "peer_data_failure_can_create_score": false,
+    "euronext_news_can_create_score": false,
     "t1_t2_forbidden": true
   }
 }
