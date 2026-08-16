@@ -39,8 +39,11 @@ def test_gap_worklist_prioritizes_high_weight_missing_criteria() -> None:
     result = frame.iloc[0]
     assert result["dd_status"] == "ACTION_REQUIRED"
     assert result["missing_criteria_count"] == 4
+    assert result["missing_weight_total_pct"] == 55.0
     assert result["priority_1_weight_pct"] == 14.0
     assert result["priority_1_criterion"] in {"revenue_growth", "valuation_vs_peers", "loss_cash_burn"}
+    assert isinstance(result["priority_1_action"], str) and result["priority_1_action"]
+    assert "VALUATION" in {result["priority_1_category"], result["priority_2_category"], result["priority_3_category"]}
     assert result["live_order_allowed"] == False
 
 
@@ -54,4 +57,5 @@ def test_complete_candidate_has_no_due_diligence_gap() -> None:
     frame = build_gap_worklist(pd.DataFrame([row]), config)
     assert frame.loc[0, "dd_status"] == "COMPLETE"
     assert frame.loc[0, "missing_criteria_count"] == 0
+    assert frame.loc[0, "missing_weight_total_pct"] == 0.0
     assert frame.loc[0, "all_required_actions"] == ""
