@@ -10,12 +10,12 @@ from v182.audit import criteria_study_governance
 from v182.reporting import run as enrichment_run
 from v182.reporting import cdc_refresh, etf_structure_refresh, etf_mt_v2081_run, committee_master_v21_4
 from v182.decision import gold_v1_1
-from v182.risk import entry_exit_governance_v21_8
+from v182.risk import beta_correlation_engine, entry_exit_governance_v21_8
 
 logger=logging.getLogger(__name__)
 ROOT=Path(__file__).resolve().parents[3]
 SOFTWARE_VERSION="21.8"
-PROCESS_VERSION="UNIFIED_V21_8_ENTRY_EXIT_CHALLENGER"
+PROCESS_VERSION="UNIFIED_V21_8_ENTRY_EXIT_CHALLENGER_RISK_V1_SHADOW"
 
 
 def _safe_step(name:str,func)->dict:
@@ -43,10 +43,11 @@ def _criteria_governance_gate(root: Path) -> dict:
 
 
 def run(root:Path=ROOT)->dict:
-    """V21.8 challenger runtime: selection -> entry gate -> HOLD/PROTECT/EXIT governance.
+    """V21.8 challenger runtime with beta/correlation context kept shadow-only.
 
-    Legacy fixed-stop execution and virtual performance execution are intentionally
-    not used until a new risk-sizing policy is independently validated.
+    Flow: scoring/committee -> beta context shadow -> entry/exit governance.
+    Legacy fixed-stop execution and virtual performance execution remain disabled
+    until a separately validated V21.8 risk-sizing policy exists.
     """
     outdir=root/"outputs"/"unified"; outdir.mkdir(parents=True,exist_ok=True); run_id=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
     steps={}
@@ -73,12 +74,12 @@ def run(root:Path=ROOT)->dict:
     else:
         steps["committee"]=_skip_dependency("Requires PASS criterion-study governance and SUCCESS refresh + CDC + ETF structure/rank stages.")
     if steps["committee"]["status"]=="SUCCESS":
+        steps["beta_correlation_risk"]=_safe_step("beta_correlation_risk",lambda:beta_correlation_engine.run(root))
         steps["entry_exit_governance"]=_safe_step("entry_exit_governance",lambda:entry_exit_governance_v21_8.run(root))
     else:
+        steps["beta_correlation_risk"]=_skip_dependency("Requires SUCCESS current Committee decisions before shadow risk context can be attached.")
         steps["entry_exit_governance"]=_skip_dependency("Requires SUCCESS current Committee decisions before V21.8 entry/exit governance.")
 
-    # Deliberate fail-closed governance: the legacy virtual portfolio sizes positions
-    # from fixed TCT/CT/MT/LT stops. Those assumptions are not valid V21.8 rules.
     steps["performance"]={
         "status":"SKIPPED_GOVERNANCE",
         "reason":"V21.8 disables legacy fixed-stop risk sizing and virtual execution until a separately validated sizing policy exists."
@@ -88,6 +89,10 @@ def run(root:Path=ROOT)->dict:
         "decisions":"outputs/committee_master/COMMITTEE_DECISIONS.csv",
         "entry_exit_challenger":"outputs/committee_master/V21_8_ENTRY_EXIT_CHALLENGER.csv",
         "entry_exit_audit":"outputs/audit/V21_8_ENTRY_EXIT_GOVERNANCE.json",
+        "beta_correlation_risk_rows":"outputs/risk/BETA_CORRELATION_RISK_ROWS.csv",
+        "portfolio_risk_summary":"outputs/risk/PORTFOLIO_RISK_SUMMARY.json",
+        "sector_beta_risk_overlay":"outputs/risk/SECTOR_BETA_RISK_OVERLAY.csv",
+        "beta_correlation_risk_audit":"outputs/audit/BETA_CORRELATION_RISK_ENGINE.json",
         "postselection_market_sheets":"outputs/committee_master/POSTSELECTION_MARKET_SHEETS.csv",
         "postselection_failures":"outputs/gaps/V21_6_3_POSTSELECTION_MARKET_SHEETS_FAILURES.csv",
         "sector_ranking":"outputs/committee_master/SECTOR_RANKING.csv",
@@ -119,7 +124,8 @@ def run(root:Path=ROOT)->dict:
         "etf_mt_reference":"V20.8.1 historical 38-dynamic-PIT sub-block only; not the full ETF/MT model",
         "etf_mt_entry_exit_challenger":"No fixed take-profit; no legacy fixed stop; profit giveback is context only",
         "tct":"V24.1.8 baseline + exact V24.1.7 T1/T2 shadow; T1/T2 ACTION TCT only",
-        "gold":"V1.1 shadow"
+        "gold":"V1.1 shadow",
+        "beta_correlation_risk":"RISK_V1.1 robust context-only shadow; validated sizing variants rejected, zero score/decision/sizing/exit influence"
     }
     payload={
         "version":PROCESS_VERSION,"software_version":SOFTWARE_VERSION,"run_id":run_id,"generated_at_utc":datetime.now(timezone.utc).isoformat(),"status":overall,"live_orders_enabled":False,"steps":steps,"persisted_outputs":existing,"decision_tracks":decision_tracks,
@@ -132,6 +138,8 @@ def run(root:Path=ROOT)->dict:
             "Legacy fixed-stop assumptions, including the historical ETF -18% protocol, are not operational V21.8 rules.",
             "No new hard stop is promoted. The 7% figure remains a research risk ceiling, not a blind liquidation rule.",
             "Emergency exit requires an explicit emergency-risk flag; gaps/slippage mean no realized-loss cap can be guaranteed.",
+            "Beta/correlation RISK_V1.1 remains context-only. Its validated sizing variants were rejected and it cannot mutate score, entry, exit, sizing or stop policy.",
+            "Risk stress scenarios are diagnostics, not forecasts or guaranteed caps of total portfolio loss.",
             "ETF full referential contains 268 criteria. The figure 38 denotes only the historical dynamic PIT MT sub-block and 90.91% attribution remains confined to that sub-block.",
             "T1/T2 are ACTION TCT only.",
             "Legacy virtual execution is disabled in this challenger until risk sizing no longer depends on invalidated fixed-stop assumptions.",

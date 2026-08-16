@@ -1,0 +1,44 @@
+name: V21.8 breach-state challenger study
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [agent/v21-6-3-cdc-postselection]
+    paths:
+      - ".github/workflows/v21_8_breach_state_runner.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  breach-state-v21-8:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - name: Checkout V21.8 challenger
+        uses: actions/checkout@v4
+        with:
+          ref: agent/v21-8-entry-exit-governance
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+      - name: Run V21.8 breach-state recovery study
+        run: python -m v182.backtest.etf_breach_state_study
+      - name: Show summary
+        if: always()
+        run: |
+          if [ -f outputs/research/etf_breach_state_2026_08_15/ETF_BREACH_STATE_SUMMARY.json ]; then
+            cat outputs/research/etf_breach_state_2026_08_15/ETF_BREACH_STATE_SUMMARY.json
+          fi
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v21-8-etf-breach-state-${{ github.run_id }}
+          path: outputs/research/etf_breach_state_2026_08_15/
+          if-no-files-found: warn
+          retention-days: 30

@@ -1,0 +1,49 @@
+name: V21.8 Action management improvement study
+
+on:
+  push:
+    branches: [agent/v21-6-3-cdc-postselection]
+    paths:
+      - ".github/workflows/v21_8_action_management_improvement.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  action-management:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - name: Checkout V21.8 challenger
+        uses: actions/checkout@v4
+        with:
+          ref: agent/v21-8-entry-exit-governance
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install project and test tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pytest
+          python -c "import pytest; print(pytest.__version__)"
+      - name: Focused tests
+        run: python -m pytest -q tests/test_action_management_v21_8.py tests/test_tct_exact_v24_1_7.py
+      - name: Run V21.8 action management study
+        run: python -m v182.backtest.action_management_v21_8
+      - name: Show outputs
+        if: always()
+        run: |
+          cat outputs/research/action_management_v21_8/SUMMARY.json || true
+          cat outputs/research/action_management_v21_8/TCT_EXACT_TIMING_AGGREGATES.csv || true
+          cat outputs/research/action_management_v21_8/CT_MT_PROFIT_PROTECTION_AGGREGATES.csv || true
+      - name: Upload study
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v21-8-action-management-${{ github.run_id }}
+          path: outputs/research/action_management_v21_8/
+          if-no-files-found: warn
+          retention-days: 30

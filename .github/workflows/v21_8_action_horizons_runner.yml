@@ -1,0 +1,48 @@
+name: V21.8 Action TCT CT MT entry-exit study
+
+on:
+  push:
+    branches: [agent/v21-6-3-cdc-postselection]
+    paths:
+      - ".github/workflows/v21_8_action_horizons_runner.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  action-horizons:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - name: Checkout V21.8 challenger
+        uses: actions/checkout@v4
+        with:
+          ref: agent/v21-8-entry-exit-governance
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install project and test tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pytest
+          python -c "import pytest; print('pytest', pytest.__version__)"
+      - name: Focused unit tests
+        run: python -m pytest -q tests/test_action_entry_exit_horizons_v21_8.py
+      - name: Run Action TCT CT MT trajectory study
+        run: python -m v182.backtest.action_entry_exit_horizons_v21_8
+      - name: Show summary and aggregates
+        if: always()
+        run: |
+          cat outputs/research/action_entry_exit_horizons_v21_8/SUMMARY.json || true
+          cat outputs/research/action_entry_exit_horizons_v21_8/ACTION_HORIZON_AGGREGATES.csv || true
+      - name: Upload Action horizon study
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v21-8-action-tct-ct-mt-${{ github.run_id }}
+          path: outputs/research/action_entry_exit_horizons_v21_8/
+          if-no-files-found: warn
+          retention-days: 30
