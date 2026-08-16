@@ -1,6 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 from datetime import datetime, timezone
+import json
 import pandas as pd
 import numpy as np
 
@@ -103,11 +104,19 @@ def wave4_info_actions(actions_df: pd.DataFrame, cfg: dict, top_n: int = 300) ->
 
 
 def wave5_consensus_finnhub(actions_df: pd.DataFrame, api_key: str, top_n: int = 300) -> tuple[list[dict], list[dict]]:
-    from v182.sources.finnhub_consensus import fetch_consensus
-    selected=actions_df.copy(); ticker_to_isin={t:i for t,i in zip(selected["yahoo_ticker"],selected["isin"]) if not is_missing(t)}; obs_raw,failures=fetch_consensus(list(ticker_to_isin),api_key); result=[]
+    from v182.sources.finnhub_consensus import fetch_consensus_cached
+    selected=actions_df.copy(); ticker_to_isin={t:i for t,i in zip(selected["yahoo_ticker"],selected["isin"]) if not is_missing(t)}
+    root=Path(__file__).resolve().parents[3]
+    cache_path=root/"state"/"provenance"/"source_cache"/"FINNHUB_CONSENSUS_V1.json"
+    obs_raw,failures,metrics=fetch_consensus_cached(list(ticker_to_isin),api_key,cache_path)
+    audit_path=root/"outputs"/"audit"/"FINNHUB_CONSENSUS_CACHE_V1.json"; audit_path.parent.mkdir(parents=True,exist_ok=True); audit_path.write_text(json.dumps(metrics,ensure_ascii=False,indent=2),encoding="utf-8")
+    result=[]
     for row in obs_raw:
         isin=ticker_to_isin.get(row["ticker"])
-        if isin is not None: result.append(_obs("ACTION",isin,row["field"],row["value"],"Finnhub","B"))
+        if isin is None: continue
+        fetched_at=str(row.get("fetched_at_utc") or NOW())
+        source="Finnhub" if row.get("cache_state")=="LIVE_REFRESH" else "Finnhub_CACHE"
+        result.append({"universe":"ACTION","isin":isin,"field":row["field"],"value":row["value"],"source":source,"collected_at":fetched_at,"as_of":fetched_at[:10],"evidence_level":"B","validation_status":"AUTO_MATCH"})
     return result,failures
 
 
