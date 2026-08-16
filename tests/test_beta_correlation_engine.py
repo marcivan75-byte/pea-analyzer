@@ -12,6 +12,22 @@ def _prices(returns: pd.Series, start: float = 100.0) -> pd.Series:
     return start * (1.0 + returns).cumprod()
 
 
+def test_repository_risk_config_is_strict_shadow():
+    root = Path(__file__).resolve().parents[1]
+    cfg = json.loads((root / "config" / "BETA_CORRELATION_RISK_ENGINE.json").read_text(encoding="utf-8"))
+    governance = cfg["governance"]
+    assert cfg["enabled"] is True
+    assert governance["decision_influence"] == 0.0
+    assert governance["score_influence"] == 0.0
+    assert governance["sizing_execution_influence"] == 0.0
+    assert governance["stop_loss_influence"] == 0.0
+    assert governance["positive_signal_can_create_buy"] is False
+    assert governance["negative_signal_can_force_sell"] is False
+    assert governance["stop_loss_formula_link_forbidden"] is True
+    assert governance["promotion_requirement"] == "DEDICATED_PIT_OOS_MARGINAL_UPLIFT"
+    assert governance["real_orders_enabled"] is False
+
+
 def test_beta_exact_linear_relationship():
     idx = pd.date_range("2024-01-01", periods=320, freq="B")
     rng = np.random.default_rng(7)
