@@ -5,8 +5,17 @@ on:
     paths:
       - "config/IPO_RADAR_V1.json"
       - "src/v182/decision/ipo_*.py"
-      - "src/v182/sources/sec_ipo.py"
+      - "src/v182/sources/sec_ipo*.py"
+      - "src/v182/sources/__init__.py"
       - "tests/test_ipo_*.py"
+      - ".github/workflows/ipo_radar_v1_1_smoke.yml"
+  push:
+    branches: [main]
+    paths:
+      - "config/IPO_RADAR_V1.json"
+      - "src/v182/decision/ipo_*.py"
+      - "src/v182/sources/sec_ipo*.py"
+      - "src/v182/sources/__init__.py"
       - ".github/workflows/ipo_radar_v1_1_smoke.yml"
   workflow_dispatch:
 
@@ -19,7 +28,7 @@ jobs:
     timeout-minutes: 12
     env:
       PYTHONUNBUFFERED: "1"
-      SEC_USER_AGENT: "PEA-Analyzer/1.1 marcivan75-byte@users.noreply.github.com"
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
