@@ -45,6 +45,16 @@
     "multi_tag": true,
     "purpose": "DETECT_NOMINAL_DIVERSIFICATION_WITH_SHARED_MACRO_DRIVERS"
   },
+  "economic_validation": {
+    "status": "VALIDATED_KEEP_SHADOW",
+    "beta_only_position_sizing": "REJECTED_KEEP_SHADOW",
+    "protocol": "BETA_RISK_PIT_OOS_V1_0_2026_08_16",
+    "workflow_run_id": 31939903983,
+    "validated_at_utc": "2026-08-16T09:52:00Z",
+    "validation_status_file": "config/BETA_RISK_VALIDATION_STATUS.json",
+    "reason": "FAILED_EXPECTANCY_RETENTION_AND_RISK_ADJUSTED_UPLIFT_IN_BOTH_OOS_PERIODS",
+    "post_result_threshold_tuning_forbidden": true
+  },
   "governance": {
     "decision_influence": 0.0,
     "score_influence": 0.0,
@@ -53,7 +63,7 @@
     "positive_signal_can_create_buy": false,
     "negative_signal_can_force_sell": false,
     "stop_loss_formula_link_forbidden": true,
-    "promotion_requirement": "DEDICATED_PIT_OOS_MARGINAL_UPLIFT",
+    "promotion_requirement": "NEW_PRE_REGISTERED_DEDICATED_PIT_OOS_MARGINAL_UPLIFT_FOR_ANY_FUTURE_HYPOTHESIS",
     "minimum_promotion_metrics": [
       "expectancy",
       "max_drawdown",

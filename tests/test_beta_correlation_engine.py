@@ -16,7 +16,12 @@ def test_repository_risk_config_is_strict_shadow():
     root = Path(__file__).resolve().parents[1]
     cfg = json.loads((root / "config" / "BETA_CORRELATION_RISK_ENGINE.json").read_text(encoding="utf-8"))
     governance = cfg["governance"]
+    validation = cfg["economic_validation"]
     assert cfg["enabled"] is True
+    assert validation["status"] == "VALIDATED_KEEP_SHADOW"
+    assert validation["beta_only_position_sizing"] == "REJECTED_KEEP_SHADOW"
+    assert validation["workflow_run_id"] == 31939903983
+    assert validation["post_result_threshold_tuning_forbidden"] is True
     assert governance["decision_influence"] == 0.0
     assert governance["score_influence"] == 0.0
     assert governance["sizing_execution_influence"] == 0.0
@@ -24,8 +29,27 @@ def test_repository_risk_config_is_strict_shadow():
     assert governance["positive_signal_can_create_buy"] is False
     assert governance["negative_signal_can_force_sell"] is False
     assert governance["stop_loss_formula_link_forbidden"] is True
-    assert governance["promotion_requirement"] == "DEDICATED_PIT_OOS_MARGINAL_UPLIFT"
+    assert governance["promotion_requirement"] == "NEW_PRE_REGISTERED_DEDICATED_PIT_OOS_MARGINAL_UPLIFT_FOR_ANY_FUTURE_HYPOTHESIS"
     assert governance["real_orders_enabled"] is False
+
+
+def test_validation_status_persists_negative_promotion_decision():
+    root = Path(__file__).resolve().parents[1]
+    status = json.loads((root / "config" / "BETA_RISK_VALIDATION_STATUS.json").read_text(encoding="utf-8"))
+    assert status["source_workflow_run_id"] == 31939903983
+    assert status["final_holdout_opened"] is False
+    assert status["verdict"] == "KEEP_BETA_SIZING_SHADOW"
+    assert status["validation_oos"]["pass"] is False
+    assert status["diagnostic_oos"]["pass"] is False
+    assert status["validation_oos"]["risk_adjusted_improvement"] < 0
+    assert status["validation_oos"]["expectancy_retention"] < 0.95
+    assert status["diagnostic_oos"]["beta_sized"]["expectancy"] < 0
+    assert status["production_policy"]["beta_only_position_sizing_promoted"] is False
+    assert status["production_policy"]["decision_influence"] == 0.0
+    assert status["production_policy"]["score_influence"] == 0.0
+    assert status["production_policy"]["sizing_execution_influence"] == 0.0
+    assert status["production_policy"]["stop_loss_influence"] == 0.0
+    assert status["production_policy"]["real_orders_enabled"] is False
 
 
 def test_beta_exact_linear_relationship():

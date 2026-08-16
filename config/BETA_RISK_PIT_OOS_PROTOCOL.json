@@ -1,0 +1,54 @@
+{
+  "version": "BETA_RISK_PIT_OOS_V1_0_2026_08_16",
+  "locked_before_results": true,
+  "scope": "ETF_MT_V20_8_1_38_DYNAMIC_PIT_CORE",
+  "final_holdout_opened": false,
+  "final_holdout_start": "2026-02-10",
+  "risk_features": [
+    "beta_63d",
+    "beta_126d",
+    "beta_252d",
+    "downside_beta_252d",
+    "upside_beta_252d",
+    "r2_252d",
+    "stress_correlation_252d",
+    "beta_stability_span"
+  ],
+  "tested_intervention": {
+    "name": "BETA_ONLY_POSITION_SIZING",
+    "formula": "clip(1/max(1, downside_beta_252d if available else beta_252d), 0.50, 1.00)",
+    "missing_feature_multiplier": 1.0,
+    "cash_return_assumption": 0.0,
+    "overlap_factor": false,
+    "sector_factor": false,
+    "score_filter": false,
+    "selection_changes": false,
+    "entry_exit_changes": false,
+    "stop_changes": false
+  },
+  "evaluation_periods": ["VALIDATION_OOS", "DIAGNOSTIC_OOS"],
+  "promotion_gates": {
+    "minimum_trades_each_oos_period": 8,
+    "minimum_beta_coverage": 0.80,
+    "minimum_risk_adjusted_improvement": 0.05,
+    "minimum_expectancy_retention": 0.95,
+    "require_p05_tail_improvement": true,
+    "require_sequence_max_drawdown_improvement": true,
+    "all_oos_periods_must_pass": true
+  },
+  "non_promotable_in_this_test": [
+    "score_or_decision_influence",
+    "stop_loss_influence",
+    "exact_holdings_overlap",
+    "economic_engine_overlap_sizing",
+    "sector_correction_overlay",
+    "action_full_model_sizing"
+  ],
+  "governance": {
+    "no_parameter_optimization_after_results": true,
+    "no_final_holdout_unlock": true,
+    "no_real_orders": true,
+    "diagnostic_not_certification": true,
+    "current_universe_survivorship_bias_disclosed": true
+  }
+}

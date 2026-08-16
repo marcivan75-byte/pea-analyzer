@@ -1,0 +1,87 @@
+{
+  "version": "BETA_RISK_VALIDATION_STATUS_V1_0_2026_08_16",
+  "validated_at_utc": "2026-08-16T09:52:00Z",
+  "source_workflow_run_id": 31939903983,
+  "source_head_sha": "a4b5a8d7b70b6bacc7bd9cc99565c689cbf58aa5",
+  "protocol": "BETA_RISK_PIT_OOS_V1_0_2026_08_16",
+  "scope": "ETF_MT_V20_8_1_38_DYNAMIC_PIT_CORE",
+  "final_holdout_start": "2026-02-10",
+  "final_holdout_opened": false,
+  "benchmark": {
+    "label": "PEA_ACTION_EQUAL_WEIGHT_PROXY",
+    "eligible_constituents": 1112,
+    "sessions": 10916
+  },
+  "sample": {
+    "raw_trades": 149,
+    "trades_after_single_position_guard": 118,
+    "overlapping_signals_blocked": 31,
+    "validation_oos_trades": 37,
+    "diagnostic_oos_trades": 19
+  },
+  "tested_intervention": {
+    "name": "BETA_ONLY_POSITION_SIZING",
+    "formula": "clip(1/max(1, downside_beta_252d if available else beta_252d), 0.50, 1.00)"
+  },
+  "validation_oos": {
+    "baseline": {
+      "win_rate": 0.918919,
+      "expectancy": 0.03719302,
+      "risk_adjusted_mean_std": 1.73550673,
+      "p05": -0.0174364,
+      "worst": -0.04167832,
+      "sequence_max_drawdown": -0.04167832
+    },
+    "beta_sized": {
+      "win_rate": 0.918919,
+      "expectancy": 0.03127455,
+      "risk_adjusted_mean_std": 1.62600264,
+      "p05": -0.0174052,
+      "worst": -0.0297111,
+      "sequence_max_drawdown": -0.03546221
+    },
+    "risk_adjusted_improvement": -0.063096,
+    "expectancy_retention": 0.840871,
+    "pass": false
+  },
+  "diagnostic_oos": {
+    "baseline": {
+      "win_rate": 0.842105,
+      "expectancy": 0.0045744,
+      "risk_adjusted_mean_std": 0.05247247,
+      "p05": -0.19240825,
+      "worst": -0.19462054,
+      "sequence_max_drawdown": -0.36938314
+    },
+    "beta_sized": {
+      "win_rate": 0.842105,
+      "expectancy": -0.00015379,
+      "risk_adjusted_mean_std": -0.00180518,
+      "p05": -0.19240825,
+      "worst": -0.19462054,
+      "sequence_max_drawdown": -0.36938314
+    },
+    "risk_adjusted_improvement": -1.034402,
+    "expectancy_retention": -0.03362,
+    "pass": false
+  },
+  "verdict": "KEEP_BETA_SIZING_SHADOW",
+  "production_policy": {
+    "risk_context_reporting_enabled": true,
+    "beta_only_position_sizing_promoted": false,
+    "decision_influence": 0.0,
+    "score_influence": 0.0,
+    "sizing_execution_influence": 0.0,
+    "stop_loss_influence": 0.0,
+    "positive_signal_can_create_buy": false,
+    "negative_signal_can_force_sell": false,
+    "real_orders_enabled": false
+  },
+  "interpretation": "Beta/downside-beta observability remains useful for warnings, diversification diagnostics and stress context. The pre-registered mechanical beta-only sizing rule failed both OOS promotion periods because expectancy and risk-adjusted performance deteriorated; it must not be activated or tuned post hoc.",
+  "limitations": [
+    "Current-universe survivorship bias remains in the equal-weight PEA Action benchmark and ETF universe.",
+    "This validates only the marginal beta-only sizing hypothesis on the historical ETF MT 38-dynamic-PIT core; it does not certify the 43-criterion composite or full 268-criterion referential.",
+    "Sequence max drawdown is based on trade outcomes in signal order, not a timestamped multi-position portfolio NAV.",
+    "Economic-engine overlap, exact ETF holdings overlap and sector correction sizing remain shadow because historical PIT snapshots are incomplete."
+  ]
+}
