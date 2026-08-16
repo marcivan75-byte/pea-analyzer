@@ -72,7 +72,7 @@ jobs:
               str(root / 'data' / 'cache' / 'actions'),
               period='max',
               interval='1d',
-              batch_size=30,
+              batch_size=100,
               auto_adjust=True,
               include_actions=False,
           )
