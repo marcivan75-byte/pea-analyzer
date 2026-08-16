@@ -11,8 +11,13 @@ from v182.sources import gdelt_news
 
 
 CURRENCY_PATTERN = r"(?:EUR|€|NOK|SEK|DKK|GBP|£|CHF|USD|\$)"
-AMOUNT_PATTERN = r"\d{1,3}(?:[ ,.]\d{3})*(?:[.,]\d+)?|\d+(?:[.,]\d+)?"
+AMOUNT_PATTERN = r"(?:\d{1,3}(?:[ ,]\d{3})+(?:[.,]\d+)?|\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:[.,]\d+)?)"
 COMPANY_NEWS_PATH = "/products/equities/company-news/"
+LISTVIEW_BASE = "https://live.euronext.com/en/listview/company-press-release/"
+IPO_NEWS_TERMS = (
+    "ipo", "listing", "offering", "placement", "prospectus", "information document",
+    "admission", "first day", "share capital", "new shares", "retail offering",
+)
 
 
 @dataclass(frozen=True)
@@ -60,13 +65,7 @@ def _scaled_money(amount: float | None, suffix: str) -> float | None:
 
 
 def _money_near(text: str, labels: tuple[str, ...], radius: int = 120) -> MoneyEvidence:
-    """Return the monetary expression closest to an explicit semantic label.
-
-    Long Euronext sentences often contain both an offer price and total proceeds.
-    Selecting the first money token in a broad regex can therefore bind NOK 7/share
-    to 'gross proceeds'. We instead rank currency/amount expressions by character
-    distance to each target label inside a bounded local window.
-    """
+    """Return the monetary expression closest to an explicit semantic label."""
     money_patterns = (
         (re.compile(rf"({CURRENCY_PATTERN})\s*({AMOUNT_PATTERN})\s*(bn|billion|m|mn|million|k|thousand)?", re.I), "currency_first"),
         (re.compile(rf"({AMOUNT_PATTERN})\s*(bn|billion|m|mn|million|k|thousand)?\s*({CURRENCY_PATTERN})", re.I), "amount_first"),
@@ -182,6 +181,36 @@ def parse_regulated_news(html: str, url: str = "") -> dict:
     }
 
 
+def _official_listview_urls(isin: object, timeout: int = 15) -> tuple[list[str], str | None, str]:
+    isin_text = str(isin or "").strip().upper()
+    if len(isin_text) < 8:
+        return [], "INVALID_OR_MISSING_ISIN", ""
+    listview_url = f"{LISTVIEW_BASE}{isin_text}"
+    try:
+        response = requests.get(
+            listview_url,
+            headers={"User-Agent": "PEA-Analyzer-IPO-Radar/1.4"},
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "lxml")
+        relevant: list[str] = []
+        for anchor in soup.find_all("a", href=True):
+            href = str(anchor.get("href") or "").strip()
+            if COMPANY_NEWS_PATH not in href:
+                continue
+            text = anchor.get_text(" ", strip=True).lower()
+            combined = f"{text} {href.lower()}"
+            if not any(term in combined for term in IPO_NEWS_TERMS):
+                continue
+            absolute = urljoin(listview_url, href)
+            if absolute not in relevant:
+                relevant.append(absolute)
+        return relevant[:12], None, listview_url
+    except Exception as exc:
+        return [], f"{type(exc).__name__}: {str(exc)[:160]}", listview_url
+
+
 def _article_urls(name: object, *, timespan: str = "90d", max_records: int = 30) -> tuple[list[str], str | None]:
     safe = gdelt_news.safe_query_text(name, max_len=100)
     if len(safe) < 3:
@@ -204,9 +233,26 @@ def enrich_candidate(candidate: dict, timeout: int = 15) -> dict:
     source_text = str(candidate.get("source") or candidate.get("sources") or "").upper()
     if "EURONEXT" not in source_text:
         return candidate
-    urls, discovery_error = _article_urls(candidate.get("name"))
-    candidate["euronext_news_discovery_status"] = "FAILED" if discovery_error and not urls else ("SUCCESS" if urls else "NO_MATCH")
-    candidate["euronext_news_discovery_error"] = discovery_error or ""
+
+    direct_urls, direct_error, listview_url = _official_listview_urls(candidate.get("isin"), timeout=timeout)
+    fallback_error = None
+    if direct_urls:
+        urls = direct_urls
+        discovery_status = "DIRECT_SUCCESS"
+        discovery_method = "EURONEXT_ISIN_LISTVIEW"
+    else:
+        fallback_urls, fallback_error = _article_urls(candidate.get("name"))
+        urls = fallback_urls
+        discovery_status = "GDELT_FALLBACK_SUCCESS" if fallback_urls else (
+            "FAILED" if direct_error and fallback_error else "NO_MATCH"
+        )
+        discovery_method = "GDELT_FALLBACK" if fallback_urls else "NONE"
+
+    candidate["euronext_news_discovery_status"] = discovery_status
+    candidate["euronext_news_discovery_method"] = discovery_method
+    candidate["euronext_news_listview_url"] = listview_url
+    candidate["euronext_news_direct_error"] = direct_error or ""
+    candidate["euronext_news_discovery_error"] = fallback_error or ""
     candidate["euronext_news_count"] = len(urls)
     candidate["euronext_news_urls"] = "|".join(urls)
     parsed: list[dict] = []
