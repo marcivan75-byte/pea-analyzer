@@ -24,11 +24,7 @@ class MoneyEvidence:
 
 def _norm_currency(value: str) -> str:
     upper = value.upper().strip()
-    return {
-        "€": "EUR",
-        "£": "GBP",
-        "$": "USD",
-    }.get(upper, upper)
+    return {"€": "EUR", "£": "GBP", "$": "USD"}.get(upper, upper)
 
 
 def _number(value: str) -> float | None:
@@ -63,25 +59,55 @@ def _scaled_money(amount: float | None, suffix: str) -> float | None:
     return amount
 
 
-def _money_near(text: str, labels: tuple[str, ...]) -> MoneyEvidence:
+def _money_near(text: str, labels: tuple[str, ...], radius: int = 120) -> MoneyEvidence:
+    """Return the monetary expression closest to an explicit semantic label.
+
+    Long Euronext sentences often contain both an offer price and total proceeds.
+    Selecting the first money token in a broad regex can therefore bind NOK 7/share
+    to 'gross proceeds'. We instead rank currency/amount expressions by character
+    distance to each target label inside a bounded local window.
+    """
+    money_patterns = (
+        (re.compile(rf"({CURRENCY_PATTERN})\s*({AMOUNT_PATTERN})\s*(bn|billion|m|mn|million|k|thousand)?", re.I), "currency_first"),
+        (re.compile(rf"({AMOUNT_PATTERN})\s*(bn|billion|m|mn|million|k|thousand)?\s*({CURRENCY_PATTERN})", re.I), "amount_first"),
+    )
+    best: tuple[int, MoneyEvidence] | None = None
     for label in labels:
-        label_re = re.escape(label)
-        patterns = (
-            rf"{label_re}.{{0,90}}?({CURRENCY_PATTERN})\s*({AMOUNT_PATTERN})\s*(bn|billion|m|mn|million|k|thousand)?",
-            rf"{label_re}.{{0,90}}?({AMOUNT_PATTERN})\s*(bn|billion|m|mn|million|k|thousand)?\s*({CURRENCY_PATTERN})",
-            rf"({CURRENCY_PATTERN})\s*({AMOUNT_PATTERN})\s*(bn|billion|m|mn|million|k|thousand)?.{{0,90}}?{label_re}",
-        )
-        for index, pattern in enumerate(patterns):
-            match = re.search(pattern, text, flags=re.I | re.S)
-            if not match:
-                continue
-            if index == 1:
-                amount_raw, suffix, currency_raw = match.group(1), match.group(2) or "", match.group(3)
-            else:
-                currency_raw, amount_raw, suffix = match.group(1), match.group(2), match.group(3) or ""
-            amount = _scaled_money(_number(amount_raw), suffix)
-            return MoneyEvidence(amount, _norm_currency(currency_raw), match.group(0).strip()[:220])
-    return MoneyEvidence(None, "", "")
+        for label_match in re.finditer(re.escape(label), text, flags=re.I):
+            window_start = max(0, label_match.start() - radius)
+            window_end = min(len(text), label_match.end() + radius)
+            window = text[window_start:window_end]
+            label_start = label_match.start() - window_start
+            label_end = label_match.end() - window_start
+            for pattern, orientation in money_patterns:
+                for money_match in pattern.finditer(window):
+                    if orientation == "currency_first":
+                        currency_raw = money_match.group(1)
+                        amount_raw = money_match.group(2)
+                        suffix = money_match.group(3) or ""
+                    else:
+                        amount_raw = money_match.group(1)
+                        suffix = money_match.group(2) or ""
+                        currency_raw = money_match.group(3)
+                    amount = _scaled_money(_number(amount_raw), suffix)
+                    if amount is None:
+                        continue
+                    if money_match.end() <= label_start:
+                        distance = label_start - money_match.end()
+                    elif money_match.start() >= label_end:
+                        distance = money_match.start() - label_end
+                    else:
+                        distance = 0
+                    raw_start = max(0, min(money_match.start(), label_start) - 20)
+                    raw_end = min(len(window), max(money_match.end(), label_end) + 20)
+                    evidence = MoneyEvidence(
+                        amount,
+                        _norm_currency(currency_raw),
+                        window[raw_start:raw_end].strip()[:220],
+                    )
+                    if best is None or distance < best[0]:
+                        best = (distance, evidence)
+    return best[1] if best is not None else MoneyEvidence(None, "", "")
 
 
 def _integer_near(text: str, labels: tuple[str, ...]) -> int | None:
@@ -175,7 +201,8 @@ def _article_urls(name: object, *, timespan: str = "90d", max_records: int = 30)
 
 
 def enrich_candidate(candidate: dict, timeout: int = 15) -> dict:
-    if not str(candidate.get("source") or candidate.get("sources") or "").upper().find("EURONEXT") >= 0:
+    source_text = str(candidate.get("source") or candidate.get("sources") or "").upper()
+    if "EURONEXT" not in source_text:
         return candidate
     urls, discovery_error = _article_urls(candidate.get("name"))
     candidate["euronext_news_discovery_status"] = "FAILED" if discovery_error and not urls else ("SUCCESS" if urls else "NO_MATCH")
