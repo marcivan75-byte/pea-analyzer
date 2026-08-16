@@ -6,18 +6,38 @@ import pandas as pd
 
 from v182.io.frames import is_missing
 
-# Yahoo exchange suffixes are enabled only where the current production universe
-# already contains validated, successful examples for the same canonical MIC.
-# This is intentionally conservative: unsupported venues remain unchanged rather
-# than guessing a Yahoo symbol from issuer country or company name.
-YAHOO_SUFFIX_BY_CANONICAL_MIC = {
+# Yahoo suffixes are derived from the actual source-market MIC carried by the
+# Euronext instrument, not from v182_ticker_canonical_mic.  The latter is a
+# normalized field and historical data contains misclassifications for some
+# Access/secondary venues (for example XMLI instruments listed in Paris).
+#
+# Only venue families with a stable Yahoo suffix are enabled. Secondary trading
+# venues such as MTAH and ETLX are intentionally excluded: their local symbol can
+# differ from the issuer's primary Yahoo symbol and must not be guessed.
+YAHOO_SUFFIX_BY_EURONEXT_MIC = {
+    # Paris
     "XPAR": ".PA",
+    "ALXP": ".PA",
+    "XMLI": ".PA",
+    # Brussels
     "XBRU": ".BR",
+    "ALXB": ".BR",
+    "MLXB": ".BR",
+    # Amsterdam
     "XAMS": ".AS",
+    # Lisbon
     "XLIS": ".LS",
-    "XMIL": ".MI",
+    "ENXL": ".LS",
+    # Milan
+    "MTAA": ".MI",
+    "EXGM": ".MI",
+    # Oslo
     "XOSL": ".OL",
-    "XDUB": ".IR",
+    "MERK": ".OL",
+    "XOAS": ".OL",
+    # Dublin
+    "XMSM": ".IR",
+    "XESM": ".IR",
 }
 
 
@@ -26,8 +46,8 @@ class TickerQualification:
     isin: str
     original_ticker: str
     qualified_ticker: str
-    canonical_mic: str
-    rule: str = "CANONICAL_MIC_YAHOO_SUFFIX"
+    market_mic: str
+    rule: str = "SOURCE_MARKET_MIC_YAHOO_SUFFIX"
 
 
 def _clean(value) -> str:
@@ -37,20 +57,19 @@ def _clean(value) -> str:
 
 
 def qualify_action_yahoo_tickers(actions_df: pd.DataFrame) -> list[TickerQualification]:
-    """Qualify ambiguous Action symbols with the validated canonical venue.
+    """Qualify ambiguous Action symbols using the instrument's source-market MIC.
 
     Raw symbols such as ``ABP`` or ``AASB`` are unsafe Yahoo identifiers: Yahoo
     can resolve an unqualified symbol to a security listed on another exchange,
-    producing plausible OHLCV for the wrong company.  When the referential has a
-    supported canonical MIC, this function rewrites only unqualified symbols to
-    the venue-qualified Yahoo form (for example ``ABP.MI`` or ``AASB.OL``).
+    producing plausible OHLCV for the wrong company.  The Euronext source MIC is
+    therefore used as the venue authority for supported markets.
 
     The operation is deterministic and mutates only ``yahoo_ticker``. Existing
-    qualified tickers and unsupported/unknown venues are left untouched. No
-    issuer-country guessing, fuzzy-name matching, or fallback to an unqualified
-    symbol is performed.
+    qualified tickers and unsupported/secondary venues are left untouched. No
+    issuer-country guessing, fuzzy-name matching, canonical-MIC fallback, or
+    fallback to an unqualified symbol is performed.
     """
-    required = {"yahoo_ticker", "v182_ticker_canonical_mic"}
+    required = {"yahoo_ticker", "euronext_mic"}
     if not required.issubset(actions_df.columns):
         return []
 
@@ -60,8 +79,8 @@ def qualify_action_yahoo_tickers(actions_df: pd.DataFrame) -> list[TickerQualifi
         if not original or "." in original:
             continue
 
-        canonical_mic = _clean(row.get("v182_ticker_canonical_mic")).upper()
-        suffix = YAHOO_SUFFIX_BY_CANONICAL_MIC.get(canonical_mic)
+        market_mic = _clean(row.get("euronext_mic")).upper()
+        suffix = YAHOO_SUFFIX_BY_EURONEXT_MIC.get(market_mic)
         if not suffix:
             continue
 
@@ -80,7 +99,7 @@ def qualify_action_yahoo_tickers(actions_df: pd.DataFrame) -> list[TickerQualifi
                 isin=_clean(row.get("isin")),
                 original_ticker=original,
                 qualified_ticker=qualified,
-                canonical_mic=canonical_mic,
+                market_mic=market_mic,
             )
         )
 

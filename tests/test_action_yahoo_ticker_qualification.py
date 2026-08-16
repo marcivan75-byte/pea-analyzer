@@ -11,25 +11,50 @@ def _actions(rows: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def test_unqualified_symbols_are_qualified_from_canonical_mic():
+def test_unqualified_symbols_are_qualified_from_source_market_mic():
     frame = _actions(
         [
-            {"isin": "IT0000000001", "yahoo_ticker": "ABP", "v182_ticker_market_symbol": "ABP", "v182_ticker_canonical_mic": "XMIL"},
-            {"isin": "NO0000000001", "yahoo_ticker": "AASB", "v182_ticker_market_symbol": "AASB", "v182_ticker_canonical_mic": "XOSL"},
-            {"isin": "IE0000000001", "yahoo_ticker": "8GW", "v182_ticker_market_symbol": "8GW", "v182_ticker_canonical_mic": "XDUB"},
+            {"isin": "IT0000000001", "yahoo_ticker": "ABP", "v182_ticker_market_symbol": "ABP", "euronext_mic": "EXGM"},
+            {"isin": "NO0000000001", "yahoo_ticker": "AASB", "v182_ticker_market_symbol": "AASB", "euronext_mic": "MERK"},
+            {"isin": "IE0000000001", "yahoo_ticker": "8GW", "v182_ticker_market_symbol": "8GW", "euronext_mic": "XESM"},
         ]
     )
 
     changes = qualify_action_yahoo_tickers(frame)
 
     assert frame["yahoo_ticker"].tolist() == ["ABP.MI", "AASB.OL", "8GW.IR"]
-    assert [change.canonical_mic for change in changes] == ["XMIL", "XOSL", "XDUB"]
+    assert [change.market_mic for change in changes] == ["EXGM", "MERK", "XESM"]
+
+
+def test_source_mic_wins_when_normalized_canonical_mic_is_wrong():
+    frame = _actions(
+        [
+            {
+                "isin": "FR0010979377",
+                "yahoo_ticker": "MLACT",
+                "v182_ticker_market_symbol": "MLACT",
+                "euronext_mic": "XMLI",
+                "v182_ticker_canonical_mic": "XMIL",
+            },
+            {
+                "isin": "IE0000000002",
+                "yahoo_ticker": "C5H",
+                "v182_ticker_market_symbol": "C5H",
+                "euronext_mic": "XMSM",
+                "v182_ticker_canonical_mic": "XMIL",
+            },
+        ]
+    )
+
+    qualify_action_yahoo_tickers(frame)
+
+    assert frame["yahoo_ticker"].tolist() == ["MLACT.PA", "C5H.IR"]
 
 
 def test_existing_qualified_ticker_is_never_rewritten():
     frame = _actions(
         [
-            {"isin": "FR0000000001", "yahoo_ticker": "AC.PA", "v182_ticker_market_symbol": "AC", "v182_ticker_canonical_mic": "XPAR"},
+            {"isin": "FR0000000001", "yahoo_ticker": "AC.PA", "v182_ticker_market_symbol": "AC", "euronext_mic": "XPAR"},
         ]
     )
 
@@ -39,10 +64,36 @@ def test_existing_qualified_ticker_is_never_rewritten():
     assert frame.loc[0, "yahoo_ticker"] == "AC.PA"
 
 
+def test_secondary_venue_is_left_unchanged_instead_of_guessing_primary_ticker():
+    frame = _actions(
+        [
+            {
+                "isin": "FR0014005AL0",
+                "yahoo_ticker": "2ANTIN",
+                "v182_ticker_market_symbol": "2ANTIN",
+                "euronext_mic": "MTAH",
+                "v182_ticker_canonical_mic": "XMIL",
+            },
+            {
+                "isin": "FR0000054470",
+                "yahoo_ticker": "4UBI",
+                "v182_ticker_market_symbol": "4UBI",
+                "euronext_mic": "ETLX",
+                "v182_ticker_canonical_mic": "XLIS",
+            },
+        ]
+    )
+
+    changes = qualify_action_yahoo_tickers(frame)
+
+    assert changes == []
+    assert frame["yahoo_ticker"].tolist() == ["2ANTIN", "4UBI"]
+
+
 def test_unsupported_venue_is_left_unchanged_instead_of_guessed():
     frame = _actions(
         [
-            {"isin": "LU0000000001", "yahoo_ticker": "ABC", "v182_ticker_market_symbol": "ABC", "v182_ticker_canonical_mic": "XLUX"},
+            {"isin": "LU0000000001", "yahoo_ticker": "ABC", "v182_ticker_market_symbol": "ABC", "euronext_mic": "XLUX"},
         ]
     )
 
@@ -55,7 +106,7 @@ def test_unsupported_venue_is_left_unchanged_instead_of_guessed():
 def test_market_symbol_is_authoritative_base_when_qualifying():
     frame = _actions(
         [
-            {"isin": "BE0000000001", "yahoo_ticker": "STALE", "v182_ticker_market_symbol": "REAL", "v182_ticker_canonical_mic": "XBRU"},
+            {"isin": "BE0000000001", "yahoo_ticker": "STALE", "v182_ticker_market_symbol": "REAL", "euronext_mic": "ALXB"},
         ]
     )
 
@@ -64,10 +115,10 @@ def test_market_symbol_is_authoritative_base_when_qualifying():
     assert frame.loc[0, "yahoo_ticker"] == "REAL.BR"
 
 
-def test_action_wave_downloads_only_the_qualified_runtime_symbol(monkeypatch, tmp_path):
+def test_action_wave_downloads_only_the_source_market_qualified_runtime_symbol(monkeypatch, tmp_path):
     frame = _actions(
         [
-            {"isin": "IT0000000001", "yahoo_ticker": "ABP", "v182_ticker_market_symbol": "ABP", "v182_ticker_canonical_mic": "XMIL"},
+            {"isin": "IT0000000001", "yahoo_ticker": "ABP", "v182_ticker_market_symbol": "ABP", "euronext_mic": "EXGM"},
         ]
     )
     captured: dict = {}
@@ -97,7 +148,7 @@ def test_action_wave_downloads_only_the_qualified_runtime_symbol(monkeypatch, tm
 def test_etf_wave_is_not_modified_by_action_qualification(monkeypatch, tmp_path):
     frame = _actions(
         [
-            {"isin": "ETF1", "yahoo_ticker": "RAW", "v182_ticker_market_symbol": "RAW", "v182_ticker_canonical_mic": "XMIL"},
+            {"isin": "ETF1", "yahoo_ticker": "RAW", "v182_ticker_market_symbol": "RAW", "euronext_mic": "EXGM"},
         ]
     )
     captured: dict = {}
