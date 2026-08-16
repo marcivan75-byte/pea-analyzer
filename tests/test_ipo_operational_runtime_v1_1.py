@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pandas as pd
 
-from v182.decision import ipo_radar_v1 as runtime
 from v182.decision.ipo_radar_operational_v1_1 import (
     build_alerts,
     classify_candidate,
     history_rows_full,
     parse_date_strict,
 )
+from v182.reporting import unified_runner
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -21,8 +21,8 @@ def _config() -> dict:
     return json.loads((ROOT / "config" / "IPO_RADAR_V1.json").read_text(encoding="utf-8"))
 
 
-def test_decision_package_routes_to_hardened_runtime() -> None:
-    assert runtime.__name__.endswith("ipo_radar_operational_v1_1")
+def test_unified_runner_routes_to_hardened_runtime_explicitly() -> None:
+    assert unified_runner.ipo_radar_v1.__name__.endswith("ipo_radar_operational_v1_1")
 
 
 def test_date_parser_handles_european_dates_without_ambiguous_pandas_first_pass() -> None:
