@@ -14,6 +14,7 @@ CURRENCY_PATTERN = r"(?:EUR|€|NOK|SEK|DKK|GBP|£|CHF|USD|\$)"
 AMOUNT_PATTERN = r"(?:\d{1,3}(?:[ ,]\d{3})+(?:[.,]\d+)?|\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:[.,]\d+)?)"
 COMPANY_NEWS_PATH = "/products/equities/company-news/"
 LISTVIEW_BASE = "https://live.euronext.com/en/listview/company-press-release/"
+PRODUCT_BASE = "https://live.euronext.com/en/product/equities/"
 IPO_NEWS_TERMS = (
     "ipo", "listing", "offering", "placement", "prospectus", "information document",
     "admission", "first day", "share capital", "new shares", "retail offering",
@@ -181,34 +182,77 @@ def parse_regulated_news(html: str, url: str = "") -> dict:
     }
 
 
+def _relevant_company_news_links(html: str, base_url: str, limit: int = 12) -> list[str]:
+    soup = BeautifulSoup(html, "lxml")
+    relevant: list[str] = []
+    for anchor in soup.find_all("a", href=True):
+        href = str(anchor.get("href") or "").strip()
+        if COMPANY_NEWS_PATH not in href:
+            continue
+        text = anchor.get_text(" ", strip=True).lower()
+        combined = f"{text} {href.lower()}"
+        if not any(term in combined for term in IPO_NEWS_TERMS):
+            continue
+        absolute = urljoin(base_url, href)
+        if absolute not in relevant:
+            relevant.append(absolute)
+    return relevant[:limit]
+
+
 def _official_listview_urls(isin: object, timeout: int = 15) -> tuple[list[str], str | None, str]:
     isin_text = str(isin or "").strip().upper()
     if len(isin_text) < 8:
         return [], "INVALID_OR_MISSING_ISIN", ""
     listview_url = f"{LISTVIEW_BASE}{isin_text}"
     try:
-        response = requests.get(
-            listview_url,
-            headers={"User-Agent": "PEA-Analyzer-IPO-Radar/1.4"},
-            timeout=timeout,
-        )
+        response = requests.get(listview_url, headers={"User-Agent": "PEA-Analyzer-IPO-Radar/1.4"}, timeout=timeout)
         response.raise_for_status()
-        soup = BeautifulSoup(response.text, "lxml")
-        relevant: list[str] = []
-        for anchor in soup.find_all("a", href=True):
-            href = str(anchor.get("href") or "").strip()
-            if COMPANY_NEWS_PATH not in href:
-                continue
-            text = anchor.get_text(" ", strip=True).lower()
-            combined = f"{text} {href.lower()}"
-            if not any(term in combined for term in IPO_NEWS_TERMS):
-                continue
-            absolute = urljoin(listview_url, href)
-            if absolute not in relevant:
-                relevant.append(absolute)
-        return relevant[:12], None, listview_url
+        return _relevant_company_news_links(response.text, listview_url), None, listview_url
     except Exception as exc:
         return [], f"{type(exc).__name__}: {str(exc)[:160]}", listview_url
+
+
+def _candidate_product_mics(candidate: dict) -> tuple[str, ...]:
+    """Return bounded URL candidates only; MIC guesses never affect scoring or PEA eligibility."""
+    location = str(candidate.get("euronext_location") or "").strip().upper()
+    market = str(candidate.get("exchange") or "").strip().upper()
+    if "OSLO" in location or "OSLO" in market:
+        return ("MERK", "XOSL")
+    if "PARIS" in location or "PARIS" in market:
+        if "ACCESS" in market:
+            return ("XMLI", "ALXP", "XPAR")
+        if "GROWTH" in market:
+            return ("ALXP", "XMLI", "XPAR")
+        return ("XPAR", "XMLI", "ALXP")
+    if "AMSTERDAM" in location or "AMSTERDAM" in market:
+        return ("XAMS", "ALXA")
+    if "BRUSSELS" in location or "BRUSSELS" in market:
+        return ("XBRU", "ALXB")
+    if "LISBON" in location or "LISBON" in market:
+        return ("XLIS", "ENXL")
+    return ()
+
+
+def _official_product_page_urls(candidate: dict, timeout: int = 15) -> tuple[list[str], str | None, str]:
+    isin_text = str(candidate.get("isin") or "").strip().upper()
+    if len(isin_text) < 8:
+        return [], "INVALID_OR_MISSING_ISIN", ""
+    errors: list[str] = []
+    first_working_page = ""
+    for mic in _candidate_product_mics(candidate):
+        product_url = f"{PRODUCT_BASE}{isin_text}-{mic}"
+        try:
+            response = requests.get(product_url, headers={"User-Agent": "PEA-Analyzer-IPO-Radar/1.4"}, timeout=timeout)
+            response.raise_for_status()
+            if not first_working_page:
+                first_working_page = product_url
+            links = _relevant_company_news_links(response.text, product_url)
+            if links:
+                return links, None, product_url
+        except Exception as exc:
+            errors.append(f"{mic}:{type(exc).__name__}")
+    detail = "|".join(errors[:4]) if errors else None
+    return [], detail, first_working_page
 
 
 def _article_urls(name: object, *, timespan: str = "90d", max_records: int = 30) -> tuple[list[str], str | None]:
@@ -234,24 +278,34 @@ def enrich_candidate(candidate: dict, timeout: int = 15) -> dict:
     if "EURONEXT" not in source_text:
         return candidate
 
-    direct_urls, direct_error, listview_url = _official_listview_urls(candidate.get("isin"), timeout=timeout)
+    list_urls, list_error, listview_url = _official_listview_urls(candidate.get("isin"), timeout=timeout)
+    product_error = None
+    product_url = ""
     fallback_error = None
-    if direct_urls:
-        urls = direct_urls
+    if list_urls:
+        urls = list_urls
         discovery_status = "DIRECT_SUCCESS"
         discovery_method = "EURONEXT_ISIN_LISTVIEW"
     else:
-        fallback_urls, fallback_error = _article_urls(candidate.get("name"))
-        urls = fallback_urls
-        discovery_status = "GDELT_FALLBACK_SUCCESS" if fallback_urls else (
-            "FAILED" if direct_error and fallback_error else "NO_MATCH"
-        )
-        discovery_method = "GDELT_FALLBACK" if fallback_urls else "NONE"
+        product_urls, product_error, product_url = _official_product_page_urls(candidate, timeout=timeout)
+        if product_urls:
+            urls = product_urls
+            discovery_status = "PRODUCT_PAGE_SUCCESS"
+            discovery_method = "EURONEXT_PRODUCT_PAGE"
+        else:
+            fallback_urls, fallback_error = _article_urls(candidate.get("name"))
+            urls = fallback_urls
+            discovery_status = "GDELT_FALLBACK_SUCCESS" if fallback_urls else (
+                "FAILED" if list_error and product_error and fallback_error else "NO_MATCH"
+            )
+            discovery_method = "GDELT_FALLBACK" if fallback_urls else "NONE"
 
     candidate["euronext_news_discovery_status"] = discovery_status
     candidate["euronext_news_discovery_method"] = discovery_method
     candidate["euronext_news_listview_url"] = listview_url
-    candidate["euronext_news_direct_error"] = direct_error or ""
+    candidate["euronext_news_product_url"] = product_url
+    candidate["euronext_news_direct_error"] = list_error or ""
+    candidate["euronext_news_product_error"] = product_error or ""
     candidate["euronext_news_discovery_error"] = fallback_error or ""
     candidate["euronext_news_count"] = len(urls)
     candidate["euronext_news_urls"] = "|".join(urls)
