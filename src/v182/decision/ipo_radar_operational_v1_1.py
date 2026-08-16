@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from io import StringIO
 import importlib
 import json
+import os
 from pathlib import Path
 import re
 
 import pandas as pd
+import requests
 
 legacy = importlib.import_module("v182.decision.ipo_radar_v1")
 ROOT = legacy.ROOT
 DECISION_RANK = legacy.DECISION_RANK
+_BASE_FINNHUB_COLLECTOR = legacy.collect_finnhub
+_LAST_ALPHA_STATUS: dict = {"source": "ALPHA_VANTAGE", "status": "NOT_RUN", "count": 0}
 
 
 def parse_date_strict(value: object) -> date | None:
@@ -41,6 +46,88 @@ def parse_date_strict(value: object) -> date | None:
             continue
     parsed = pd.to_datetime(text, errors="coerce")
     return None if pd.isna(parsed) else parsed.date()
+
+
+def _normalized_columns(frame: pd.DataFrame) -> dict[str, str]:
+    return {re.sub(r"[^a-z0-9]+", "", str(column).lower()): str(column) for column in frame.columns}
+
+
+def _first_column(columns: dict[str, str], *aliases: str) -> str | None:
+    for alias in aliases:
+        if alias in columns:
+            return columns[alias]
+    return None
+
+
+def collect_alpha_vantage(start: date, end: date, api_key: str | None, timeout: int = 20) -> tuple[list[dict], dict]:
+    source = "ALPHA_VANTAGE"
+    if not api_key:
+        return [], {"source": source, "status": "SKIPPED_MISSING_KEY", "count": 0}
+    try:
+        response = requests.get(
+            "https://www.alphavantage.co/query",
+            params={"function": "IPO_CALENDAR", "apikey": api_key},
+            headers={"User-Agent": "PEA-Analyzer-IPO-Radar/1.1"},
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        text = response.text.strip()
+        if not text:
+            return [], {"source": source, "status": "FAILED_EMPTY_RESPONSE", "count": 0}
+        if text.startswith("{"):
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = {}
+            detail = str(payload.get("Information") or payload.get("Note") or payload.get("Error Message") or "JSON response instead of IPO CSV")
+            return [], {"source": source, "status": "FAILED_API_MESSAGE", "count": 0, "detail": detail[:220]}
+        frame = pd.read_csv(StringIO(text), dtype=str).fillna("")
+        if frame.empty:
+            return [], {"source": source, "status": "SUCCESS", "count": 0}
+        columns = _normalized_columns(frame)
+        date_col = _first_column(columns, "ipodate", "expecteddate", "date")
+        symbol_col = _first_column(columns, "symbol", "ticker")
+        name_col = _first_column(columns, "name", "companyname", "company")
+        exchange_col = _first_column(columns, "exchange", "market")
+        range_col = _first_column(columns, "pricerange", "expectedprice")
+        low_col = _first_column(columns, "pricerangelow", "lowprice", "low")
+        high_col = _first_column(columns, "pricerangehigh", "highprice", "high")
+        currency_col = _first_column(columns, "currency")
+        if not date_col or not name_col:
+            return [], {"source": source, "status": "FAILED_SCHEMA", "count": 0, "detail": f"columns={list(frame.columns)[:12]}"}
+        candidates: list[dict] = []
+        for _, row in frame.iterrows():
+            event_date = parse_date_strict(row.get(date_col))
+            if not event_date or not start <= event_date <= end:
+                continue
+            if range_col:
+                price_range = row.get(range_col)
+            else:
+                low = str(row.get(low_col, "")).strip() if low_col else ""
+                high = str(row.get(high_col, "")).strip() if high_col else ""
+                price_range = f"{low}-{high}" if low and high else low or high
+            candidate = legacy._standard_candidate(
+                name=row.get(name_col),
+                symbol=row.get(symbol_col) if symbol_col else None,
+                exchange=row.get(exchange_col) if exchange_col else None,
+                expected_date=event_date,
+                status="expected",
+                price_range=price_range,
+                source=source,
+                alpha_vantage_currency=row.get(currency_col) if currency_col else "",
+            )
+            candidates.append(candidate)
+        return candidates, {"source": source, "status": "SUCCESS", "count": len(candidates)}
+    except Exception as exc:
+        return [], {"source": source, "status": "FAILED", "count": 0, "detail": f"{type(exc).__name__}: {str(exc)[:180]}"}
+
+
+def collect_finnhub_with_alpha(start: date, end: date, api_key: str | None, timeout: int = 20) -> tuple[list[dict], dict]:
+    global _LAST_ALPHA_STATUS
+    finnhub_rows, finnhub_status = _BASE_FINNHUB_COLLECTOR(start, end, api_key, timeout)
+    alpha_rows, alpha_status = collect_alpha_vantage(start, end, os.environ.get("ALPHA_VANTAGE_API_KEY"), timeout)
+    _LAST_ALPHA_STATUS = alpha_status
+    return finnhub_rows + alpha_rows, finnhub_status
 
 
 def classify_candidate(row: dict, config: dict) -> str:
@@ -208,13 +295,28 @@ def install_runtime_hardening() -> None:
     legacy.classify_candidate = classify_candidate
     legacy.build_alerts = build_alerts
     legacy._history_rows = history_rows_full
+    legacy.collect_finnhub = collect_finnhub_with_alpha
+
+
+def _append_alpha_status(root: Path, summary: dict) -> None:
+    alpha_status = dict(_LAST_ALPHA_STATUS)
+    statuses = [row for row in summary.get("source_status", []) if row.get("source") != "ALPHA_VANTAGE"]
+    statuses.append(alpha_status)
+    summary["source_status"] = statuses
+    successful_sources = [row["source"] for row in statuses if row.get("status") in {"SUCCESS", "PARTIAL"}]
+    degraded_sources = [row["source"] for row in statuses if row.get("status") not in {"SUCCESS", "SKIPPED_MISSING_KEY"}]
+    summary["degraded_sources"] = degraded_sources
+    summary["operational_status"] = "SUCCESS" if successful_sources and not degraded_sources else "DEGRADED" if successful_sources else "FAILED_DISCOVERY"
+    pd.DataFrame(statuses).to_csv(root / "outputs" / "ipo_radar" / "IPO_SOURCE_STATUS.csv", index=False)
 
 
 def run(root: Path = ROOT) -> dict:
     install_runtime_hardening()
     summary = legacy.run(root)
+    _append_alpha_status(root, summary)
     summary["runtime_layer"] = "IPO_RADAR_OPERATIONAL_V1.1"
     summary["history_policy"] = "FULL_PIT_EVIDENCE_SNAPSHOT"
+    summary["calendar_redundancy"] = ["EURONEXT", "NASDAQ", "ALPHA_VANTAGE", "FINNHUB", "SEC_EDGAR"]
     summary_path = root / "outputs" / "ipo_radar" / "IPO_SUMMARY.json"
     if summary_path.exists():
         summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
