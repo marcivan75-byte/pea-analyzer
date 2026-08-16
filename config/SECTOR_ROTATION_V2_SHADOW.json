@@ -122,7 +122,13 @@
     "above_mm50": ["above_mm50"],
     "above_mm200": ["above_mm200"],
     "volume_ratio": ["volume_ratio_20d", "volume_vs_20d"],
-    "beta": ["beta_3y", "beta"]
+    "beta": ["beta_3y", "beta"],
+    "sector_catalyst_score": ["funnel_sector_news_score", "sector_catalyst_score"],
+    "sector_macro_score": ["sector_macro_score"],
+    "sector_flow_score": ["sector_flow_score"],
+    "sector_structural_score": ["sector_structural_score"],
+    "sector_valuation_history_percentile": ["sector_valuation_history_percentile"],
+    "theme_confluence_score": ["theme_confluence_score"]
   },
   "sector_specific_drivers": {
     "SEMICONDUCTORS": ["orders", "inventories", "capacity_utilization", "memory_pricing", "hyperscaler_capex", "server_demand", "export_restrictions"],
@@ -142,6 +148,6 @@
   "output": {
     "sector_csv": "outputs/sector_rotation/V2_SECTOR_ROTATION_SHADOW.csv",
     "diagnostic_json": "outputs/audit/V2_SECTOR_ROTATION_SHADOW.json",
-    "history_csv": "outputs/sector_rotation/V2_SECTOR_ROTATION_HISTORY.csv"
+    "history_csv": "state/sector_rotation_v2/SECTOR_ROTATION_V2_HISTORY.csv"
   }
 }
