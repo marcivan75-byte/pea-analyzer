@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import json
 
+import pandas as pd
+
+from v182.reporting import waves
 from v182.sources import finnhub_consensus as consensus
 
 
@@ -157,3 +160,28 @@ def test_negative_cache_avoids_immediate_repeat_calls(tmp_path, monkeypatch) -> 
     assert calls == 1
     assert metrics["negative_cache_hits"] == 1
     assert metrics["live_refresh_requested"] == 0
+
+
+def test_wave5_preserves_cached_timestamp_and_marks_cache_source(monkeypatch) -> None:
+    cached_at = "2026-08-12T10:30:00+00:00"
+
+    def fake_cached(tickers, api_key, cache_path, **kwargs):
+        return ([{
+            "ticker": "AAA.PA",
+            "field": "consensus_score",
+            "value": 4.25,
+            "source": "Finnhub",
+            "fetched_at_utc": cached_at,
+            "cache_state": "CACHE_HIT",
+        }], [], {"requested": 1, "cache_hit_tickers": 1, "full_universe_preserved": True})
+
+    monkeypatch.setattr(consensus, "fetch_consensus_cached", fake_cached)
+    actions = pd.DataFrame({"isin": ["FR0000000001"], "yahoo_ticker": ["AAA.PA"]})
+    observations, failures = waves.wave5_consensus_finnhub(actions, "key")
+    assert failures == []
+    assert len(observations) == 1
+    row = observations[0]
+    assert row["source"] == "Finnhub_CACHE"
+    assert row["collected_at"] == cached_at
+    assert row["as_of"] == "2026-08-12"
+    assert row["evidence_level"] == "B"
