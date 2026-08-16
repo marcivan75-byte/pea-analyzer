@@ -22,7 +22,7 @@ def _close(values):
     return pd.Series(values, index=pd.bdate_range("2026-09-01", periods=len(values), tz="UTC"), dtype=float)
 
 
-def test_basket_metrics_uses_frozen_equal_weight_paths():
+def test_basket_metrics_uses_next_session_and_frozen_equal_weight_paths():
     prices = {
         "A.PA": _close([100, 101, 102, 103, 104]),
         "B.PA": _close([200, 202, 204, 206, 208]),
@@ -30,7 +30,7 @@ def test_basket_metrics_uses_frozen_equal_weight_paths():
     }
     metrics = _basket_metrics(["A.PA", "B.PA", "C.PA"], pd.Timestamp("2026-09-01", tz="UTC"), prices, PROTOCOL)
     assert metrics is not None
-    expected = np.mean([1.03, 1.03, 0.94])
+    expected = np.mean([104 / 101, 208 / 202, 46 / 49])
     assert abs(metrics["forward_return_pct"] - (expected - 1) * 100) < 1e-9
     assert metrics["constituents_used"] == 3
 
@@ -112,9 +112,9 @@ def test_immature_sector_is_retained_for_forward_coverage_denominator():
 
 def test_constituents_without_tickers_count_against_price_coverage():
     prices = {
-        "A.PA": _close([100, 101, 102, 103]),
-        "B.PA": _close([100, 101, 102, 103]),
-        "C.PA": _close([100, 101, 102, 103]),
+        "A.PA": _close([100, 101, 102, 103, 104]),
+        "B.PA": _close([100, 101, 102, 103, 104]),
+        "C.PA": _close([100, 101, 102, 103, 104]),
     }
     metrics = _basket_metrics(
         ["A.PA", "B.PA", "C.PA"],
