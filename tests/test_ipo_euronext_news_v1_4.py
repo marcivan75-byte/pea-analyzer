@@ -41,7 +41,36 @@ def test_parse_euronext_regulated_news_extracts_shadow_facts() -> None:
     assert "polar-prospectus.pdf" in result["euronext_news_document_urls"]
 
 
-def test_gdelt_discovery_keeps_only_official_euronext_company_news(monkeypatch) -> None:
+def test_money_parser_does_not_bind_offer_price_to_gross_proceeds() -> None:
+    html = "<p>The offering comprised shares at NOK 7.00 per share and raised NOK 50 million in gross proceeds.</p>"
+    result = news.parse_regulated_news(html)
+    assert result["euronext_news_gross_proceeds_local"] == 50_000_000.0
+    assert result["euronext_news_offer_price_local"] is None
+
+
+def test_official_isin_listview_keeps_only_ipo_relevant_company_news(monkeypatch) -> None:
+    listview_html = """
+    <html><body>
+      <a href="/en/products/equities/company-news/2026-07-02-polar-private-placement-successfully-completed">Private placement successfully completed</a>
+      <a href="/en/products/equities/company-news/2026-07-03-polar-mandatory-notification-trade">Mandatory notification of trade</a>
+      <a href="/en/products/equities/company-news/2026-07-09-polar-first-day-trading-information-document">First day of trading and information document</a>
+    </body></html>
+    """
+    monkeypatch.setattr(
+        news.requests,
+        "get",
+        lambda *args, **kwargs: SimpleNamespace(text=listview_html, raise_for_status=lambda: None),
+    )
+    urls, error, source = news._official_listview_urls("NO0013756361")
+    assert error is None
+    assert source.endswith("/NO0013756361")
+    assert len(urls) == 2
+    assert any("private-placement" in url for url in urls)
+    assert any("first-day-trading" in url for url in urls)
+    assert all("mandatory-notification" not in url for url in urls)
+
+
+def test_gdelt_fallback_keeps_only_official_euronext_company_news(monkeypatch) -> None:
     articles = [
         {"url": "https://live.euronext.com/en/products/equities/company-news/2026-07-02-polar-offering"},
         {"url": "https://example.com/polar-ipo"},
@@ -53,16 +82,18 @@ def test_gdelt_discovery_keeps_only_official_euronext_company_news(monkeypatch) 
     assert urls == ["https://live.euronext.com/en/products/equities/company-news/2026-07-02-polar-offering"]
 
 
-def test_candidate_enrichment_is_shadow_only_and_does_not_create_scores(monkeypatch) -> None:
+def test_direct_discovery_is_primary_and_shadow_only(monkeypatch) -> None:
     url = "https://live.euronext.com/en/products/equities/company-news/2026-07-02-polar-offering"
-    monkeypatch.setattr(news, "_article_urls", lambda *args, **kwargs: ([url], None))
+    monkeypatch.setattr(news, "_official_listview_urls", lambda *args, **kwargs: ([url], None, "https://live.euronext.com/listview"))
+    monkeypatch.setattr(news, "_article_urls", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fallback must not run")))
     monkeypatch.setattr(
         news.requests,
         "get",
         lambda *args, **kwargs: SimpleNamespace(text=POLAR_HTML, raise_for_status=lambda: None),
     )
-    candidate = news.enrich_candidate({"name": "Polar Resources AS", "source": "EURONEXT"})
-    assert candidate["euronext_news_discovery_status"] == "SUCCESS"
+    candidate = news.enrich_candidate({"name": "Polar Resources AS", "isin": "NO0013756361", "source": "EURONEXT"})
+    assert candidate["euronext_news_discovery_status"] == "DIRECT_SUCCESS"
+    assert candidate["euronext_news_discovery_method"] == "EURONEXT_ISIN_LISTVIEW"
     assert candidate["euronext_news_fetch_success_count"] == 1
     assert candidate["euronext_news_demand_signal_shadow"] == "STRONG_DEMAND"
     assert candidate["euronext_news_evidence_policy"] == "SHADOW_FACTS_ONLY_NO_ACTIVE_SCORE_V1.4"
@@ -71,8 +102,22 @@ def test_candidate_enrichment_is_shadow_only_and_does_not_create_scores(monkeypa
     assert "live_order_allowed" not in candidate
 
 
+def test_gdelt_is_only_fallback_when_direct_discovery_has_no_match(monkeypatch) -> None:
+    url = "https://live.euronext.com/en/products/equities/company-news/2026-07-02-polar-offering"
+    monkeypatch.setattr(news, "_official_listview_urls", lambda *args, **kwargs: ([], None, "https://live.euronext.com/listview"))
+    monkeypatch.setattr(news, "_article_urls", lambda *args, **kwargs: ([url], None))
+    monkeypatch.setattr(
+        news.requests,
+        "get",
+        lambda *args, **kwargs: SimpleNamespace(text=POLAR_HTML, raise_for_status=lambda: None),
+    )
+    candidate = news.enrich_candidate({"name": "Polar Resources AS", "isin": "NO0013756361", "source": "EURONEXT"})
+    assert candidate["euronext_news_discovery_status"] == "GDELT_FALLBACK_SUCCESS"
+    assert candidate["euronext_news_discovery_method"] == "GDELT_FALLBACK"
+
+
 def test_non_euronext_candidate_is_not_enriched(monkeypatch) -> None:
-    monkeypatch.setattr(news, "_article_urls", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not query")))
+    monkeypatch.setattr(news, "_official_listview_urls", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not query")))
     candidate = {"name": "US IPO Inc", "source": "FINNHUB"}
     assert news.enrich_candidate(candidate) == candidate
 
@@ -83,7 +128,6 @@ def test_v1_4_collector_survives_v1_3_runtime_reinstall() -> None:
         v14.v13.euronext_ipo_v1_3.collect_euronext_v1_3 = original
         v14.v13.install_v1_3()
         v14.install_v1_4()
-        # v13.run() executes this reinstall. It must resolve to the patched V1.4 collector.
         v14.v13.install_v1_3()
         assert v14.legacy.collect_euronext is v14.collect_euronext_v1_4
     finally:
