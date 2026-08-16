@@ -2,14 +2,19 @@
 
 ## Objective
 
-Detect future IPOs as early as possible, evaluate opportunity and risk with auditable evidence, surface material changes to the investment committee, and build a forward performance dataset for later PIT/OOS validation.
+Detect future IPOs as early as possible, evaluate opportunity and risk with auditable evidence, surface material changes to the investment committee, convert missing information into explicit due-diligence actions, and build a forward performance dataset for later PIT/OOS validation.
 
 ## Discovery sources
 
-1. SEC EDGAR full index: S-1 and F-1 initial registration filings, 45-day rolling discovery window.
-2. Nasdaq IPO calendar: upcoming and filed candidates.
-3. Finnhub IPO calendar: expected/priced/filed/withdrawn candidates when the API key is available.
-4. Euronext IPO showcase: European listing identity metadata and market/location information when a future row is published.
+The runtime uses redundant calendars rather than a single dependency:
+
+1. Euronext IPO showcase for European listing identity, market and location data.
+2. Nasdaq IPO calendar for upcoming and filed US candidates.
+3. Alpha Vantage IPO calendar through the API key already available in the project.
+4. Finnhub IPO calendar for expected/priced/filed/withdrawn candidates.
+5. SEC EDGAR / EFTS for early S-1 and F-1 discovery and prospectus due diligence when the execution network can reach SEC endpoints.
+
+SEC access is best-effort because hosted GitHub runners may receive HTTP 403 responses from SEC endpoints. SEC failure therefore degrades the module but does not suppress Nasdaq, Alpha Vantage, Finnhub or Euronext discovery.
 
 All candidates are deduplicated by normalized issuer identity. SEC CIK is the preferred stable identity once resolved.
 
@@ -27,7 +32,7 @@ For SEC-matched candidates the module retrieves the latest available S-1, S-1/A,
 - recognized underwriters;
 - use-of-proceeds quality.
 
-When SEC Company Facts is available, the module also derives conservative scores from revenue growth, gross margin, operating leverage, cash, assets, liabilities and operating cash flow.
+When SEC Company Facts is available, the module also derives conservative US-GAAP or IFRS scores from revenue growth, gross margin, operating leverage, cash, assets, liabilities and operating cash flow.
 
 No LLM-generated factual assertion is used in the scoring path. Missing evidence remains missing and is handled through active-weight renormalization plus minimum coverage gates.
 
@@ -56,6 +61,19 @@ A candidate cannot reach DEEP_DD unless:
 - market readiness >= 50.
 
 Early SEC filings without a sufficiently mature market setup are capped at WATCH_EARLY_FILING.
+
+## Actionable due diligence gaps
+
+`IPO_DD_GAPS.csv` converts every missing scored criterion into an operational worklist. For each IPO it publishes:
+
+- number of missing criteria;
+- total scoring weight still undocumented;
+- the three highest-priority missing criteria;
+- category of work required (valuation, financials, offer terms, governance, legal, business model, sector, accounting, balance sheet or prospectus);
+- precise next action to execute;
+- exhaustive list of remaining missing criteria and actions.
+
+Prioritization starts with the criterion weight, then a deterministic work-category priority. A missing high-weight valuation or revenue-growth criterion is therefore treated before a low-weight secondary criterion. The worklist can never authorize an order.
 
 ## Hard blocks
 
@@ -104,6 +122,7 @@ Promotion remains disabled even after the initial sample target is reached. A de
 - outputs/ipo_radar/IPO_SEC_DD_STATUS.csv
 - outputs/ipo_radar/IPO_ALERTS.csv
 - outputs/ipo_radar/IPO_COMMITTEE_BRIEF.json
+- outputs/ipo_radar/IPO_DD_GAPS.csv
 - outputs/ipo_radar/IPO_VALIDATION_STATUS.json
 - state/ipo_radar/IPO_HISTORY.csv
 - state/ipo_radar/IPO_OUTCOMES.csv
@@ -116,4 +135,5 @@ Promotion remains disabled even after the initial sample target is reached. A de
 - T1/T2 forbidden.
 - PEA eligibility never inferred solely from exchange or ISIN prefix.
 - All missing-data coverage is explicit.
+- All due-diligence actions are advisory and traceable.
 - All forward validation uses observations persisted before the measured post-listing outcome.
