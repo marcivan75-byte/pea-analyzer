@@ -1,0 +1,51 @@
+{
+  "version": "BETA_RISK_REGIME_PIT_OOS_V1_1_2026_08_16",
+  "locked_before_results": true,
+  "scope": "ETF_MT_V20_8_1_38_DYNAMIC_PIT_CORE",
+  "final_holdout_opened": false,
+  "final_holdout_start": "2026-02-10",
+  "primary_intervention": {
+    "name": "REGIME_GATED_BETA_RISK_REDUCTION",
+    "trigger_all": {
+      "downside_beta_252d_min": 1.30,
+      "r2_252d_min": 0.35,
+      "beta_acceleration_63d_minus_252d_min": 0.30,
+      "benchmark_return_21d_max": 0.0,
+      "benchmark_return_63d_max": 0.0
+    },
+    "trigger_sources": {
+      "downside_beta_threshold": "existing RISK_V1 dynamic/aggressive boundary",
+      "r2_threshold": "existing RISK_V1 medium reliability boundary",
+      "beta_acceleration_threshold": "existing RISK_V1 nonstationarity warning threshold",
+      "market_regime_thresholds": "sign-only negative 21d and 63d returns; no fitted percentage threshold"
+    },
+    "triggered_position_multiplier": 0.75,
+    "otherwise_position_multiplier": 1.0,
+    "selection_changes": false,
+    "entry_exit_changes": false,
+    "stop_changes": false,
+    "score_changes": false,
+    "cash_return_assumption": 0.0
+  },
+  "evaluation_periods": ["VALIDATION_OOS", "DIAGNOSTIC_OOS"],
+  "promotion_gates": {
+    "minimum_trades_each_oos_period": 8,
+    "minimum_beta_coverage": 0.80,
+    "minimum_triggered_trades_total": 3,
+    "minimum_risk_adjusted_improvement": 0.05,
+    "minimum_expectancy_retention": 0.98,
+    "require_positive_adjusted_expectancy": true,
+    "require_p05_tail_not_worse": true,
+    "require_sequence_max_drawdown_not_worse": true,
+    "all_oos_periods_must_pass": true
+  },
+  "governance": {
+    "no_parameter_optimization_after_results": true,
+    "failed_primary_hypothesis_cannot_be_retuned_in_same_protocol": true,
+    "no_final_holdout_unlock": true,
+    "no_real_orders": true,
+    "diagnostic_not_certification": true,
+    "current_universe_survivorship_bias_disclosed": true,
+    "only_primary_intervention_is_promotion_eligible": true
+  }
+}
