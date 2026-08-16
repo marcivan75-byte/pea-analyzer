@@ -8,6 +8,7 @@ from v182.sources.yfinance_bulk import download_history, DownloadResult
 from v182.sources.yfinance_info import collect_info
 from v182.features.ohlcv_features import calculate as calculate_features
 from v182.io.frames import is_missing
+from v182.mapping.action_yahoo_ticker import qualify_action_yahoo_tickers
 
 NOW = lambda: datetime.now(timezone.utc).isoformat()
 
@@ -27,6 +28,8 @@ def _select_actions_scope(actions_df: pd.DataFrame, cfg: dict, scope_key: str, t
 
 
 def wave_history(df: pd.DataFrame, universe: str, cache_dir: str, cfg: dict) -> DownloadResult:
+    if universe == "ACTION":
+        qualify_action_yahoo_tickers(df)
     valid=df[df["yahoo_ticker"].apply(lambda v:not is_missing(v))]; tickers=valid["yahoo_ticker"].tolist(); batch_key="actions_batch_size" if universe=="ACTION" else "etf_batch_size"
     return download_history(tickers=tickers,cache_dir=cache_dir,period=cfg["yfinance"]["history_period"],interval=cfg["yfinance"]["interval"],batch_size=cfg["yfinance"][batch_key],auto_adjust=cfg["yfinance"]["auto_adjust"])
 
