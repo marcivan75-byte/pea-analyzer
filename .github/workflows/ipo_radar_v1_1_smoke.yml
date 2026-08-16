@@ -1,0 +1,97 @@
+name: IPO Radar V1.1 live smoke
+
+on:
+  pull_request:
+    paths:
+      - "config/IPO_RADAR_V1.json"
+      - "src/v182/decision/ipo_*.py"
+      - "src/v182/sources/sec_ipo*.py"
+      - "src/v182/sources/__init__.py"
+      - "tests/test_ipo_*.py"
+      - ".github/workflows/ipo_radar_v1_1_smoke.yml"
+  push:
+    branches: [main]
+    paths:
+      - "config/IPO_RADAR_V1.json"
+      - "src/v182/decision/ipo_*.py"
+      - "src/v182/sources/sec_ipo*.py"
+      - "src/v182/sources/__init__.py"
+      - ".github/workflows/ipo_radar_v1_1_smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      PYTHONUNBUFFERED: "1"
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+      - name: Run live hardened IPO Radar only
+        run: python -m v182.decision.ipo_radar_operational_v1_1
+      - name: Validate operational outputs governance and PIT evidence
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+
+          root=Path('.')
+          summary=json.loads((root/'outputs/ipo_radar/IPO_SUMMARY.json').read_text())
+          assert summary['mode']=='SHADOW_ADVISORY_ONLY'
+          assert summary['runtime_layer']=='IPO_RADAR_OPERATIONAL_V1.1'
+          assert summary['history_policy']=='FULL_PIT_EVIDENCE_SNAPSHOT'
+          assert summary['live_orders_enabled'] is False
+          assert summary['can_create_buy'] is False
+          assert summary['operational_status'] in {'SUCCESS','DEGRADED'}
+          statuses={row['source']:row['status'] for row in summary['source_status']}
+          assert 'SEC_EDGAR' in statuses
+          assert any(status in {'SUCCESS','PARTIAL'} for status in statuses.values())
+          for relative in (
+              'outputs/ipo_radar/IPO_RANKING.csv',
+              'outputs/ipo_radar/IPO_SOURCE_STATUS.csv',
+              'outputs/ipo_radar/IPO_SEC_DD_STATUS.csv',
+              'outputs/ipo_radar/IPO_ALERTS.csv',
+              'outputs/ipo_radar/IPO_COMMITTEE_BRIEF.json',
+              'state/ipo_radar/IPO_HISTORY.csv',
+          ):
+              assert (root/relative).exists(), relative
+          ranking=pd.read_csv(root/'outputs/ipo_radar/IPO_RANKING.csv')
+          history=pd.read_csv(root/'state/ipo_radar/IPO_HISTORY.csv')
+          assert {'identity_key','candidate_id','decision','live_order_allowed'}.issubset(history.columns)
+          if not ranking.empty:
+              assert not ranking['live_order_allowed'].astype(bool).any()
+              assert set(ranking['decision']).issubset({
+                  'PRIORITY_DD','DEEP_DD','WATCH','WATCH_EARLY_FILING','WATCH_DATA_GAP',
+                  'AVOID_OR_LOW_EDGE','AVOID_HIGH_RISK','AVOID_HARD_BLOCK','AVOID_WITHDRAWN'
+              })
+          print(json.dumps({
+              'operational_status':summary['operational_status'],
+              'candidate_count':summary['candidate_count'],
+              'decision_counts':summary['decision_counts'],
+              'source_status':summary['source_status'],
+              'sec_prospectus_enriched_count':summary['sec_prospectus_enriched_count'],
+              'runtime_layer':summary['runtime_layer'],
+          },ensure_ascii=False,indent=2))
+          PY
+      - name: Upload IPO smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipo-radar-v1-1-smoke-${{ github.run_id }}
+          path: |
+            outputs/ipo_radar/
+            state/ipo_radar/
+          if-no-files-found: warn
+          retention-days: 30

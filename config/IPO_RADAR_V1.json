@@ -1,7 +1,10 @@
 {
-  "version": "IPO_RADAR_V1.0",
+  "version": "IPO_RADAR_V1.1",
   "mode": "SHADOW_ADVISORY_ONLY",
   "lookahead_days": 180,
+  "sec_discovery_lookback_days": 45,
+  "sec_max_enrichments_per_run": 15,
+  "sec_user_agent_fallback": "PEA-Analyzer/1.1 marcivan75-byte@users.noreply.github.com",
   "minimum_scored_weight_pct": 60.0,
   "high_confidence_weight_pct": 75.0,
   "net_score_weights": {
@@ -41,13 +44,15 @@
       "net_min": 75.0,
       "opportunity_min": 75.0,
       "risk_max": 35.0,
-      "coverage_min": 75.0
+      "coverage_min": 75.0,
+      "market_readiness_min": 60.0
     },
     "deep_dd": {
       "net_min": 65.0,
       "opportunity_min": 65.0,
       "risk_max": 50.0,
-      "coverage_min": 65.0
+      "coverage_min": 65.0,
+      "market_readiness_min": 50.0
     },
     "watch": {
       "net_min": 55.0,
@@ -73,7 +78,9 @@
     "can_create_buy": false,
     "promotion_requires_dedicated_pit_oos_backtest": true,
     "missing_criteria_policy": "AVAILABLE_CRITERIA_RENORMALIZED_TO_100_PERCENT_WITH_MINIMUM_COVERAGE_GATE",
-    "pea_eligibility_policy": "NEVER_INFER_FINAL_ELIGIBILITY_FROM_LISTING_EXCHANGE_ONLY",
+    "sec_text_scoring_policy": "DETERMINISTIC_CONSERVATIVE_HEURISTICS_WITH_EVIDENCE_FIELDS",
+    "early_sec_filing_policy": "WATCH_ONLY_UNTIL_MARKET_READINESS_GATE",
+    "pea_eligibility_policy": "NEVER_INFER_FINAL_ELIGIBILITY_FROM_LISTING_EXCHANGE_OR_ISIN_PREFIX_ONLY",
     "t1_t2_forbidden": true
   }
 }
