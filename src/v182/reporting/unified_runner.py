@@ -52,10 +52,40 @@ def run(root:Path=ROOT)->dict:
     else:
         steps["performance"]=_skip_dependency("Requires SUCCESS refresh and SUCCESS current Committee; stale decisions are forbidden for virtual transactions.")
     outputs={
-        "decisions":"outputs/committee_master/COMMITTEE_DECISIONS.csv","sector_ranking":"outputs/committee_master/SECTOR_RANKING.csv","sector_ranking_challenger":"outputs/committee_master/SECTOR_RANKING_CHALLENGER_V21_4.csv","action_reference_vs_challenger":"outputs/committee_master/ACTION_REFERENCE_VS_CHALLENGER_V21_4.csv","criteria_coverage":"outputs/committee_master/CRITERIA_COVERAGE.csv","effective_weights":"outputs/committee_master/EFFECTIVE_WEIGHTS_100.xlsx","tct_baseline":"outputs/committee_master/TCT_BASELINE_V24_1_8.csv","tct_shadow":"outputs/committee_master/TCT_SHADOW_V24_1_7.csv","collection_audit_latest":"outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx","provenance":"state/provenance/OBSERVATION_PROVENANCE.csv","sector_rotation":"outputs/V21_3_SECTOR_ROTATION.csv","performance_workbook":"outputs/performance/COMMITTEE_BUY_PERFORMANCE.xlsx","etf_mt_ranking":"outputs/etf_mt_v2081/V20.8.1_ETF_MT_RANKING.csv","etf_mt_summary":"outputs/etf_mt_v2081/V20.8.1_ETF_MT_SUMMARY.json","gold_decision":"outputs/gold_v1_1/GOLD_V1_1_DECISION.json","gold_criteria":"outputs/gold_v1_1/GOLD_V1_1_CRITERIA.csv","gold_sources":"outputs/gold_v1_1/GOLD_V1_1_SOURCE_STATUS.csv","ipo_ranking":"outputs/ipo_radar/IPO_RANKING.csv","ipo_summary":"outputs/ipo_radar/IPO_SUMMARY.json","ipo_sources":"outputs/ipo_radar/IPO_SOURCE_STATUS.csv"
+        "decisions":"outputs/committee_master/COMMITTEE_DECISIONS.csv",
+        "sector_ranking":"outputs/committee_master/SECTOR_RANKING.csv",
+        "sector_ranking_challenger":"outputs/committee_master/SECTOR_RANKING_CHALLENGER_V21_4.csv",
+        "action_reference_vs_challenger":"outputs/committee_master/ACTION_REFERENCE_VS_CHALLENGER_V21_4.csv",
+        "criteria_coverage":"outputs/committee_master/CRITERIA_COVERAGE.csv",
+        "effective_weights":"outputs/committee_master/EFFECTIVE_WEIGHTS_100.xlsx",
+        "tct_baseline":"outputs/committee_master/TCT_BASELINE_V24_1_8.csv",
+        "tct_shadow":"outputs/committee_master/TCT_SHADOW_V24_1_7.csv",
+        "collection_audit_latest":"outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx",
+        "provenance":"state/provenance/OBSERVATION_PROVENANCE.csv",
+        "sector_rotation":"outputs/V21_3_SECTOR_ROTATION.csv",
+        "performance_workbook":"outputs/performance/COMMITTEE_BUY_PERFORMANCE.xlsx",
+        "etf_mt_ranking":"outputs/etf_mt_v2081/V20.8.1_ETF_MT_RANKING.csv",
+        "etf_mt_summary":"outputs/etf_mt_v2081/V20.8.1_ETF_MT_SUMMARY.json",
+        "gold_decision":"outputs/gold_v1_1/GOLD_V1_1_DECISION.json",
+        "gold_criteria":"outputs/gold_v1_1/GOLD_V1_1_CRITERIA.csv",
+        "gold_sources":"outputs/gold_v1_1/GOLD_V1_1_SOURCE_STATUS.csv",
+        "ipo_ranking":"outputs/ipo_radar/IPO_RANKING.csv",
+        "ipo_summary":"outputs/ipo_radar/IPO_SUMMARY.json",
+        "ipo_sources":"outputs/ipo_radar/IPO_SOURCE_STATUS.csv",
+        "ipo_sec_dd":"outputs/ipo_radar/IPO_SEC_DD_STATUS.csv",
+        "ipo_alerts":"outputs/ipo_radar/IPO_ALERTS.csv",
+        "ipo_committee_brief":"outputs/ipo_radar/IPO_COMMITTEE_BRIEF.json"
     }
     existing={k:v for k,v in outputs.items() if (root/v).exists()}; failed=[k for k,v in steps.items() if v["status"]=="FAILED"]; skipped=[k for k,v in steps.items() if v["status"].startswith("SKIPPED")]; overall="SUCCESS" if not failed and not skipped else "PARTIAL_SUCCESS"
-    decision_tracks={"actions_final":"V21.0 frozen-weight reference on current 1829 universe","actions_challenger":"V21.4 enriched shadow challenger","etf_mt_reference":"V20.8.1 exact 38-PIT core","etf_mt_challenger":"V20.8.2 missing-data dynamic shadow","tct":"V24.1.8 baseline + exact V24.1.7 T1/T2 shadow","gold":"V1.1 shadow","ipo":"IPO_RADAR_V1.0 shadow/advisory; no automatic BUY"}
+    decision_tracks={
+        "actions_final":"V21.0 frozen-weight reference on current 1829 universe",
+        "actions_challenger":"V21.4 enriched shadow challenger",
+        "etf_mt_reference":"V20.8.1 exact 38-PIT core",
+        "etf_mt_challenger":"V20.8.2 missing-data dynamic shadow",
+        "tct":"V24.1.8 baseline + exact V24.1.7 T1/T2 shadow",
+        "gold":"V1.1 shadow",
+        "ipo":"IPO_RADAR_V1.1 SEC-enriched shadow/advisory; no automatic BUY"
+    }
     payload={
         "version":PROCESS_VERSION,"software_version":SOFTWARE_VERSION,"run_id":run_id,"generated_at_utc":datetime.now(timezone.utc).isoformat(),"status":overall,"live_orders_enabled":False,"steps":steps,"persisted_outputs":existing,"decision_tracks":decision_tracks,
         "governance":[
@@ -70,7 +100,7 @@ def run(root:Path=ROOT)->dict:
             "A partial unified run returns a non-zero CLI exit code so GitHub cannot display false green success.",
             "T1/T2 are ACTION TCT only.",
             "ETF MT 90.91% historical OOS attribution belongs only to exact V20.8.1 38-PIT core.",
-            "IPO Radar V1.0 is discovery and due-diligence only; it cannot create a BUY before dedicated PIT/OOS validation.",
+            "IPO Radar V1.1 can discover SEC S-1/F-1 filings early, parse prospectus risk evidence, and issue due-diligence alerts; it cannot create a BUY before dedicated PIT/OOS validation.",
             "No real orders are emitted."
         ]
     }
