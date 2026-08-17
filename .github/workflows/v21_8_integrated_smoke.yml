@@ -1,0 +1,79 @@
+name: V21.8 integrated Committee smoke
+
+on:
+  push:
+    branches:
+      - agent/v21-6-3-cdc-postselection
+    paths:
+      - "config/V21_8_ENTRY_EXIT_GOVERNANCE.json"
+      - "src/v182/risk/entry_exit_governance_v21_8.py"
+      - "src/v182/reporting/unified_runner.py"
+      - "tests/test_entry_exit_governance_v21_8.py"
+      - ".github/workflows/v21_8_integrated_smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v21-8-integrated-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integrated-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      PYTHONUNBUFFERED: "1"
+      FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
+      ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+      EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . pytest
+      - name: Compile and focused governance tests
+        run: |
+          python -m compileall -q src tests
+          python -m pytest -q tests/test_entry_exit_governance_v21_8.py tests/test_tct_exact_v24_1_7.py
+      - name: Run integrated V21.8 unified pipeline
+        run: python -m v182.reporting.unified_runner
+      - name: Assert integrated governance outputs
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          summary=json.loads(Path('outputs/unified/UNIFIED_SUMMARY_LATEST.json').read_text())
+          assert summary['live_orders_enabled'] is False
+          assert 'entry_exit_governance' in summary['steps']
+          assert 'beta_correlation_risk' in summary['steps']
+          assert summary['steps']['performance']['status'] == 'SKIPPED_GOVERNANCE'
+          assert Path('outputs/committee_master/V21_8_ENTRY_EXIT_CHALLENGER.csv').exists()
+          audit=json.loads(Path('outputs/audit/V21_8_ENTRY_EXIT_GOVERNANCE.json').read_text())
+          assert audit['fixed_take_profit_enabled'] is False
+          assert audit['new_hard_stop_promoted'] is False
+          assert audit['real_orders_enabled'] is False
+          print('V21.8 integrated smoke assertions PASS')
+          PY
+      - name: Upload integrated outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v21-8-integrated-smoke-${{ github.run_id }}
+          path: |
+            outputs/unified/
+            outputs/committee_master/V21_8_ENTRY_EXIT_CHALLENGER.csv
+            outputs/audit/V21_8_ENTRY_EXIT_GOVERNANCE.json
+            outputs/audit/BETA_CORRELATION_RISK_ENGINE.json
+            outputs/risk/
+          if-no-files-found: warn
+          retention-days: 14
