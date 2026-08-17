@@ -45,9 +45,10 @@ jobs:
         run: |
           python -m compileall -q src tests
           python -m pytest -q tests/test_entry_exit_governance_v21_8.py tests/test_tct_exact_v24_1_7.py
-      - name: Run integrated V21.8 unified pipeline
+      - name: Run live integrated pipeline as data-quality diagnostic
+        continue-on-error: true
         run: python -m v182.reporting.unified_runner
-      - name: Assert integrated governance outputs
+      - name: Assert fail-closed integrated wiring
         run: |
           python - <<'PY'
           import json
@@ -57,12 +58,49 @@ jobs:
           assert 'entry_exit_governance' in summary['steps']
           assert 'beta_correlation_risk' in summary['steps']
           assert summary['steps']['performance']['status'] == 'SKIPPED_GOVERNANCE'
-          assert Path('outputs/committee_master/V21_8_ENTRY_EXIT_CHALLENGER.csv').exists()
-          audit=json.loads(Path('outputs/audit/V21_8_ENTRY_EXIT_GOVERNANCE.json').read_text())
-          assert audit['fixed_take_profit_enabled'] is False
-          assert audit['new_hard_stop_promoted'] is False
-          assert audit['real_orders_enabled'] is False
-          print('V21.8 integrated smoke assertions PASS')
+          assert 'No fixed take-profit is operational in V21.8.' in summary['governance']
+          assert any('Legacy fixed-stop assumptions' in x for x in summary['governance'])
+          assert any('No new hard stop is promoted' in x for x in summary['governance'])
+          assert any('TCT challenger entry requires exact T2 confirmation' in x for x in summary['governance'])
+          assert any('HOLD -> PROTECT -> EXIT' in x for x in summary['governance'])
+          assert any('Beta/correlation RISK_V1.1 remains context-only' in x for x in summary['governance'])
+          assert any('No real orders are emitted' in x for x in summary['governance'])
+          print('Integrated wiring/fail-closed assertions PASS; live refresh may be PARTIAL_SUCCESS when external data quality blocks.')
+          PY
+      - name: Deterministic downstream V21.8 execution smoke
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json, shutil
+          import pandas as pd
+          from v182.risk import entry_exit_governance_v21_8
+
+          root=Path('tmp/v21_8_smoke')
+          (root/'config').mkdir(parents=True, exist_ok=True)
+          (root/'outputs/committee_master').mkdir(parents=True, exist_ok=True)
+          shutil.copy2('config/V21_8_ENTRY_EXIT_GOVERNANCE.json', root/'config/V21_8_ENTRY_EXIT_GOVERNANCE.json')
+          rows=[
+            {'isin':'FR0000000001','asset_class':'ACTION','horizon':'TCT','decision':'ACTION','score':85,'dist_sma50':0.02,'dist_sma200':0.10,'momentum_accel':0.03,'vol20':0.20,'t2_confirmed':False},
+            {'isin':'FR0000000002','asset_class':'ACTION','horizon':'TCT','decision':'ACTION','score':85,'dist_sma50':0.02,'dist_sma200':0.10,'momentum_accel':0.03,'vol20':0.20,'t2_confirmed':True},
+            {'isin':'FR0000000003','asset_class':'ACTION','horizon':'CT','decision':'ACTION','score':82,'dist_sma50':-0.02,'dist_sma200':0.05,'slope_sma50_20d':-0.01,'ret_21d':-0.03,'return_since_entry':0.08,'max_return_since_entry':0.12},
+            {'isin':'FR0000000004','asset_class':'ACTION','horizon':'MT','decision':'ACTION','score':84,'dist_sma50':-0.03,'dist_sma200':-0.02,'slope_sma50_20d':-0.01,'ret_21d':-0.04,'previous_v21_8_position_state':'PROTECT','return_since_entry':0.12,'max_return_since_entry':0.20},
+          ]
+          pd.DataFrame(rows).to_csv(root/'outputs/committee_master/COMMITTEE_DECISIONS.csv',sep=';',index=False,encoding='utf-8-sig')
+          payload=entry_exit_governance_v21_8.run(root)
+          assert payload['status']=='SUCCESS'
+          out=pd.read_csv(root/'outputs/committee_master/V21_8_ENTRY_EXIT_CHALLENGER.csv',sep=';',encoding='utf-8-sig')
+          assert out.loc[out['isin']=='FR0000000001','v21_8_entry_state'].iloc[0]=='WAIT'
+          assert out.loc[out['isin']=='FR0000000002','v21_8_entry_state'].iloc[0]=='ACTION'
+          assert out.loc[out['isin']=='FR0000000003','v21_8_position_state'].iloc[0]=='PROTECT'
+          assert out.loc[out['isin']=='FR0000000004','v21_8_position_state'].iloc[0]=='EXIT'
+          assert not out['v21_8_fixed_take_profit'].astype(bool).any()
+          assert not out['v21_8_legacy_fixed_stop_engine'].astype(bool).any()
+          assert not out['v21_8_new_hard_stop_promoted'].astype(bool).any()
+          assert not out['v21_8_real_order'].astype(bool).any()
+          audit=json.loads((root/'outputs/audit/V21_8_ENTRY_EXIT_GOVERNANCE.json').read_text())
+          assert audit['tct_requires_exact_t2_confirmation'] is True
+          assert audit['exit_requires_temporal_confirmation'] is True
+          print('Deterministic V21.8 downstream execution smoke PASS')
           PY
       - name: Upload integrated outputs
         if: always()
@@ -75,5 +113,7 @@ jobs:
             outputs/audit/V21_8_ENTRY_EXIT_GOVERNANCE.json
             outputs/audit/BETA_CORRELATION_RISK_ENGINE.json
             outputs/risk/
+            tmp/v21_8_smoke/outputs/committee_master/V21_8_ENTRY_EXIT_CHALLENGER.csv
+            tmp/v21_8_smoke/outputs/audit/V21_8_ENTRY_EXIT_GOVERNANCE.json
           if-no-files-found: warn
           retention-days: 14
