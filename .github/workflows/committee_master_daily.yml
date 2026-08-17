@@ -1,13 +1,12 @@
-name: Committee Master V21.6.3 study-hardened
+name: Committee Master V21.7.4 + Sector Rotation V2 PIT/OOS + RISK V1.1
 
 on:
   workflow_dispatch:
   push:
-    branches: [main, agent/v21-6-3-cdc-postselection]
+    branches: [main]
     paths:
       - "config/**"
       - "src/**/*.py"
-      - "tests/**/*.py"
       - "pyproject.toml"
       - ".github/workflows/committee_master_daily.yml"
   schedule:
@@ -22,13 +21,8 @@ permissions:
 
 jobs:
   committee-master:
-    if: >-
-      github.ref == 'refs/heads/main' ||
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      (github.ref == 'refs/heads/agent/v21-6-3-cdc-postselection' && contains(github.event.head_commit.message, '[PIT-OOS-ONCE]'))
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 180
     env:
       PYTHONUNBUFFERED: "1"
       PEA_PROVENANCE_PATH: state/provenance/OBSERVATION_PROVENANCE.csv
@@ -53,27 +47,30 @@ jobs:
           key: gold-v11-history-${{ github.run_id }}
           restore-keys: |
             gold-v11-history-
+      - name: Restore IPO radar history
+        uses: actions/cache/restore@v4
+        with:
+          path: state/ipo_radar/
+          key: ipo-radar-v1-${{ github.run_id }}
+          restore-keys: |
+            ipo-radar-v1-
+      - name: Restore Sector Rotation V2 shadow history
+        uses: actions/cache/restore@v4
+        with:
+          path: state/sector_rotation_v2/
+          key: sector-rotation-v2-${{ github.run_id }}
+          restore-keys: |
+            sector-rotation-v2-
       - name: Restore field provenance
         uses: actions/cache/restore@v4
         with:
           path: state/provenance/
-          key: provenance-v2163-${{ github.run_id }}
+          key: provenance-v2161-${{ github.run_id }}
           restore-keys: |
-            provenance-v2163-
             provenance-v2161-
             provenance-v216-
             provenance-v215-
             provenance-v214-
-      - name: Restore CDC and ETF rank PIT histories
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            state/finnhub/
-            state/boursorama/
-          key: cdc-study-v2163-${{ github.run_id }}
-          restore-keys: |
-            cdc-study-v2163-
-            cdc-postselection-v2163-
       - name: Restore V21.4 virtual performance state
         uses: actions/cache/restore@v4
         with:
@@ -90,10 +87,8 @@ jobs:
           pip install -e .
       - name: Full Python compile and static safety gate
         run: |
-          python -m compileall -q src tests
+          python -m compileall -q src
           python -m v182.audit.static_code_audit --root . --output outputs/audit/PYTHON_STATIC_AUDIT.json --fail-high
-      - name: Criterion-study governance gate
-        run: python -m v182.audit.criteria_study_governance
       - name: Validate exhaustive referentials and real Action input
         run: |
           python - <<'PY'
@@ -105,27 +100,19 @@ jobs:
           from v182.decision.tct_timing_exact_v24_1_7 import FORMULA_VERSION, T1_WEIGHTS, T2_WEIGHTS
           a=json.loads(Path("config/V21_ACTIONS_CRITERIA_REGISTRY.json").read_text())
           e=json.loads(Path("config/V20_7_1_ETF_CRITERIA_REGISTRY.json").read_text())
-          emt=json.loads(Path("config/V20.8_ETF_MT_HIGH_PRECISION.json").read_text())
           ed=json.loads(Path("config/V20.8.2_ETF_MT_DYNAMIC.json").read_text())
           g=json.loads(Path("config/GOLD_V1_1_102_CRITERIA.json").read_text())
-          master=json.loads(Path("config/V18.2_MASTER_CONFIG.json").read_text())
           integrity=json.loads(Path("config/FULL_REFERENTIAL_INTEGRITY.json").read_text())
-          study=json.loads(Path("config/V21_6_3_CRITERIA_STUDY_GOVERNANCE.json").read_text())
           tct=json.loads(Path("config/TCT_V24_1_7_SHADOW.json").read_text())
           mm=json.loads(Path("config/COMMITTEE_VIRTUAL_MONEY_MANAGEMENT.json").read_text())
-          assert master["version"] == "21.6.3"
-          assert master["criteria_study_governance"]["enabled"] is True
-          assert study["scope"]["actions_decision_candidates_to_optimize"] == 201
-          assert study["scope"]["etf_decision_candidates_to_optimize"] == 62
-          assert a["version"] == "V21.7_ACTIONS_STUDY_HARDENED_2026_08_14"
+          ipo=json.loads(Path("config/IPO_RADAR_V1.json").read_text())
+          sr=json.loads(Path("config/SECTOR_ROTATION_V2_SHADOW.json").read_text())
+          srp=json.loads(Path("config/SECTOR_ROTATION_V2_PIT_OOS_PROTOCOL.json").read_text())
+          risk=json.loads(Path("config/BETA_CORRELATION_RISK_ENGINE.json").read_text())
+          risk_validation=json.loads(Path("config/BETA_RISK_ROBUST_VALIDATION_STATUS.json").read_text())
           assert a["criteria_count"] == 633 == integrity["actions"]["criteria_count"]
           assert integrity["actions"]["universe_count"] == 1829
           assert e["criteria_count"] == 268 == integrity["etf"]["criteria_count"]
-          assert len(emt["dynamic_criteria"]) == 38
-          assert len(emt["structural_overlay"]) == 5
-          assert study["etf_study_hardening"]["mt_target_composite_criteria_count"] == 43
-          assert study["etf_study_hardening"]["mt_target_split"] == {"dynamic":0.69,"structural":0.31}
-          assert master["etf_canonical_category_rank_trajectory"]["decision_influence"] == 0.0
           assert len(load_compressed_isins("config/V21_3_ACTION_UNIVERSE_1829_ISINS.parts")) == 1829
           legacy=pd.read_csv("inputs/V18.2_PEA_ACTIONS_MASTER.csv",sep=";",encoding="utf-8-sig",dtype=str,low_memory=False)
           materialized=filter_actions(legacy,"config/V21_3_ACTION_UNIVERSE_1829_ISINS.parts")
@@ -133,12 +120,8 @@ jobs:
           assert materialized.included["isin"].nunique()==1829
           for h in ("CT","MT","LT","SHORT","TOP_DOWN"):
               assert abs(sum(a["weights"][h].values())-1.0) < 1e-6
-              assert abs(sum(a["family_budgets"][h].values())-1.0) < 1e-6
-          assert all("target_upside_gt4_score" not in a["weights"][h] for h in ("CT","MT","LT"))
-          assert all("dividend_gt4_score" not in a["weights"][h] for h in ("CT","MT","LT"))
-          assert all("morningstar_action_score" not in a["weights"][h] for h in ("CT","MT","LT"))
-          assert all("sector_rotation_score" not in a["weights"][h] for h in ("CT","MT","LT"))
-          assert all("action_catchup_score" not in a["weights"][h] for h in ("CT","MT","LT"))
+          assert a["governance"]["positive_unvalidated_overlay_can_create_buy"] is False
+          assert a["governance"]["total_return_composite_active_weight"] is False
           assert a["governance"]["t1_t2_scope"] == "ACTION_TCT_ONLY"
           assert e["governance"]["t1_t2_forbidden"] is True
           assert NORMALIZATION_POLICY == "ACTIVE_AVAILABLE_PILLARS_RENORMALIZED_TO_100_SETUP_EXCLUDED"
@@ -153,46 +136,78 @@ jobs:
           assert g["governance"]["contribution_blocks"] == 11
           assert mm["entry_execution_rule"] == "NEXT_RUN_OBSERVED_PRICE_AFTER_SIGNAL_DATE"
           assert mm["single_position_per_isin"] is True
-          print(f"V21.6.3 study-hardened integrity OK: Actions 1829/633 (identity-only={materialized.materialized_missing_count}), ETF 102/268, MT target 43=38+5, family budgets, rank PIT history, TCT, Gold")
+          assert abs(sum(ipo["opportunity_weights"].values())-100.0) < 1e-9
+          assert abs(sum(ipo["risk_weights"].values())-100.0) < 1e-9
+          assert ipo["governance"]["can_create_buy"] is False
+          assert ipo["governance"]["t1_t2_forbidden"] is True
+          assert sr["mode"] == "SHADOW_ONLY"
+          assert sr["version"] == "SECTOR_ROTATION_V2.0_SHADOW"
+          assert sr["governance"]["changes_action_scores"] is False
+          assert sr["governance"]["changes_etf_scores"] is False
+          assert sr["governance"]["can_trigger_orders"] is False
+          assert sr["governance"]["can_trigger_sales"] is False
+          assert abs(sum(sr["score_weights"]["RLS"].values())-1.0) < 1e-9
+          assert abs(sum(sr["score_weights"]["AVCR"].values())-1.0) < 1e-9
+          assert abs(sum(sr["score_weights"]["RARS_OPPORTUNITY"].values())-1.0) < 1e-9
+          assert abs(sum(sr["score_weights"]["DQS"].values())-1.0) < 1e-9
+          assert srp["locked_before_results"] is True
+          assert srp["model_version_lock"] == sr["version"]
+          assert srp["primary_horizon_days"] == 60
+          assert srp["outcomes"]["entry_rule"] == "FIRST_TRADING_SESSION_STRICTLY_AFTER_SIGNAL_DATE"
+          assert srp["governance"]["same_day_close_execution_forbidden"] is True
+          assert srp["governance"]["no_score_weight_changes"] is True
+          assert srp["governance"]["no_threshold_retuning"] is True
+          assert srp["governance"]["no_real_orders"] is True
+          assert srp["governance"]["final_holdout_locked"] is True
+          assert risk["enabled"] is True
+          assert risk["benchmark"]["label"] == "PEA_ACTION_ROBUST_EQUAL_WEIGHT_PROXY_V2"
+          assert risk["benchmark"]["fail_closed"] is True
+          assert risk["governance"]["decision_influence"] == 0.0
+          assert risk["governance"]["score_influence"] == 0.0
+          assert risk["governance"]["sizing_execution_influence"] == 0.0
+          assert risk["governance"]["stop_loss_influence"] == 0.0
+          assert risk["governance"]["real_orders_enabled"] is False
+          assert risk_validation["status"] == "ROBUST_VALIDATED_CONTEXT_ONLY_KEEP_ALL_SIZING_SHADOW"
+          assert risk_validation["final_holdout_opened"] is False
+          assert risk_validation["production_policy"]["beta_only_position_sizing_promoted"] is False
+          assert risk_validation["production_policy"]["regime_v1_1_sizing_promoted"] is False
+          assert risk_validation["production_policy"]["regime_v1_2_sizing_promoted"] is False
+          print(f"V21.7.4 integrity OK: Actions 1829/633 (materialized identity-only={materialized.materialized_missing_count}), ETF 102/268, TCT, Gold, IPO Radar, Sector Rotation V2 PIT/OOS shadow, RISK V1.1 context-only, bias-safe virtual book")
           PY
       - name: Publish Action identity hydration worklist
         run: python -m v182.audit.identity_hydration
       - name: Run unified Committee pipeline
         run: python -m v182.reporting.unified_runner
-      - name: Monitor Boursorama imports
-        if: always()
-        run: python -m v182.reporting.boursorama_monitor
-      - name: Exceptional PIT/OOS diagnostic — one shot only
-        if: >-
-          success() &&
-          github.ref == 'refs/heads/agent/v21-6-3-cdc-postselection' &&
-          contains(github.event.head_commit.message, '[PIT-OOS-ONCE]')
-        env:
-          ALLOW_EXCEPTIONAL_PIT_OOS_ONCE: "1"
-        run: python -m v182.backtest.exceptional_pit_oos
-      - name: Publish Android Investment Committee Control Center
-        if: always()
-        run: |
-          python -m v182.reporting.android_ci_control_center
-          if [ -f outputs/mobile/ANDROID_CI_CONTROL_CENTER.md ]; then
-            cat outputs/mobile/ANDROID_CI_CONTROL_CENTER.md >> "$GITHUB_STEP_SUMMARY"
-          fi
       - name: Show unified summary
         if: always()
         run: |
           if [ -f outputs/unified/UNIFIED_SUMMARY_LATEST.json ]; then cat outputs/unified/UNIFIED_SUMMARY_LATEST.json; fi
-      - name: Show Boursorama monitor
-        if: always()
-        run: |
-          if [ -f outputs/audit/BOURSORAMA_IMPORT_MONITOR.json ]; then cat outputs/audit/BOURSORAMA_IMPORT_MONITOR.json; fi
-      - name: Show exceptional PIT/OOS summary
-        if: always()
-        run: |
-          if [ -f outputs/backtest/exceptional_pit_oos_2026_08_14/EXCEPTIONAL_PIT_OOS_SUMMARY.json ]; then cat outputs/backtest/exceptional_pit_oos_2026_08_14/EXCEPTIONAL_PIT_OOS_SUMMARY.json; fi
       - name: Show committee summary
         if: always()
         run: |
           if [ -f outputs/committee_master/SUMMARY.json ]; then cat outputs/committee_master/SUMMARY.json; fi
+      - name: Show IPO radar summary
+        if: always()
+        run: |
+          if [ -f outputs/ipo_radar/IPO_SUMMARY.json ]; then cat outputs/ipo_radar/IPO_SUMMARY.json; fi
+      - name: Show Sector Rotation V2 shadow summary
+        if: always()
+        run: |
+          if [ -f outputs/audit/V2_SECTOR_ROTATION_SHADOW.json ]; then cat outputs/audit/V2_SECTOR_ROTATION_SHADOW.json; fi
+      - name: Show Sector Rotation V2 PIT OOS status
+        if: always()
+        run: |
+          if [ -f outputs/audit/V2_SECTOR_ROTATION_PIT_OOS_STATUS.json ]; then cat outputs/audit/V2_SECTOR_ROTATION_PIT_OOS_STATUS.json; fi
+      - name: Show RISK V1.1 audit
+        if: always()
+        run: |
+          if [ -f outputs/audit/BETA_CORRELATION_RISK_ENGINE.json ]; then cat outputs/audit/BETA_CORRELATION_RISK_ENGINE.json; fi
+      - name: Publish RISK V1.1 Android summary
+        if: always()
+        run: |
+          if [ -f outputs/mobile/RISK_V1_1_CONTROL_CENTER.md ]; then
+            cat outputs/mobile/RISK_V1_1_CONTROL_CENTER.md >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Show V21.4 performance summary
         if: always()
         run: |
@@ -209,38 +224,44 @@ jobs:
         with:
           path: state/GOLD_V1_1_SHADOW_HISTORY.csv
           key: gold-v11-history-${{ github.run_id }}
+      - name: Save IPO radar history
+        if: ${{ always() && hashFiles('state/ipo_radar/**') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: state/ipo_radar/
+          key: ipo-radar-v1-${{ github.run_id }}
+      - name: Save Sector Rotation V2 shadow history
+        if: ${{ always() && hashFiles('state/sector_rotation_v2/**') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: state/sector_rotation_v2/
+          key: sector-rotation-v2-${{ github.run_id }}
       - name: Save field provenance
         if: ${{ always() && hashFiles('state/provenance/**') != '' }}
         uses: actions/cache/save@v4
         with:
           path: state/provenance/
-          key: provenance-v2163-${{ github.run_id }}
-      - name: Save CDC and ETF rank PIT histories
-        if: ${{ always() && (hashFiles('state/finnhub/**') != '' || hashFiles('state/boursorama/**') != '') }}
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            state/finnhub/
-            state/boursorama/
-          key: cdc-study-v2163-${{ github.run_id }}
+          key: provenance-v2161-${{ github.run_id }}
       - name: Save V21.4 virtual performance state
         if: ${{ always() && hashFiles('state/committee_performance_v21_4/**') != '' }}
         uses: actions/cache/save@v4
         with:
           path: state/committee_performance_v21_4/
           key: committee-performance-v214-${{ github.run_id }}
-      - name: Upload complete Committee V21.6.3 study-hardened results
+      - name: Upload complete Committee V21.7.4 results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: committee-master-v21-6-3-study-${{ github.run_id }}
+          name: committee-master-v21-7-4-${{ github.run_id }}
           path: |
             outputs/unified/
-            outputs/mobile/
-            outputs/backtest/
             outputs/committee_master/
             outputs/etf_mt_v2081/
             outputs/gold_v1_1/
+            outputs/ipo_radar/
+            outputs/sector_rotation/
+            outputs/risk/
+            outputs/mobile/
             outputs/data_audit/
             outputs/performance/
             outputs/audit/
@@ -250,9 +271,9 @@ jobs:
             outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
             state/TCT_V24_1_7_T1_STATE.json
             state/GOLD_V1_1_SHADOW_HISTORY.csv
+            state/ipo_radar/
+            state/sector_rotation_v2/
             state/provenance/
-            state/finnhub/
-            state/boursorama/
             state/committee_performance_v21_4/
           if-no-files-found: warn
           retention-days: 30

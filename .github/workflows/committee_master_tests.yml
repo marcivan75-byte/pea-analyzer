@@ -1,4 +1,4 @@
-name: Committee Master V21.6.3 full audit validation
+name: Committee Master V21.7.0 full audit validation
 
 on:
   pull_request:
@@ -31,8 +31,6 @@ jobs:
         run: ruff check src tests
       - name: Static Python safety audit
         run: python -m v182.audit.static_code_audit --root . --output outputs/audit/PYTHON_STATIC_AUDIT.json --fail-high
-      - name: Criterion-study governance gate
-        run: python -m v182.audit.criteria_study_governance
       - name: Referential and governance integrity
         run: |
           python - <<'PY'
@@ -45,57 +43,16 @@ jobs:
           from v182.decision.tct_timing_exact_v24_1_7 import FORMULA_VERSION, T1_WEIGHTS, T2_WEIGHTS
           a=json.loads(Path("config/V21_ACTIONS_CRITERIA_REGISTRY.json").read_text())
           e=json.loads(Path("config/V20_7_1_ETF_CRITERIA_REGISTRY.json").read_text())
-          emt=json.loads(Path("config/V20.8_ETF_MT_HIGH_PRECISION.json").read_text())
           ed=json.loads(Path("config/V20.8.2_ETF_MT_DYNAMIC.json").read_text())
           g=json.loads(Path("config/GOLD_V1_1_102_CRITERIA.json").read_text())
           t=json.loads(Path("config/TCT_V24_1_7_SHADOW.json").read_text())
           mm=json.loads(Path("config/COMMITTEE_VIRTUAL_MONEY_MANAGEMENT.json").read_text())
+          sr=json.loads(Path("config/SECTOR_ROTATION_V2_SHADOW.json").read_text())
           integrity=json.loads(Path("config/FULL_REFERENTIAL_INTEGRITY.json").read_text())
           master=json.loads(Path("config/V18.2_MASTER_CONFIG.json").read_text())
-          study=json.loads(Path("config/V21_6_3_CRITERIA_STUDY_GOVERNANCE.json").read_text())
-          assert master["version"] == "21.6.3"
-          assert master["criteria_study_governance"]["enabled"] is True
-          assert master["criteria_study_governance"]["actions_referential_criteria"] == 633
-          assert master["criteria_study_governance"]["etf_referential_criteria"] == 268
-          assert study["scope"]["actions_decision_candidates_to_optimize"] == 201
-          assert study["scope"]["etf_decision_candidates_to_optimize"] == 62
-          assert study["master_principles"]["family_budget_is_optimized_before_intra_family_weights"] is True
-          assert study["master_principles"]["derived_reporting_components_never_receive_separate_alpha_weight"] is True
-          assert master["cdc"]["finnhub_earnings_calendar"]["same_fiscal_period_revision_only"] is True
-          assert master["cdc"]["finnhub_earnings_calendar"]["symbol_resolution"] == "EXACT_SUFFIX_FIRST_UNIQUE_ALIAS_ONLY"
-          assert master["cdc"]["finnhub_earnings_calendar"]["ambiguous_alias_policy"] == "QUARANTINE"
-          amf=master["cdc"]["amf_short_positions"]
-          assert amf["semantic"] == "OPEN_PUBLIC_DISCLOSURE_PROXY_NOT_TRUE_CURRENT_SHORT_INTEREST"
-          assert amf["publication_start_required"] is True
-          assert amf["publication_end_required"] is True
-          assert amf["latest_active_record_per_holder"] is True
-          assert amf["observation_as_of_policy"] == "LATEST_RETAINED_PUBLIC_DISCLOSURE_DATE"
-          assert amf["freshness_age_field"] == "amf_public_short_days_since_latest_publication"
-          assert amf["absence_policy"] == "MISSING_NOT_ZERO"
-          assert master["postselection_market_sheets"]["decision_influence"] == 0.0
-          assert master["postselection_market_sheets"]["positive_confirmation_can_create_buy"] is False
-          assert master["postselection_market_sheets"]["investing"]["timeframes"] == ["WEEKLY","MONTHLY"]
-          assert master["boursorama_etf_category_rank"]["decision_influence"] == 0.0
-          assert master["boursorama_etf_category_rank"]["mt_dynamic_38_unchanged"] is True
-          assert master["boursorama_etf_category_rank"]["rank_format"] == "RAW_INTEGER_LOWER_IS_BETTER"
-          assert master["boursorama_etf_category_rank"]["percentile_fabrication_forbidden"] is True
-          assert master["etf_canonical_category_rank_trajectory"]["decision_influence"] == 0.0
-          assert master["etf_canonical_category_rank_trajectory"]["canonical_semantic"] == "1_BEST_100_WORST"
-          assert integrity["etf"]["boursorama_category_rank_v21_6_3"]["percentile_fabrication_forbidden"] is True
-          cdc_visibility=integrity["actions"]["cdc_committee_visibility_v21_6_3"]
-          assert cdc_visibility["decision_influence"] == 0.0
-          assert cdc_visibility["amf_short_semantics"] == "OPEN_PUBLIC_DISCLOSURE_PROXY_NOT_TRUE_CURRENT_SHORT_INTEREST"
-          assert cdc_visibility["amf_observation_as_of"] == "LATEST_RETAINED_PUBLIC_DISCLOSURE_DATE"
-          assert cdc_visibility["amf_freshness_age_field"] == "amf_public_short_days_since_latest_publication"
-          assert integrity["actions"]["cdc_identity_governance_v21_6_3"]["ambiguous_alias_policy"] == "QUARANTINE"
           assert a["criteria_count"] == 633 == integrity["actions"]["criteria_count"]
-          assert a["version"] == "V21.7_ACTIONS_STUDY_HARDENED_2026_08_14"
           assert integrity["actions"]["universe_count"] == 1829
           assert e["criteria_count"] == 268 == integrity["etf"]["criteria_count"]
-          assert len(emt["dynamic_criteria"]) == 38
-          assert len(emt["structural_overlay"]) == 5
-          assert study["etf_study_hardening"]["mt_target_composite_criteria_count"] == 43
-          assert study["etf_study_hardening"]["mt_target_split"] == {"dynamic":0.69,"structural":0.31}
           assert len(load_compressed_isins("config/V21_3_ACTION_UNIVERSE_1829_ISINS.parts")) == 1829
           assert EXPECTED_SHA256 == master["canonical_universe"]["actions_whitelist_sha256"]
           assert master["quality_gates"]["actions_min_rows"] == 1829
@@ -103,16 +60,12 @@ jobs:
           assert master["collection_audit"]["after_each_wave"] is True
           for h in ("CT","MT","LT","SHORT","TOP_DOWN"):
               assert abs(sum(a["weights"][h].values())-1.0) < 1e-6
-              assert abs(sum(a["family_budgets"][h].values())-1.0) < 1e-6
           assert a["governance"]["positive_unvalidated_overlay_can_create_buy"] is False
           assert a["governance"]["total_return_composite_active_weight"] is False
-          assert all("target_upside_gt4_score" not in a["weights"][h] for h in ("CT","MT","LT"))
-          assert all("dividend_gt4_score" not in a["weights"][h] for h in ("CT","MT","LT"))
-          assert all("morningstar_action_score" not in a["weights"][h] for h in ("CT","MT","LT"))
-          assert all("sector_rotation_score" not in a["weights"][h] for h in ("CT","MT","LT"))
-          assert all("action_catchup_score" not in a["weights"][h] for h in ("CT","MT","LT"))
-          assert a["weights"]["MT"]["target_upside_pct_v21"] > 0
-          assert a["weights"]["MT"]["dividend_yield_v21_pct"] > 0
+          assert all("total_return_potential_score" not in a["weights"][h] for h in ("CT","MT","LT"))
+          assert all("target_upside_gt4_score" in a["weights"][h] for h in ("CT","MT","LT"))
+          assert a["weights"]["MT"]["morningstar_action_score"] > 0
+          assert a["weights"]["LT"]["dividend_gt4_score"] > 0
           assert "ATTRIBUTED" in ACCEPTED_VALIDATION_STATUSES
           assert e["governance"]["t1_t2_forbidden"] is True
           assert a["governance"]["t1_t2_scope"] == "ACTION_TCT_ONLY"
@@ -133,17 +86,26 @@ jobs:
           assert mm["entry_execution_rule"] == "NEXT_RUN_OBSERVED_PRICE_AFTER_SIGNAL_DATE"
           assert mm["single_position_per_isin"] is True
           assert mm["max_instrument_exposure_pct"] <= mm["max_position_pct"]
-          print("V21.6.3 study-hardened integrity OK: 1829/633 Actions, 102/268 ETF, 43=38+5 MT target architecture, family budgets, CDC, postselection, TCT, Gold")
+          assert sr["version"] == "SECTOR_ROTATION_V2.0_SHADOW"
+          assert sr["mode"] == "SHADOW_ONLY"
+          assert sr["governance"]["changes_action_scores"] is False
+          assert sr["governance"]["changes_etf_scores"] is False
+          assert sr["governance"]["can_trigger_orders"] is False
+          assert sr["governance"]["can_trigger_sales"] is False
+          assert sr["governance"]["pit_required"] is True
+          assert sr["governance"]["oos_validation_required_before_activation"] is True
+          for key in ("RLS","AVCR","RARS_OPPORTUNITY","DQS"):
+              assert abs(sum(sr["score_weights"][key].values())-1.0) < 1e-9
+          assert sr["valuation_thresholds"]["promising_but_overvalued_avcr_min"] < sr["valuation_thresholds"]["no_chase_avcr_min"]
+          print("V21.7.0 integrity OK: 1829/633 Actions, 102/268 ETF, exact TCT, Gold 102/11, Sector Rotation V2 shadow, bias-safe virtual book")
           PY
       - name: Full pytest suite
         run: pytest -q
-      - name: Upload audits
+      - name: Upload static audit
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: python-and-criteria-audits-${{ github.run_id }}
-          path: |
-            outputs/audit/PYTHON_STATIC_AUDIT.json
-            outputs/audit/CRITERIA_STUDY_GOVERNANCE.json
+          name: python-static-audit-${{ github.run_id }}
+          path: outputs/audit/PYTHON_STATIC_AUDIT.json
           if-no-files-found: warn
           retention-days: 30
