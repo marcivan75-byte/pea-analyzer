@@ -1,1 +1,1 @@
-"""Backtest utilities. Production runs must keep exceptional diagnostics disabled by default."""
+"""Point-in-time backtest utilities for governed shadow models."""

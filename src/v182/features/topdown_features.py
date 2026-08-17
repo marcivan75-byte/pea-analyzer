@@ -43,6 +43,7 @@ def _market_regime_score(frame: pd.DataFrame, min_observations: int = 10) -> flo
 
 
 def _clean_label_series(values: pd.Series) -> pd.Series:
+    """Normalize categorical labels without turning missing/numeric values into fake groups."""
     def clean(value: object) -> str:
         if not isinstance(value, str):
             return "N/A"
@@ -54,6 +55,7 @@ def _clean_label_series(values: pd.Series) -> pd.Series:
 
 
 def _valid_group_labels(groups: pd.Series) -> list[str]:
+    """Return deterministic sortable labels; invalid mixed-type values are ignored."""
     labels=set()
     for value in groups.tolist():
         if not isinstance(value, str):
