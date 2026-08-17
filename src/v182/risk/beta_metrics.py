@@ -289,9 +289,28 @@ def compute_beta_metrics(
     result["beta_stability_span"] = max(valid) - min(valid) if len(valid) >= 2 else None
     beta_long = num(result.get(f"beta_{long_window}d"))
     result["beta_class"] = _beta_class(beta_long)
-    result["beta_reliability"] = _reliability(num(result["r2_252d"]))
+    reliability = _reliability(num(result["r2_252d"]))
+    result["beta_reliability"] = reliability
     result["sessions_252d"] = int(len(long_pair))
-    result["status"] = "OK" if beta_long is not None else "INSUFFICIENT_HISTORY"
+
+    # A beta with R² < 0.15 is mathematically computable but too weakly linked to
+    # the common market factor to support a risk verdict, portfolio beta or stress
+    # scenario. Preserve correlation/R² for auditability, but fail closed on all
+    # beta-derived fields so extreme low-R² micro-cap estimates cannot pollute the
+    # context layer. LOW/MEDIUM/HIGH reliability remains observable and usable.
+    if reliability == "VERY_LOW":
+        for field in (
+            *(f"beta_{window}d" for window in windows),
+            "upside_beta_252d",
+            "downside_beta_252d",
+            "downside_upside_beta_ratio",
+            "beta_stability_span",
+        ):
+            result[field] = None
+        result["beta_class"] = "UNRELIABLE"
+        result["status"] = "UNRELIABLE_LOW_R2"
+    else:
+        result["status"] = "OK" if beta_long is not None else "INSUFFICIENT_HISTORY"
     return result
 
 
