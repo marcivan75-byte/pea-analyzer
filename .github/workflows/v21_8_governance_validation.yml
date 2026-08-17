@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - agent/v21-8-entry-exit-governance
+      - agent/v21-6-3-cdc-postselection
   workflow_dispatch:
 
 permissions:
