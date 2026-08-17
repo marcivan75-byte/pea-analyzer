@@ -104,11 +104,18 @@ def score_instrument_theme_exposure(
     return result, summary
 
 
-def build_mapping_worklist(instruments: pd.DataFrame, mapping: pd.DataFrame, *, universe: str) -> pd.DataFrame:
-    """List canonical instruments with no governed theme mapping."""
+def build_mapping_worklist(
+    instruments: pd.DataFrame,
+    mapping: pd.DataFrame,
+    *,
+    universe: str,
+    covered_isins: set[str] | None = None,
+) -> pd.DataFrame:
+    """List canonical instruments with no governed manual mapping or direct classification."""
     if "isin" not in instruments.columns:
         return pd.DataFrame(columns=["universe", "isin", "name", "sector", "status"])
     mapped = set(mapping.loc[mapping["universe"].astype(str).eq(universe), "isin"].astype(str)) if not mapping.empty else set()
+    mapped |= {str(value) for value in (covered_isins or set()) if str(value)}
     pending = instruments.loc[~instruments["isin"].astype(str).isin(mapped)].copy()
     sector_column = next((name for name in ("sector_yf", "sector", "sector_bucket", "industry_yf") if name in pending.columns), None)
     name_column = "name" if "name" in pending.columns else None
