@@ -12,34 +12,78 @@ ACTIVE_DECISIONS = {"BUY", "BUY_CANDIDATE", "HOLD"}
 
 
 def economic_overlap_scores(rows: pd.DataFrame, returns_by_isin: dict[str, pd.Series]) -> list[float | None]:
-    active = set(rows.loc[rows["decision"].astype(str).str.upper().isin(ACTIVE_DECISIONS), "isin"].astype(str))
+    """Compute the legacy overlap score once per unique ISIN/tag combination.
+
+    Committee decisions contain the same ISIN on several horizons. The previous
+    implementation recomputed the exact same return correlation for every
+    horizon row, turning a ~1,931-instrument risk context into tens/hundreds of
+    thousands of redundant pandas concat/corr operations. This implementation
+    preserves the scoring formula and pairwise 126-session semantics while
+    caching pair correlations and reusing identical ISIN/tag results.
+    """
+    active_rows = rows[
+        rows["decision"].astype(str).str.upper().isin(ACTIVE_DECISIONS)
+    ]
+    active_tags_by_isin: dict[str, set[tuple[str, ...]]] = {}
+    for _, row in active_rows.iterrows():
+        other_isin = str(row.get("isin") or "")
+        if not other_isin:
+            continue
+        tags = tuple(str(row.get("risk_engine_tags") or "").split("|"))
+        active_tags_by_isin.setdefault(other_isin, set()).add(tags)
+
+    pair_corr_cache: dict[tuple[str, str], float | None] = {}
+
+    def pair_corr(left_isin: str, right_isin: str) -> float | None:
+        key = tuple(sorted((left_isin, right_isin)))
+        if key in pair_corr_cache:
+            return pair_corr_cache[key]
+        left = returns_by_isin.get(left_isin)
+        right = returns_by_isin.get(right_isin)
+        if left is None or right is None:
+            pair_corr_cache[key] = None
+            return None
+        pair = pd.concat([left, right], axis=1).dropna().tail(126)
+        if len(pair) < 40:
+            pair_corr_cache[key] = None
+            return None
+        corr = float(pair.iloc[:, 0].corr(pair.iloc[:, 1]))
+        value = corr if math.isfinite(corr) else None
+        pair_corr_cache[key] = value
+        return value
+
+    score_cache: dict[tuple[str, tuple[str, ...]], float | None] = {}
+
+    def score_for(isin: str, current_tags: tuple[str, ...]) -> float | None:
+        cache_key = (isin, current_tags)
+        if cache_key in score_cache:
+            return score_cache[cache_key]
+        if returns_by_isin.get(isin) is None:
+            score_cache[cache_key] = None
+            return None
+
+        candidates: list[float] = []
+        for other_isin, other_tag_variants in active_tags_by_isin.items():
+            if other_isin == isin:
+                continue
+            corr = pair_corr(isin, other_isin)
+            if corr is None:
+                continue
+            corr_component = max(0.0, min(1.0, corr))
+            for other_tags in other_tag_variants:
+                tag_component = jaccard(list(current_tags), list(other_tags))
+                candidates.append(
+                    100.0 * (0.70 * corr_component + 0.30 * tag_component)
+                )
+        value = round(max(candidates), 4) if candidates else 0.0
+        score_cache[cache_key] = value
+        return value
+
     scores: list[float | None] = []
     for _, row in rows.iterrows():
         isin = str(row.get("isin") or "")
-        current = returns_by_isin.get(isin)
-        if current is None:
-            scores.append(None)
-            continue
-        candidates: list[float] = []
-        current_tags = str(row.get("risk_engine_tags") or "").split("|")
-        for other_idx, other in rows.iterrows():
-            other_isin = str(other.get("isin") or "")
-            if other_isin == isin or other_isin not in active:
-                continue
-            other_returns = returns_by_isin.get(other_isin)
-            if other_returns is None:
-                continue
-            pair = pd.concat([current, other_returns], axis=1).dropna().tail(126)
-            if len(pair) < 40:
-                continue
-            corr = float(pair.iloc[:, 0].corr(pair.iloc[:, 1]))
-            if not math.isfinite(corr):
-                continue
-            corr_component = max(0.0, min(1.0, corr))
-            other_tags = str(rows.at[other_idx, "risk_engine_tags"] or "").split("|")
-            tag_component = jaccard(current_tags, other_tags)
-            candidates.append(100.0 * (0.70 * corr_component + 0.30 * tag_component))
-        scores.append(round(max(candidates), 4) if candidates else 0.0)
+        tags = tuple(str(row.get("risk_engine_tags") or "").split("|"))
+        scores.append(score_for(isin, tags))
     return scores
 
 
