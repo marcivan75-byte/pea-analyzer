@@ -69,3 +69,36 @@ The final execution layer remains:
 - real-order authority = 0.
 
 Promotion still requires dedicated PIT/OOS evidence versus V1 and the no-rotation baseline.
+
+## 6. Per-decision Committee context
+
+Sector Rotation V2 is attached to the current Committee universe through the separate diagnostic output:
+
+`outputs/committee_master/COMMITTEE_SECTOR_ROTATION_V2_CONTEXT.csv`
+
+The join is intentionally non-invasive:
+
+- `COMMITTEE_DECISIONS.csv` is not modified by the Sector V2 context layer;
+- row count and `(asset_class, horizon, isin)` ordering are guarded;
+- Action sector context comes only from the governed enriched master (`sector_yf` / `sector_yahoo`);
+- ETF sector context is allowed only for explicit single-sector buckets already present in Committee data;
+- `ETF MULTISECTORIEL / PAYS` is explicitly classified `NO_SINGLE_SECTOR_CONTEXT` rather than receiving a fabricated sector;
+- Action theme context uses only governed high-confidence `DIRECT_INDUSTRY` tags;
+- low-confidence AI, data-center, grid and cyber hypotheses remain disabled;
+- PIT/OOS status and holdout lock are copied into every context row;
+- decision, score, sizing and stop-loss influence remain exactly `0.0`.
+
+The companion audit is:
+
+`outputs/audit/SECTOR_ROTATION_V2_DECISION_CONTEXT.json`
+
+A non-zero Sector V2 influence or an unexpected promotion request is reported as `GOVERNANCE_BREACH_BLOCKED` and is never converted into execution authority.
+
+## 7. Theme mapping-gap semantics
+
+The theme mapping worklist now distinguishes governed coverage from true gaps. An Action is not reported as `MAPPING_REQUIRED` when it is already covered by either:
+
+- an effective-dated governed manual mapping; or
+- a governed high-confidence direct industry classification.
+
+This does **not** convert a direct industry tag into a revenue-exposure estimate. It only prevents already classified instruments from being incorrectly counted as entirely unmapped.

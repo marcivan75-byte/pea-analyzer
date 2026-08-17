@@ -118,12 +118,33 @@ def run(root: Path = ROOT) -> dict:
     propagation.to_csv(theme_propagation_path, sep=";", index=False, encoding="utf-8-sig")
 
     mapping = load_instrument_theme_mapping(mapping_path, as_of=as_of)
-    action_worklist = build_mapping_worklist(actions, mapping, universe="ACTION")
+    direct_action_isins = (
+        set(direct_tags["isin"].dropna().astype(str))
+        if not direct_tags.empty and "isin" in direct_tags.columns
+        else set()
+    )
+    action_worklist = build_mapping_worklist(
+        actions,
+        mapping,
+        universe="ACTION",
+        covered_isins=direct_action_isins,
+    )
     etf_worklist = build_mapping_worklist(etfs, mapping, universe="ETF")
     pd.concat([action_worklist, etf_worklist], ignore_index=True).to_csv(
         mapping_worklist_path, sep=";", index=False, encoding="utf-8-sig"
     )
     pit_oos_validation = _run_validation_safely(root)
+
+    manual_mapped_actions = (
+        int(mapping.loc[mapping["universe"].astype(str).eq("ACTION"), "isin"].nunique())
+        if not mapping.empty
+        else 0
+    )
+    manual_mapped_etfs = (
+        int(mapping.loc[mapping["universe"].astype(str).eq("ETF"), "isin"].nunique())
+        if not mapping.empty
+        else 0
+    )
 
     summary = dict(result.diagnostic)
     summary.update(
@@ -143,6 +164,11 @@ def run(root: Path = ROOT) -> dict:
             "theme_propagation_path": str(theme_propagation_path.relative_to(root)),
             "theme_committee_shadow_path": str(theme_committee_dir.relative_to(root)),
             "mapping_worklist_path": str(mapping_worklist_path.relative_to(root)),
+            "manual_mapped_actions": manual_mapped_actions,
+            "manual_mapped_etfs": manual_mapped_etfs,
+            "direct_auto_tagged_actions": int(len(direct_action_isins)),
+            "remaining_action_theme_mapping_gaps": int(len(action_worklist)),
+            "remaining_etf_theme_mapping_gaps": int(len(etf_worklist)),
             "unmapped_actions": int(len(action_worklist)),
             "unmapped_etfs": int(len(etf_worklist)),
             "comparison": comparison,
