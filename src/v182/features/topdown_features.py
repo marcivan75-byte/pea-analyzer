@@ -42,31 +42,41 @@ def _market_regime_score(frame: pd.DataFrame, min_observations: int = 10) -> flo
     return round(sum(values)/len(values),4) if values else None
 
 
+def _clean_label_series(values: pd.Series) -> pd.Series:
+    def clean(value: object) -> str:
+        if not isinstance(value, str):
+            return "N/A"
+        label=value.strip()
+        if not label or label.upper() in {"N/A","NA","NONE","NAN","<NA>","NULL"}:
+            return "N/A"
+        return label
+    return values.map(clean)
+
+
+def _valid_group_labels(groups: pd.Series) -> list[str]:
+    labels=set()
+    for value in groups.tolist():
+        if not isinstance(value, str):
+            continue
+        label=value.strip()
+        if not label or label.upper() in {"N/A","NA","NONE","NAN","<NA>","NULL"}:
+            continue
+        labels.add(label)
+    return sorted(labels)
+
+
 def _country_series(frame: pd.DataFrame) -> pd.Series:
     for field in ("country_yf","country","listing_country","country_domicile","geo_exposure"):
         if field in frame.columns and frame[field].notna().any():
-            return frame[field].astype(str).str.strip().replace({"":"N/A","nan":"N/A"})
+            return _clean_label_series(frame[field])
     return pd.Series("N/A",index=frame.index)
 
 
 def _sector_series(frame: pd.DataFrame) -> pd.Series:
     for field in ("sector_yf","sector_v21","sector","industry_yf","industry","category","morningstar_category"):
         if field in frame.columns and frame[field].notna().any():
-            return frame[field].astype(str).str.strip().replace({"":"N/A","nan":"N/A"})
+            return _clean_label_series(frame[field])
     return pd.Series("N/A",index=frame.index)
-
-
-def _distinct_text_values(groups: pd.Series) -> list[str]:
-    """Return deterministic valid text keys and reject malformed non-text group values."""
-    values=set()
-    for value in groups.tolist():
-        if not isinstance(value,str):
-            continue
-        key=value.strip()
-        if not key or key.upper() in {"N/A","NA","NONE","NAN","<NA>"}:
-            continue
-        values.add(key)
-    return sorted(values)
 
 
 def _group_regime_scores(frame: pd.DataFrame, groups: pd.Series, min_names: int = 3) -> dict[str,float]:
@@ -131,11 +141,11 @@ def build_topdown(actions: pd.DataFrame, etfs: pd.DataFrame, *, fred_api_key: st
         countries=_country_series(frame); sectors=_sector_series(frame)
         country_macro=_group_regime_scores(frame,countries,min_names=3)
         country_news={}; sector_news={}
-        for country in _distinct_text_values(countries):
+        for country in _valid_group_labels(countries):
             query=f'"{safe_query_text(country)}" (economy OR markets OR rates OR inflation)'
             score=_query_score(query,diagnostics,f"{asset_class}_country_news",country)
             if score is not None: country_news[country]=score
-        for sector in _distinct_text_values(sectors):
+        for sector in _valid_group_labels(sectors):
             query=f'"{safe_query_text(sector)}" (stocks OR industry OR earnings OR outlook)'
             score=_query_score(query,diagnostics,f"{asset_class}_sector_news",sector)
             if score is not None: sector_news[sector]=score
