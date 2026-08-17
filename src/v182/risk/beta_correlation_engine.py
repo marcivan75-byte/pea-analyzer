@@ -15,7 +15,11 @@ from v182.risk.beta_metrics import (
     num,
     to_returns,
 )
-from v182.risk.beta_portfolio import economic_overlap_scores, portfolio_summary, sector_overlay
+from v182.risk.beta_portfolio import (
+    economic_overlap_scores,
+    portfolio_summary,
+    sector_overlay,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -56,7 +60,9 @@ def _metadata_maps(root: Path) -> tuple[dict[str, dict], dict[str, dict]]:
 
 
 def _context(
-    row: pd.Series, action_meta: dict[str, dict], etf_meta: dict[str, dict]
+    row: pd.Series,
+    action_meta: dict[str, dict],
+    etf_meta: dict[str, dict],
 ) -> dict:
     isin = str(row.get("isin") or "")
     asset_class = str(row.get("asset_class") or "").upper()
@@ -74,21 +80,29 @@ def _return_map(
     action_prices: dict[str, pd.Series],
     etf_prices: dict[str, pd.Series],
 ) -> dict[str, pd.Series]:
+    """Build the same final ISIN map while converting each asset/ticker series once."""
     out: dict[str, pd.Series] = {}
+    returns_cache: dict[tuple[str, str], pd.Series | None] = {}
     for _, row in rows.iterrows():
         context = _context(row, action_meta, etf_meta)
         ticker = clean_text(context.get("yahoo_ticker") or row.get("yahoo_ticker"))
         asset_class = str(row.get("asset_class") or "").upper()
-        if asset_class == "ACTION":
-            prices = action_prices.get(ticker)
-        elif asset_class == "ETF":
-            prices = etf_prices.get(ticker)
-        else:
-            prices = None
-        if prices is not None:
-            returns = to_returns(prices)
-            if not returns.empty:
-                out[str(row.get("isin"))] = returns
+        cache_key = (asset_class, ticker)
+        if cache_key not in returns_cache:
+            if asset_class == "ACTION":
+                prices = action_prices.get(ticker)
+            elif asset_class == "ETF":
+                prices = etf_prices.get(ticker)
+            else:
+                prices = None
+            if prices is None:
+                returns_cache[cache_key] = None
+            else:
+                returns = to_returns(prices)
+                returns_cache[cache_key] = returns if not returns.empty else None
+        returns = returns_cache[cache_key]
+        if returns is not None:
+            out[str(row.get("isin"))] = returns
     return out
 
 
@@ -144,21 +158,33 @@ def apply_risk_overlay(
     score_guard = out["score"].copy() if "score" in out.columns else None
     decision_guard = out["decision"].copy() if "decision" in out.columns else None
     returns_by_isin = _return_map(
-        out, action_meta, etf_meta, action_prices, etf_prices
+        out,
+        action_meta,
+        etf_meta,
+        action_prices,
+        etf_prices,
     )
+
+    context_cache: dict[tuple[str, str], dict] = {}
     contexts: list[dict] = []
+    metrics_cache: dict[str, dict] = {}
     metrics_rows: list[dict] = []
     for _, row in out.iterrows():
-        context = _context(row, action_meta, etf_meta)
-        contexts.append(context)
-        returns = returns_by_isin.get(str(row.get("isin") or ""))
-        if returns is None or str(row.get("asset_class") or "").upper() not in {
-            "ACTION",
-            "ETF",
-        }:
+        isin = str(row.get("isin") or "")
+        asset_class = str(row.get("asset_class") or "").upper()
+        context_key = (asset_class, isin)
+        if context_key not in context_cache:
+            context_cache[context_key] = _context(row, action_meta, etf_meta)
+        contexts.append(context_cache[context_key])
+
+        returns = returns_by_isin.get(isin)
+        if returns is None or asset_class not in {"ACTION", "ETF"}:
             metrics_rows.append({"status": "NOT_APPLICABLE_OR_MISSING_HISTORY"})
-        else:
-            metrics_rows.append(compute_beta_metrics(returns, benchmark))
+            continue
+        if isin not in metrics_cache:
+            metrics_cache[isin] = compute_beta_metrics(returns, benchmark)
+        metrics_rows.append(metrics_cache[isin])
+
     metrics = pd.DataFrame(metrics_rows, index=out.index)
     mapping = {
         "beta_63d": "risk_beta_63d",
@@ -199,7 +225,9 @@ def apply_risk_overlay(
         name = clean_text(row_dict.get("name") or context.get("name"))
         sectors.append(sector)
         tags.append("|".join(economic_engine_tags(sector, industry, category, name)))
-        concentrations.append(num(context.get("direct_top_holdings_concentration_pct")))
+        concentrations.append(
+            num(context.get("direct_top_holdings_concentration_pct"))
+        )
         sector_hhis.append(num(context.get("direct_sector_hhi")))
     out["risk_sector"] = sectors
     out["risk_engine_tags"] = tags
@@ -207,7 +235,10 @@ def apply_risk_overlay(
     out["risk_etf_sector_hhi"] = sector_hhis
     out["risk_exact_holdings_overlap_status"] = "NOT_COMPUTED_SOURCE_NOT_PERSISTED"
     out["risk_overlap_method"] = "RETURN_CORR_70_ENGINE_TAG_30_SHADOW_HEURISTIC"
-    out["risk_economic_overlap_score"] = economic_overlap_scores(out, returns_by_isin)
+    out["risk_economic_overlap_score"] = economic_overlap_scores(
+        out,
+        returns_by_isin,
+    )
 
     scores = [_risk_score(row) for _, row in out.iterrows()]
     out["risk_score_0_100_shadow"] = scores
@@ -217,7 +248,9 @@ def apply_risk_overlay(
     # Keep the legacy column for downstream schema compatibility, but never emit
     # a candidate multiplier that could be mistaken for an execution instruction.
     out["risk_position_multiplier_shadow"] = pd.NA
-    out["risk_position_multiplier_status"] = "REJECTED_KEEP_SHADOW_NO_ACTIVE_FORMULA"
+    out["risk_position_multiplier_status"] = (
+        "REJECTED_KEEP_SHADOW_NO_ACTIVE_FORMULA"
+    )
     out["risk_score_decision_influence"] = 0.0
     out["risk_sizing_execution_influence"] = 0.0
     out["risk_stop_loss_influence"] = 0.0
@@ -235,7 +268,9 @@ def apply_risk_overlay(
 
 def run(root: Path = ROOT) -> dict:
     config_path = root / "config" / "BETA_CORRELATION_RISK_ENGINE.json"
-    decisions_path = root / "outputs" / "committee_master" / "COMMITTEE_DECISIONS.csv"
+    decisions_path = (
+        root / "outputs" / "committee_master" / "COMMITTEE_DECISIONS.csv"
+    )
     if not config_path.exists():
         return {"status": "BLOCKED_CONFIG_MISSING", "decision_influence": 0.0}
     if not decisions_path.exists():
@@ -267,21 +302,34 @@ def run(root: Path = ROOT) -> dict:
             "version": cfg.get("version"),
             "generated_at_utc": _now(),
             "benchmark": benchmark_diag,
-            "benchmark_failure_policy": "FAIL_CLOSED_NO_DECISION_OR_SIZING_INFLUENCE",
+            "benchmark_failure_policy": (
+                "FAIL_CLOSED_NO_DECISION_OR_SIZING_INFLUENCE"
+            ),
             "decision_influence": 0.0,
             "sizing_execution_influence": 0.0,
             "stop_loss_influence": 0.0,
             "real_orders_enabled": False,
         }
         (audit_dir / "BETA_CORRELATION_RISK_ENGINE.json").write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
         )
         return payload
 
     enriched, returns_by_isin = apply_risk_overlay(
-        decisions, action_meta, etf_meta, action_prices, etf_prices, benchmark
+        decisions,
+        action_meta,
+        etf_meta,
+        action_prices,
+        etf_prices,
+        benchmark,
     )
-    enriched.to_csv(decisions_path, sep=";", index=False, encoding="utf-8-sig")
+    enriched.to_csv(
+        decisions_path,
+        sep=";",
+        index=False,
+        encoding="utf-8-sig",
+    )
     risk_columns = [
         field
         for field in enriched.columns
@@ -296,11 +344,20 @@ def run(root: Path = ROOT) -> dict:
     )
     scenarios = [
         float(value)
-        for value in cfg.get("stress", {}).get("scenarios_pct", [-5, -10, -20, -30])
+        for value in cfg.get("stress", {}).get(
+            "scenarios_pct",
+            [-5, -10, -20, -30],
+        )
     ]
-    portfolio = portfolio_summary(enriched, returns_by_isin, benchmark, scenarios)
+    portfolio = portfolio_summary(
+        enriched,
+        returns_by_isin,
+        benchmark,
+        scenarios,
+    )
     (outdir / "PORTFOLIO_RISK_SUMMARY.json").write_text(
-        json.dumps(portfolio, ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(portfolio, ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
     sectors = sector_overlay(enriched, root)
     if not sectors.empty:
@@ -317,8 +374,14 @@ def run(root: Path = ROOT) -> dict:
         "generated_at_utc": _now(),
         "benchmark": benchmark_diag,
         "decision_rows": int(len(enriched)),
+        "unique_decision_isins": int(
+            enriched["isin"].astype(str).nunique()
+        ) if "isin" in enriched.columns else 0,
+        "returns_isins": int(len(returns_by_isin)),
         "rows_with_beta_252d": int(valid.sum()),
-        "coverage_pct": round(float(valid.mean() * 100.0), 4) if len(valid) else 0.0,
+        "coverage_pct": (
+            round(float(valid.mean() * 100.0), 4) if len(valid) else 0.0
+        ),
         "portfolio": portfolio,
         "sector_rows": int(len(sectors)),
         "decision_influence": 0.0,
@@ -328,9 +391,18 @@ def run(root: Path = ROOT) -> dict:
         "shadow_position_multiplier_produced": False,
         "position_sizing_status": "REJECTED_KEEP_SHADOW_NO_ACTIVE_FORMULA",
         "exact_holdings_overlap": "NOT_COMPUTED_SOURCE_NOT_PERSISTED",
-        "overlap_proxy": "MAX_PAIRWISE_126D_RETURN_CORRELATION_70_PLUS_ENGINE_TAG_JACCARD_30",
-        "stress_semantic": "SYSTEMATIC_SENSITIVITY_ESTIMATE_NOT_TOTAL_LOSS_FORECAST",
-        "economic_validation_status": "ROBUST_VALIDATED_CONTEXT_ONLY_KEEP_ALL_SIZING_SHADOW",
+        "overlap_proxy": (
+            "MAX_PAIRWISE_126D_RETURN_CORRELATION_70_PLUS_ENGINE_TAG_JACCARD_30"
+        ),
+        "runtime_optimization": (
+            "EXACT_ISIN_CACHE_AND_PAIR_MULTIPLICITY_NO_FORMULA_CHANGE"
+        ),
+        "stress_semantic": (
+            "SYSTEMATIC_SENSITIVITY_ESTIMATE_NOT_TOTAL_LOSS_FORECAST"
+        ),
+        "economic_validation_status": (
+            "ROBUST_VALIDATED_CONTEXT_ONLY_KEEP_ALL_SIZING_SHADOW"
+        ),
         "validation_status_file": "config/BETA_RISK_ROBUST_VALIDATION_STATUS.json",
         "real_orders_enabled": False,
         "outputs": {
@@ -340,7 +412,8 @@ def run(root: Path = ROOT) -> dict:
         },
     }
     (audit_dir / "BETA_CORRELATION_RISK_ENGINE.json").write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return payload
