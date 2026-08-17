@@ -7,6 +7,7 @@ import pandas as pd
 from v182.decision.committee_master import load_registry, decisions_from_scores, sector_ranking
 from v182.io.frames import is_missing
 from v182.reporting import committee_master_gold_v1_1
+from v182.reporting.sector_rotation_v2_committee_bridge import build_committee_sector_rotation_v2_status
 from v182.sources.postselection_market_sheets import enrich_postselection
 
 ROOT=Path(__file__).resolve().parents[3]
@@ -64,16 +65,17 @@ def _attach_cdc_context(decisions: pd.DataFrame, actions: pd.DataFrame) -> pd.Da
 def run(root:Path=ROOT)->dict:
     """Reference V21.0 decisions plus V21.7 study-hardened Action challenger.
 
-    V21.7 incorporates the criterion-by-criterion audit: derived duplicate factors
-    no longer receive separate alpha weights and explicit family budgets are
-    retained for future two-stage optimisation. Final Action decisions remain
-    frozen on V21.0 until dedicated PIT/OOS promotion.
+    V21.7 keeps the criterion-study hardening, CDC/post-selection context and
+    main's Sector Rotation V2 diagnostic bridge. Final Action decisions remain
+    frozen on V21.0 until dedicated PIT/OOS promotion. Sector Rotation V2 and
+    all added context layers remain zero-influence diagnostics.
     """
     summary=committee_master_gold_v1_1.run(root)
     outdir=root/"outputs"/"committee_master"; decisions_path=outdir/"COMMITTEE_DECISIONS.csv"
     actions_path=root/"outputs"/"V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv"
     if not decisions_path.exists() or not actions_path.exists():
         summary["action_dual_track"]={"status":"BLOCKED_INPUT"}
+        summary["sector_rotation_v2"]=build_committee_sector_rotation_v2_status(root)
         return summary
     decisions=_read(decisions_path); actions=_read(actions_path)
     reference_reg=load_registry(root/"config"/"V21_ACTIONS_REFERENCE_V21_0.json")
@@ -150,6 +152,7 @@ def run(root:Path=ROOT)->dict:
     summary["action_dual_track"]={"status":"ACTIVE_REFERENCE_PLUS_STUDY_HARDENED_SHADOW_CHALLENGER","reference_version":reference_reg.get("version"),"challenger_version":challenger_reg.get("version"),"final_decision_source":"REFERENCE","comparison_rows":int(len(comparison)),"decision_divergences":divergences,"reference_buy_count":ref_buy,"challenger_buy_count":chal_buy,"family_budget_policy":challenger_reg.get("governance",{}).get("family_budget_policy"),"performance_attribution":"NONE_TO_V21_7_CHALLENGER_UNTIL_DEDICATED_PIT_OOS_BACKTEST"}
     summary["cdc_committee_context"]={"status":"ACTIVE_OBSERVED_CONTEXT","available_action_decision_rows":cdc_available,"fields":[field for field in CDC_FIELDS if field in actions.columns],"decision_influence":0.0,"score_mutation_forbidden":True,"decision_mutation_forbidden":True,"amf_short_semantics":"OPEN_PUBLIC_DISCLOSURE_PROXY_NOT_TRUE_CURRENT_SHORT_INTEREST","amf_observation_as_of":"LATEST_RETAINED_PUBLIC_DISCLOSURE_DATE","amf_staleness_fields":["amf_public_short_days_since_latest_publication","amf_public_short_max_days_since_retained_publication"]}
     summary["postselection_market_sheets"]={"status":"ACTIVE_SHADOW_CONFIRMATION","shortlisted_isins":len(shortlist),"enriched_isins":int(len(postselection)),"source_failures":int(len(postselection_failures)),"decision_influence":0.0,"investing_timeframes":["WEEKLY","MONTHLY"],"investing_listing_resolution":"EXPLICIT_URL_OR_UNIQUE_IDENTITY_MATCH_NO_ARBITRARY_ADR_VENUE","signals":["STRONG_BUY","BUY","NEUTRAL","SELL","STRONG_SELL"],"positive_confirmation_can_create_buy":False}
+    summary["sector_rotation_v2"]=build_committee_sector_rotation_v2_status(root)
     summary["status_counts"]=decisions.groupby(["asset_class","horizon","status"],dropna=False).size().reset_index(name="count").to_dict("records")
     summary["decision_counts"]=decisions.groupby(["asset_class","horizon","decision"],dropna=False).size().reset_index(name="count").to_dict("records")
     summary.setdefault("outputs",{})["action_reference_vs_challenger"]="outputs/committee_master/ACTION_REFERENCE_VS_CHALLENGER_V21_7.csv"
@@ -157,8 +160,13 @@ def run(root:Path=ROOT)->dict:
     summary["outputs"]["sector_ranking_challenger"]="outputs/committee_master/SECTOR_RANKING_CHALLENGER_V21_7.csv"
     summary["outputs"]["sector_ranking_challenger_legacy_alias"]="outputs/committee_master/SECTOR_RANKING_CHALLENGER_V21_4.csv"
     summary["outputs"]["postselection_market_sheets"]="outputs/committee_master/POSTSELECTION_MARKET_SHEETS.csv"
+    summary["outputs"]["sector_rotation_v2_shadow"]="outputs/sector_rotation/V2_SECTOR_ROTATION_SHADOW.csv"
+    summary["outputs"]["sector_rotation_v2_pit_oos_status"]="outputs/audit/V2_SECTOR_ROTATION_PIT_OOS_STATUS.json"
+    summary["outputs"]["sector_rotation_v2_pit_oos_observations"]="outputs/sector_rotation/V2_PIT_OOS_OBSERVATIONS.csv"
+    summary["outputs"]["sector_rotation_v2_pit_oos_metrics"]="outputs/sector_rotation/V2_PIT_OOS_SNAPSHOT_METRICS.csv"
     summary.setdefault("notes",[]).append("Actions use frozen V21.0 reference weights for final decisions. V21.7 is a study-hardened challenger: derived threshold scores are folded into canonical criteria, family budgets are explicit, and unvalidated overlays are zero-weight.")
     summary["notes"].append("Finnhub earnings/EPS revisions and AMF open public-short-disclosure proxy fields are copied into Committee Action rows with zero score/decision influence.")
     summary["notes"].append("Boursorama/Investing Action enrichment runs only after BUY/WATCH preselection and remains zero-influence until PIT/OOS validation.")
+    summary["notes"].append("Sector Rotation V2 remains Committee diagnostics only with zero influence on Action/ETF scores, decisions, sales or orders until governed PIT/OOS promotion.")
     (outdir/"SUMMARY.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2,default=str),encoding="utf-8")
     return summary
