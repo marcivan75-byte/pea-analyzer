@@ -15,6 +15,7 @@ from v182.reporting import (
     etf_mt_v2081_run,
     etf_structure_refresh,
     ipo_dd_gaps_run,
+    sector_rotation_v2_decision_context,
     sector_rotation_v2_shadow_run,
 )
 from v182.decision import gold_v1_1, ipo_outcomes_v1_2
@@ -23,8 +24,8 @@ from v182.risk import beta_correlation_engine
 
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[3]
-SOFTWARE_VERSION = "21.7.5"
-PROCESS_VERSION = "UNIFIED_V21_7_5_SECTOR_ROTATION_V2_PIT_OOS_RISK_V1_1_CONTEXT_ONLY_IPO_V1_3"
+SOFTWARE_VERSION = "21.7.6"
+PROCESS_VERSION = "UNIFIED_V21_7_6_SECTOR_ROTATION_V2_DECISION_CONTEXT_PIT_OOS_RISK_V1_1_CONTEXT_ONLY_IPO_V1_3"
 
 
 def _safe_step(name: str, func) -> dict:
@@ -91,6 +92,16 @@ def run(root: Path = ROOT) -> dict:
             "Requires SUCCESS current refresh; stale or legacy Action masters are forbidden for Committee decisions."
         )
 
+    if steps["sector_rotation_v2"]["status"] == "SUCCESS" and steps["committee"]["status"] == "SUCCESS":
+        steps["sector_rotation_v2_decision_context"] = _safe_step(
+            "sector_rotation_v2_decision_context",
+            lambda: sector_rotation_v2_decision_context.run(root),
+        )
+    else:
+        steps["sector_rotation_v2_decision_context"] = _skip_dependency(
+            "Requires SUCCESS current Sector Rotation V2 shadow evidence and SUCCESS current Committee decisions."
+        )
+
     if steps["committee"]["status"] == "SUCCESS":
         steps["risk_context"] = _safe_step(
             "risk_context", lambda: beta_correlation_engine.run(root)
@@ -130,6 +141,8 @@ def run(root: Path = ROOT) -> dict:
         "sector_rotation_v1": "outputs/V21_3_SECTOR_ROTATION.csv",
         "sector_rotation_v2": "outputs/sector_rotation/V2_SECTOR_ROTATION_SHADOW.csv",
         "sector_rotation_v2_audit": "outputs/audit/V2_SECTOR_ROTATION_SHADOW.json",
+        "sector_rotation_v2_decision_context": "outputs/committee_master/COMMITTEE_SECTOR_ROTATION_V2_CONTEXT.csv",
+        "sector_rotation_v2_decision_context_audit": "outputs/audit/SECTOR_ROTATION_V2_DECISION_CONTEXT.json",
         "sector_rotation_v2_pit_oos_status": "outputs/audit/V2_SECTOR_ROTATION_PIT_OOS_STATUS.json",
         "sector_rotation_v2_pit_oos_observations": "outputs/sector_rotation/V2_PIT_OOS_OBSERVATIONS.csv",
         "sector_rotation_v2_pit_oos_metrics": "outputs/sector_rotation/V2_PIT_OOS_SNAPSHOT_METRICS.csv",
@@ -174,7 +187,7 @@ def run(root: Path = ROOT) -> dict:
         "tct": "V24.1.8 baseline + exact V24.1.7 T1/T2 shadow",
         "gold": "V1.1 shadow",
         "ipo": "IPO_RADAR_V1.3 official Euronext evidence + same-basis real-peer valuation + V1.2 deep-DD/PIT-safe calibration; shadow/advisory; no automatic BUY",
-        "sector_rotation": "V1 baseline + V2.0 multi-factor shadow + locked PIT/OOS validator; Committee diagnostic bridge active; V2 decision influence = 0",
+        "sector_rotation": "V1 baseline + V2.0 multi-factor shadow + locked PIT/OOS validator + per-decision Action/ETF diagnostic context; V2 decision influence = 0",
         "risk_context": "RISK_V1.1 robust beta/correlation/diversification context-only; score/decision/sizing/stop influence = 0",
     }
 
@@ -195,6 +208,9 @@ def run(root: Path = ROOT) -> dict:
             "New/unvalidated Action factors, including 52-week overlays, remain challenger-only until dedicated PIT/OOS validation.",
             "Sector Rotation V2 is SHADOW_ONLY: it cannot change Action/ETF scores, create BUYs, create SELLs, or emit orders before dedicated PIT/OOS validation.",
             "Sector Rotation V2 is integrated into Committee and unified reporting only as diagnostics: current PIT/OOS status, valuation/correction warnings and frozen evidence are visible with decision influence fixed at zero.",
+            "Sector Rotation V2 per-decision context is published in a separate immutable diagnostic file keyed to Committee rows; COMMITTEE_DECISIONS.csv is not modified by that context join.",
+            "ETF Sector V2 mapping is allowed only for explicit single-sector categories; multisector/country ETFs remain NO_SINGLE_SECTOR_CONTEXT.",
+            "Theme V2 per-decision context is limited to governed direct Action industry tags; low-confidence AI/data-center/grid/cyber hypotheses remain disabled.",
             "Sector Rotation V2 economic outcomes use frozen constituents and the first trading-session close strictly after the signal date; same-day close execution is forbidden.",
             "Sector Rotation V2 final holdout remains locked and model-version drift cannot be mixed into the registered V2.0 OOS evidence.",
             "Sector Rotation V2 explicitly separates rotation opportunity from valuation/correction risk and publishes PROMISING_BUT_OVERVALUED / NO_CHASE warnings.",
