@@ -10,6 +10,7 @@ import os
 from v182.reporting import run as enrichment_run
 from v182.reporting import (
     android_risk_control_center,
+    committee_ci_explainability,
     committee_master_v21_4,
     etf_mt_v2081_run,
     etf_structure_refresh,
@@ -108,12 +109,18 @@ def run(root: Path = ROOT) -> dict:
         steps["risk_control_center"] = _safe_step(
             "risk_control_center", lambda: android_risk_control_center.run(root)
         )
+        steps["ci_explainability"] = _safe_step(
+            "ci_explainability", lambda: committee_ci_explainability.run(root)
+        )
     else:
         steps["risk_context"] = _skip_dependency(
             "Requires SUCCESS current Committee decisions. Risk V1.1 never operates on stale decisions."
         )
         steps["risk_control_center"] = _skip_dependency(
             "Requires current Committee/Risk context before publishing the mobile risk panel."
+        )
+        steps["ci_explainability"] = _skip_dependency(
+            "Requires SUCCESS current Committee decisions before publishing Android/PC Committee explainability."
         )
 
     # V21.8 invalidates the legacy fixed-stop sizing/execution assumptions used by
@@ -128,6 +135,9 @@ def run(root: Path = ROOT) -> dict:
     outputs = {
         "decisions": "outputs/committee_master/COMMITTEE_DECISIONS.csv",
         "committee_summary": "outputs/committee_master/SUMMARY.json",
+        "ci_android": "outputs/mobile/ANDROID_CI_CONTROL_CENTER.md",
+        "ci_pc": "outputs/committee_master/CI_PC_EXPLAINABILITY.xlsx",
+        "ci_explainability_audit": "outputs/audit/CI_EXPLAINABILITY_AUDIT.json",
         "entry_exit_v21_8": "outputs/committee_master/V21_8_ENTRY_EXIT_CHALLENGER.csv",
         "entry_exit_v21_8_audit": "outputs/audit/V21_8_ENTRY_EXIT_GOVERNANCE.json",
         "entry_exit_v21_8_state": "state/provenance/V21_8_ENTRY_EXIT_STATE.csv",
@@ -186,6 +196,7 @@ def run(root: Path = ROOT) -> dict:
         "actions_final": "V21.0 frozen-weight reference on current 1829 universe",
         "actions_challenger": "V21.4 enriched shadow challenger",
         "entry_exit": "V21.8 official decision-support baseline; TCT exact T2 gate; HOLD/PROTECT/EXIT temporal state; no fixed TP/legacy fixed stop/new hard stop",
+        "committee_reporting": "CI_EXPLAINABILITY_V1 canonical Android + PC outputs derived from the same Committee decisions; no score/decision mutation",
         "etf_mt_reference": "V20.8.1 exact 38-PIT core",
         "etf_mt_challenger": "V20.8.2 missing-data dynamic shadow",
         "tct": "V24.1.8 baseline + exact V24.1.7 T1/T2 shadow; T1/T2 ACTION TCT only",
@@ -218,6 +229,7 @@ def run(root: Path = ROOT) -> dict:
             "Profit level and profit giveback are context only and never create a standalone exit signal.",
             "No fixed take-profit, legacy fixed stop, or new hard stop is operational in V21.8; the 7% figure is a research risk ceiling only and gaps/slippage can exceed any stop.",
             "Legacy virtual execution/performance is disabled under V21.8 because its sizing and exit logic depend on invalidated fixed-stop assumptions; historical state is audit-only until a separately validated sizing policy exists.",
+            "CI Android and PC explainability are generated from the same canonical Committee decisions and cannot mutate scores, decisions, weights, thresholds or order state.",
             "Sector Rotation V2 is SHADOW_ONLY: it cannot change Action/ETF scores, create BUYs, create SELLs, or emit orders before dedicated PIT/OOS validation.",
             "Sector Rotation V2 is integrated into Committee and unified reporting only as diagnostics: current PIT/OOS status, valuation/correction warnings and frozen evidence are visible with decision influence fixed at zero.",
             "Sector Rotation V2 per-decision context is published in a separate immutable diagnostic file keyed to Committee rows; COMMITTEE_DECISIONS.csv is not modified by that context join.",

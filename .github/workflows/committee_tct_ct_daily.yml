@@ -1,0 +1,130 @@
+name: PEA Daily Collect + TCT CT V21.8.1
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 18 * * 1-5"
+
+concurrency:
+  group: pea-daily-tct-ct
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  daily-tactical:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PEA_PROVENANCE_PATH: state/provenance/OBSERVATION_PROVENANCE.csv
+      FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
+      ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+      EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore persistent OHLCV cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cache/
+          key: ohlcv-v3-${{ github.run_id }}
+          restore-keys: |
+            ohlcv-v3-
+
+      - name: Restore TCT state
+        uses: actions/cache/restore@v4
+        with:
+          path: state/TCT_V24_1_7_T1_STATE.json
+          key: daily-tct-state-${{ github.run_id }}
+          restore-keys: |
+            daily-tct-state-
+            tct-v2417-state-
+
+      - name: Restore provenance, V21.8 state and source caches
+        uses: actions/cache/restore@v4
+        with:
+          path: state/provenance/
+          key: daily-provenance-v2181-${{ github.run_id }}
+          restore-keys: |
+            daily-provenance-v2181-
+            provenance-v2161-
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Compile tactical runtime
+        run: python -m compileall -q src
+
+      - name: Daily collection and enrichment
+        run: python -m v182.reporting.run
+
+      - name: Daily TCT CT scoring and V21.8
+        run: python -m v182.reporting.daily_tct_ct_runner
+
+      - name: Publish Android tactical summary
+        if: always()
+        run: |
+          if [ -f outputs/mobile/ANDROID_DAILY_TCT_CT.md ]; then
+            cat outputs/mobile/ANDROID_DAILY_TCT_CT.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Show daily audit
+        if: always()
+        run: |
+          if [ -f outputs/audit/DAILY_TCT_CT_AUDIT.json ]; then
+            cat outputs/audit/DAILY_TCT_CT_AUDIT.json
+          fi
+          if [ -f outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json ]; then
+            cat outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json
+          fi
+          if [ -f data/cache/actions/history_manifest.json ]; then
+            cat data/cache/actions/history_manifest.json
+          fi
+
+      - name: Save persistent OHLCV cache
+        if: ${{ success() && hashFiles('data/cache/**') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: data/cache/
+          key: ohlcv-v3-${{ github.run_id }}
+
+      - name: Save TCT state
+        if: ${{ always() && hashFiles('state/TCT_V24_1_7_T1_STATE.json') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: state/TCT_V24_1_7_T1_STATE.json
+          key: daily-tct-state-${{ github.run_id }}
+
+      - name: Save provenance, V21.8 state and source caches
+        if: ${{ always() && hashFiles('state/provenance/**') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: state/provenance/
+          key: daily-provenance-v2181-${{ github.run_id }}
+
+      - name: Upload compact daily tactical artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pea-daily-tct-ct-${{ github.run_id }}
+          path: |
+            outputs/daily_tct_ct/
+            outputs/mobile/ANDROID_DAILY_TCT_CT.md
+            outputs/audit/DAILY_TCT_CT_AUDIT.json
+            outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json
+            outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx
+            data/cache/actions/history_manifest.json
+            data/cache/etf/history_manifest.json
+          if-no-files-found: warn
+          retention-days: 7

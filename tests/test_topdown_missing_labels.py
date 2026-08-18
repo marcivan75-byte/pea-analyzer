@@ -24,7 +24,7 @@ def test_build_topdown_handles_mixed_country_and_sector_missing_values(monkeypat
         }
     )
     etfs = pd.DataFrame(columns=["isin"])
-    queries: list[tuple[str, str, str]] = []
+    captured_queries: list[str] = []
 
     monkeypatch.setattr(
         topdown,
@@ -32,18 +32,26 @@ def test_build_topdown_handles_mixed_country_and_sector_missing_values(monkeypat
         lambda _key: SimpleNamespace(score=None, coverage=0.0, components={}, errors=[]),
     )
 
-    def fake_query(query: str, diagnostics: list[dict], kind: str, key: str) -> float:
-        queries.append((kind, key, query))
-        return 50.0
+    def fake_score_queries(queries, **_kwargs):
+        captured_queries.extend(list(queries))
+        score = SimpleNamespace(article_count=1, positive_hits=1, negative_hits=0, score=50.0)
+        return {query: (score, None) for query in queries}
 
-    monkeypatch.setattr(topdown, "_query_score", fake_query)
+    monkeypatch.setattr(topdown, "score_queries", fake_score_queries)
 
     result = topdown.build_topdown(actions, etfs, fred_api_key=None, instrument_news_top_n=0)
 
-    country_keys = {key for kind, key, _ in queries if kind == "ACTION_country_news"}
-    sector_keys = {key for kind, key, _ in queries if kind == "ACTION_sector_news"}
-    assert country_keys == {"France", "Germany"}
-    assert sector_keys == {"Technology", "Industrials"}
-    assert "nan" not in {str(key).lower() for _, key, _ in queries}
-    assert 7.0 not in sector_keys
+    country_queries = {query for query in captured_queries if "economy OR markets OR rates OR inflation" in query}
+    sector_queries = {query for query in captured_queries if "stocks OR industry OR earnings OR outlook" in query}
+
+    assert country_queries == {
+        '"France" (economy OR markets OR rates OR inflation)',
+        '"Germany" (economy OR markets OR rates OR inflation)',
+    }
+    assert sector_queries == {
+        '"Technology" (stocks OR industry OR earnings OR outlook)',
+        '"Industrials" (stocks OR industry OR earnings OR outlook)',
+    }
+    assert all('"nan"' not in query.lower() for query in captured_queries)
+    assert all('"7.0"' not in query for query in captured_queries)
     assert set(result.action_scores) == set(actions["isin"])
