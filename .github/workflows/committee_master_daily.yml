@@ -27,6 +27,13 @@ jobs:
       EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
     steps:
       - uses: actions/checkout@v4
+      - name: Restore persistent OHLCV cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cache/
+          key: ohlcv-v3-${{ github.run_id }}
+          restore-keys: |
+            ohlcv-v3-
       - name: Restore TCT state
         uses: actions/cache/restore@v4
         with:
@@ -206,6 +213,12 @@ jobs:
           elif [ -f outputs/mobile/RISK_V1_1_CONTROL_CENTER.md ]; then
             cat outputs/mobile/RISK_V1_1_CONTROL_CENTER.md >> "$GITHUB_STEP_SUMMARY"
           fi
+      - name: Save persistent OHLCV cache
+        if: ${{ success() && hashFiles('data/cache/**') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: data/cache/
+          key: ohlcv-v3-${{ github.run_id }}
       - name: Save TCT state
         if: ${{ always() && hashFiles('state/TCT_V24_1_7_T1_STATE.json') != '' }}
         uses: actions/cache/save@v4
@@ -256,6 +269,8 @@ jobs:
             outputs/V21_3_SECTOR_ROTATION.csv
             outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv
             outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
+            data/cache/actions/history_manifest.json
+            data/cache/etf/history_manifest.json
             state/TCT_V24_1_7_T1_STATE.json
             state/GOLD_V1_1_SHADOW_HISTORY.csv
             state/ipo_radar/
