@@ -14,7 +14,7 @@ def test_generic_details_reconstructs_cross_sectional_score_exactly():
     )
     selected = pd.DataFrame(
         [
-            {"asset_class": "ACTION", "horizon": "CT", "isin": "FR0001", "name": "A", "decision": "BUY_CANDIDATE", "score": 50.0},
+            {"asset_class": "ACTION", "horizon": "CT", "isin": "FR0001", "name": "A", "decision": "BUY_CANDIDATE", "score": 75.0},
         ]
     )
     registry = {
@@ -25,7 +25,7 @@ def test_generic_details_reconstructs_cross_sectional_score_exactly():
     detail = _generic_details(source, selected, registry, "ACTION", ["CT"])
     assert len(detail) == 2
     assert abs(detail["effective_weight_pct"].sum() - 100.0) < 1e-9
-    assert abs(detail["weighted_contribution_points"].sum() - 50.0) < 1e-9
+    assert abs(detail["weighted_contribution_points"].sum() - 75.0) < 1e-9
 
 
 def test_missing_criterion_is_explicit_and_not_renormalized_as_available():
