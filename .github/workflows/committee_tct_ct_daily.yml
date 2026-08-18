@@ -28,6 +28,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Restore persistent OHLCV cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cache/
+          key: ohlcv-v3-${{ github.run_id }}
+          restore-keys: |
+            ohlcv-v3-
+
       - name: Restore TCT state
         uses: actions/cache/restore@v4
         with:
@@ -80,6 +88,16 @@ jobs:
           if [ -f outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json ]; then
             cat outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json
           fi
+          if [ -f data/cache/actions/history_manifest.json ]; then
+            cat data/cache/actions/history_manifest.json
+          fi
+
+      - name: Save persistent OHLCV cache
+        if: ${{ success() && hashFiles('data/cache/**') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: data/cache/
+          key: ohlcv-v3-${{ github.run_id }}
 
       - name: Save TCT state
         if: ${{ always() && hashFiles('state/TCT_V24_1_7_T1_STATE.json') != '' }}
@@ -106,5 +124,7 @@ jobs:
             outputs/audit/DAILY_TCT_CT_AUDIT.json
             outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json
             outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx
+            data/cache/actions/history_manifest.json
+            data/cache/etf/history_manifest.json
           if-no-files-found: warn
           retention-days: 7
