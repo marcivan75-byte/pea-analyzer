@@ -1,0 +1,89 @@
+{
+  "version": "TCT_V24.2.0_INTRADAY_SCALPING_SHADOW",
+  "asset_class": "ACTION",
+  "horizon": "TCT",
+  "status": "SHADOW_RESEARCH_ONLY",
+  "mode": "SHADOW_ONLY",
+  "source_timing_version": "V24.1.7_T1_T2_V2_SHADOW",
+  "source_baseline_version": "V24.1.8_DYNAMIC_NORMALIZATION_SHADOW",
+  "governance": {
+    "decision_influence": 0.0,
+    "score_influence": 0.0,
+    "sizing_execution_influence": 0.0,
+    "stop_loss_influence": 0.0,
+    "ct_influence": 0.0,
+    "etf_forbidden": true,
+    "non_tct_forbidden": true,
+    "real_orders_enabled": false,
+    "fixed_take_profit_enabled": false,
+    "fixed_stop_loss_enabled": false,
+    "holdout_locked": true,
+    "pit_required": true,
+    "oos_validation_required_before_activation": true,
+    "historical_performance_attribution": "NONE_UNTIL_DEDICATED_PIT_OOS"
+  },
+  "signal_bridge": {
+    "eligible_source_decisions": [
+      "T1_STARTER_25_SHADOW",
+      "T1_WATCH_SHADOW",
+      "T2_CONFIRM_75_SHADOW"
+    ],
+    "minimum_lag_sessions": 1,
+    "max_execution_sessions_after_signal": 3,
+    "same_session_execution_forbidden": true,
+    "ledger_path": "state/TCT_V24_2_0_SIGNAL_LEDGER.csv",
+    "observation_ledger_path": "state/TCT_V24_2_0_INTRADAY_OBSERVATIONS.csv"
+  },
+  "intraday_data": {
+    "interval": "5m",
+    "bootstrap_period": "60d",
+    "cache_dir": "data/cache/actions_intraday_5m",
+    "opening_range_bars": 3,
+    "rvol_lookback_sessions": 10,
+    "rvol_min_sessions": 5,
+    "minimum_session_bars": 18,
+    "breakout_lookback_bars": 20,
+    "retest_lookback_bars": 6
+  },
+  "diagnostic_weights": {
+    "rvol_volume_acceleration": 0.2,
+    "vwap_timing": 0.15,
+    "structure": 0.2,
+    "intraday_volatility": 0.15,
+    "liquidity_execution": 0.15,
+    "momentum_5m": 0.1,
+    "order_flow_optional": 0.05
+  },
+  "shadow_thresholds": {
+    "minimum_weighted_coverage": 0.65,
+    "entry_ready_score": 72.0,
+    "entry_strong_score": 82.0,
+    "rvol_confirmation_min": 1.2,
+    "range_expansion_min": 1.1,
+    "max_vwap_extension_pct": 0.025,
+    "minimum_turnover_ratio": 0.75,
+    "max_spread_pct_if_available": 0.006
+  },
+  "setups": {
+    "EXPLOSIVE_BREAKOUT": {
+      "enabled": true
+    },
+    "BREAKOUT_RETEST": {
+      "enabled": true
+    },
+    "VWAP_RECLAIM": {
+      "enabled": true
+    },
+    "OPENING_RANGE_BREAKOUT": {
+      "enabled": true
+    }
+  },
+  "research_exit_labels": [
+    "ACCELERATION",
+    "NORMAL_PULLBACK",
+    "MOMENTUM_STALL",
+    "FAILED_BREAKOUT",
+    "STRUCTURAL_INVALIDATION",
+    "REACCELERATION"
+  ]
+}
