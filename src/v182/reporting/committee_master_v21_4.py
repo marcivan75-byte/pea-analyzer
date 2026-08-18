@@ -7,6 +7,7 @@ import pandas as pd
 from v182.decision.committee_master import load_registry, decisions_from_scores, sector_ranking
 from v182.reporting import committee_master_gold_v1_1
 from v182.reporting.sector_rotation_v2_committee_bridge import build_committee_sector_rotation_v2_status
+from v182.risk import entry_exit_governance_v21_8
 
 ROOT=Path(__file__).resolve().parents[3]
 HORIZONS=["CT","MT","LT","SHORT","TOP_DOWN"]
@@ -21,14 +22,12 @@ def _key(frame:pd.DataFrame)->pd.Series:
 
 
 def run(root:Path=ROOT)->dict:
-    """Dual-track Action Committee: frozen reference + V21.4 challenger.
+    """Dual-track Action Committee plus V21.8 entry/exit decision support.
 
-    The enriched V21.4 Action score is preserved and exported, but final Action
-    CT/MT/LT/SHORT/TOP_DOWN decisions are replaced by the frozen V21.0-weight
-    reference until the V21.4 challenger completes dedicated PIT/OOS validation.
-    Sector Rotation V2 is surfaced to the Committee as a diagnostic bridge only:
-    it cannot alter Action/ETF scores or final decisions before governed promotion.
-    ETF, TCT and Gold governance remain unchanged.
+    Final Action CT/MT/LT/SHORT/TOP_DOWN selection remains the frozen V21.0-weight
+    reference. V21.8 consumes those final Committee decisions in a separate file;
+    it never mutates score/decision, never emits an order and never promotes a
+    fixed take-profit or fixed hard stop.
     """
     summary=committee_master_gold_v1_1.run(root)
     outdir=root/"outputs"/"committee_master"; decisions_path=outdir/"COMMITTEE_DECISIONS.csv"
@@ -36,6 +35,7 @@ def run(root:Path=ROOT)->dict:
     if not decisions_path.exists() or not actions_path.exists():
         summary["action_dual_track"]={"status":"BLOCKED_INPUT"}
         summary["sector_rotation_v2"]=build_committee_sector_rotation_v2_status(root)
+        summary["entry_exit_v21_8"]={"status":"BLOCKED_INPUT","decision_influence":0.0,"real_orders_enabled":False}
         return summary
     decisions=_read(decisions_path); actions=_read(actions_path)
     reference_reg=load_registry(root/"config"/"V21_ACTIONS_REFERENCE_V21_0.json")
@@ -77,13 +77,16 @@ def run(root:Path=ROOT)->dict:
     challenger_view.loc[mask,"decision"]=challenger_view.loc[mask,"action_challenger_decision"]
     sector_ranking(challenger_view).to_csv(outdir/"SECTOR_RANKING_CHALLENGER_V21_4.csv",sep=";",index=False,encoding="utf-8-sig")
 
+    v21_8_status=entry_exit_governance_v21_8.run(root)
+    if v21_8_status.get("status") != "SUCCESS":
+        raise RuntimeError(f"V21_8_ENTRY_EXIT_FAILED:{v21_8_status.get('status')}")
+
     divergences=int((comparison["reference_decision"].astype(str)!=comparison["challenger_decision"].astype(str)).sum()) if not comparison.empty else 0
     ref_buy=int((comparison["reference_decision"].astype(str)=="BUY_CANDIDATE").sum()) if not comparison.empty else 0
     chal_buy=int((comparison["challenger_decision"].astype(str)=="BUY_CANDIDATE").sum()) if not comparison.empty else 0
     summary["action_dual_track"]={"status":"ACTIVE_REFERENCE_PLUS_SHADOW_CHALLENGER","reference_version":reference_reg.get("version"),"challenger_version":challenger_reg.get("version"),"final_decision_source":"REFERENCE","comparison_rows":int(len(comparison)),"decision_divergences":divergences,"reference_buy_count":ref_buy,"challenger_buy_count":chal_buy,"performance_attribution":"NONE_TO_V21_4_CHALLENGER_UNTIL_DEDICATED_PIT_OOS_BACKTEST"}
     summary["sector_rotation_v2"]=build_committee_sector_rotation_v2_status(root)
-    # Rebuild aggregate counts after reference replacement so SUMMARY matches the
-    # decisions actually consumed by the Committee/performance tracker.
+    summary["entry_exit_v21_8"]=v21_8_status
     summary["status_counts"]=decisions.groupby(["asset_class","horizon","status"],dropna=False).size().reset_index(name="count").to_dict("records")
     summary["decision_counts"]=decisions.groupby(["asset_class","horizon","decision"],dropna=False).size().reset_index(name="count").to_dict("records")
     summary.setdefault("outputs",{})["action_reference_vs_challenger"]="outputs/committee_master/ACTION_REFERENCE_VS_CHALLENGER_V21_4.csv"
@@ -92,7 +95,10 @@ def run(root:Path=ROOT)->dict:
     summary["outputs"]["sector_rotation_v2_pit_oos_status"]="outputs/audit/V2_SECTOR_ROTATION_PIT_OOS_STATUS.json"
     summary["outputs"]["sector_rotation_v2_pit_oos_observations"]="outputs/sector_rotation/V2_PIT_OOS_OBSERVATIONS.csv"
     summary["outputs"]["sector_rotation_v2_pit_oos_metrics"]="outputs/sector_rotation/V2_PIT_OOS_SNAPSHOT_METRICS.csv"
+    summary["outputs"]["entry_exit_v21_8"]="outputs/committee_master/V21_8_ENTRY_EXIT_CHALLENGER.csv"
+    summary["outputs"]["entry_exit_v21_8_audit"]="outputs/audit/V21_8_ENTRY_EXIT_GOVERNANCE.json"
     summary.setdefault("notes",[]).append("Actions use V21.0 frozen weights as final reference decision; V21.4 enriched scores and unvalidated positive/negative 52w overlays are challenger-only until PIT/OOS validation.")
     summary["notes"].append("Sector Rotation V2 is integrated into Committee reporting as SHADOW diagnostics only: PIT/OOS status, valuation/correction warnings and frozen-outcome evidence are visible, with zero influence on final Action/ETF decisions until governed promotion.")
+    summary["notes"].append("V21.8 is the official entry/exit decision-support baseline: selection remains unchanged, no fixed take-profit, no legacy fixed stop, no new hard stop, T2 required for TCT entry, and HOLD/PROTECT/EXIT requires multifactor deterioration with temporal confirmation. No real orders.")
     (outdir/"SUMMARY.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2,default=str),encoding="utf-8")
     return summary
