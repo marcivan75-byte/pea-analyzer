@@ -6,6 +6,8 @@ import math
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[3]
+STATE_RELATIVE_PATH = Path("state/provenance/V21_8_ENTRY_EXIT_STATE.csv")
+STATE_KEY_FIELDS = ("asset_class", "horizon", "isin")
 
 
 def _num(value):
@@ -35,6 +37,69 @@ def _first_num(row: pd.Series, fields: tuple[str, ...]):
 
 def _horizon(row: pd.Series) -> str:
     return str(row.get("horizon", row.get("primary_horizon", "")) or "").upper()
+
+
+def _state_key(row: pd.Series | dict) -> tuple[str, str, str]:
+    getter = row.get
+    return (
+        str(getter("asset_class", "") or "").upper(),
+        str(getter("horizon", getter("primary_horizon", "")) or "").upper(),
+        str(getter("isin", "") or "").strip(),
+    )
+
+
+def _load_temporal_state(path: Path) -> dict[tuple[str, str, str], str]:
+    if not path.exists():
+        return {}
+    try:
+        frame = pd.read_csv(path, sep=";", encoding="utf-8-sig", dtype=str, low_memory=False)
+    except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError):
+        return {}
+    required = {*STATE_KEY_FIELDS, "v21_8_position_state"}
+    if not required.issubset(frame.columns):
+        return {}
+    out: dict[tuple[str, str, str], str] = {}
+    for _, row in frame.iterrows():
+        key = _state_key(row)
+        state = str(row.get("v21_8_position_state", "") or "").upper()
+        if all(key) and state:
+            out[key] = state
+    return out
+
+
+def _attach_temporal_state(decisions: pd.DataFrame, state: dict[tuple[str, str, str], str]) -> pd.DataFrame:
+    out = decisions.copy()
+    existing = out.get("previous_v21_8_position_state")
+    previous: list[str | None] = []
+    for idx, row in out.iterrows():
+        explicit = None
+        if existing is not None:
+            value = existing.loc[idx]
+            if pd.notna(value) and str(value).strip():
+                explicit = str(value).strip().upper()
+        previous.append(explicit or state.get(_state_key(row)))
+    out["previous_v21_8_position_state"] = previous
+    return out
+
+
+def _persist_temporal_state(governed: pd.DataFrame, path: Path) -> int:
+    rows: list[dict] = []
+    for _, row in governed.iterrows():
+        key = _state_key(row)
+        if not all(key):
+            continue
+        rows.append(
+            {
+                "asset_class": key[0],
+                "horizon": key[1],
+                "isin": key[2],
+                "v21_8_position_state": str(row.get("v21_8_position_state", "") or "").upper(),
+            }
+        )
+    state = pd.DataFrame(rows).drop_duplicates(list(STATE_KEY_FIELDS), keep="last") if rows else pd.DataFrame(columns=[*STATE_KEY_FIELDS, "v21_8_position_state"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    state.to_csv(path, sep=";", index=False, encoding="utf-8-sig")
+    return int(len(state))
 
 
 def _tct_t2_confirmed(row: pd.Series) -> bool:
@@ -125,7 +190,7 @@ def classify_position(row: pd.Series, cfg: dict) -> tuple[str, list[str]]:
     multifactor = structural_count >= 1 and momentum_count >= 1 and (structural_count >= 2 or market_bad)
 
     previous = str(row.get("previous_v21_8_position_state", row.get("previous_position_state", "")) or "").upper()
-    confirmed = _bool(row.get("deterioration_confirmed")) or previous == "PROTECT"
+    confirmed = _bool(row.get("deterioration_confirmed")) or previous in {"PROTECT", "EXIT"}
 
     if multifactor and confirmed:
         return "EXIT", reasons + ["MULTIFACTOR_DETERIORATION_CONFIRMED_AFTER_PROTECT"]
@@ -176,7 +241,12 @@ def run(root: Path = ROOT) -> dict:
         return {"status": "BLOCKED_COMMITTEE_DECISIONS_MISSING", "decision_influence": 0.0, "real_orders_enabled": False}
 
     decisions = pd.read_csv(src, sep=";", encoding="utf-8-sig", low_memory=False)
-    governed = apply_governance(decisions, cfg)
+    state_path = root / STATE_RELATIVE_PATH
+    previous_state = _load_temporal_state(state_path)
+    decisions_with_state = _attach_temporal_state(decisions, previous_state)
+    governed = apply_governance(decisions_with_state, cfg)
+    state_rows = _persist_temporal_state(governed, state_path)
+
     outdir = root / "outputs" / "committee_master"
     auditdir = root / "outputs" / "audit"
     auditdir.mkdir(parents=True, exist_ok=True)
@@ -199,6 +269,9 @@ def run(root: Path = ROOT) -> dict:
         "tct_requires_exact_t2_confirmation": True,
         "t1_t2_scope": "ACTION_TCT_ONLY",
         "exit_requires_temporal_confirmation": True,
+        "temporal_state_persisted": True,
+        "temporal_state_path": str(STATE_RELATIVE_PATH),
+        "temporal_state_rows": state_rows,
         "weights_unchanged": True,
         "selection_threshold_unchanged": True,
         "decision_influence": 0.0,
