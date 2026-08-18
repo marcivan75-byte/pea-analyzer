@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from v182.risk.entry_exit_governance_v21_8 import apply_governance, classify_entry, classify_position
+from v182.risk.entry_exit_governance_v21_8 import apply_governance, classify_entry, classify_position, run
 
 ROOT = Path(__file__).resolve().parents[1]
 CFG = json.loads((ROOT / "config" / "V21_8_ENTRY_EXIT_GOVERNANCE.json").read_text(encoding="utf-8"))
@@ -53,6 +53,40 @@ def test_multifactor_deterioration_first_moves_to_protect_then_exit_after_confir
     state, reasons = classify_position(row, CFG)
     assert state == "EXIT"
     assert "MULTIFACTOR_DETERIORATION_CONFIRMED_AFTER_PROTECT" in reasons
+
+
+def test_temporal_protect_state_is_persisted_and_confirms_exit_on_next_run(tmp_path: Path):
+    (tmp_path / "config").mkdir(parents=True)
+    (tmp_path / "outputs" / "committee_master").mkdir(parents=True)
+    (tmp_path / "config" / "V21_8_ENTRY_EXIT_GOVERNANCE.json").write_text(json.dumps(CFG), encoding="utf-8")
+    decisions = pd.DataFrame([
+        {
+            "asset_class": "ACTION",
+            "horizon": "MT",
+            "isin": "FRTEST0000001",
+            "name": "Test",
+            "decision": "BUY_CANDIDATE",
+            "score": 88.0,
+            "dist_sma50": -0.02,
+            "dist_sma200": -0.01,
+            "slope_sma50_20d": -0.02,
+            "ret_21d": -0.05,
+            "vol20": 0.2,
+        }
+    ])
+    decisions.to_csv(tmp_path / "outputs" / "committee_master" / "COMMITTEE_DECISIONS.csv", sep=";", index=False, encoding="utf-8-sig")
+
+    first = run(tmp_path)
+    first_rows = pd.read_csv(tmp_path / "outputs" / "committee_master" / "V21_8_ENTRY_EXIT_CHALLENGER.csv", sep=";")
+    assert first["temporal_state_persisted"] is True
+    assert first_rows.loc[0, "v21_8_position_state"] == "PROTECT"
+    assert (tmp_path / "state" / "provenance" / "V21_8_ENTRY_EXIT_STATE.csv").exists()
+
+    second = run(tmp_path)
+    second_rows = pd.read_csv(tmp_path / "outputs" / "committee_master" / "V21_8_ENTRY_EXIT_CHALLENGER.csv", sep=";")
+    assert second["temporal_state_rows"] == 1
+    assert second_rows.loc[0, "previous_v21_8_position_state"] == "PROTECT"
+    assert second_rows.loc[0, "v21_8_position_state"] == "EXIT"
 
 
 def test_profit_giveback_alone_never_exits():
