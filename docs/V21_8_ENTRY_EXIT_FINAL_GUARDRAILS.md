@@ -31,14 +31,23 @@ Les états sont `HOLD`, `PROTECT`, `EXIT`, `EMERGENCY_EXIT`.
 - `EXIT` exige une détérioration structurelle + momentum, renforcée par un second facteur structurel ou un régime marché dégradé, puis une confirmation temporelle ;
 - `EMERGENCY_EXIT` exige un drapeau de risque d'urgence explicite.
 
-## Stops et pertes
+La confirmation temporelle n'est pas simulée dans la même exécution. L'état V21.8 de chaque clé `(asset_class, horizon, isin)` est conservé dans :
+
+`state/provenance/V21_8_ENTRY_EXIT_STATE.csv`
+
+Ce fichier utilise le cache de provenance déjà restauré et sauvegardé par le workflow quotidien. Une détérioration multifactorielle observée une première fois produit donc `PROTECT`; si elle persiste lors d'une exécution ultérieure, le contexte peut passer à `EXIT`. L'état reste du **decision-support** et ne déclenche aucune transaction.
+
+## Stops, sizing et pertes
 
 - aucun take-profit fixe n'est actif ;
 - l'ancien objectif +4 % n'est pas une règle opérationnelle ;
 - l'ancien stop ETF -18 % n'est pas une règle opérationnelle V21.8 ;
+- les anciennes hypothèses de stops TCT/CT/MT/LT du moteur de performance virtuel ne sont pas opérationnelles sous V21.8 ;
 - aucun nouveau hard stop n'est promu ;
 - la cible de risque de perte de 7 % reste un **plafond de recherche**, pas un stop aveugle ;
 - gaps et slippage peuvent dépasser tout niveau de stop théorique.
+
+Le moteur historique `committee_performance_v21_4` calculait le sizing et certaines sorties à partir de stops fixes devenus incompatibles avec V21.8. Son exécution est donc `SKIPPED_GOVERNANCE` dans le runner unifié. Son historique peut être conservé pour audit, mais il ne doit plus créer ni clôturer de position virtuelle tant qu'une politique de sizing indépendante de ces stops n'a pas été validée séparément.
 
 ## Gouvernance PIT/OOS
 
@@ -54,4 +63,6 @@ Les résultats antérieurs n'ont pas démontré une règle fixe de stop ou de ta
 - influence V21.8 sur score Comité = 0 ;
 - influence V21.8 sur décision de sélection = 0 ;
 - influence V21.8 sur sizing = 0 ;
+- moteur historique de performance virtuelle = `SKIPPED_GOVERNANCE` sous V21.8 ;
+- holdout final fermé ;
 - aucun ordre réel.
