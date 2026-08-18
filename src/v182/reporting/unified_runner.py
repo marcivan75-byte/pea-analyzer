@@ -11,7 +11,6 @@ from v182.reporting import run as enrichment_run
 from v182.reporting import (
     android_risk_control_center,
     committee_master_v21_4,
-    committee_performance_v21_4,
     etf_mt_v2081_run,
     etf_structure_refresh,
     ipo_dd_gaps_run,
@@ -24,8 +23,8 @@ from v182.risk import beta_correlation_engine
 
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[3]
-SOFTWARE_VERSION = "21.7.6"
-PROCESS_VERSION = "UNIFIED_V21_7_6_SECTOR_ROTATION_V2_DECISION_CONTEXT_PIT_OOS_RISK_V1_1_CONTEXT_ONLY_IPO_V1_3"
+SOFTWARE_VERSION = "21.8.1"
+PROCESS_VERSION = "UNIFIED_V21_8_1_ENTRY_EXIT_BASELINE_SECTOR_ROTATION_V2_PIT_OOS_RISK_V1_1_CONTEXT_ONLY_IPO_V1_3"
 
 
 def _safe_step(name: str, func) -> dict:
@@ -117,18 +116,21 @@ def run(root: Path = ROOT) -> dict:
             "Requires current Committee/Risk context before publishing the mobile risk panel."
         )
 
-    if steps["refresh"]["status"] == "SUCCESS" and steps["committee"]["status"] == "SUCCESS":
-        steps["performance"] = _safe_step(
-            "performance", lambda: committee_performance_v21_4.run(root)
-        )
-    else:
-        steps["performance"] = _skip_dependency(
-            "Requires SUCCESS refresh and SUCCESS current Committee; stale decisions are forbidden for virtual transactions."
-        )
+    # V21.8 invalidates the legacy fixed-stop sizing/execution assumptions used by
+    # committee_performance_v21_4. Keep historical state for audit only; do not
+    # create or close virtual positions until a separately validated sizing policy
+    # no longer depends on those fixed stops.
+    steps["performance"] = {
+        "status": "SKIPPED_GOVERNANCE",
+        "reason": "V21.8 disables legacy fixed-stop risk sizing and virtual execution until a separately validated sizing policy exists.",
+    }
 
     outputs = {
         "decisions": "outputs/committee_master/COMMITTEE_DECISIONS.csv",
         "committee_summary": "outputs/committee_master/SUMMARY.json",
+        "entry_exit_v21_8": "outputs/committee_master/V21_8_ENTRY_EXIT_CHALLENGER.csv",
+        "entry_exit_v21_8_audit": "outputs/audit/V21_8_ENTRY_EXIT_GOVERNANCE.json",
+        "entry_exit_v21_8_state": "state/provenance/V21_8_ENTRY_EXIT_STATE.csv",
         "sector_ranking": "outputs/committee_master/SECTOR_RANKING.csv",
         "sector_ranking_challenger": "outputs/committee_master/SECTOR_RANKING_CHALLENGER_V21_4.csv",
         "action_reference_vs_challenger": "outputs/committee_master/ACTION_REFERENCE_VS_CHALLENGER_V21_4.csv",
@@ -153,7 +155,6 @@ def run(root: Path = ROOT) -> dict:
         "risk_portfolio": "outputs/risk/PORTFOLIO_RISK_SUMMARY.json",
         "risk_sector_overlay": "outputs/risk/SECTOR_BETA_RISK_OVERLAY.csv",
         "risk_mobile": "outputs/mobile/RISK_V1_1_CONTROL_CENTER.md",
-        "performance_workbook": "outputs/performance/COMMITTEE_BUY_PERFORMANCE.xlsx",
         "etf_mt_ranking": "outputs/etf_mt_v2081/V20.8.1_ETF_MT_RANKING.csv",
         "etf_mt_summary": "outputs/etf_mt_v2081/V20.8.1_ETF_MT_SUMMARY.json",
         "gold_decision": "outputs/gold_v1_1/GOLD_V1_1_DECISION.json",
@@ -175,20 +176,24 @@ def run(root: Path = ROOT) -> dict:
     }
     existing = {key: value for key, value in outputs.items() if (root / value).exists()}
     failed = [key for key, value in steps.items() if value["status"] == "FAILED"]
-    skipped = [key for key, value in steps.items() if value["status"].startswith("SKIPPED")]
-    overall = "SUCCESS" if not failed and not skipped else "PARTIAL_SUCCESS"
+    skipped_dependencies = [
+        key for key, value in steps.items() if value["status"].startswith("SKIPPED_DEPENDENCY")
+    ]
+    overall = "SUCCESS" if not failed and not skipped_dependencies else "PARTIAL_SUCCESS"
     sector_validation = _sector_validation_from_step(steps["sector_rotation_v2"])
 
     decision_tracks = {
         "actions_final": "V21.0 frozen-weight reference on current 1829 universe",
         "actions_challenger": "V21.4 enriched shadow challenger",
+        "entry_exit": "V21.8 official decision-support baseline; TCT exact T2 gate; HOLD/PROTECT/EXIT temporal state; no fixed TP/legacy fixed stop/new hard stop",
         "etf_mt_reference": "V20.8.1 exact 38-PIT core",
         "etf_mt_challenger": "V20.8.2 missing-data dynamic shadow",
-        "tct": "V24.1.8 baseline + exact V24.1.7 T1/T2 shadow",
+        "tct": "V24.1.8 baseline + exact V24.1.7 T1/T2 shadow; T1/T2 ACTION TCT only",
         "gold": "V1.1 shadow",
         "ipo": "IPO_RADAR_V1.3 official Euronext evidence + same-basis real-peer valuation + V1.2 deep-DD/PIT-safe calibration; shadow/advisory; no automatic BUY",
         "sector_rotation": "V1 baseline + V2.0 multi-factor shadow + locked PIT/OOS validator + per-decision Action/ETF diagnostic context; V2 decision influence = 0",
         "risk_context": "RISK_V1.1 robust beta/correlation/diversification context-only; score/decision/sizing/stop influence = 0",
+        "virtual_performance": "SKIPPED_GOVERNANCE under V21.8 because legacy sizing depends on invalidated fixed-stop assumptions",
     }
 
     payload = {
@@ -206,6 +211,13 @@ def run(root: Path = ROOT) -> dict:
             "Runtime/software version is distinct from model versions; decision_tracks is the authoritative model-version map.",
             "Missing canonical Action ISINs are materialized as identity-only rows; no ticker/name/market data are invented.",
             "New/unvalidated Action factors, including 52-week overlays, remain challenger-only until dedicated PIT/OOS validation.",
+            "V21.8 is the official entry/exit decision-support baseline and does not change selection scores or Committee decisions.",
+            "TCT V21.8 entry requires exact T2 confirmation; T1 alone never opens a challenger entry and T1/T2 remain ACTION TCT only.",
+            "V21.8 position context is HOLD -> PROTECT -> EXIT; a first multifactor deterioration produces PROTECT and persistent deterioration on a later run confirms EXIT.",
+            "V21.8 temporal state is persisted inside the existing provenance state cache; an explicit emergency flag remains the only direct EMERGENCY_EXIT path.",
+            "Profit level and profit giveback are context only and never create a standalone exit signal.",
+            "No fixed take-profit, legacy fixed stop, or new hard stop is operational in V21.8; the 7% figure is a research risk ceiling only and gaps/slippage can exceed any stop.",
+            "Legacy virtual execution/performance is disabled under V21.8 because its sizing and exit logic depend on invalidated fixed-stop assumptions; historical state is audit-only until a separately validated sizing policy exists.",
             "Sector Rotation V2 is SHADOW_ONLY: it cannot change Action/ETF scores, create BUYs, create SELLs, or emit orders before dedicated PIT/OOS validation.",
             "Sector Rotation V2 is integrated into Committee and unified reporting only as diagnostics: current PIT/OOS status, valuation/correction warnings and frozen evidence are visible with decision influence fixed at zero.",
             "Sector Rotation V2 per-decision context is published in a separate immutable diagnostic file keyed to Committee rows; COMMITTEE_DECISIONS.csv is not modified by that context join.",
@@ -228,10 +240,7 @@ def run(root: Path = ROOT) -> dict:
             "Every collection publishes retained-value provenance plus missing/partial/available data.",
             "Per-field retained provenance governs evidence/freshness merge decisions and persists across runs.",
             "Dynamic available-criterion weights renormalize to 100% while minimum coverage gates remain active.",
-            "Virtual BUYs execute no earlier than the next observed run and one consolidated position is allowed per ISIN.",
-            "Virtual performance is model-version cohorted and never consumes stale Committee decisions.",
             "A partial unified run returns a non-zero CLI exit code so GitHub cannot display false green success.",
-            "T1/T2 are ACTION TCT only.",
             "ETF MT 90.91% historical OOS attribution belongs only to exact V20.8.1 38-PIT core.",
             "No real orders are emitted.",
         ],
