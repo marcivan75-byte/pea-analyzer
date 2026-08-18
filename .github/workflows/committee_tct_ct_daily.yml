@@ -79,6 +79,10 @@ jobs:
         continue-on-error: true
         run: python -m v182.reporting.tct_intraday_shadow_run
 
+      - name: TCT V24.2.1 shadow analytics
+        continue-on-error: true
+        run: python -m v182.reporting.tct_intraday_shadow_analysis
+
       - name: Publish Android tactical summaries
         if: always()
         run: |
@@ -89,6 +93,10 @@ jobs:
             printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
             cat outputs/mobile/ANDROID_TCT_INTRADAY_SHADOW.md >> "$GITHUB_STEP_SUMMARY"
           fi
+          if [ -f outputs/mobile/ANDROID_TCT_INTRADAY_ANALYTICS.md ]; then
+            printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+            cat outputs/mobile/ANDROID_TCT_INTRADAY_ANALYTICS.md >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Show daily audit
         if: always()
@@ -98,6 +106,9 @@ jobs:
           fi
           if [ -f outputs/audit/TCT_INTRADAY_V24_2_0_AUDIT.json ]; then
             cat outputs/audit/TCT_INTRADAY_V24_2_0_AUDIT.json
+          fi
+          if [ -f outputs/audit/TCT_INTRADAY_V24_2_1_ANALYTICS.json ]; then
+            cat outputs/audit/TCT_INTRADAY_V24_2_1_ANALYTICS.json
           fi
           if [ -f outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json ]; then
             cat outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json
@@ -142,8 +153,10 @@ jobs:
             outputs/daily_tct_ct/
             outputs/mobile/ANDROID_DAILY_TCT_CT.md
             outputs/mobile/ANDROID_TCT_INTRADAY_SHADOW.md
+            outputs/mobile/ANDROID_TCT_INTRADAY_ANALYTICS.md
             outputs/audit/DAILY_TCT_CT_AUDIT.json
             outputs/audit/TCT_INTRADAY_V24_2_0_AUDIT.json
+            outputs/audit/TCT_INTRADAY_V24_2_1_ANALYTICS.json
             outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json
             outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx
             state/TCT_V24_2_0_SIGNAL_LEDGER.csv

@@ -64,6 +64,15 @@
     "minimum_turnover_ratio": 0.75,
     "max_spread_pct_if_available": 0.006
   },
+  "analysis": {
+    "version": "TCT_V24.2.1_SHADOW_ANALYTICS",
+    "minimum_entry_events_for_descriptive_metrics": 10,
+    "minimum_entry_events_for_candidate_review": 30,
+    "minimum_entry_events_per_setup_for_review": 15,
+    "minimum_distinct_isins_for_candidate_review": 10,
+    "promotion_authority": false,
+    "retuning_allowed": false
+  },
   "setups": {
     "EXPLOSIVE_BREAKOUT": {
       "enabled": true
