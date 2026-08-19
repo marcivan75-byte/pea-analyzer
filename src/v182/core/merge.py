@@ -51,11 +51,9 @@ def _as_of_timestamp(value) -> pd.Timestamp | None:
     try:
         Decimal(text)
     except InvalidOperation:
-        pass
-    else:
-        return None
-    parsed=pd.to_datetime(text,errors="coerce",utc=True)
-    return None if pd.isna(parsed) else parsed
+        parsed=pd.to_datetime(text,errors="coerce",utc=True)
+        return None if pd.isna(parsed) else parsed
+    return None
 
 
 def values_equal(left,right) -> bool:
