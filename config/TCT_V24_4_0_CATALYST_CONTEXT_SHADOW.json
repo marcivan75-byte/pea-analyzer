@@ -23,12 +23,13 @@
     "candidate_limit": 60,
     "news_query_limit": 60,
     "news_max_records_per_candidate": 25,
+    "max_preopen_seed_staleness_calendar_days": 7,
     "global_snapshot_interval": "1d",
     "global_snapshot_period": "5d"
   },
   "news": {
     "source": "GDELT",
-    "preopen_fetch_timespan": "4d",
+    "preopen_fetch_timespan": "7d",
     "postmarket_fetch_timespan": "1d",
     "require_parseable_article_timestamp": true,
     "deduplicate_headlines": true,
