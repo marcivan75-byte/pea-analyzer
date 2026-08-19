@@ -1,0 +1,125 @@
+{
+  "version": "TCT_V24.4.0_NEXT_SESSION_CATALYST_CYCLE_SHADOW",
+  "asset_class": "ACTION",
+  "horizon": "TCT",
+  "status": "SHADOW_RESEARCH_ONLY",
+  "mode": "SHADOW_ONLY",
+  "intent": "ANTICIPATE_NEXT_SESSION_LARGE_MOVES_FROM_POSTMARKET_PREOPEN_NEWS_AND_GLOBAL_CONTEXT",
+  "data_policy": {
+    "tct_daily_seed_only": true,
+    "individual_pea_extended_hours_quotes_used": false,
+    "continuous_monitoring_forbidden": true,
+    "intraday_bars_forbidden": true,
+    "five_minute_forbidden": true,
+    "quasi_realtime_forbidden": true,
+    "snapshot_phases": ["POSTMARKET", "PREOPEN"],
+    "timezone": "Europe/Paris",
+    "europe_close_hour": 17,
+    "europe_close_minute": 30,
+    "preopen_target_hour": 8,
+    "preopen_target_minute": 40,
+    "postmarket_target_hour": 23,
+    "postmarket_target_minute": 15,
+    "candidate_limit": 60,
+    "news_query_limit": 60,
+    "news_max_records_per_candidate": 20,
+    "global_snapshot_interval": "1d",
+    "global_snapshot_period": "5d"
+  },
+  "news": {
+    "source": "GDELT",
+    "preopen_fetch_timespan": "4d",
+    "postmarket_fetch_timespan": "1d",
+    "require_parseable_article_timestamp": true,
+    "deduplicate_headlines": true,
+    "max_headlines_persisted": 5,
+    "candidate_query_suffix": "(earnings OR results OR guidance OR \"profit warning\" OR acquisition OR merger OR contract OR approval OR investigation OR lawsuit OR downgrade OR upgrade OR buyback OR dividend OR CEO OR offering OR capital)",
+    "event_weights": {
+      "PROFIT_WARNING": {"magnitude": 100, "direction": -100},
+      "GUIDANCE_CUT": {"magnitude": 95, "direction": -95},
+      "GUIDANCE_RAISED": {"magnitude": 95, "direction": 95},
+      "EARNINGS_BEAT": {"magnitude": 90, "direction": 85},
+      "EARNINGS_MISS": {"magnitude": 90, "direction": -85},
+      "BANKRUPTCY_DEFAULT": {"magnitude": 100, "direction": -100},
+      "FRAUD_INVESTIGATION": {"magnitude": 95, "direction": -90},
+      "REGULATORY_REJECTION": {"magnitude": 95, "direction": -90},
+      "REGULATORY_APPROVAL": {"magnitude": 85, "direction": 80},
+      "MA_ACQUISITION": {"magnitude": 90, "direction": 35},
+      "MAJOR_CONTRACT": {"magnitude": 78, "direction": 75},
+      "CAPITAL_RAISE_DILUTION": {"magnitude": 78, "direction": -70},
+      "DIVIDEND_CUT": {"magnitude": 82, "direction": -80},
+      "BUYBACK_DIVIDEND_RAISE": {"magnitude": 65, "direction": 60},
+      "ANALYST_DOWNGRADE": {"magnitude": 62, "direction": -60},
+      "ANALYST_UPGRADE": {"magnitude": 58, "direction": 55},
+      "CEO_DEPARTURE": {"magnitude": 58, "direction": -35},
+      "OTHER_NEWS": {"magnitude": 35, "direction": 0}
+    },
+    "freshness_hours_full": 4,
+    "freshness_hours_medium": 12,
+    "corroboration_full_articles": 3
+  },
+  "global_market": {
+    "completed_session_symbols": {
+      "SP500": "^GSPC",
+      "NASDAQ": "^IXIC",
+      "RUSSELL2000": "^RUT",
+      "VIX": "^VIX",
+      "NIKKEI": "^N225",
+      "EUROSTOXX50": "^STOXX50E",
+      "CAC40": "^FCHI",
+      "DAX": "^GDAXI"
+    },
+    "one_shot_context_symbols": {
+      "OIL": "CL=F",
+      "GOLD": "GC=F",
+      "EURUSD": "EURUSD=X"
+    },
+    "exclude_partial_asia_from_core_score": true,
+    "risk_on_weights": {
+      "SP500": 0.25,
+      "NASDAQ": 0.25,
+      "RUSSELL2000": 0.15,
+      "NIKKEI": 0.15,
+      "VIX_INVERSE": 0.20
+    }
+  },
+  "movement_potential_weights": {
+    "news_magnitude": 0.45,
+    "technical_impulse": 0.25,
+    "global_market_shock": 0.15,
+    "known_event_proximity": 0.15
+  },
+  "direction_weights": {
+    "news_direction": 0.55,
+    "technical_direction": 0.25,
+    "exit_risk_inverse": 0.10,
+    "global_risk_on": 0.10
+  },
+  "thresholds": {
+    "high_movement_potential": 70,
+    "medium_movement_potential": 50,
+    "bullish_direction": 25,
+    "bearish_direction": -25,
+    "high_existing_news_catalyst": 65,
+    "high_exit_risk": 50,
+    "high_atr_pct": 0.04,
+    "earnings_proximity_days": 7
+  },
+  "state": {
+    "context_seed_path": "state/tct_context/TCT_DAILY_TRADER_LATEST.csv",
+    "catalyst_ledger_path": "state/tct_context/TCT_V24_4_0_CATALYST_LEDGER.csv"
+  },
+  "governance": {
+    "decision_influence": 0.0,
+    "score_influence": 0.0,
+    "sizing_influence": 0.0,
+    "stop_loss_influence": 0.0,
+    "ct_influence": 0.0,
+    "real_orders_enabled": false,
+    "fixed_take_profit_enabled": false,
+    "fixed_stop_loss_enabled": false,
+    "holdout_locked": true,
+    "retuning_allowed": false,
+    "promotion_authority": false
+  }
+}
