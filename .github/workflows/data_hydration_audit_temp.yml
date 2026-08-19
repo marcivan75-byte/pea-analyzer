@@ -4,9 +4,12 @@ on:
   push:
     branches:
       - "audit/data-hydration-run-2026-08-19"
+  pull_request:
+    branches:
+      - main
 
 concurrency:
-  group: data-hydration-audit-2026-08-19
+  group: data-hydration-audit-2026-08-19-${{ github.event_name }}
   cancel-in-progress: true
 
 permissions:
