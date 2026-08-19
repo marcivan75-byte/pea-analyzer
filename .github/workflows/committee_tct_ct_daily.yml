@@ -75,9 +75,9 @@ jobs:
       - name: Daily TCT CT scoring and V21.8
         run: python -m v182.reporting.daily_tct_ct_runner
 
-      - name: TCT V24.3 daily weekly trader-tools shadow
+      - name: TCT V24.3.1 robust daily weekly trader-tools shadow
         continue-on-error: true
-        run: python -m v182.reporting.tct_daily_trader_shadow_run
+        run: python -m v182.reporting.tct_daily_trader_shadow_run_v24_3_1
 
       - name: Publish Android tactical summaries
         if: always()
@@ -96,8 +96,8 @@ jobs:
           if [ -f outputs/audit/DAILY_TCT_CT_AUDIT.json ]; then
             cat outputs/audit/DAILY_TCT_CT_AUDIT.json
           fi
-          if [ -f outputs/audit/TCT_DAILY_TRADER_V24_3_0_AUDIT.json ]; then
-            cat outputs/audit/TCT_DAILY_TRADER_V24_3_0_AUDIT.json
+          if [ -f outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json ]; then
+            cat outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json
           fi
           if [ -f outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json ]; then
             cat outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json
@@ -137,7 +137,7 @@ jobs:
             outputs/mobile/ANDROID_DAILY_TCT_CT.md
             outputs/mobile/ANDROID_TCT_DAILY_TRADER_SHADOW.md
             outputs/audit/DAILY_TCT_CT_AUDIT.json
-            outputs/audit/TCT_DAILY_TRADER_V24_3_0_AUDIT.json
+            outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json
             outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json
             outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx
             data/cache/actions/history_manifest.json
