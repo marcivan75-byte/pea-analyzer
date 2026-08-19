@@ -37,6 +37,10 @@ jobs:
         run: python -m v182.audit.master_data --root . --fail-fatal
       - name: Qualitative and quantitative coverage profile
         run: python -m v182.audit.master_data_profile
+      - name: Canonical identity hydration worklist
+        run: python -m v182.audit.identity_hydration
+      - name: Audit excluded legacy Action rows
+        run: python -m v182.audit.master_data_exclusions
       - name: Referential and governance integrity
         run: |
           python - <<'PY'
@@ -123,5 +127,9 @@ jobs:
             outputs/audit/MASTER_DATA_AUDIT_ISSUES.csv
             outputs/audit/MASTER_DATA_PROFILE.json
             outputs/audit/MASTER_DATA_FIELD_COVERAGE.csv
+            outputs/audit/MASTER_DATA_EXCLUDED_LEGACY_ACTIONS.csv
+            outputs/audit/MASTER_DATA_EXCLUSIONS_SUMMARY.json
+            outputs/gaps/ACTION_IDENTITY_HYDRATION_WORKLIST.csv
+            outputs/gaps/ACTION_IDENTITY_HYDRATION_SUMMARY.json
           if-no-files-found: warn
           retention-days: 30
