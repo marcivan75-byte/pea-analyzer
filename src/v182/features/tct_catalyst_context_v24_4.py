@@ -51,12 +51,25 @@ def previous_business_day(day):
     return current
 
 
-def catalyst_window(phase: str, now: datetime, cfg: dict) -> tuple[datetime, datetime]:
-    """Return strict UTC event window for PREOPEN or POSTMARKET.
+def _anchor_market_day(value: object, local_day):
+    if value is None:
+        return None
+    try:
+        parsed = pd.Timestamp(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(parsed):
+        return None
+    anchor = parsed.date()
+    return anchor if anchor < local_day else None
 
-    PREOPEN starts at the previous business day's European close. POSTMARKET
-    starts at the current business day's European close. This intentionally
-    captures corporate releases after the cash session rather than intraday flow.
+
+def catalyst_window(phase: str, now: datetime, cfg: dict, *, anchor_date: object | None = None) -> tuple[datetime, datetime]:
+    """Return a strict PIT UTC news window for PREOPEN or POSTMARKET.
+
+    PREOPEN is anchored to the last completed daily market date when supplied.
+    That makes weekends and exchange holidays causal without requiring a separate
+    paid exchange calendar. POSTMARKET starts at the current European cash close.
     """
     tz = ZoneInfo(str(cfg["data_policy"].get("timezone", "Europe/Paris")))
     local = now.astimezone(tz)
@@ -66,7 +79,8 @@ def catalyst_window(phase: str, now: datetime, cfg: dict) -> tuple[datetime, dat
     )
     phase_u = str(phase).upper()
     if phase_u == "PREOPEN":
-        start_day = previous_business_day(local.date())
+        market_anchor = _anchor_market_day(anchor_date, local.date())
+        start_day = market_anchor or previous_business_day(local.date())
     elif phase_u == "POSTMARKET":
         start_day = local.date()
         if start_day.weekday() >= 5:
@@ -80,9 +94,6 @@ def catalyst_window(phase: str, now: datetime, cfg: dict) -> tuple[datetime, dat
 def infer_phase(now: datetime, cfg: dict) -> str:
     tz = ZoneInfo(str(cfg["data_policy"].get("timezone", "Europe/Paris")))
     local = now.astimezone(tz)
-    # PREOPEN run is scheduled around 07:40/08:40 local depending DST;
-    # POSTMARKET around 22:15/23:15 local. Manual runs are assigned to the
-    # nearest meaningful snapshot rather than creating extra monitoring phases.
     if local.hour < 12:
         return "PREOPEN"
     return "POSTMARKET"
@@ -195,7 +206,6 @@ def score_candidate(
         "exit_risk_inverse": exit_inverse_direction,
         "global_risk_on": global_direction,
     }
-    # Direction components live on -100..100; reweight only observed evidence.
     numerator = 0.0
     observed = 0.0
     for key, weight in cfg["direction_weights"].items():
