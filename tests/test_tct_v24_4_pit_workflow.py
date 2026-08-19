@@ -9,7 +9,7 @@ def test_pit_validator_runs_after_snapshot_and_is_artifacted():
     workflow = (ROOT / ".github" / "workflows" / "tct_next_session_context.yml").read_text(encoding="utf-8")
     assert "Run one next-session catalyst snapshot" in workflow
     assert "Validate accumulated V24.4 PIT ledger" in workflow
-    assert "python -m v182.reporting.tct_v24_4_pit_validator" in workflow
+    assert "python -m v182.reporting.tct_v24_4_pit_validator_runtime" in workflow
     assert "TCT_V24_4_0_PIT_VALIDATION.json" in workflow
     assert "ANDROID_TCT_V24_4_PIT_VALIDATION.md" in workflow
     assert "TCT_V24_4_0_PIT_SLICES.csv" in workflow
@@ -31,9 +31,12 @@ def test_validation_gates_are_frozen_and_non_promoting():
 
 def test_validator_has_no_production_authority():
     source = (ROOT / "src" / "v182" / "reporting" / "tct_v24_4_pit_validator.py").read_text(encoding="utf-8")
+    runtime = (ROOT / "src" / "v182" / "reporting" / "tct_v24_4_pit_validator_runtime.py").read_text(encoding="utf-8")
     assert '"production_influence": 0.0' in source
     assert '"holdout_opened": False' in source
     assert '"promotion_authority": False' in source
     assert '"retuning_allowed": False' in source
     assert "MATURE_FOR_REVIEW_NOT_PROMOTION" in source
     assert "NOT_EVALUABLE_BEFORE_MATURITY" in source
+    assert "Spearman rho = Pearson correlation of average ranks" in runtime
+    assert "scipy" not in runtime.lower()
