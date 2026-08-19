@@ -196,6 +196,30 @@ def _append_observations(path: Path, new_rows: list[dict]) -> tuple[pd.DataFrame
     return combined, max(0, len(combined) - before)
 
 
+def _eligible_completed_sessions(
+    sessions: list[str],
+    signal_date: str,
+    cfg: dict,
+    *,
+    as_of_date: str | None = None,
+) -> list[str]:
+    """Return only completed post-signal sessions eligible for persistence.
+
+    V24.2 is a research collector, not a live execution engine. Persisting the
+    current calendar session would allow a manual intraday run to freeze a
+    partial session and partial outcome labels. For PIT integrity the current
+    calendar session is therefore deferred and becomes eligible on a later run.
+    """
+    bridge = cfg["signal_bridge"]
+    minimum_lag = max(1, int(bridge.get("minimum_lag_sessions", 1)))
+    max_sessions = int(bridge["max_execution_sessions_after_signal"])
+    current = as_of_date or datetime.now(timezone.utc).date().isoformat()
+    future = sorted({str(s) for s in sessions if str(s) > str(signal_date)})
+    if bool(bridge.get("current_calendar_session_persistence_forbidden", True)):
+        future = [s for s in future if s < current]
+    return future[minimum_lag - 1:minimum_lag - 1 + max_sessions]
+
+
 def _android_summary(observations: pd.DataFrame, generated_at: str) -> str:
     lines = [
         "# TCT V24.2.0 — Intraday / Scalping SHADOW",
@@ -247,6 +271,7 @@ def run(root: Path = ROOT) -> dict:
     histories_found = 0
     requested_tickers: list[str] = []
     cache_failures: list[dict] = []
+    deferred_incomplete_sessions = 0
 
     if not ledger.empty:
         signal_dates = pd.to_datetime(ledger["signal_date"], errors="coerce")
@@ -262,8 +287,6 @@ def run(root: Path = ROOT) -> dict:
                 histories_found = len(histories)
                 if cache_failures and not histories:
                     status = "DEGRADED_INTRADAY_DATA"
-                minimum_lag = max(1, int(cfg["signal_bridge"].get("minimum_lag_sessions", 1)))
-                max_sessions = int(cfg["signal_bridge"]["max_execution_sessions_after_signal"])
                 for _, signal in active.iterrows():
                     ticker = str(signal["yahoo_ticker"])
                     history = histories.get(ticker)
@@ -275,13 +298,15 @@ def run(root: Path = ROOT) -> dict:
                         errors.append(f"{ticker}:FEATURES:{type(exc).__name__}:{str(exc)[:120]}")
                         continue
                     sessions = sorted(set(features.get("session_date", pd.Series(dtype=str)).astype(str)))
-                    future_sessions = [s for s in sessions if s > str(signal["signal_date"])]
-                    eligible_sessions = future_sessions[minimum_lag - 1:minimum_lag - 1 + max_sessions]
+                    eligible_sessions = _eligible_completed_sessions(sessions, str(signal["signal_date"]), cfg)
                     for session_date in eligible_sessions:
                         key = f"{signal['signal_key']}|{session_date}"
                         if key in seen:
                             continue
                         result = evaluate_intraday_session(features, session_date, cfg)
+                        if result.status == "SESSION_INCOMPLETE":
+                            deferred_incomplete_sessions += 1
+                            continue
                         new_rows.append(_flatten_result(signal, result, cfg))
                         seen.add(key)
             except Exception as exc:
@@ -312,6 +337,9 @@ def run(root: Path = ROOT) -> dict:
         "new_observations": int(new_observations),
         "observation_ledger_rows": int(len(observations)),
         "causal_entry_events": entry_events,
+        "deferred_incomplete_sessions": int(deferred_incomplete_sessions),
+        "completed_sessions_only": bool(cfg["signal_bridge"].get("completed_sessions_only", True)),
+        "current_calendar_session_persistence_forbidden": bool(cfg["signal_bridge"].get("current_calendar_session_persistence_forbidden", True)),
         "same_session_execution_forbidden": True,
         "minimum_lag_sessions": int(cfg["signal_bridge"]["minimum_lag_sessions"]),
         "decision_influence": 0.0,
