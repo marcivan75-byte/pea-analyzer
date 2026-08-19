@@ -22,7 +22,7 @@
     "postmarket_target_minute": 15,
     "candidate_limit": 60,
     "news_query_limit": 60,
-    "news_max_records_per_candidate": 20,
+    "news_max_records_per_candidate": 25,
     "global_snapshot_interval": "1d",
     "global_snapshot_period": "5d"
   },
@@ -33,7 +33,8 @@
     "require_parseable_article_timestamp": true,
     "deduplicate_headlines": true,
     "max_headlines_persisted": 5,
-    "candidate_query_suffix": "(earnings OR results OR guidance OR \"profit warning\" OR acquisition OR merger OR contract OR approval OR investigation OR lawsuit OR downgrade OR upgrade OR buyback OR dividend OR CEO OR offering OR capital)",
+    "candidate_query_suffix": "",
+    "query_policy": "EXACT_COMPANY_NAME_THEN_WINDOWED_EVENT_CLASSIFICATION_MULTILINGUAL",
     "event_weights": {
       "PROFIT_WARNING": {"magnitude": 100, "direction": -100},
       "GUIDANCE_CUT": {"magnitude": 95, "direction": -95},
