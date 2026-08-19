@@ -4,8 +4,6 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 
-import pandas as pd
-
 from v182.audit.canonical_universe import filter_actions
 from v182.audit.master_data import isin_checksum_valid, normalize_isin
 from v182.io.frames import load_master
