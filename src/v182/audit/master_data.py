@@ -12,6 +12,8 @@ import pandas as pd
 
 from v182.audit.canonical_universe import filter_actions
 from v182.io.frames import is_missing, load_master
+from v182.mapping.action_isin_resolver import apply_identity_overlay
+from v182.mapping.identity_overlay_store import materialize_identity_overlay
 
 ISIN_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{9}[0-9]$")
 IDENTITY_ONLY_STATUS = "WHITELIST_ONLY_MISSING_METADATA"
@@ -262,9 +264,15 @@ def audit_frame(frame: pd.DataFrame, universe: str, *, today: date | None = None
 def run(root: Path, *, fail_fatal: bool = False) -> dict[str, Any]:
     actions_legacy = load_master(root / "inputs" / "V18.2_PEA_ACTIONS_MASTER.csv")
     canonical = filter_actions(actions_legacy, root / "config" / "V21_3_ACTION_UNIVERSE_1829_ISINS.parts")
+    overlay_path = materialize_identity_overlay(root)
+    if overlay_path is None:
+        governed_actions = canonical.included
+        overlay_audit = {"status": "NO_OVERLAY", "applied": 0}
+    else:
+        governed_actions, overlay_audit = apply_identity_overlay(canonical.included, overlay_path)
     etf = load_master(root / "inputs" / "V18.2_PEA_ETF_MASTER.csv")
 
-    action_result = audit_frame(canonical.included, "ACTION")
+    action_result = audit_frame(governed_actions, "ACTION")
     etf_result = audit_frame(etf, "ETF")
     issues = pd.concat([action_result.issues, etf_result.issues], ignore_index=True)
     fatal_count = int((issues["severity"] == "FATAL").sum()) if not issues.empty else 0
@@ -275,13 +283,14 @@ def run(root: Path, *, fail_fatal: bool = False) -> dict[str, Any]:
         "contract": "CURRENT_SNAPSHOT_IDENTITY_AND_VALUE_INTEGRITY; dynamic historical backtests require PIT observations, never the current snapshot as historical truth.",
         "actions": action_result.summary,
         "etf": etf_result.summary,
+        "action_identity_overlay": overlay_audit,
         "legacy_action_rows": int(len(actions_legacy)),
         "excluded_legacy_action_rows": int(len(canonical.excluded)),
         "canonical_materialized_missing_actions": int(canonical.materialized_missing_count),
         "fatal_count": fatal_count,
         "block_data_count": block_count,
         "passed_structural_integrity": fatal_count == 0,
-        "scoring_policy": "Rows with BLOCK_DATA issues remain non-scoring for affected data; missing values are never imputed as neutral.",
+        "scoring_policy": "Rows or fields with BLOCK_DATA issues remain non-scoring; missing values are never imputed as neutral.",
         "backtest_policy": "Current master dynamic fields are not PIT evidence. Historical modules must use timestamped observations available at the simulated decision time.",
     }
 
