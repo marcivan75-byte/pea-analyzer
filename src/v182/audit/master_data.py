@@ -24,7 +24,7 @@ IDENTITY_FIELDS = {
 DATE_FIELDS = (
     "as_of_date", "enrichment_as_of", "mapping_as_of", "isin_validation_as_of",
     "ticker_validation_as_of", "ticker_validated_as_of", "referential_actualised_as_of",
-    "perf_as_of", "fundamentals_as_of", "yf_consensus_as_of", "ta_as_of", "ohlcv_last",
+    "perf_as_of", "fundamentals_as_of", "yf_consensus_as_of", "ta_as_of", "ohlcv_as_of",
 )
 NUMERIC_BOUNDS: dict[str, tuple[float | None, float | None]] = {
     "dividend_yield_pct": (0.0, 100.0),
@@ -33,6 +33,8 @@ NUMERIC_BOUNDS: dict[str, tuple[float | None, float | None]] = {
     "fund_total_assets_eur_m": (0.0, None),
     "holdings": (0.0, None),
     "market_cap": (0.0, None),
+    "ohlcv_last": (0.0, None),
+    "last_close": (0.0, None),
     "volatility_1y_pct": (0.0, 500.0),
     "risk_indicator": (1.0, 7.0),
     "morningstar_rating": (1.0, 5.0),
@@ -55,11 +57,7 @@ def normalize_isin(value: Any) -> str:
 
 
 def isin_checksum_valid(value: Any) -> bool:
-    """Validate an ISO-6166 style ISIN with the mod-10 checksum.
-
-    This validates syntax/check digit only. It does not claim that the security
-    exists or is PEA eligible; those require attributed reference evidence.
-    """
+    """Validate ISO-6166 syntax/check digit without asserting security existence."""
     isin = normalize_isin(value)
     if not ISIN_RE.fullmatch(isin):
         return False
