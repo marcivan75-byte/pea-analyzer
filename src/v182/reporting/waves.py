@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 
 from v182.sources.yfinance_bulk import download_history, DownloadResult
-from v182.sources.yfinance_info import collect_info
+from v182.sources.yfinance_info import collect_info_cached
 from v182.features.ohlcv_features import calculate as calculate_features
 from v182.io.frames import is_missing
 from v182.mapping.action_yahoo_ticker import qualify_action_yahoo_tickers
@@ -97,12 +97,34 @@ def wave3_etf_beta3y(cache_dir: str, ticker_isin_map: dict[str, str], min_sessio
     return out
 
 
+def _cached_yfinance_info(tickers: list[str], cfg: dict, cache_name: str) -> tuple[list[dict], list[dict], dict]:
+    root=Path(__file__).resolve().parents[3]
+    cache_path=root/"state"/"provenance"/"source_cache"/cache_name
+    max_age=float(cfg.get("yfinance",{}).get("fundamental_refresh_days",7) or 7)
+    observations,failures,metrics=collect_info_cached(
+        tickers,
+        cache_path,
+        max_cache_age_days=max_age,
+        delay_seconds=cfg.get("yfinance",{}).get("info_delay_seconds",0.4),
+    )
+    audit_path=root/"outputs"/"audit"/cache_name.replace(".json","_AUDIT.json")
+    audit_path.parent.mkdir(parents=True,exist_ok=True)
+    audit_path.write_text(json.dumps(metrics,ensure_ascii=False,indent=2,default=str),encoding="utf-8")
+    return observations,failures,metrics
+
+
+def _cached_obs(universe: str, isin: str, row: dict, evidence: str = "C") -> dict:
+    stamp=str(row.get("fetched_at_utc") or NOW())
+    source=str(row.get("source") or "yfinance")
+    return {"universe":universe,"isin":isin,"field":row["field"],"value":row["value"],"source":source,"collected_at":stamp,"as_of":stamp[:10],"evidence_level":evidence,"validation_status":"AUTO_MATCH"}
+
+
 def wave4_info_actions(actions_df: pd.DataFrame, cfg: dict, top_n: int = 300) -> tuple[list[dict], list[dict]]:
     selected=_select_actions_scope(actions_df,cfg,"actions_fundamentals_scope",top_n); ticker_to_isin={t:i for t,i in zip(selected["yahoo_ticker"],selected["isin"]) if not is_missing(t)}
-    observations,failures=collect_info(list(ticker_to_isin),delay_seconds=cfg["yfinance"].get("info_delay_seconds",0.4)); result=[]
+    observations,failures,_metrics=_cached_yfinance_info(list(ticker_to_isin),cfg,"YFINANCE_ACTION_INFO_V1.json"); result=[]
     for row in observations:
         isin=ticker_to_isin.get(row["ticker"])
-        if isin is not None: result.append(_obs("ACTION",isin,row["field"],row["value"],"yfinance","C"))
+        if isin is not None: result.append(_cached_obs("ACTION",isin,row))
     return result,failures
 
 
@@ -124,12 +146,12 @@ def wave5_consensus_finnhub(actions_df: pd.DataFrame, api_key: str, top_n: int =
 
 
 def wave6_etf_info(etf_with_tickers: pd.DataFrame, cfg: dict) -> tuple[list[dict], list[dict]]:
-    valid=etf_with_tickers[etf_with_tickers["yahoo_ticker"].apply(lambda v:not is_missing(v))]; ticker_to_isin=dict(zip(valid["yahoo_ticker"],valid["isin"])); obs_raw,failures=collect_info(list(ticker_to_isin),delay_seconds=cfg["yfinance"].get("info_delay_seconds",0.4)); result=[]; allowed={"dividend_yield_pct","sector_yf","industry_yf","country_yf"}
+    valid=etf_with_tickers[etf_with_tickers["yahoo_ticker"].apply(lambda v:not is_missing(v))]; ticker_to_isin=dict(zip(valid["yahoo_ticker"],valid["isin"])); obs_raw,failures,_metrics=_cached_yfinance_info(list(ticker_to_isin),cfg,"YFINANCE_ETF_INFO_V1.json"); result=[]; allowed={"dividend_yield_pct","sector_yf","industry_yf","country_yf"}
     for row in obs_raw:
         isin=ticker_to_isin.get(row["ticker"])
         if isin is None or row["field"] not in allowed: continue
-        result.append(_obs("ETF",isin,row["field"],row["value"],"yfinance","C"))
-        if row["field"]=="dividend_yield_pct": result.append(_obs("ETF",isin,"dividend_data_status","OK","yfinance","C"))
+        result.append(_cached_obs("ETF",isin,row))
+        if row["field"]=="dividend_yield_pct": result.append(_cached_obs("ETF",isin,{**row,"field":"dividend_data_status","value":"OK"}))
     return result,failures
 
 
