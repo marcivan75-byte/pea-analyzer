@@ -6,6 +6,7 @@ from pathlib import Path
 import json
 import os
 
+import numpy as np
 import pandas as pd
 
 from v182.features.tct_catalyst_context_v24_4 import (
@@ -37,15 +38,74 @@ def _write_csv(frame: pd.DataFrame, path: Path) -> None:
     frame.to_csv(path, sep=";", index=False, encoding="utf-8-sig")
 
 
-def _append_ledger(frame: pd.DataFrame, path: Path) -> tuple[pd.DataFrame, int]:
-    """Persist the first PREOPEN/POSTMARKET snapshot per candidate and day.
+def _label_preopen_outcomes(ledger: pd.DataFrame, seed: pd.DataFrame, generated_at: str) -> tuple[pd.DataFrame, int]:
+    """Label prior PREOPEN forecasts only after a later completed daily seed exists."""
+    if ledger.empty or seed.empty or "reference_close" not in seed.columns:
+        return ledger, 0
+    out = ledger.copy()
+    if "realized_close_to_close_return_pct" not in out.columns:
+        out["realized_close_to_close_return_pct"] = np.nan
+        out["realized_abs_return_pct"] = np.nan
+        out["realized_direction_hit"] = np.nan
+        out["outcome_as_of_date"] = pd.NA
+        out["outcome_labeled_at_utc"] = pd.NA
+        out["realized_abs_move_rank_within_snapshot"] = np.nan
 
-    A manual rerun may update the current report, but must not rewrite the first
-    PIT observation used later for validation.
-    """
+    current = seed[[c for c in ["isin", "as_of_date", "reference_close"] if c in seed.columns]].copy()
+    if len(current.columns) < 3:
+        return out, 0
+    current["isin"] = current["isin"].astype(str)
+    current["reference_close"] = pd.to_numeric(current["reference_close"], errors="coerce")
+    current = current.dropna(subset=["reference_close"]).drop_duplicates("isin")
+    current_map = current.set_index("isin").to_dict("index")
+
+    labeled_indices: list[int] = []
+    for idx, row in out.iterrows():
+        if str(row.get("phase") or "") != "PREOPEN":
+            continue
+        if pd.notna(row.get("realized_close_to_close_return_pct")):
+            continue
+        isin = str(row.get("isin") or "")
+        latest = current_map.get(isin)
+        if not latest:
+            continue
+        source_date = str(row.get("as_of_date") or "")[:10]
+        outcome_date = str(latest.get("as_of_date") or "")[:10]
+        if not source_date or not outcome_date or outcome_date <= source_date:
+            continue
+        before = pd.to_numeric(pd.Series([row.get("reference_close")]), errors="coerce").iloc[0]
+        after = float(latest["reference_close"])
+        if pd.isna(before) or float(before) <= 0 or after <= 0:
+            continue
+        realized = (after / float(before) - 1.0) * 100.0
+        bias = pd.to_numeric(pd.Series([row.get("direction_bias_score")]), errors="coerce").iloc[0]
+        hit = np.nan
+        if not pd.isna(bias) and abs(float(bias)) >= 25.0 and realized != 0:
+            hit = 1.0 if np.sign(float(bias)) == np.sign(realized) else 0.0
+        out.at[idx, "realized_close_to_close_return_pct"] = round(realized, 6)
+        out.at[idx, "realized_abs_return_pct"] = round(abs(realized), 6)
+        out.at[idx, "realized_direction_hit"] = hit
+        out.at[idx, "outcome_as_of_date"] = outcome_date
+        out.at[idx, "outcome_labeled_at_utc"] = generated_at
+        labeled_indices.append(idx)
+
+    # Rank realized absolute moves only within each original PREOPEN snapshot.
+    if labeled_indices:
+        labeled = out.loc[labeled_indices].copy()
+        for snapshot_time, group in labeled.groupby("snapshot_generated_at_utc", dropna=False):
+            ranks = pd.to_numeric(group["realized_abs_return_pct"], errors="coerce").rank(method="min", ascending=False)
+            for idx, rank in ranks.items():
+                out.at[idx, "realized_abs_move_rank_within_snapshot"] = float(rank)
+    return out, len(labeled_indices)
+
+
+def _append_ledger(frame: pd.DataFrame, path: Path, *, seed: pd.DataFrame, generated_at: str) -> tuple[pd.DataFrame, int, int]:
+    """Preserve first PIT snapshot and label older PREOPEN rows only post-close."""
     existing = _read_csv(path)
+    existing, labeled = _label_preopen_outcomes(existing, seed, generated_at)
     if frame.empty:
-        return existing, 0
+        _write_csv(existing, path)
+        return existing, 0, labeled
     before = len(existing)
     combined = pd.concat([existing, frame], ignore_index=True, sort=False) if not existing.empty else frame.copy()
     if "snapshot_key" in combined.columns:
@@ -54,37 +114,17 @@ def _append_ledger(frame: pd.DataFrame, path: Path) -> tuple[pd.DataFrame, int]:
     if sort_cols:
         combined = combined.sort_values(sort_cols, ascending=[True, False, True][: len(sort_cols)])
     _write_csv(combined, path)
-    return combined, max(0, len(combined) - before)
+    return combined, max(0, len(combined) - before), labeled
 
 
 def _flatten_candidate(row: pd.Series, scored: dict, *, generated_at: str, window_start: str, window_end: str) -> dict:
     keep = [
-        "isin",
-        "name",
-        "yahoo_ticker",
-        "as_of_date",
-        "source_tct_decision",
-        "source_tct_setup",
-        "source_t1_quality",
-        "source_t2_quality",
-        "entry_state",
-        "entry_score",
-        "entry_confirmation_count",
-        "exit_state",
-        "exit_risk_score",
-        "atr14_pct",
-        "range_expansion",
-        "sector_yf",
-        "industry_yf",
-        "country_yf",
-        "market_cap",
-        "days_to_earnings",
-        "earnings_within_7d_flag",
-        "next_earnings_timestamp_yf",
-        "news_catalyst_score",
-        "funnel_instrument_news_score",
-        "funnel_sector_news_score",
-        "funnel_global_news_score",
+        "isin", "name", "yahoo_ticker", "as_of_date", "reference_close",
+        "source_tct_decision", "source_tct_setup", "source_t1_quality", "source_t2_quality",
+        "entry_state", "entry_score", "entry_confirmation_count", "exit_state", "exit_risk_score",
+        "atr14_pct", "range_expansion", "sector_yf", "industry_yf", "country_yf", "market_cap",
+        "days_to_earnings", "earnings_within_7d_flag", "next_earnings_timestamp_yf",
+        "news_catalyst_score", "funnel_instrument_news_score", "funnel_sector_news_score", "funnel_global_news_score",
     ]
     base = {key: row.get(key) for key in keep if key in row.index}
     phase = str(scored.get("phase") or "")
@@ -171,11 +211,8 @@ def run(root: Path = ROOT, *, phase: str | None = None, now: datetime | None = N
             market = GlobalMarketSnapshot(None, None, {}, {}, "NOT_FETCHED_NO_CANDIDATES", ())
         else:
             news = fetch_candidate_news(
-                candidates.to_dict("records"),
-                start_utc=window_start,
-                end_utc=window_end,
-                phase=selected_phase,
-                cfg=cfg,
+                candidates.to_dict("records"), start_utc=window_start, end_utc=window_end,
+                phase=selected_phase, cfg=cfg,
             )
             market = fetch_global_market_snapshot(cfg, phase=selected_phase)
             rows: list[dict] = []
@@ -184,11 +221,8 @@ def run(root: Path = ROOT, *, phase: str | None = None, now: datetime | None = N
                 scored = score_candidate(candidate, news.get(isin), market, phase=selected_phase, cfg=cfg)
                 rows.append(
                     _flatten_candidate(
-                        candidate,
-                        scored,
-                        generated_at=generated_at,
-                        window_start=window_start.isoformat(),
-                        window_end=window_end.isoformat(),
+                        candidate, scored, generated_at=generated_at,
+                        window_start=window_start.isoformat(), window_end=window_end.isoformat(),
                     )
                 )
             output = pd.DataFrame(rows)
@@ -199,7 +233,7 @@ def run(root: Path = ROOT, *, phase: str | None = None, now: datetime | None = N
     output_path = outdir / "TCT_NEXT_SESSION_CATALYST_V24_4_0.csv"
     _write_csv(output, output_path)
     ledger_path = root / cfg["state"]["catalyst_ledger_path"]
-    ledger, new_ledger_rows = _append_ledger(output, ledger_path)
+    ledger, new_ledger_rows, newly_labeled = _append_ledger(output, ledger_path, seed=seed, generated_at=generated_at)
 
     market_payload = asdict(market)
     android_path = mobile / "ANDROID_TCT_NEXT_SESSION_CATALYST.md"
@@ -231,6 +265,7 @@ def run(root: Path = ROOT, *, phase: str | None = None, now: datetime | None = N
         "volatility_alerts": volatility,
         "ledger_rows": int(len(ledger)),
         "new_ledger_rows": int(new_ledger_rows),
+        "preopen_outcomes_labeled_post_close": int(newly_labeled),
         "global_market": market_payload,
         "individual_pea_extended_hours_quotes_used": False,
         "intraday_bars_used": False,
