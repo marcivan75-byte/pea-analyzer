@@ -33,20 +33,15 @@ def _write_csv(frame: pd.DataFrame, path: Path) -> None:
 
 
 def _normalise(value):
-    if value is None:
+    if value is None or value is pd.NA or value is pd.NaT:
         return None
-    try:
-        if pd.isna(value):
-            return None
-    except (TypeError, ValueError):
-        pass
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
     if isinstance(value, (np.integer, int)):
         return int(value)
     if isinstance(value, (np.floating, float)):
         x = float(value)
         return None if not math.isfinite(x) else round(x, 10)
-    if isinstance(value, (bool, np.bool_)):
-        return bool(value)
     return str(value)
 
 
@@ -196,7 +191,8 @@ def apply_lineage(
             if not pd.isna(bias) and abs(float(bias)) >= 25.0 and float(raw_ret) != 0:
                 out.at[idx, "realized_direction_hit"] = 1.0 if np.sign(float(bias)) == np.sign(float(raw_ret)) else 0.0
             out.at[idx, "pit_label_evaluable"] = True
-        eligible = group.index[pd.to_numeric(out.loc[group.index, "realized_abs_return_pct"], errors="coerce").notna()]
+        eligible_mask = pd.to_numeric(out.loc[group.index, "realized_abs_return_pct"], errors="coerce").notna().to_numpy()
+        eligible = group.index[eligible_mask]
         if len(eligible):
             ranks = pd.to_numeric(out.loc[eligible, "realized_abs_return_pct"], errors="coerce").rank(method="min", ascending=False)
             for idx, rank in ranks.items():
