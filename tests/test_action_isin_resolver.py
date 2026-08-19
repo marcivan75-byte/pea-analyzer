@@ -38,6 +38,8 @@ def test_candidate_requires_supported_equity_exchange() -> None:
 
 def test_name_similarity_handles_legal_suffixes() -> None:
     assert name_similarity("Test Société SA", "TEST SOCIETE") > 0.95
+    assert name_similarity("Bayer Aktiengesellschaft", "Bayer AG") > 0.95
+    assert name_similarity("Example Registered Shares", "Example") > 0.95
 
 
 def test_resolver_promotes_only_cross_validated_exact_isin_identity() -> None:
@@ -60,7 +62,7 @@ def test_resolver_promotes_only_cross_validated_exact_isin_identity() -> None:
     assert row["yahoo_ticker"] == "TEST.PA"
     assert row["canonical_seed_status"] == HYDRATED_STATUS
     assert row["identity_resolution_status"] == "VALIDATED"
-    assert "Yahoo_Search_ISIN_rank1" in row["identity_source"]
+    assert "Yahoo_Search_ISIN_EEA_rank" in row["identity_source"]
 
 
 def test_openfigi_alternate_venues_do_not_create_ambiguity_when_yahoo_isin_search_is_exact() -> None:
@@ -81,7 +83,7 @@ def test_openfigi_alternate_venues_do_not_create_ambiguity_when_yahoo_isin_searc
     assert overlay.iloc[0]["yahoo_ticker"] == "TEST.PA"
 
 
-def test_yahoo_isin_name_mismatch_remains_unresolved() -> None:
+def test_yahoo_isin_name_mismatch_stays_blocked_with_name_only_evidence() -> None:
     frame = pd.DataFrame([{"isin":"FR0013412038","name":pd.NA,"yahoo_ticker":pd.NA,"canonical_seed_status":IDENTITY_ONLY_STATUS}])
     matches = {
         "FR0013412038":[{"name":"Test Société","ticker":"TEST","exchCode":"FP","marketSector":"Equity","securityType":"Common Stock"}]
@@ -93,12 +95,33 @@ def test_yahoo_isin_name_mismatch_remains_unresolved() -> None:
         yahoo_isin_searcher=bad_search,
         yahoo_validator=lambda *_: None,
     )
-    assert overlay.empty
+    assert len(overlay) == 1
+    assert overlay.iloc[0]["identity_resolution_status"] == "OPENFIGI_NAME_ONLY_TICKER_UNRESOLVED"
+    assert overlay.iloc[0]["yahoo_ticker"] == ""
     assert len(gaps) == 1
-    assert gaps.iloc[0]["reason"] == "YAHOO_ISIN_SEARCH_NAME_MISMATCH"
+    assert gaps.iloc[0]["reason"] == "NO_NAME_COMPATIBLE_EEA_YAHOO_ISIN_RESULT"
 
 
-def test_yahoo_no_rank1_adds_name_only_but_keeps_blocked() -> None:
+def test_non_eea_only_yahoo_result_is_recorded_but_not_promoted() -> None:
+    frame = pd.DataFrame([{"isin":"FR0013412038","name":pd.NA,"yahoo_ticker":pd.NA,"canonical_seed_status":IDENTITY_ONLY_STATUS}])
+    matches = {
+        "FR0013412038":[{"name":"Test Société","ticker":"TEST","exchCode":"FP","marketSector":"Equity","securityType":"Common Stock"}]
+    }
+    us_search=lambda _isin: {"symbol":"TEST","quoteType":"EQUITY","longname":"Test Société","exchange":"NYQ"}
+    overlay, gaps = resolve_identity_rows(
+        frame,
+        openfigi_matches=matches,
+        yahoo_isin_searcher=us_search,
+        yahoo_validator=lambda *_: None,
+    )
+    assert len(overlay) == 1
+    assert overlay.iloc[0]["identity_resolution_status"] == "IDENTITY_VALIDATED_NON_EEA_VENUE_REVIEW"
+    assert overlay.iloc[0]["yahoo_ticker"] == ""
+    assert overlay.iloc[0]["yahoo_non_eea_symbol"] == "TEST"
+    assert len(gaps) == 1
+
+
+def test_yahoo_empty_search_adds_name_only_but_keeps_blocked() -> None:
     frame = pd.DataFrame([{"isin":"FR0013412038","name":pd.NA,"yahoo_ticker":pd.NA,"canonical_seed_status":IDENTITY_ONLY_STATUS}])
     matches = {
         "FR0013412038":[{"name":"Test Société","ticker":"TEST","exchCode":"FP","marketSector":"Equity","securityType":"Common Stock"}]
@@ -112,7 +135,22 @@ def test_yahoo_no_rank1_adds_name_only_but_keeps_blocked() -> None:
     assert len(overlay) == 1
     assert overlay.iloc[0]["identity_resolution_status"] == "OPENFIGI_NAME_ONLY_TICKER_UNRESOLVED"
     assert len(gaps) == 1
-    assert gaps.iloc[0]["reason"] == "YAHOO_ISIN_SEARCH_NO_EQUITY_RANK1"
+    assert gaps.iloc[0]["reason"] == "YAHOO_ISIN_SEARCH_EMPTY"
+
+
+def test_preferred_equity_is_not_rejected_by_identity_type_gate() -> None:
+    frame = pd.DataFrame([{"isin":"FR0013412038","name":pd.NA,"yahoo_ticker":pd.NA,"canonical_seed_status":IDENTITY_ONLY_STATUS}])
+    matches = {
+        "FR0013412038":[{"name":"Test Société","ticker":"TEST","exchCode":"FP","marketSector":"Equity","securityType":"Preferred Stock"}]
+    }
+    overlay, gaps = resolve_identity_rows(
+        frame,
+        openfigi_matches=matches,
+        yahoo_isin_searcher=_searcher,
+        yahoo_validator=_validator,
+    )
+    assert gaps.empty
+    assert overlay.iloc[0]["identity_resolution_status"] == "VALIDATED"
 
 
 def test_name_only_openfigi_does_not_make_row_scorable(tmp_path: Path) -> None:
@@ -138,7 +176,7 @@ def test_validated_overlay_transitions_row_to_market_data_eligible(tmp_path: Pat
     overlay = pd.DataFrame([{
         "isin":"FR0013412038","name":"Test Société","yahoo_ticker":"TEST.PA",
         "canonical_seed_status":HYDRATED_STATUS,"identity_resolution_status":"VALIDATED",
-        "identity_source":"OpenFIGI_ID_ISIN+Yahoo_Search_ISIN_rank1+Yahoo_Ticker_validation",
+        "identity_source":"OpenFIGI_ID_ISIN+Yahoo_Search_ISIN_EEA_rank+Yahoo_Ticker_validation",
         "identity_validation_as_of":"2026-08-19T20:00:00+00:00",
     }])
     path = tmp_path / "overlay.csv"
