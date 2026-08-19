@@ -6,12 +6,18 @@ on:
       - agent/tct-v24-2-real-smoke
     paths:
       - .github/workflows/tct_v24_2_real_smoke.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/tct_v24_2_real_smoke.yml
 
 permissions:
   contents: read
 
 jobs:
   smoke:
+    if: github.event_name == 'push' || github.head_ref == 'agent/tct-v24-2-real-smoke'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
