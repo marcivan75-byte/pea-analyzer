@@ -118,8 +118,9 @@ def _ensure_text_assignable(frame: pd.DataFrame, field: str) -> None:
 
 
 def apply_observations(frame: pd.DataFrame, observations: list[dict]) -> tuple[pd.DataFrame, list[dict]]:
-    """Merge observations with hash-bound provenance and source-aware legacy bootstrap."""
+    """Merge observations with provenance, freshness and numeric-domain gates."""
     from v182.audit.provenance import append_records, load_latest, retained_meta_matches_value, value_hash
+    from v182.core.data_domain import bounds_for_field, validate_numeric_value
     from v182.core.merge import decide
 
     frame = frame.set_index("isin", drop=False)
@@ -133,6 +134,16 @@ def apply_observations(frame: pd.DataFrame, observations: list[dict]) -> tuple[p
             provenance_records.append({**obs,"merge_action":"SKIP","merge_reason":"ISIN_OR_FIELD_NOT_IN_MASTER"})
             continue
         if field not in frame.columns: frame[field] = pd.NA
+
+        # Fail closed on bounded quantitative fields. The raw observation remains
+        # in the quarantine/provenance trail but can never replace a valid master
+        # value or become an automated score input. Values are not clipped.
+        if bounds_for_field(str(field)) is not None:
+            valid, domain_reason = validate_numeric_value(str(field), obs.get("value"))
+            if not valid:
+                quarantined.append({**obs,"reason":f"NUMERIC_DOMAIN:{domain_reason}"})
+                provenance_records.append({**obs,"merge_action":"QUARANTINE","merge_reason":f"NUMERIC_DOMAIN:{domain_reason}"})
+                continue
 
         current_value = frame.at[isin, field]
         key=(str(isin),str(field)); meta=provenance.get(key)
