@@ -14,6 +14,19 @@ from v182.features.tct_daily_trader_v24_3_1 import compute_daily_weekly_trader_s
 ROOT = Path(__file__).resolve().parents[3]
 VERSION = "TCT_V24.3.1_DAILY_WEEKLY_TRADER_TOOLS_SHADOW"
 CONFIG = "TCT_V24_3_1_DAILY_TRADER_SHADOW.json"
+CONTEXT_FIELDS = [
+    "sector_yf",
+    "industry_yf",
+    "country_yf",
+    "market_cap",
+    "news_catalyst_score",
+    "funnel_instrument_news_score",
+    "funnel_sector_news_score",
+    "funnel_global_news_score",
+    "days_to_earnings",
+    "earnings_within_7d_flag",
+    "next_earnings_timestamp_yf",
+]
 
 
 def _read_csv(path: Path) -> pd.DataFrame:
@@ -67,6 +80,21 @@ def _flatten(base: pd.Series, snapshot: dict) -> dict:
         "fixed_stop_loss_enabled": False,
         "ct_influence": 0.0,
     }
+
+
+def _attach_context(output: pd.DataFrame, actions: pd.DataFrame) -> pd.DataFrame:
+    """Attach already-collected catalyst metadata without changing V24.3.1 scoring."""
+    if output.empty or actions.empty or "isin" not in output.columns or "isin" not in actions.columns:
+        return output
+    available = [field for field in CONTEXT_FIELDS if field in actions.columns]
+    if not available:
+        return output
+    context = actions[["isin", *available]].copy()
+    context["isin"] = context["isin"].astype(str).str.upper()
+    context = context.drop_duplicates("isin")
+    enriched = output.copy()
+    enriched["isin"] = enriched["isin"].astype(str).str.upper()
+    return enriched.merge(context, on="isin", how="left")
 
 
 def _android_summary(frame: pd.DataFrame, generated_at: str) -> str:
@@ -182,9 +210,12 @@ def run(root: Path = ROOT) -> dict:
                     }
             rows.append(_flatten(row, snap.copy()))
         output = pd.DataFrame(rows)
+        output = _attach_context(output, actions)
 
     output_path = outdir / "TCT_DAILY_TRADER_V24_3_1_SHADOW.csv"
     _write_csv(output, output_path)
+    context_seed_path = root / "state" / "tct_context" / "TCT_DAILY_TRADER_LATEST.csv"
+    _write_csv(output, context_seed_path)
     android_path = mobile / "ANDROID_TCT_DAILY_TRADER_SHADOW.md"
     android_path.write_text(_android_summary(output, generated_at), encoding="utf-8")
 
@@ -202,6 +233,7 @@ def run(root: Path = ROOT) -> dict:
         "five_minute_data_used": False,
         "quasi_realtime_data_used": False,
         "new_market_data_downloads_required": False,
+        "context_seed_persisted": True,
         "decision_influence": 0.0,
         "score_influence": 0.0,
         "sizing_influence": 0.0,
@@ -214,6 +246,7 @@ def run(root: Path = ROOT) -> dict:
         "errors": errors[:50],
         "outputs": {
             "shadow": str(output_path.relative_to(root)),
+            "context_seed": str(context_seed_path.relative_to(root)),
             "android": str(android_path.relative_to(root)),
         },
     }
