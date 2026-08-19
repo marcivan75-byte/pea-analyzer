@@ -204,9 +204,16 @@ def _shadow_state(row: pd.Series, setup: str | None, score: float | None, covera
 
 
 def _post_entry_outcomes(session: pd.DataFrame, pos: int, entry: float) -> tuple[float | None, float | None, float | None]:
-    if entry <= 0 or pos >= len(session):
+    """Label only price action observable after the entry-bar close.
+
+    The SHADOW entry price is the close of bar ``pos``. High/low values from
+    that same bar happened before the entry decision and must never contribute
+    to post-entry MFE/MAE. Starting at ``pos + 1`` keeps outcome labelling
+    causal and avoids a subtle performance bias.
+    """
+    if entry <= 0 or pos + 1 >= len(session):
         return None, None, None
-    future = session.iloc[pos:]
+    future = session.iloc[pos + 1:]
     high = pd.to_numeric(future["high"], errors="coerce").max()
     low = pd.to_numeric(future["low"], errors="coerce").min()
     close = _finite(future["close"].iloc[-1])
