@@ -12,6 +12,9 @@ def test_tct_intraday_shadow_is_non_blocking_and_persisted():
     assert "state/TCT_V24_2_0_SIGNAL_LEDGER.csv" in workflow
     assert "state/TCT_V24_2_0_INTRADAY_OBSERVATIONS.csv" in workflow
     assert "outputs/audit/TCT_INTRADAY_V24_2_0_AUDIT.json" in workflow
+    assert "path: data/cache/" in workflow
+    assert "find data/cache/actions_intraday_5m -maxdepth 2 -name history_manifest.json" in workflow
+    assert "data/cache/actions_intraday_5m/history_manifest.json" not in workflow
 
 
 def test_tct_intraday_runner_enforces_post_signal_sessions_only():

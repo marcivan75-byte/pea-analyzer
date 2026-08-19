@@ -116,8 +116,8 @@ jobs:
           if [ -f data/cache/actions/history_manifest.json ]; then
             cat data/cache/actions/history_manifest.json
           fi
-          if [ -f data/cache/actions_intraday_5m/history_manifest.json ]; then
-            cat data/cache/actions_intraday_5m/history_manifest.json
+          if [ -d data/cache/actions_intraday_5m ]; then
+            find data/cache/actions_intraday_5m -maxdepth 2 -name history_manifest.json -print | sort | head -50
           fi
 
       - name: Save persistent OHLCV cache
@@ -162,7 +162,6 @@ jobs:
             state/TCT_V24_2_0_SIGNAL_LEDGER.csv
             state/TCT_V24_2_0_INTRADAY_OBSERVATIONS.csv
             data/cache/actions/history_manifest.json
-            data/cache/actions_intraday_5m/history_manifest.json
             data/cache/etf/history_manifest.json
           if-no-files-found: warn
           retention-days: 7
