@@ -1,0 +1,95 @@
+name: TCT Next-Session Catalyst V24.4
+
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: "Snapshot phase"
+        required: false
+        type: choice
+        options:
+          - PREOPEN
+          - POSTMARKET
+  schedule:
+    # 06:40 UTC = 08:40 Paris in summer / 07:40 in winter, before Europe opens
+    # and after the Tokyo cash close. One snapshot only, no continuous polling.
+    - cron: "40 6 * * 1-5"
+    # 21:15 UTC = 23:15 Paris in summer / 22:15 in winter, after Europe and US cash closes.
+    - cron: "15 21 * * 1-5"
+
+concurrency:
+  group: pea-tct-next-session-context
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  catalyst-snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      TCT_CATALYST_PHASE: ${{ github.event.inputs.phase }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore TCT catalyst context
+        uses: actions/cache/restore@v4
+        with:
+          path: state/tct_context/
+          key: tct-context-${{ github.run_id }}
+          restore-keys: |
+            tct-context-
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Compile catalyst runtime
+        run: |
+          python -m py_compile \
+            src/v182/sources/tct_catalyst_news.py \
+            src/v182/sources/global_market_snapshot.py \
+            src/v182/features/tct_catalyst_context_v24_4.py \
+            src/v182/reporting/tct_next_session_catalyst_run.py
+
+      - name: Run one next-session catalyst snapshot
+        run: python -m v182.reporting.tct_next_session_catalyst_run
+
+      - name: Publish catalyst summary
+        if: always()
+        run: |
+          if [ -f outputs/mobile/ANDROID_TCT_NEXT_SESSION_CATALYST.md ]; then
+            cat outputs/mobile/ANDROID_TCT_NEXT_SESSION_CATALYST.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f outputs/audit/TCT_NEXT_SESSION_CATALYST_V24_4_0_AUDIT.json ]; then
+            printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+            cat outputs/audit/TCT_NEXT_SESSION_CATALYST_V24_4_0_AUDIT.json >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Save TCT catalyst context
+        if: ${{ always() && hashFiles('state/tct_context/**') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: state/tct_context/
+          key: tct-context-${{ github.run_id }}
+
+      - name: Upload compact catalyst artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tct-next-session-catalyst-${{ github.run_id }}
+          path: |
+            outputs/daily_tct_ct/TCT_NEXT_SESSION_CATALYST_V24_4_0.csv
+            outputs/mobile/ANDROID_TCT_NEXT_SESSION_CATALYST.md
+            outputs/audit/TCT_NEXT_SESSION_CATALYST_V24_4_0_AUDIT.json
+            state/tct_context/TCT_V24_4_0_CATALYST_LEDGER.csv
+          if-no-files-found: warn
+          retention-days: 14

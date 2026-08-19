@@ -48,6 +48,14 @@ jobs:
             daily-tct-state-
             tct-v2417-state-
 
+      - name: Restore next-session catalyst state
+        uses: actions/cache/restore@v4
+        with:
+          path: state/tct_context/
+          key: tct-context-${{ github.run_id }}
+          restore-keys: |
+            tct-context-
+
       - name: Restore provenance, V21.8 state and source caches
         uses: actions/cache/restore@v4
         with:
@@ -120,6 +128,13 @@ jobs:
           path: state/TCT_V24_1_7_T1_STATE.json
           key: daily-tct-state-${{ github.run_id }}
 
+      - name: Save next-session catalyst state
+        if: ${{ always() && hashFiles('state/tct_context/**') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: state/tct_context/
+          key: tct-context-${{ github.run_id }}
+
       - name: Save provenance, V21.8 state and source caches
         if: ${{ always() && hashFiles('state/provenance/**') != '' }}
         uses: actions/cache/save@v4
@@ -140,6 +155,7 @@ jobs:
             outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json
             outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json
             outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx
+            state/tct_context/TCT_DAILY_TRADER_LATEST.csv
             data/cache/actions/history_manifest.json
             data/cache/etf/history_manifest.json
           if-no-files-found: warn
