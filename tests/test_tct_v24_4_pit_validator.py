@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from v182.reporting.tct_v24_4_pit_validator import validate_ledger
+from v182.reporting.tct_v24_4_pit_validator_runtime import validate_ledger
 
 
 ROOT = Path(__file__).resolve().parents[1]
