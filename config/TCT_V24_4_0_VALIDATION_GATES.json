@@ -24,6 +24,22 @@
     "NEWS_CONFLICT_ABS_RETURN",
     "FALSE_HIGH_POTENTIAL_RATE"
   ],
+  "baseline_comparator": {
+    "movement": "technical_impulse_score derived only from V24.3.1 daily/weekly seed",
+    "direction": "technical_direction_score derived only from V24.3.1 daily/weekly seed"
+  },
+  "acceptance": {
+    "minimum_top10_recall_improvement_pp_vs_technical": 10.0,
+    "minimum_top_decile_lift_improvement_vs_technical": 0.15,
+    "minimum_spearman_improvement_vs_technical": 0.10,
+    "minimum_primary_improvement_checks_passed": 2,
+    "maximum_false_high_potential_rate": 0.60,
+    "false_high_potential_definition": "movement_potential_score >= 70 but realized absolute move is outside the top quartile of that PREOPEN candidate snapshot",
+    "minimum_direction_hit_rate": 0.55,
+    "minimum_direction_hit_improvement_pp_vs_technical": 0.0,
+    "movement_pass_does_not_automatically_promote": true,
+    "direction_is_secondary_and_separately_validated": true
+  },
   "required_slices": [
     "NEWS_EVENT_TYPE",
     "SECTOR",
