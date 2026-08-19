@@ -39,10 +39,7 @@ jobs:
       - name: Restore TCT state
         uses: actions/cache/restore@v4
         with:
-          path: |
-            state/TCT_V24_1_7_T1_STATE.json
-            state/TCT_V24_2_0_SIGNAL_LEDGER.csv
-            state/TCT_V24_2_0_INTRADAY_OBSERVATIONS.csv
+          path: state/TCT_V24_1_7_T1_STATE.json
           key: daily-tct-state-${{ github.run_id }}
           restore-keys: |
             daily-tct-state-
@@ -75,13 +72,9 @@ jobs:
       - name: Daily TCT CT scoring and V21.8
         run: python -m v182.reporting.daily_tct_ct_runner
 
-      - name: TCT V24.2 intraday scalping shadow
+      - name: TCT V24.3 daily weekly trader-tools shadow
         continue-on-error: true
-        run: python -m v182.reporting.tct_intraday_shadow_run
-
-      - name: TCT V24.2.1 shadow analytics
-        continue-on-error: true
-        run: python -m v182.reporting.tct_intraday_shadow_analysis
+        run: python -m v182.reporting.tct_daily_trader_shadow_run
 
       - name: Publish Android tactical summaries
         if: always()
@@ -89,13 +82,9 @@ jobs:
           if [ -f outputs/mobile/ANDROID_DAILY_TCT_CT.md ]; then
             cat outputs/mobile/ANDROID_DAILY_TCT_CT.md >> "$GITHUB_STEP_SUMMARY"
           fi
-          if [ -f outputs/mobile/ANDROID_TCT_INTRADAY_SHADOW.md ]; then
+          if [ -f outputs/mobile/ANDROID_TCT_DAILY_TRADER_SHADOW.md ]; then
             printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
-            cat outputs/mobile/ANDROID_TCT_INTRADAY_SHADOW.md >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if [ -f outputs/mobile/ANDROID_TCT_INTRADAY_ANALYTICS.md ]; then
-            printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
-            cat outputs/mobile/ANDROID_TCT_INTRADAY_ANALYTICS.md >> "$GITHUB_STEP_SUMMARY"
+            cat outputs/mobile/ANDROID_TCT_DAILY_TRADER_SHADOW.md >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Show daily audit
@@ -104,20 +93,14 @@ jobs:
           if [ -f outputs/audit/DAILY_TCT_CT_AUDIT.json ]; then
             cat outputs/audit/DAILY_TCT_CT_AUDIT.json
           fi
-          if [ -f outputs/audit/TCT_INTRADAY_V24_2_0_AUDIT.json ]; then
-            cat outputs/audit/TCT_INTRADAY_V24_2_0_AUDIT.json
-          fi
-          if [ -f outputs/audit/TCT_INTRADAY_V24_2_1_ANALYTICS.json ]; then
-            cat outputs/audit/TCT_INTRADAY_V24_2_1_ANALYTICS.json
+          if [ -f outputs/audit/TCT_DAILY_TRADER_V24_3_0_AUDIT.json ]; then
+            cat outputs/audit/TCT_DAILY_TRADER_V24_3_0_AUDIT.json
           fi
           if [ -f outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json ]; then
             cat outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json
           fi
           if [ -f data/cache/actions/history_manifest.json ]; then
             cat data/cache/actions/history_manifest.json
-          fi
-          if [ -d data/cache/actions_intraday_5m ]; then
-            find data/cache/actions_intraday_5m -maxdepth 2 -name history_manifest.json -print | sort | head -50
           fi
 
       - name: Save persistent OHLCV cache
@@ -128,13 +111,10 @@ jobs:
           key: ohlcv-v3-${{ github.run_id }}
 
       - name: Save TCT state
-        if: ${{ always() && hashFiles('state/TCT_V24_1_7_T1_STATE.json', 'state/TCT_V24_2_0_SIGNAL_LEDGER.csv', 'state/TCT_V24_2_0_INTRADAY_OBSERVATIONS.csv') != '' }}
+        if: ${{ always() && hashFiles('state/TCT_V24_1_7_T1_STATE.json') != '' }}
         uses: actions/cache/save@v4
         with:
-          path: |
-            state/TCT_V24_1_7_T1_STATE.json
-            state/TCT_V24_2_0_SIGNAL_LEDGER.csv
-            state/TCT_V24_2_0_INTRADAY_OBSERVATIONS.csv
+          path: state/TCT_V24_1_7_T1_STATE.json
           key: daily-tct-state-${{ github.run_id }}
 
       - name: Save provenance, V21.8 state and source caches
@@ -152,15 +132,11 @@ jobs:
           path: |
             outputs/daily_tct_ct/
             outputs/mobile/ANDROID_DAILY_TCT_CT.md
-            outputs/mobile/ANDROID_TCT_INTRADAY_SHADOW.md
-            outputs/mobile/ANDROID_TCT_INTRADAY_ANALYTICS.md
+            outputs/mobile/ANDROID_TCT_DAILY_TRADER_SHADOW.md
             outputs/audit/DAILY_TCT_CT_AUDIT.json
-            outputs/audit/TCT_INTRADAY_V24_2_0_AUDIT.json
-            outputs/audit/TCT_INTRADAY_V24_2_1_ANALYTICS.json
+            outputs/audit/TCT_DAILY_TRADER_V24_3_0_AUDIT.json
             outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json
             outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx
-            state/TCT_V24_2_0_SIGNAL_LEDGER.csv
-            state/TCT_V24_2_0_INTRADAY_OBSERVATIONS.csv
             data/cache/actions/history_manifest.json
             data/cache/etf/history_manifest.json
           if-no-files-found: warn
