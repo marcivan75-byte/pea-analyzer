@@ -23,6 +23,7 @@ NUMERIC_BOUNDS: dict[str, tuple[float | None, float | None]] = {
     "rank_cat_3y": (0.0, 100.0),
     "rank_cat_5y": (0.0, 100.0),
 }
+MISSING_TEXT = {"", "NON_OBSERVE", "MISSING", "UNKNOWN", "N/A", "NA", "NULL", "NAN", "<NA>"}
 
 
 def bounds_for_field(field: str) -> tuple[float | None, float | None] | None:
@@ -37,17 +38,21 @@ def bounds_for_field(field: str) -> tuple[float | None, float | None] | None:
     return None
 
 
-def parse_finite_number(value: Any) -> float | None:
+def is_effectively_missing(value: Any) -> bool:
     if value is None:
-        return None
+        return True
     try:
         if pd.isna(value):
-            return None
+            return True
     except (TypeError, ValueError):
+        return False
+    return str(value).strip().upper() in MISSING_TEXT
+
+
+def parse_finite_number(value: Any) -> float | None:
+    if is_effectively_missing(value):
         return None
     text = str(value).strip().replace("\u202f", "").replace(" ", "").replace(",", ".").replace("%", "")
-    if not text or text.upper() in {"NON_OBSERVE", "MISSING", "UNKNOWN", "N/A", "NA", "NULL", "NAN", "<NA>"}:
-        return None
     try:
         number = float(text)
     except ValueError:
@@ -58,10 +63,12 @@ def parse_finite_number(value: Any) -> float | None:
 
 
 def validate_numeric_value(field: str, value: Any) -> tuple[bool, str]:
-    """Validate a bounded numeric field; unbounded fields pass untouched."""
+    """Validate a bounded numeric field while preserving missing-value semantics."""
     bounds = bounds_for_field(field)
     if bounds is None:
         return True, "UNBOUNDED_FIELD"
+    if is_effectively_missing(value):
+        return True, "MISSING_NO_OBSERVATION"
     number = parse_finite_number(value)
     if number is None:
         return False, "NUMERIC_UNPARSABLE"
@@ -82,7 +89,8 @@ def filter_numeric_series(series: pd.Series, field: str) -> tuple[pd.Series, pd.
     bounds = bounds_for_field(field)
     if bounds is None:
         return numeric, pd.Series(False, index=series.index, dtype=bool)
-    invalid = numeric.isna() & series.notna()
+    source_missing = series.map(is_effectively_missing)
+    invalid = numeric.isna() & ~source_missing
     low, high = bounds
     if low is not None:
         invalid |= numeric < low
