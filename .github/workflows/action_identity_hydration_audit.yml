@@ -1,0 +1,87 @@
+name: Action Identity Hydration V21.9 Audit
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-identity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      PYTHONUNBUFFERED: "1"
+      OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: pip install -e ".[test]"
+      - name: Static and unit validation
+        run: |
+          python -m compileall -q src tests
+          ruff check src tests
+          pytest -q tests/test_action_isin_resolver.py tests/test_action_yahoo_ticker_qualification.py tests/test_action_identity_hydration_worklist.py tests/test_identity_overlay_store.py tests/test_master_data_integrity.py tests/test_numeric_domain_quarantine.py
+      - name: Validate frozen governed overlay
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          from v182.audit.canonical_universe import filter_actions, IDENTITY_ONLY_STATUS
+          from v182.audit.master_data import audit_frame
+          from v182.io.frames import load_master
+          from v182.mapping.action_isin_resolver import apply_identity_overlay
+          from v182.mapping.identity_overlay_store import decode_identity_overlay, materialize_identity_overlay
+
+          root=Path('.')
+          overlay=decode_identity_overlay(root)
+          overlay_path=materialize_identity_overlay(root)
+          legacy=load_master(root/'inputs/V18.2_PEA_ACTIONS_MASTER.csv')
+          canonical=filter_actions(legacy,root/'config/V21_3_ACTION_UNIVERSE_1829_ISINS.parts').included
+          enriched,audit=apply_identity_overlay(canonical,overlay_path)
+          integrity=audit_frame(enriched,'ACTION')
+          remaining=int(enriched['canonical_seed_status'].astype(str).eq(IDENTITY_ONLY_STATUS).sum())
+          ticker_dupes=int(enriched.loc[enriched['yahoo_ticker'].notna(),'yahoo_ticker'].duplicated(keep=False).sum())
+          payload={
+            'frozen_overlay_rows':len(overlay),
+            'overlay_audit':audit,
+            'remaining_identity_only':remaining,
+            'ticker_duplicate_rows':ticker_dupes,
+            'integrity':integrity.summary,
+          }
+          out=root/'outputs/audit'; out.mkdir(parents=True,exist_ok=True)
+          (out/'V21_9_ACTION_IDENTITY_POST_AUDIT.json').write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding='utf-8')
+          print(json.dumps(payload,ensure_ascii=False,indent=2))
+          assert len(overlay)==399
+          assert audit['fully_hydrated']==360
+          assert remaining==39
+          assert integrity.summary['market_data_eligible_rows']==1790
+          assert integrity.summary['identity_coverage_pct']['name']==100.0
+          assert integrity.summary['identity_coverage_pct']['yahoo_ticker']==97.87
+          assert integrity.summary['issue_counts']['FATAL']==0
+          assert ticker_dupes==0
+          PY
+      - name: Live external re-resolution audit
+        if: github.event_name == 'workflow_dispatch'
+        run: python -m v182.mapping.action_isin_resolver
+      - name: Full suite
+        run: pytest -q
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: action-identity-hydration-${{ github.run_id }}
+          path: |
+            outputs/audit/V21_9_ACTION_IDENTITY_POST_AUDIT.json
+            outputs/gaps/V21_9_ACTION_IDENTITY_OVERLAY_CANDIDATE.csv
+            outputs/gaps/V21_9_ACTION_IDENTITY_UNRESOLVED.csv
+            outputs/audit/V21_9_ACTION_IDENTITY_RESOLUTION.json
+          if-no-files-found: ignore
+          retention-days: 30

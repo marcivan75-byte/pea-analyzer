@@ -7,7 +7,15 @@
     "ACTION": {
       "expected_count": 1829,
       "canonical_source": "config/V21_3_ACTION_UNIVERSE_1829_ISINS.parts",
-      "identity_only_policy": "BLOCK_DATA_UNTIL_ATTRIBUTED_HYDRATION"
+      "identity_overlay_source": "config/V21_9_ACTION_IDENTITY_MAP.parts",
+      "identity_overlay_raw_sha256": "0dfecb6a4014c4c77b1b5e17379ebf202e427bc50f190b86a0d46967dceebd20",
+      "identity_overlay_rows": 399,
+      "validated_eea_ticker_rows": 360,
+      "market_data_eligible_rows": 1790,
+      "identified_but_eea_ticker_unresolved_rows": 39,
+      "name_coverage_pct": 100.0,
+      "ticker_coverage_pct": 97.87,
+      "identity_only_policy": "IDENTIFIED_ROWS_WITHOUT_VALIDATED_EEA_TICKER_REMAIN_BLOCK_DATA"
     },
     "ETF": {
       "expected_count": 102,
@@ -23,6 +31,14 @@
     "duplicate": "FATAL",
     "correction_policy": "NEVER_GUESS; REQUIRE_ORIGINAL_ISIN_ATTRIBUTED_SOURCE_AND_VALIDATION_DATE"
   },
+  "identity_resolution": {
+    "actions_policy": "OPENFIGI_EXACT_ISIN_PLUS_YAHOO_EXACT_ISIN_NAME_COMPATIBLE_EEA_EQUITY_PLUS_YAHOO_TICKER_VALIDATION",
+    "country_suffix_guessing": false,
+    "alternate_venue_arbitrary_selection": false,
+    "non_eea_only_ticker_scoring_eligible": false,
+    "ambiguous_or_unresolved_scoring_eligible": false,
+    "frozen_overlay_integrity": "SHA256_PLUS_ROW_COUNT_PLUS_VALIDATED_COUNT"
+  },
   "qualitative": {
     "principle": "MISSING_REMAINS_MISSING",
     "neutral_imputation": false,
@@ -37,9 +53,14 @@
     "morningstar_rating_range": [1, 5],
     "risk_indicator_range": [1, 7],
     "percentage_rank_range": [0, 100],
+    "simple_return_min_pct": -100.0,
+    "dividend_yield_automated_scoring_range_pct": [0.0, 100.0],
+    "volatility_1y_automated_scoring_range_pct": [0.0, 500.0],
     "ohlcv_last_semantics": "PRICE_NOT_TIMESTAMP",
     "last_close_semantics": "PRICE",
-    "out_of_domain_policy": "BLOCK_DATA_PENDING_SOURCE_REVIEW"
+    "out_of_domain_policy": "QUARANTINE_BEFORE_MERGE_AND_EXCLUDE_FROM_AUTOMATED_SCORING_PENDING_SOURCE_REVIEW",
+    "clipping_forbidden": true,
+    "neutral_replacement_forbidden": true
   },
   "time_and_provenance": {
     "future_evidence_timestamp": "FATAL",
@@ -62,6 +83,8 @@
     "run_field_coverage_profile_in_ci": true,
     "run_identity_hydration_gap_report_in_ci": true,
     "run_excluded_legacy_quarantine_report_in_ci": true,
+    "validate_frozen_identity_overlay_in_ci": true,
+    "reject_out_of_domain_numeric_observations_at_ingestion": true,
     "input_master_changes_trigger_ci": true,
     "fatal_issues_block_merge": true,
     "block_data_issues_do_not_receive_neutral_values": true
