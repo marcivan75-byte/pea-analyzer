@@ -3,7 +3,6 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import re
 from typing import Iterable
 
 from v182.sources.gdelt_news import fetch_articles, lexical_score, safe_query_text
@@ -93,24 +92,98 @@ def filter_articles_to_window(
     return out
 
 
+# The TCT universe is European. Patterns deliberately cover common English,
+# French and selected German formulations without attempting open-ended NLP.
 _EVENT_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("PROFIT_WARNING", ("profit warning", "profits warning", "warns on profit", "warning on profit")),
-    ("GUIDANCE_CUT", ("cuts guidance", "cut guidance", "lowers guidance", "lowered guidance", "guidance cut", "reduces outlook", "lowered outlook")),
-    ("GUIDANCE_RAISED", ("raises guidance", "raised guidance", "lifts guidance", "guidance raised", "raises outlook", "raised outlook")),
-    ("EARNINGS_BEAT", ("beats estimates", "beat estimates", "beats expectations", "beat expectations", "earnings beat", "profit beats", "revenue beats")),
-    ("EARNINGS_MISS", ("misses estimates", "missed estimates", "misses expectations", "missed expectations", "earnings miss", "profit misses", "revenue misses")),
-    ("BANKRUPTCY_DEFAULT", ("bankruptcy", "insolvency", "insolvent", "default on", "debt default")),
-    ("FRAUD_INVESTIGATION", ("fraud", "investigation", "investigated", "probe into", "regulatory probe")),
-    ("REGULATORY_REJECTION", ("approval rejected", "regulator rejects", "regulatory rejection", "fails approval", "approval denied")),
-    ("REGULATORY_APPROVAL", ("regulatory approval", "regulator approves", "approved by", "wins approval", "receives approval")),
-    ("MA_ACQUISITION", ("acquisition", "acquire", "acquires", "takeover", "merger", "buyout", "bid for")),
-    ("MAJOR_CONTRACT", ("major contract", "wins contract", "awarded contract", "new order", "order worth", "framework agreement")),
-    ("CAPITAL_RAISE_DILUTION", ("capital raise", "capital increase", "rights issue", "share offering", "equity offering", "dilution", "new shares")),
-    ("DIVIDEND_CUT", ("dividend cut", "cuts dividend", "cut dividend", "suspends dividend", "dividend suspended")),
-    ("BUYBACK_DIVIDEND_RAISE", ("share buyback", "stock buyback", "buyback program", "raises dividend", "dividend increase", "special dividend")),
-    ("ANALYST_DOWNGRADE", ("analyst downgrade", "downgraded to", "broker downgrade", "rating cut")),
-    ("ANALYST_UPGRADE", ("analyst upgrade", "upgraded to", "broker upgrade", "rating raised")),
-    ("CEO_DEPARTURE", ("ceo resigns", "ceo resignation", "chief executive resigns", "ceo steps down", "chief executive steps down")),
+    (
+        "PROFIT_WARNING",
+        (
+            "profit warning", "profits warning", "warns on profit", "warning on profit",
+            "avertissement sur résultats", "avertissement sur resultats", "alerte sur résultats",
+            "profit warning", "gewinnwarnung",
+        ),
+    ),
+    (
+        "GUIDANCE_CUT",
+        (
+            "cuts guidance", "cut guidance", "lowers guidance", "lowered guidance", "guidance cut",
+            "reduces outlook", "lowered outlook", "abaisse ses prévisions", "abaisse ses previsions",
+            "réduit ses prévisions", "reduit ses previsions", "revoit à la baisse", "revoit a la baisse",
+            "senkt prognose", "prognose gesenkt",
+        ),
+    ),
+    (
+        "GUIDANCE_RAISED",
+        (
+            "raises guidance", "raised guidance", "lifts guidance", "guidance raised", "raises outlook",
+            "raised outlook", "relève ses prévisions", "releve ses previsions", "revoit à la hausse",
+            "revoit a la hausse", "augmente ses objectifs", "hebt prognose an", "prognose angehoben",
+        ),
+    ),
+    (
+        "EARNINGS_BEAT",
+        (
+            "beats estimates", "beat estimates", "beats expectations", "beat expectations", "earnings beat",
+            "profit beats", "revenue beats", "supérieur aux attentes", "superieur aux attentes",
+            "dépasse les attentes", "depasse les attentes", "über den erwartungen", "ueber den erwartungen",
+        ),
+    ),
+    (
+        "EARNINGS_MISS",
+        (
+            "misses estimates", "missed estimates", "misses expectations", "missed expectations", "earnings miss",
+            "profit misses", "revenue misses", "inférieur aux attentes", "inferieur aux attentes",
+            "sous les attentes", "verfehlt erwartungen", "unter den erwartungen",
+        ),
+    ),
+    (
+        "BANKRUPTCY_DEFAULT",
+        ("bankruptcy", "insolvency", "insolvent", "default on", "debt default", "faillite", "défaut de paiement", "defaut de paiement", "insolvenz"),
+    ),
+    (
+        "FRAUD_INVESTIGATION",
+        ("fraud", "investigation", "investigated", "probe into", "regulatory probe", "fraude", "enquête", "enquete", "perquisition", "ermittlungen"),
+    ),
+    (
+        "REGULATORY_REJECTION",
+        ("approval rejected", "regulator rejects", "regulatory rejection", "fails approval", "approval denied", "autorisation refusée", "autorisation refusee", "rejet réglementaire", "rejet reglementaire"),
+    ),
+    (
+        "REGULATORY_APPROVAL",
+        ("regulatory approval", "regulator approves", "approved by", "wins approval", "receives approval", "autorisation réglementaire", "autorisation reglementaire", "obtient l'autorisation", "approbation réglementaire", "approbation reglementaire"),
+    ),
+    (
+        "MA_ACQUISITION",
+        ("acquisition", "acquire", "acquires", "takeover", "merger", "buyout", "bid for", "rachat", "fusion", "offre publique", "übernahme", "uebernahme"),
+    ),
+    (
+        "MAJOR_CONTRACT",
+        ("major contract", "wins contract", "awarded contract", "new order", "order worth", "framework agreement", "contrat majeur", "remporte un contrat", "commande majeure", "accord-cadre", "großauftrag", "grossauftrag"),
+    ),
+    (
+        "CAPITAL_RAISE_DILUTION",
+        ("capital raise", "capital increase", "rights issue", "share offering", "equity offering", "dilution", "new shares", "augmentation de capital", "émission d'actions", "emission d'actions", "nouvelles actions", "kapitalerhöhung", "kapitalerhoehung"),
+    ),
+    (
+        "DIVIDEND_CUT",
+        ("dividend cut", "cuts dividend", "cut dividend", "suspends dividend", "dividend suspended", "baisse du dividende", "réduit le dividende", "reduit le dividende", "suspend le dividende", "dividendenkürzung", "dividendenkuerzung"),
+    ),
+    (
+        "BUYBACK_DIVIDEND_RAISE",
+        ("share buyback", "stock buyback", "buyback program", "raises dividend", "dividend increase", "special dividend", "rachat d'actions", "relève le dividende", "releve le dividende", "hausse du dividende", "aktienrückkauf", "aktienrueckkauf"),
+    ),
+    (
+        "ANALYST_DOWNGRADE",
+        ("analyst downgrade", "downgraded to", "broker downgrade", "rating cut", "dégradation", "degradation", "abaisse sa recommandation", "abaisse son objectif", "herabstufung"),
+    ),
+    (
+        "ANALYST_UPGRADE",
+        ("analyst upgrade", "upgraded to", "broker upgrade", "rating raised", "relève sa recommandation", "releve sa recommandation", "relève son objectif", "releve son objectif", "rehaussement", "hochgestuft"),
+    ),
+    (
+        "CEO_DEPARTURE",
+        ("ceo resigns", "ceo resignation", "chief executive resigns", "ceo steps down", "chief executive steps down", "démission du directeur général", "demission du directeur general", "démission du pdg", "demission du pdg", "ceo tritt zurück", "ceo tritt zurueck"),
+    ),
 )
 
 
@@ -156,8 +229,6 @@ def score_windowed_articles(
             domains.add(domain)
         scored.append((magnitude, direction, event_type, headline, observed, domain))
 
-    # Highest-impact event anchors magnitude. Corroboration and freshness only
-    # modestly lift it; they cannot manufacture a catalyst where none exists.
     strongest = max(item[0] for item in scored)
     independent_sources = len(domains)
     corroboration_full = max(1, int(news_cfg.get("corroboration_full_articles", 3)))
@@ -199,14 +270,17 @@ def score_windowed_articles(
         top_headlines,
         start_utc.isoformat(),
         end_utc.isoformat(),
-        "GDELT_WINDOWED",
+        "GDELT_WINDOWED_MULTILINGUAL",
         error,
     )
 
 
 def build_company_query(name: object, cfg: dict) -> str:
     clean = safe_query_text(name, max_len=80)
-    return f'"{clean}" {cfg["news"]["candidate_query_suffix"]}' if clean else ""
+    if not clean:
+        return ""
+    suffix = str(cfg["news"].get("candidate_query_suffix") or "").strip()
+    return f'"{clean}" {suffix}'.strip()
 
 
 def fetch_candidate_news(
@@ -221,16 +295,17 @@ def fetch_candidate_news(
     news_cfg = cfg["news"]
     limit = int(cfg["data_policy"].get("news_query_limit", 60))
     selected = candidates[:limit]
-    query_by_isin = {
-        str(row.get("isin") or ""): build_company_query(row.get("name"), cfg)
-        for row in selected
-        if str(row.get("isin") or "") and build_company_query(row.get("name"), cfg)
-    }
+    query_by_isin: dict[str, str] = {}
+    for row in selected:
+        isin = str(row.get("isin") or "")
+        query = build_company_query(row.get("name"), cfg)
+        if isin and query:
+            query_by_isin[isin] = query
     if not query_by_isin:
         return {}
 
     timespan = news_cfg["preopen_fetch_timespan"] if str(phase).upper() == "PREOPEN" else news_cfg["postmarket_fetch_timespan"]
-    max_records = int(cfg["data_policy"].get("news_max_records_per_candidate", 20))
+    max_records = int(cfg["data_policy"].get("news_max_records_per_candidate", 25))
     limiter = StartRateLimiter(0.12)
     workers = max(1, min(6, len(query_by_isin)))
     raw_results: dict[str, tuple[list[dict], str | None]] = {}
@@ -243,7 +318,7 @@ def fetch_candidate_news(
             isin = futures[future]
             try:
                 raw_results[isin] = future.result()
-            except Exception as exc:  # defensive: fetch_articles normally captures its own failures
+            except Exception as exc:
                 raw_results[isin] = ([], f"{type(exc).__name__}: {str(exc)[:160]}")
 
     return {
