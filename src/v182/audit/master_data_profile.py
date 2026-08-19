@@ -9,6 +9,8 @@ import pandas as pd
 
 from v182.audit.canonical_universe import filter_actions
 from v182.io.frames import is_missing, load_master
+from v182.mapping.action_isin_resolver import apply_identity_overlay
+from v182.mapping.identity_overlay_store import materialize_identity_overlay
 
 FIELD_GROUPS: dict[str, dict[str, tuple[str, ...]]] = {
     "ACTION": {
@@ -97,7 +99,13 @@ def profile_frame(frame: pd.DataFrame, universe: str) -> tuple[pd.DataFrame, dic
 
 def run(root: Path) -> dict[str, Any]:
     actions_legacy = load_master(root / "inputs" / "V18.2_PEA_ACTIONS_MASTER.csv")
-    actions = filter_actions(actions_legacy, root / "config" / "V21_3_ACTION_UNIVERSE_1829_ISINS.parts").included
+    canonical = filter_actions(actions_legacy, root / "config" / "V21_3_ACTION_UNIVERSE_1829_ISINS.parts")
+    overlay_path = materialize_identity_overlay(root)
+    if overlay_path is None:
+        actions = canonical.included
+        overlay_audit = {"status": "NO_OVERLAY", "applied": 0}
+    else:
+        actions, overlay_audit = apply_identity_overlay(canonical.included, overlay_path)
     etf = load_master(root / "inputs" / "V18.2_PEA_ETF_MASTER.csv")
     action_detail, action_summary = profile_frame(actions, "ACTION")
     etf_detail, etf_summary = profile_frame(etf, "ETF")
@@ -106,6 +114,7 @@ def run(root: Path) -> dict[str, Any]:
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "actions_rows": int(len(actions)),
         "etf_rows": int(len(etf)),
+        "action_identity_overlay": overlay_audit,
         "actions": action_summary,
         "etf": etf_summary,
         "interpretation": "Coverage measures observation presence only. It never upgrades evidence quality and missing values remain missing.",
