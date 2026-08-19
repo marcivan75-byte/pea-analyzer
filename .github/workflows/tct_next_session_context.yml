@@ -58,10 +58,15 @@ jobs:
             src/v182/sources/tct_catalyst_news.py \
             src/v182/sources/global_market_snapshot.py \
             src/v182/features/tct_catalyst_context_v24_4.py \
-            src/v182/reporting/tct_next_session_catalyst_run.py
+            src/v182/reporting/tct_next_session_catalyst_run.py \
+            src/v182/reporting/tct_v24_4_pit_validator.py \
+            src/v182/reporting/tct_v24_4_pit_validator_runtime.py
 
       - name: Run one next-session catalyst snapshot
         run: python -m v182.reporting.tct_next_session_catalyst_run
+
+      - name: Validate accumulated V24.4 PIT ledger
+        run: python -m v182.reporting.tct_v24_4_pit_validator_runtime
 
       - name: Publish catalyst summary
         if: always()
@@ -69,9 +74,17 @@ jobs:
           if [ -f outputs/mobile/ANDROID_TCT_NEXT_SESSION_CATALYST.md ]; then
             cat outputs/mobile/ANDROID_TCT_NEXT_SESSION_CATALYST.md >> "$GITHUB_STEP_SUMMARY"
           fi
+          if [ -f outputs/mobile/ANDROID_TCT_V24_4_PIT_VALIDATION.md ]; then
+            printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+            cat outputs/mobile/ANDROID_TCT_V24_4_PIT_VALIDATION.md >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [ -f outputs/audit/TCT_NEXT_SESSION_CATALYST_V24_4_0_AUDIT.json ]; then
             printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
             cat outputs/audit/TCT_NEXT_SESSION_CATALYST_V24_4_0_AUDIT.json >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f outputs/audit/TCT_V24_4_0_PIT_VALIDATION.json ]; then
+            printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+            cat outputs/audit/TCT_V24_4_0_PIT_VALIDATION.json >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Save TCT catalyst context
@@ -88,8 +101,12 @@ jobs:
           name: tct-next-session-catalyst-${{ github.run_id }}
           path: |
             outputs/daily_tct_ct/TCT_NEXT_SESSION_CATALYST_V24_4_0.csv
+            outputs/daily_tct_ct/TCT_V24_4_0_PIT_SLICES.csv
+            outputs/daily_tct_ct/TCT_V24_4_0_PREOPEN_POSTMARKET_CHANGES.csv
             outputs/mobile/ANDROID_TCT_NEXT_SESSION_CATALYST.md
+            outputs/mobile/ANDROID_TCT_V24_4_PIT_VALIDATION.md
             outputs/audit/TCT_NEXT_SESSION_CATALYST_V24_4_0_AUDIT.json
+            outputs/audit/TCT_V24_4_0_PIT_VALIDATION.json
             state/tct_context/TCT_V24_4_0_CATALYST_LEDGER.csv
           if-no-files-found: warn
           retention-days: 14
