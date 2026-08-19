@@ -37,7 +37,7 @@ Les news sont filtrées sur leur timestamp de publication/observation. Une news 
 
 Le PREOPEN est ancré sur la date réelle du dernier cours daily. Cette règle couvre les week-ends et jours fériés boursiers sans supposer qu'un simple lundi-vendredi correspond à une séance ouverte.
 
-Si le seed PREOPEN est trop ancien (>5 jours calendaires par défaut), le module se met en garde et n'effectue pas de recherche coûteuse. Si le POSTMARKET ne dispose pas d'un seed correspondant à la séance européenne du jour, le snapshot est également neutralisé.
+La profondeur de récupération GDELT PREOPEN est limitée à 7 jours, puis un filtre strict conserve uniquement les news postérieures à la vraie clôture d'ancrage. Si le seed PREOPEN est trop ancien (>7 jours calendaires), le module se met en garde et n'effectue pas de recherche coûteuse. Si le POSTMARKET ne dispose pas d'un seed correspondant à la séance européenne du jour, le snapshot est également neutralisé.
 
 ## 4. News catalysts
 
