@@ -21,24 +21,24 @@ OPENFIGI_URL = "https://api.openfigi.com/v3/mapping"
 HYDRATED_STATUS = "HYDRATED_ATTRIBUTED_IDENTITY"
 NAME_ONLY_STATUS = "OPENFIGI_NAME_ONLY_TICKER_UNRESOLVED"
 
-# OpenFIGI/Bloomberg exchange code -> Yahoo Finance suffix. Only venue pairs that
-# we explicitly support are enabled. Country-prefix guessing is forbidden.
-# Both common API code variants seen in our reference stack are accepted.
+# Kept for deterministic diagnostics and legacy tests only. The governed resolver
+# no longer constructs the selected Yahoo ticker from this table: Yahoo is queried
+# directly with the ISIN so venue/symbol selection is made by Yahoo itself.
 EXCHANGE_TO_YAHOO_SUFFIX = {
-    "FP": "PA", "PA": "PA",          # Paris
-    "BB": "BR", "BR": "BR",          # Brussels
-    "NA": "AS", "AS": "AS",          # Amsterdam
-    "PL": "LS", "LS": "LS",          # Lisbon
-    "IM": "MI", "MI": "MI",          # Milan
-    "SM": "MC",                        # Madrid
-    "GY": "DE", "GR": "DE",          # Germany/Xetra family
-    "SS": "ST", "ST": "ST",          # Stockholm
-    "FH": "HE", "HE": "HE",          # Helsinki
-    "NO": "OL", "OS": "OL",          # Oslo
-    "AV": "VI", "VI": "VI",          # Vienna
-    "ID": "IR", "IR": "IR",          # Dublin
-    "LX": "LU",                        # Luxembourg
-    "CP": "PR",                        # Prague
+    "FP": "PA", "PA": "PA",
+    "BB": "BR", "BR": "BR",
+    "NA": "AS", "AS": "AS",
+    "PL": "LS", "LS": "LS",
+    "IM": "MI", "MI": "MI",
+    "SM": "MC",
+    "GY": "DE", "GR": "DE",
+    "SS": "ST", "ST": "ST",
+    "FH": "HE", "HE": "HE",
+    "NO": "OL", "OS": "OL",
+    "AV": "VI", "VI": "VI",
+    "ID": "IR", "IR": "IR",
+    "LX": "LU",
+    "CP": "PR",
 }
 
 UNSUPPORTED_SECURITY_TOKENS = (
@@ -86,14 +86,13 @@ def _is_equity_match(match: dict) -> bool:
 
 
 def candidate_yahoo_ticker(match: dict) -> str:
+    """Diagnostic only: construct the conventional Yahoo symbol for a known venue."""
     if not _is_equity_match(match):
         return ""
     ticker = str(match.get("ticker") or "").strip().upper()
     exch = str(match.get("exchCode") or "").strip().upper()
     suffix = EXCHANGE_TO_YAHOO_SUFFIX.get(exch)
-    if not ticker or not suffix:
-        return ""
-    if "." in ticker:
+    if not ticker or not suffix or "." in ticker:
         return ""
     return f"{ticker}.{suffix}"
 
@@ -101,12 +100,7 @@ def candidate_yahoo_ticker(match: dict) -> str:
 def resolve_isins_openfigi(
     isins: list[str], api_key: str | None = None, *, delay_seconds: float | None = None
 ) -> dict[str, list[dict]]:
-    """Resolve ISINs with OpenFIGI v3 using rate-safe batches.
-
-    The public endpoint has a lower per-request job limit than authenticated use,
-    so unauthenticated batches are deliberately capped at five. The resolver does
-    not infer identities when OpenFIGI returns no supported equity match.
-    """
+    """Resolve ISINs with OpenFIGI v3, respecting authenticated/public limits."""
     import requests
 
     key = api_key or os.environ.get("OPENFIGI_API_KEY")
@@ -172,39 +166,86 @@ def validate_yahoo_candidate(ticker: str, expected_name: str) -> YahooIdentity |
     )
 
 
-def _candidate_records(matches: list[dict]) -> list[dict]:
-    records: list[dict] = []
-    seen: set[str] = set()
-    for match in matches:
-        yahoo_ticker = candidate_yahoo_ticker(match)
-        if not yahoo_ticker or yahoo_ticker in seen:
-            continue
-        name = str(match.get("name") or "").strip()
-        if not name:
-            continue
-        seen.add(yahoo_ticker)
-        records.append({
-            "yahoo_ticker": yahoo_ticker,
-            "openfigi_name": name,
-            "openfigi_figi": str(match.get("figi") or "").strip(),
-            "openfigi_share_class_figi": str(match.get("shareClassFIGI") or "").strip(),
-            "openfigi_exchange_code": str(match.get("exchCode") or "").strip().upper(),
-            "openfigi_security_type": str(match.get("securityType") or match.get("securityType2") or "").strip(),
-        })
-    return records
+def search_yahoo_by_isin(isin: str) -> dict | None:
+    """Return Yahoo's rank-1 quote for an exact ISIN search.
+
+    yfinance itself uses an ISIN Search query for ISIN lookup. We deliberately
+    accept only the first ranked quote and never choose a lower-ranked venue to
+    avoid turning an alternate listing into the canonical market-data ticker.
+    """
+    try:
+        import yfinance as yf
+        search = yf.Search(
+            str(isin).strip().upper(),
+            max_results=8,
+            news_count=0,
+            lists_count=0,
+            include_cb=False,
+            raise_errors=False,
+        )
+        quotes = search.quotes or []
+    except Exception as exc:
+        logger.info("Yahoo ISIN search failed for %s: %s", isin, type(exc).__name__)
+        return None
+    if not quotes:
+        return None
+    first = quotes[0]
+    if not isinstance(first, dict):
+        return None
+    if str(first.get("quoteType") or "").strip().upper() != "EQUITY":
+        return None
+    if not str(first.get("symbol") or "").strip():
+        return None
+    return first
+
+
+def _equity_matches(matches: list[dict]) -> list[dict]:
+    return [m for m in matches if isinstance(m, dict) and _is_equity_match(m) and str(m.get("name") or "").strip()]
+
+
+def _best_openfigi_match(matches: list[dict], yahoo_name: str) -> tuple[dict | None, float]:
+    eligible = _equity_matches(matches)
+    if not eligible:
+        return None, 0.0
+    ranked = sorted(
+        ((name_similarity(match.get("name"), yahoo_name), match) for match in eligible),
+        key=lambda item: item[0],
+        reverse=True,
+    )
+    return ranked[0][1], float(ranked[0][0])
+
+
+def _representative_openfigi_name(matches: list[dict]) -> str:
+    eligible = _equity_matches(matches)
+    if not eligible:
+        return ""
+    normalized: dict[str, str] = {}
+    for match in eligible:
+        raw = str(match.get("name") or "").strip()
+        key = _norm_text(raw)
+        if key and key not in normalized:
+            normalized[key] = raw
+    if len(normalized) == 1:
+        return next(iter(normalized.values()))
+    return str(eligible[0].get("name") or "").strip()
 
 
 def resolve_identity_rows(
     frame: pd.DataFrame,
     *,
     openfigi_matches: dict[str, list[dict]] | None = None,
+    yahoo_isin_searcher=search_yahoo_by_isin,
     yahoo_validator=validate_yahoo_candidate,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Produce a sourced overlay and unresolved worklist for identity-only rows.
+    """Resolve canonical identity-only Actions using two independent mappings.
 
-    A ticker is promoted only after an OpenFIGI ISIN mapping and independent
-    Yahoo quote/name validation. If multiple materially plausible Yahoo symbols
-    survive, the ISIN remains unresolved rather than selecting one arbitrarily.
+    Promotion requires:
+      1) OpenFIGI returns at least one supported Equity identity for the ISIN;
+      2) Yahoo Search queried with that same ISIN returns a rank-1 Equity symbol;
+      3) Yahoo Ticker info validates the symbol as Equity and its issuer name
+         materially agrees with the OpenFIGI identity.
+
+    No country suffix, venue priority or alternate-listing guess is used.
     """
     if "isin" not in frame.columns or "canonical_seed_status" not in frame.columns:
         return pd.DataFrame(), pd.DataFrame()
@@ -213,71 +254,94 @@ def resolve_identity_rows(
     matches_by_isin = openfigi_matches if openfigi_matches is not None else resolve_isins_openfigi(isins)
     overlay_rows: list[dict] = []
     gaps: list[dict] = []
-    validation_cache: dict[tuple[str, str], YahooIdentity | None] = {}
 
     for isin in isins:
         matches = matches_by_isin.get(isin, [])
-        candidates = _candidate_records(matches)
-        direct_names = sorted({_norm_text(m.get("name")) for m in matches if _is_equity_match(m) and _norm_text(m.get("name"))})
-        if not candidates:
-            if len(direct_names) == 1:
-                raw_name = next(str(m.get("name") or "").strip() for m in matches if _norm_text(m.get("name")) == direct_names[0])
+        equity_matches = _equity_matches(matches)
+        representative_name = _representative_openfigi_name(matches)
+        if not equity_matches:
+            gaps.append({
+                "isin": isin,
+                "status": "UNRESOLVED",
+                "reason": "NO_OPENFIGI_EQUITY_IDENTITY",
+                "openfigi_matches": len(matches),
+            })
+            continue
+
+        search_quote = yahoo_isin_searcher(isin)
+        if not search_quote:
+            if representative_name:
                 overlay_rows.append({
                     "isin": isin,
-                    "name": raw_name,
+                    "name": representative_name,
                     "yahoo_ticker": "",
                     "canonical_seed_status": IDENTITY_ONLY_STATUS,
                     "identity_resolution_status": NAME_ONLY_STATUS,
                     "identity_source": "OpenFIGI_ID_ISIN",
                     "identity_validation_as_of": _now(),
                 })
-            gaps.append({"isin": isin, "status": "UNRESOLVED", "reason": "NO_SUPPORTED_EQUITY_YAHOO_CANDIDATE", "openfigi_matches": len(matches)})
+            gaps.append({
+                "isin": isin,
+                "status": "UNRESOLVED",
+                "reason": "YAHOO_ISIN_SEARCH_NO_EQUITY_RANK1",
+                "openfigi_equity_matches": len(equity_matches),
+            })
             continue
 
-        validated: list[tuple[dict, YahooIdentity]] = []
-        for candidate in candidates[:8]:
-            key = (candidate["yahoo_ticker"], candidate["openfigi_name"])
-            if key not in validation_cache:
-                validation_cache[key] = yahoo_validator(candidate["yahoo_ticker"], candidate["openfigi_name"])
-            yahoo = validation_cache[key]
-            if yahoo is not None:
-                validated.append((candidate, yahoo))
-
-        validated.sort(key=lambda item: item[1].similarity, reverse=True)
-        if not validated:
-            gaps.append({"isin": isin, "status": "UNRESOLVED", "reason": "YAHOO_IDENTITY_VALIDATION_FAILED", "candidate_count": len(candidates)})
+        symbol = str(search_quote.get("symbol") or "").strip()
+        search_name = str(search_quote.get("longname") or search_quote.get("shortname") or "").strip()
+        best_match, search_similarity = _best_openfigi_match(matches, search_name)
+        if best_match is None or search_similarity < 0.70:
+            gaps.append({
+                "isin": isin,
+                "status": "UNRESOLVED",
+                "reason": "YAHOO_ISIN_SEARCH_NAME_MISMATCH",
+                "yahoo_symbol": symbol,
+                "search_name_similarity": round(search_similarity, 4),
+            })
             continue
-        if len(validated) > 1:
-            best = validated[0][1].similarity
-            second = validated[1][1].similarity
-            if validated[0][0]["yahoo_ticker"] != validated[1][0]["yahoo_ticker"] and best - second < 0.08:
-                gaps.append({
-                    "isin": isin,
-                    "status": "UNRESOLVED",
-                    "reason": "AMBIGUOUS_MULTIPLE_VALIDATED_TICKERS",
-                    "candidate_count": len(validated),
-                    "best_similarity": round(best, 4),
-                    "second_similarity": round(second, 4),
-                })
-                continue
 
-        candidate, yahoo = validated[0]
+        expected_name = str(best_match.get("name") or representative_name).strip()
+        yahoo = yahoo_validator(symbol, expected_name)
+        if yahoo is None:
+            gaps.append({
+                "isin": isin,
+                "status": "UNRESOLVED",
+                "reason": "YAHOO_TICKER_SECONDARY_VALIDATION_FAILED",
+                "yahoo_symbol": symbol,
+            })
+            continue
+
+        final_match, final_similarity = _best_openfigi_match(matches, yahoo.name)
+        if final_match is None or final_similarity < 0.75:
+            gaps.append({
+                "isin": isin,
+                "status": "UNRESOLVED",
+                "reason": "FINAL_OPENFIGI_YAHOO_NAME_MISMATCH",
+                "yahoo_symbol": symbol,
+                "final_name_similarity": round(final_similarity, 4),
+            })
+            continue
+
         overlay_rows.append({
             "isin": isin,
-            "name": candidate["openfigi_name"],
-            "yahoo_ticker": candidate["yahoo_ticker"],
+            "name": str(final_match.get("name") or representative_name).strip(),
+            "yahoo_ticker": symbol,
             "canonical_seed_status": HYDRATED_STATUS,
             "identity_resolution_status": "VALIDATED",
-            "identity_source": "OpenFIGI_ID_ISIN+Yahoo_identity_check",
+            "identity_source": "OpenFIGI_ID_ISIN+Yahoo_Search_ISIN_rank1+Yahoo_Ticker_validation",
             "identity_validation_as_of": _now(),
-            **{key: candidate[key] for key in (
-                "openfigi_figi", "openfigi_share_class_figi", "openfigi_exchange_code", "openfigi_security_type"
-            )},
+            "openfigi_figi": str(final_match.get("figi") or "").strip(),
+            "openfigi_share_class_figi": str(final_match.get("shareClassFIGI") or "").strip(),
+            "openfigi_exchange_code": str(final_match.get("exchCode") or "").strip().upper(),
+            "openfigi_security_type": str(final_match.get("securityType") or final_match.get("securityType2") or "").strip(),
+            "yahoo_search_name": search_name,
+            "yahoo_search_exchange": str(search_quote.get("exchange") or search_quote.get("exchDisp") or "").strip(),
             "yahoo_validated_name": yahoo.name,
             "yahoo_quote_type": yahoo.quote_type,
             "yahoo_currency": yahoo.currency,
             "yahoo_exchange": yahoo.exchange,
-            "identity_name_similarity": round(yahoo.similarity, 6),
+            "identity_name_similarity": round(final_similarity, 6),
         })
 
     return pd.DataFrame(overlay_rows), pd.DataFrame(gaps)
@@ -299,7 +363,7 @@ def apply_identity_overlay(frame: pd.DataFrame, overlay_path: str | Path) -> tup
     result = frame.copy().set_index("isin", drop=False)
     applied = 0
     full = 0
-    name_only = 0
+    name_observed = 0
     for _, row in overlay.iterrows():
         isin = str(row.get("isin") or "").strip()
         if not isin or isin not in result.index:
@@ -316,7 +380,7 @@ def apply_identity_overlay(frame: pd.DataFrame, overlay_path: str | Path) -> tup
         ticker = str(row.get("yahoo_ticker") or "").strip()
         if name and is_missing(result.at[isin, "name"] if "name" in result.columns else None):
             result.at[isin, "name"] = name
-            name_only += 1
+            name_observed += 1
         if resolution == "VALIDATED" and name and ticker:
             result.at[isin, "yahoo_ticker"] = ticker
             result.at[isin, "canonical_seed_status"] = HYDRATED_STATUS
@@ -325,7 +389,8 @@ def apply_identity_overlay(frame: pd.DataFrame, overlay_path: str | Path) -> tup
         for field in (
             "identity_resolution_status", "identity_source", "identity_validation_as_of",
             "openfigi_figi", "openfigi_share_class_figi", "openfigi_exchange_code", "openfigi_security_type",
-            "yahoo_validated_name", "yahoo_quote_type", "yahoo_currency", "yahoo_exchange", "identity_name_similarity",
+            "yahoo_search_name", "yahoo_search_exchange", "yahoo_validated_name", "yahoo_quote_type",
+            "yahoo_currency", "yahoo_exchange", "identity_name_similarity",
         ):
             if field in overlay.columns and not is_missing(row.get(field)):
                 if field not in result.columns:
@@ -336,7 +401,7 @@ def apply_identity_overlay(frame: pd.DataFrame, overlay_path: str | Path) -> tup
         "overlay_rows": int(len(overlay)),
         "applied": applied,
         "fully_hydrated": full,
-        "name_observed": name_only,
+        "name_observed": name_observed,
     }
 
 
@@ -361,7 +426,7 @@ def run(root: Path) -> dict:
         "fully_validated": fully,
         "name_only": name_only,
         "unresolved": int(len(gaps)),
-        "policy": "OPENFIGI_ISIN_PLUS_INDEPENDENT_YAHOO_IDENTITY_VALIDATION; NO_COUNTRY_SUFFIX_GUESSING; AMBIGUITY_STAYS_BLOCK_DATA",
+        "policy": "OPENFIGI_ISIN_PLUS_YAHOO_EXACT_ISIN_RANK1_PLUS_YAHOO_TICKER_VALIDATION; NO_COUNTRY_SUFFIX_GUESSING; NO_ALTERNATE_VENUE_SELECTION",
         "candidate_overlay": str(overlay_path.relative_to(root)),
         "unresolved_file": str(gaps_path.relative_to(root)),
     }
