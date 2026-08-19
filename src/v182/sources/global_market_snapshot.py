@@ -35,16 +35,18 @@ def _extract_close_series(raw: pd.DataFrame, symbol: str) -> pd.Series:
     if isinstance(raw.columns, pd.MultiIndex):
         if "Close" in raw.columns.get_level_values(0):
             try:
-                return pd.to_numeric(raw["Close"][symbol], errors="coerce").dropna()
+                candidate = raw["Close"][symbol]
             except (KeyError, TypeError):
-                pass
+                candidate = None
+            if candidate is not None:
+                return pd.to_numeric(candidate, errors="coerce").dropna()
         if symbol in raw.columns.get_level_values(0):
             try:
                 sub = raw[symbol]
-                if "Close" in sub.columns:
-                    return pd.to_numeric(sub["Close"], errors="coerce").dropna()
             except (KeyError, TypeError):
-                pass
+                sub = None
+            if sub is not None and "Close" in sub.columns:
+                return pd.to_numeric(sub["Close"], errors="coerce").dropna()
     if "Close" in raw.columns and raw.shape[1] <= 8:
         return pd.to_numeric(raw["Close"], errors="coerce").dropna()
     return pd.Series(dtype=float)
@@ -136,8 +138,6 @@ def fetch_global_market_snapshot(cfg: dict, *, phase: str | None = None) -> Glob
         observed_weight = sum(weight for _, weight in components)
         risk_on = sum(score * weight for score, weight in components) / observed_weight
 
-    # PREOPEN gets a small overlay from the current one-shot ES/NQ daily session.
-    # POSTMARKET uses completed cash sessions only for direction.
     if str(phase or "").upper() == "PREOPEN":
         futures_scores = [
             _risk_component(one_shot_returns.get("SP500_FUTURE")),
