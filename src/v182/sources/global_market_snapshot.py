@@ -33,7 +33,6 @@ def _extract_close_series(raw: pd.DataFrame, symbol: str) -> pd.Series:
     if raw is None or raw.empty:
         return pd.Series(dtype=float)
     if isinstance(raw.columns, pd.MultiIndex):
-        # yfinance may return either (Price,Ticker) or (Ticker,Price).
         if "Close" in raw.columns.get_level_values(0):
             try:
                 return pd.to_numeric(raw["Close"][symbol], errors="coerce").dropna()
@@ -66,13 +65,15 @@ def _risk_component(return_pct: float | None, *, inverse: bool = False) -> float
     if return_pct is None:
         return None
     value = -return_pct if inverse else return_pct
-    # +/-2% corresponds roughly to the useful daily risk-on/risk-off range;
-    # larger changes saturate rather than dominate the snapshot.
     return _clip(50.0 + value / 2.0 * 50.0)
 
 
-def fetch_global_market_snapshot(cfg: dict) -> GlobalMarketSnapshot:
-    """Fetch one compact daily snapshot; no 1m/5m or continuous polling."""
+def fetch_global_market_snapshot(cfg: dict, *, phase: str | None = None) -> GlobalMarketSnapshot:
+    """Fetch one compact 1d snapshot; PREOPEN may include one-shot US futures.
+
+    No 1m/5m bars are requested. Futures/FX/commodities are sampled once and
+    explicitly stored as one-shot context rather than completed cash sessions.
+    """
     import yfinance as yf
 
     spec = cfg["global_market"]
@@ -96,8 +97,12 @@ def fetch_global_market_snapshot(cfg: dict) -> GlobalMarketSnapshot:
         )
     except Exception as exc:
         return GlobalMarketSnapshot(
-            None, None, {k: None for k in completed}, {k: None for k in one_shot},
-            "YFINANCE_DAILY_SNAPSHOT", (f"DOWNLOAD:{type(exc).__name__}:{str(exc)[:160]}",)
+            None,
+            None,
+            {k: None for k in completed},
+            {k: None for k in one_shot},
+            "YFINANCE_DAILY_SNAPSHOT",
+            (f"DOWNLOAD:{type(exc).__name__}:{str(exc)[:160]}",),
         )
 
     completed_returns: dict[str, float | None] = {}
@@ -131,8 +136,20 @@ def fetch_global_market_snapshot(cfg: dict) -> GlobalMarketSnapshot:
         observed_weight = sum(weight for _, weight in components)
         risk_on = sum(score * weight for score, weight in components) / observed_weight
 
-    # Magnitude is deliberately direction-agnostic. Completed global indices
-    # and one-shot oil/gold/FX shocks can flag a volatile next European session.
+    # PREOPEN gets a small overlay from the current one-shot ES/NQ daily session.
+    # POSTMARKET uses completed cash sessions only for direction.
+    if str(phase or "").upper() == "PREOPEN":
+        futures_scores = [
+            _risk_component(one_shot_returns.get("SP500_FUTURE")),
+            _risk_component(one_shot_returns.get("NASDAQ_FUTURE")),
+        ]
+        futures_scores = [x for x in futures_scores if x is not None]
+        if futures_scores:
+            future_score = float(np.mean(futures_scores))
+            overlay = float(spec.get("preopen_futures_overlay_weight", 0.20))
+            overlay = float(np.clip(overlay, 0.0, 0.40))
+            risk_on = future_score if risk_on is None else (1.0 - overlay) * risk_on + overlay * future_score
+
     magnitudes: list[float] = []
     for value in [*completed_returns.values(), *one_shot_returns.values()]:
         if value is not None:
@@ -144,6 +161,6 @@ def fetch_global_market_snapshot(cfg: dict) -> GlobalMarketSnapshot:
         None if shock is None else round(float(shock), 4),
         completed_returns,
         one_shot_returns,
-        "YFINANCE_DAILY_SNAPSHOT",
+        "YFINANCE_DAILY_SNAPSHOT_ONCE",
         tuple(errors),
     )
