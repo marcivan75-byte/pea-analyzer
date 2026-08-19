@@ -112,7 +112,16 @@
   },
   "state": {
     "context_seed_path": "state/tct_context/TCT_DAILY_TRADER_LATEST.csv",
-    "catalyst_ledger_path": "state/tct_context/TCT_V24_4_0_CATALYST_LEDGER.csv"
+    "catalyst_ledger_path": "state/tct_context/TCT_V24_4_0_CATALYST_LEDGER.csv",
+    "daily_close_ledger_path": "state/tct_context/TCT_DAILY_CLOSE_LEDGER.csv"
+  },
+  "pit_lineage": {
+    "first_subsequent_close_only": true,
+    "close_ledger_recent_bars": 10,
+    "minimum_snapshot_outcome_coverage": 0.80,
+    "snapshot_fingerprint_required": true,
+    "fail_closed_on_fingerprint_mismatch": true,
+    "historical_replay_without_historical_tct_snapshots_forbidden": true
   },
   "governance": {
     "decision_influence": 0.0,
