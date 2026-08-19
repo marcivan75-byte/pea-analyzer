@@ -110,7 +110,7 @@ def test_scoring_separates_movement_potential_from_direction():
     row = pd.Series(
         {
             "entry_score": 82.0,
-            "exit_risk_score": 20.0,
+            "exit_risk_score": 10.0,
             "entry_state": "ENTRY_STRONG_SHADOW",
             "exit_state": "HOLD_SUPPORTIVE_SHADOW",
             "entry_confirmation_count": 4,
