@@ -71,11 +71,14 @@
       "DAX": "^GDAXI"
     },
     "one_shot_context_symbols": {
+      "SP500_FUTURE": "ES=F",
+      "NASDAQ_FUTURE": "NQ=F",
       "OIL": "CL=F",
       "GOLD": "GC=F",
       "EURUSD": "EURUSD=X"
     },
     "exclude_partial_asia_from_core_score": true,
+    "preopen_futures_overlay_weight": 0.20,
     "risk_on_weights": {
       "SP500": 0.25,
       "NASDAQ": 0.25,
