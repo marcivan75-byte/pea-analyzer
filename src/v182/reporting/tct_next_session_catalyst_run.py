@@ -15,7 +15,7 @@ from v182.features.tct_catalyst_context_v24_4 import (
     score_candidate,
     select_catalyst_candidates,
 )
-from v182.sources.global_market_snapshot import fetch_global_market_snapshot
+from v182.sources.global_market_snapshot import GlobalMarketSnapshot, fetch_global_market_snapshot
 from v182.sources.tct_catalyst_news import fetch_candidate_news
 
 
@@ -38,13 +38,18 @@ def _write_csv(frame: pd.DataFrame, path: Path) -> None:
 
 
 def _append_ledger(frame: pd.DataFrame, path: Path) -> tuple[pd.DataFrame, int]:
+    """Persist the first PREOPEN/POSTMARKET snapshot per candidate and day.
+
+    A manual rerun may update the current report, but must not rewrite the first
+    PIT observation used later for validation.
+    """
     existing = _read_csv(path)
     if frame.empty:
         return existing, 0
     before = len(existing)
     combined = pd.concat([existing, frame], ignore_index=True, sort=False) if not existing.empty else frame.copy()
     if "snapshot_key" in combined.columns:
-        combined = combined.drop_duplicates("snapshot_key", keep="last")
+        combined = combined.drop_duplicates("snapshot_key", keep="first")
     sort_cols = [c for c in ["snapshot_generated_at_utc", "movement_potential_score", "isin"] if c in combined.columns]
     if sort_cols:
         combined = combined.sort_values(sort_cols, ascending=[True, False, True][: len(sort_cols)])
@@ -83,7 +88,7 @@ def _flatten_candidate(row: pd.Series, scored: dict, *, generated_at: str, windo
     ]
     base = {key: row.get(key) for key in keep if key in row.index}
     phase = str(scored.get("phase") or "")
-    local_session_key = str(window_end)[:10]
+    session_key = str(window_end)[:10]
     isin = str(row.get("isin") or "")
     return {
         **base,
@@ -91,7 +96,7 @@ def _flatten_candidate(row: pd.Series, scored: dict, *, generated_at: str, windo
         "snapshot_generated_at_utc": generated_at,
         "snapshot_window_start_utc": window_start,
         "snapshot_window_end_utc": window_end,
-        "snapshot_key": f"{local_session_key}|{phase}|{isin}",
+        "snapshot_key": f"{session_key}|{phase}|{isin}",
         "real_orders_enabled": False,
         "fixed_take_profit_enabled": False,
         "fixed_stop_loss_enabled": False,
@@ -157,35 +162,39 @@ def run(root: Path = ROOT, *, phase: str | None = None, now: datetime | None = N
     if seed.empty:
         candidates = pd.DataFrame()
         output = pd.DataFrame()
-        market = fetch_global_market_snapshot(cfg)
+        market = GlobalMarketSnapshot(None, None, {}, {}, "NOT_FETCHED_NO_SEED", ())
         errors.append("TCT_DAILY_CONTEXT_SEED_MISSING")
     else:
         candidates = select_catalyst_candidates(seed, cfg)
-        news = fetch_candidate_news(
-            candidates.to_dict("records"),
-            start_utc=window_start,
-            end_utc=window_end,
-            phase=selected_phase,
-            cfg=cfg,
-        )
-        market = fetch_global_market_snapshot(cfg)
-        rows: list[dict] = []
-        for _, candidate in candidates.iterrows():
-            isin = str(candidate.get("isin") or "")
-            scored = score_candidate(candidate, news.get(isin), market, phase=selected_phase, cfg=cfg)
-            rows.append(
-                _flatten_candidate(
-                    candidate,
-                    scored,
-                    generated_at=generated_at,
-                    window_start=window_start.isoformat(),
-                    window_end=window_end.isoformat(),
-                )
+        if candidates.empty:
+            output = pd.DataFrame()
+            market = GlobalMarketSnapshot(None, None, {}, {}, "NOT_FETCHED_NO_CANDIDATES", ())
+        else:
+            news = fetch_candidate_news(
+                candidates.to_dict("records"),
+                start_utc=window_start,
+                end_utc=window_end,
+                phase=selected_phase,
+                cfg=cfg,
             )
-        output = pd.DataFrame(rows)
-        if not output.empty:
-            output["_move"] = pd.to_numeric(output["movement_potential_score"], errors="coerce")
-            output = output.sort_values("_move", ascending=False).drop(columns=["_move"], errors="ignore")
+            market = fetch_global_market_snapshot(cfg, phase=selected_phase)
+            rows: list[dict] = []
+            for _, candidate in candidates.iterrows():
+                isin = str(candidate.get("isin") or "")
+                scored = score_candidate(candidate, news.get(isin), market, phase=selected_phase, cfg=cfg)
+                rows.append(
+                    _flatten_candidate(
+                        candidate,
+                        scored,
+                        generated_at=generated_at,
+                        window_start=window_start.isoformat(),
+                        window_end=window_end.isoformat(),
+                    )
+                )
+            output = pd.DataFrame(rows)
+            if not output.empty:
+                output["_move"] = pd.to_numeric(output["movement_potential_score"], errors="coerce")
+                output = output.sort_values("_move", ascending=False).drop(columns=["_move"], errors="ignore")
 
     output_path = outdir / "TCT_NEXT_SESSION_CATALYST_V24_4_0.csv"
     _write_csv(output, output_path)
