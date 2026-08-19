@@ -107,7 +107,7 @@ def build_etf_ticker_map(
     if gaps:
         Path(gaps_path).parent.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(gaps).to_csv(gaps_path, sep=";", index=False, encoding="utf-8-sig")
-    return {"requested": len(to_resolve), "resolved": len(new_rows), "gaps": len(gaps), "authenticated": bool(key)}
+    return {"requested": len(to_resolve), "resolved": len(new_rows), "gaps": len(gaps)}
 
 
 if __name__ == "__main__":
