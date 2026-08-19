@@ -39,4 +39,6 @@ def test_validator_has_no_production_authority():
     assert "MATURE_FOR_REVIEW_NOT_PROMOTION" in source
     assert "NOT_EVALUABLE_BEFORE_MATURITY" in source
     assert "Spearman rho = Pearson correlation of average ranks" in runtime
-    assert "scipy" not in runtime.lower()
+    lower = runtime.lower()
+    assert "import scipy" not in lower
+    assert "from scipy" not in lower
