@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 import json
 
@@ -15,6 +16,7 @@ from v182.sources.yfinance_bulk import download_history
 
 ROOT = Path(__file__).resolve().parents[3]
 VERSION = "TCT_V24.2.0_INTRADAY_SCALPING_SHADOW"
+CACHE_LAYOUT = "PER_TICKER_V1"
 
 
 def _read_csv(path: Path) -> pd.DataFrame:
@@ -39,6 +41,60 @@ def _latest_daily_dates(cache_dir: Path, tickers: set[str]) -> dict[str, str]:
         except Exception:
             continue
     return dates
+
+
+def _ticker_cache_dir(cache_root: Path, ticker: str) -> Path:
+    """Return a stable cache directory independent of the daily candidate set.
+
+    yfinance_bulk intentionally fingerprints the exact requested ticker list.
+    A shared cache for a changing TCT candidate set would therefore be rebuilt
+    whenever that list changes, destroying locally accumulated intraday history.
+    One stable one-ticker cache avoids that failure mode while preserving the
+    generic yfinance cache governance for every other module.
+    """
+    canonical = str(ticker).strip().upper()
+    digest = sha256(canonical.encode("utf-8")).hexdigest()[:16]
+    return cache_root / f"ticker_{digest}"
+
+
+def _download_intraday_histories(tickers: list[str], cache_root: Path, icfg: dict) -> tuple[dict[str, pd.DataFrame], list[dict]]:
+    histories: dict[str, pd.DataFrame] = {}
+    failures: list[dict] = []
+    cache_root.mkdir(parents=True, exist_ok=True)
+    for ticker in tickers:
+        ticker_cache = _ticker_cache_dir(cache_root, ticker)
+        try:
+            result = download_history(
+                [ticker],
+                str(ticker_cache),
+                period=str(icfg["bootstrap_period"]),
+                interval=str(icfg["interval"]),
+                batch_size=1,
+                auto_adjust=True,
+                include_actions=False,
+            )
+            extracted = _extract_histories(ticker_cache, {ticker})
+            history = extracted.get(ticker)
+            if history is not None and not history.empty:
+                histories[ticker] = history
+            else:
+                failures.append(
+                    {
+                        "ticker": ticker,
+                        "error": "INTRADAY_HISTORY_MISSING_AFTER_REFRESH",
+                        "download_successful": ticker in set(result.successful),
+                        "download_failed": ticker in set(result.failed),
+                    }
+                )
+        except Exception as exc:
+            failures.append(
+                {
+                    "ticker": ticker,
+                    "error": type(exc).__name__,
+                    "detail": str(exc)[:180],
+                }
+            )
+    return histories, failures
 
 
 def _signal_ledger(snapshot: pd.DataFrame, actions: pd.DataFrame, ledger_path: Path, daily_cache: Path, cfg: dict) -> tuple[pd.DataFrame, int]:
@@ -190,6 +246,7 @@ def run(root: Path = ROOT) -> dict:
     new_rows: list[dict] = []
     histories_found = 0
     requested_tickers: list[str] = []
+    cache_failures: list[dict] = []
 
     if not ledger.empty:
         signal_dates = pd.to_datetime(ledger["signal_date"], errors="coerce")
@@ -200,17 +257,11 @@ def run(root: Path = ROOT) -> dict:
         if requested_tickers:
             try:
                 icfg = cfg["intraday_data"]
-                download_history(
-                    requested_tickers,
-                    str(root / icfg["cache_dir"]),
-                    period=str(icfg["bootstrap_period"]),
-                    interval=str(icfg["interval"]),
-                    batch_size=20,
-                    auto_adjust=True,
-                    include_actions=False,
-                )
-                histories = _extract_histories(root / icfg["cache_dir"], set(requested_tickers))
+                cache_root = root / icfg["cache_dir"]
+                histories, cache_failures = _download_intraday_histories(requested_tickers, cache_root, icfg)
                 histories_found = len(histories)
+                if cache_failures and not histories:
+                    status = "DEGRADED_INTRADAY_DATA"
                 minimum_lag = max(1, int(cfg["signal_bridge"].get("minimum_lag_sessions", 1)))
                 max_sessions = int(cfg["signal_bridge"]["max_execution_sessions_after_signal"])
                 for _, signal in active.iterrows():
@@ -255,6 +306,9 @@ def run(root: Path = ROOT) -> dict:
         "signal_ledger_rows": int(len(ledger)),
         "requested_tickers": len(requested_tickers),
         "intraday_histories_found": int(histories_found),
+        "intraday_cache_layout": CACHE_LAYOUT,
+        "intraday_cache_root": str((root / cfg["intraday_data"]["cache_dir"]).relative_to(root)),
+        "intraday_cache_failures": cache_failures[:50],
         "new_observations": int(new_observations),
         "observation_ledger_rows": int(len(observations)),
         "causal_entry_events": entry_events,
