@@ -41,7 +41,7 @@ YAHOO_SUFFIX_BY_EURONEXT_MIC = {
     "XESM": ".IR",
 }
 
-DEFAULT_IDENTITY_OVERLAY = Path(__file__).resolve().parents[3] / "config" / "V21_9_ACTION_IDENTITY_MAP.csv"
+ROOT = Path(__file__).resolve().parents[3]
 
 
 @dataclass(frozen=True)
@@ -60,15 +60,25 @@ def _clean(value) -> str:
 
 
 def apply_configured_action_identity_overlay(actions_df: pd.DataFrame, overlay_path: str | Path | None = None) -> dict:
-    """Apply the governed sourced identity overlay in place before market-data waves.
+    """Apply the governed sourced identity overlay before market-data waves.
 
-    The overlay is additive and only hydrates rows still explicitly tagged as
-    whitelist-only identity skeletons. It never overwrites legacy validated
-    identities. Missing/ambiguous rows remain untouched and BLOCK_DATA.
+    The default overlay is reconstructed deterministically from compressed parts
+    whose raw SHA-256, row count and validated-row count are checked at load time.
+    A caller may still pass an explicit overlay path for isolated audits/tests.
+    The overlay never overwrites legacy validated identities; unresolved rows stay
+    explicitly BLOCK_DATA until a later attributed resolution.
     """
     from v182.mapping.action_isin_resolver import apply_identity_overlay
 
-    path = Path(overlay_path) if overlay_path is not None else DEFAULT_IDENTITY_OVERLAY
+    if overlay_path is None:
+        from v182.mapping.identity_overlay_store import materialize_identity_overlay
+
+        path = materialize_identity_overlay(ROOT)
+        if path is None:
+            return {"status": "NO_OVERLAY", "applied": 0}
+    else:
+        path = Path(overlay_path)
+
     enriched, audit = apply_identity_overlay(actions_df, path)
     if audit.get("applied", 0) == 0:
         return audit
@@ -80,20 +90,18 @@ def apply_configured_action_identity_overlay(actions_df: pd.DataFrame, overlay_p
 
 
 def qualify_action_yahoo_tickers(actions_df: pd.DataFrame) -> list[TickerQualification]:
-    """Hydrate sourced identities, then qualify ambiguous Action symbols by MIC.
+    """Hydrate sourced identities, then qualify ambiguous legacy Action symbols by MIC.
 
     Raw symbols such as ``ABP`` or ``AASB`` are unsafe Yahoo identifiers: Yahoo
     can resolve an unqualified symbol to a security listed on another exchange,
     producing plausible OHLCV for the wrong company. The Euronext source MIC is
-    therefore used as the venue authority for supported markets.
+    therefore used as the venue authority for supported legacy rows.
 
-    Before legacy symbol qualification, a static V21.9 identity overlay may
-    hydrate canonical identity-only rows. That overlay itself is produced only
-    from attributed ISIN mapping plus independent Yahoo identity validation.
-
-    Existing qualified tickers and unsupported/secondary venues are left
-    untouched. No issuer-country guessing, fuzzy-name-only promotion,
-    canonical-MIC fallback, or fallback to an unqualified symbol is performed.
+    Before legacy symbol qualification, the governed V21.9 identity overlay
+    hydrates canonical identity-only rows from attributed ISIN mappings. Existing
+    qualified tickers and unsupported/secondary venues are left untouched. No
+    issuer-country guessing, fuzzy-name-only promotion, canonical-MIC fallback,
+    or fallback to an unqualified symbol is performed.
     """
     apply_configured_action_identity_overlay(actions_df)
 
