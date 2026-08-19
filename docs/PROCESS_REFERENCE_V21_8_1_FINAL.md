@@ -1,6 +1,6 @@
 # PEA Analyzer — Process de référence final V21.8.1
 
-Date de référence : 18/08/2026
+Date de référence : 19/08/2026
 
 ## 1. Statut de gouvernance
 
@@ -16,9 +16,12 @@ Ce document reste la référence opérationnelle unique de production après cl�
 - Performance virtuelle legacy : **SKIPPED_GOVERNANCE** dans le runtime V21.8.1.
 - Aucun ordre réel ; le système reste une aide à la décision.
 - Sector/Theme Rotation V2 et Risk V1.1/Bêta restent **CONTEXT_ONLY** tant qu’une promotion PIT/OOS n’est pas explicitement validée.
-- TCT V24.2.0 Intraday/Scalping et V24.2.1 Analytics sont **SHADOW_RESEARCH_ONLY** : influence décision, score, sizing, stop et CT = **0**.
-- Le signal T1/T2 journalier connu à la clôture de J ne peut alimenter l'analyse intraday qu'à partir d'une session ultérieure ; V24.2.0 impose actuellement **J+1 au plus tôt**.
-- CT reste gelé pendant le chantier TCT V24.2.x ; aucun transfert de variable intraday/scalping vers CT n'est autorisé sans démonstration spécifique ultérieure.
+- Challenger actif TCT : **V24.3.0 Daily/Weekly Trader Tools SHADOW**.
+- V24.3.0 utilise uniquement les OHLCV quotidiennes déjà collectées ; le weekly est dérivé du daily.
+- Données intraday, 5 minutes, quasi temps réel, carnet/order flow live et spread live : **EXCLUS du chantier TCT**.
+- V24.3.0 : influence décision, score, sizing, stop et CT = **0**.
+- CT reste gelé pendant le chantier TCT V24.3.x ; aucun transfert vers CT sans démonstration spécifique ultérieure.
+- V24.2.x Intraday/Scalping est **ABANDONNÉE et retirée du runtime actif** car elle ne correspond pas au besoin fonctionnel final. Elle reste uniquement dans l'historique Git pour traçabilité.
 - Aucune nouvelle pondération, règle ou seuil ne peut être promu sans preuve PIT/OOS/backtest robuste.
 
 ## 2. Critères, pondérations et explicabilité
@@ -39,9 +42,9 @@ Le cœur ETF MT V20.8.1 conserve ses 38 critères dynamiques et son attribution 
 - `MISSING` : critère gouverné sans donnée exploitable ;
 - `BLOCKED` : promotion ou autorité explicitement interdite.
 
-Les poids de code/config/référentiels doivent rester cohérents. Aucun changement de poids n’a été réalisé pendant l’audit final, la couverture Actions étant insuffisante pour justifier une nouvelle optimisation.
+Les poids de code/config/référentiels doivent rester cohérents. La couverture Actions restant insuffisante pour justifier une nouvelle optimisation globale, la priorité demeure l'enrichissement et la provenance plutôt qu'une repondération prématurée.
 
-### 2.3 Couverture à améliorer avant repondération
+### 2.3 Couverture Actions de référence
 
 Mesure issue de l’artefact réel `main` #32064095330 :
 
@@ -51,48 +54,116 @@ Mesure issue de l’artefact réel `main` #32064095330 :
 - Actions SHORT : ~58,32 % ;
 - Actions TOP_DOWN : ~45,36 %.
 
-Priorités de données : consensus/targets, révisions brokers, earnings catalysts, news catalysts, Morningstar Action et autres champs à faible couverture identifiés dans l’audit. La priorité est **l’enrichissement et la provenance**, pas la repondération prématurée.
+Priorités de données hors chantier TCT : consensus/targets, révisions brokers, earnings catalysts, news catalysts, Morningstar Action et autres champs à faible couverture identifiés dans l’audit.
 
-### 2.4 Challenger TCT V24.2.x — Intraday / Scalping
+### 2.4 Challenger TCT V24.3.0 — outils de traders adaptés au daily/weekly
 
-Le chantier TCT actif utilise le scalping comme **couche de micro-timing et d'observation**, jamais comme stratégie autonome et jamais comme autorité de décision de production.
+L'objectif n'est **pas de faire du day trading**. Le système emprunte uniquement des concepts utiles aux traders court terme pour améliorer la décision d'entrée et de sortie sur un horizon TCT de quelques séances, éventuellement proche d'une semaine.
 
 Chaîne de recherche :
 
-`PEA ACTION → baseline TCT → T1/T2 exact → ledger PIT → J+1..J+3 intraday 5m → diagnostic SHADOW → analytics SHADOW`.
+`PEA ACTION → baseline TCT → T1/T2 exact → diagnostic Daily/Weekly Trader Tools SHADOW`.
 
-V24.2.0 observe notamment :
+Aucun téléchargement de marché supplémentaire n'est requis : V24.3.0 réutilise `data/cache/actions`.
 
-- VWAP cumulatif de séance, distance et pente ;
-- RVOL par tranche intraday comparé uniquement aux séances antérieures ;
-- accélération du volume ;
-- opening range, actionnable seulement après sa clôture ;
-- breakout, breakout/retest et VWAP reclaim ;
-- volatilité/range intraday ;
-- turnover relatif et momentum 5 minutes ;
-- spread et order-flow imbalance uniquement lorsqu'ils sont réellement disponibles.
+#### Bloc structure et niveaux
 
-Quatre setups de recherche sont séparés : `EXPLOSIVE_BREAKOUT`, `BREAKOUT_RETEST`, `VWAP_RECLAIM`, `OPENING_RANGE_BREAKOUT`.
+- breakout 20 jours ;
+- breakout 55 jours ;
+- retest d'un breakout récent ;
+- plus hauts/bas récents ;
+- pivot/R1/S1 de la séance précédente ;
+- plus haut/bas/pivot de la semaine précédente ;
+- référence d'invalidation structurelle.
 
-Le score V24.2.0 est diagnostique uniquement. Les poids et seuils initiaux sont pré-enregistrés dans `config/TCT_V24_2_0_INTRADAY_SHADOW.json` et ne peuvent pas être retunés sur les premiers résultats.
+#### Bloc volume et liquidité
 
-V24.2.1 mesure automatiquement l'espérance brute à la clôture, taux positif, gain/perte moyens, profit factor brut, MFE/MAE et segmentations par setup, T1/T2, rang J+1/J+2/J+3, tranche horaire et tranche de score. L'espérance nette n'est pas calculée tant que la couverture de friction réelle n'est pas suffisante.
+- RVOL quotidien vs médiane 20 jours ;
+- accélération volume récent vs 20 jours ;
+- turnover quotidien médian 20 jours ;
+- warning de liquidité lorsque le titre est trop peu négocié pour un TCT propre.
 
-Seuils de maturité pré-enregistrés :
+#### Bloc volatilité
 
-- <10 entrées SHADOW : `ACCUMULATING_EARLY` ;
-- 10–29 : `ACCUMULATING_DESCRIPTIVE_ONLY` ;
-- ≥30 : revue candidate possible uniquement après contrôle de diversité ;
-- ≥10 ISIN distincts pour une revue candidate ;
-- ≥15 entrées par setup pour considérer son sous-échantillon suffisamment alimenté.
+- ATR 14 jours ;
+- expansion du range quotidien ;
+- compression récente ;
+- expansion après compression ;
+- détection de gap ou extension excessive en unités d'ATR.
 
-Même après ces seuils, le statut maximal automatique reste `READY_FOR_PRE_REGISTERED_REVIEW_NOT_PROMOTION`. Une hypothèse candidate doit ensuite être gelée et validée séparément en PIT/OOS avant toute autorité de production.
+#### Bloc price action / qualité de clôture
+
+- position de la clôture dans le range ;
+- corps de bougie ;
+- mèches haute/basse ;
+- direction ouverture/clôture ;
+- gap quotidien.
+
+#### Bloc momentum / tendance
+
+- EMA 9 ;
+- EMA 20 ;
+- pente EMA 9 ;
+- rendement 5 jours ;
+- rendement 20 jours.
+
+#### Bloc prix pondéré par le volume
+
+V24.3.0 calcule un **prix roulant pondéré par le volume sur 20 et 60 séances** à partir des barres quotidiennes. Ce n'est pas un VWAP intraday de séance. Il sert uniquement à apprécier la position du cours par rapport au prix moyen associé au volume récent et à détecter une sur-extension.
+
+#### Bloc weekly
+
+Le weekly est dérivé des barres daily déjà disponibles :
+
+- moyenne de tendance 10 semaines ;
+- momentum 4 semaines ;
+- position de clôture dans le range hebdomadaire ;
+- niveaux de la semaine précédente.
+
+### 2.5 Scores SHADOW V24.3.0
+
+Score d'entrée pré-enregistré :
+
+- structure breakout/retest : 20 % ;
+- volume/liquidité : 15 % ;
+- qualité de clôture : 15 % ;
+- volatilité : 15 % ;
+- momentum/tendance : 15 % ;
+- alignement weekly : 15 % ;
+- position vs prix pondéré volume : 5 %.
+
+États d'entrée SHADOW :
+
+- `ENTRY_STRONG_SHADOW` ;
+- `ENTRY_READY_SHADOW` ;
+- `WAIT_PULLBACK_SHADOW` ;
+- `LIQUIDITY_WARNING_SHADOW` ;
+- `WAIT_SHADOW` ;
+- `DATA_INSUFFICIENT`.
+
+Score de risque de sortie pré-enregistré :
+
+- failed breakout / structure : 25 % ;
+- passage sous tendance courte : 20 % ;
+- distribution avec volume : 15 % ;
+- détérioration momentum : 15 % ;
+- détérioration weekly : 15 % ;
+- volatilité adverse : 10 %.
+
+États de sortie SHADOW :
+
+- `HOLD_SUPPORTIVE_SHADOW` ;
+- `EXIT_WATCH_SHADOW` ;
+- `EXIT_RISK_HIGH_SHADOW` ;
+- `DATA_INSUFFICIENT`.
+
+Ces poids et seuils sont des hypothèses de recherche gelées. Aucun retuning automatique n'est autorisé et aucune performance n'est attribuée à V24.3.0 avant validation.
 
 ## 3. Restitution Comité d’Investissement
 
 ### 3.1 Android
 
-Le Control Center Android est généré à partir des mêmes décisions canoniques que la restitution PC. Il expose au minimum :
+Le Control Center Android canonique est généré à partir des mêmes décisions que la restitution PC. Il expose notamment :
 
 - Actions/ETF sélectionnés et classement ;
 - horizon, décision, score et couverture ;
@@ -101,7 +172,7 @@ Le Control Center Android est généré à partir des mêmes décisions canoniqu
 - warnings Risk/Bêta et Sector/Theme lorsqu’ils existent ;
 - mention explicite qu’aucun ordre réel n’est créé.
 
-Le workflow TCT/CT quotidien produit une synthèse tactique compacte. Les sorties V24.2.0/V24.2.1 sont publiées dans des blocs Android **SHADOW séparés** et ne peuvent pas modifier la synthèse canonique. Le workflow hebdomadaire produit le Control Center Comité complet.
+Le workflow TCT/CT quotidien produit une synthèse tactique canonique puis un bloc séparé `ANDROID_TCT_DAILY_TRADER_SHADOW.md`. Ce bloc SHADOW ne peut jamais modifier les décisions canoniques.
 
 ### 3.2 PC détaillée
 
@@ -117,11 +188,11 @@ La restitution PC publie, pour chaque titre Action/ETF sélectionné, une vue pa
 - contribution pondérée ;
 - score final et décision canonique.
 
-La reconstruction des contributions est contrôlée contre le score publié lorsque le moteur permet une reconstruction exacte. Une donnée non persistée ne doit jamais être inventée.
+Une donnée non persistée ne doit jamais être inventée.
 
 ### 3.3 Règle de cohérence
 
-Android et PC canoniques proviennent du **même run canonique** et des mêmes décisions. Aucune divergence de score, version, statut ou gouvernance n’est autorisée. Les rapports SHADOW V24.2.x doivent être identifiés comme tels et ne sont pas assimilés à des décisions du Comité.
+Android et PC canoniques proviennent du même run canonique et des mêmes décisions. Les rapports V24.3.0 restent explicitement SHADOW et ne sont pas assimilés à une décision du Comité.
 
 ## 4. Architecture GitHub optimisée
 
@@ -129,24 +200,24 @@ Android et PC canoniques proviennent du **même run canonique** et des mêmes d�
 
 Workflow : `committee_tct_ct_daily.yml`.
 
-Cadence : jours ouvrés.
+Cadence : jours ouvrés, post-clôture.
 
 Rôle :
 
-1. restaurer cache OHLCV, provenance et états ;
-2. effectuer la collecte/enrichissement quotidien ;
-3. recalculer uniquement les horizons TCT/CT et leurs dépendances ;
-4. produire la synthèse Android tactique canonique ;
-5. exécuter ensuite V24.2.0 Intraday/Scalping SHADOW, de façon non bloquante ;
-6. exécuter V24.2.1 Analytics SHADOW, de façon non bloquante ;
-7. sauvegarder les caches, états et ledgers PIT ;
+1. restaurer le cache OHLCV quotidien, provenance et état T1/T2 ;
+2. supprimer tout ancien `data/cache/actions_intraday_5m` éventuellement restauré depuis un cache historique ;
+3. effectuer la collecte/enrichissement quotidien déjà prévue ;
+4. recalculer TCT/CT et leurs dépendances canoniques ;
+5. exécuter V24.3.0 Daily/Weekly Trader Tools SHADOW sans téléchargement de marché supplémentaire ;
+6. publier la synthèse Android canonique et le bloc V24.3.0 SHADOW séparé ;
+7. sauvegarder uniquement les caches/états utiles ;
 8. uploader un artefact compact à rétention courte.
 
-Une panne de la couche V24.2.x ne doit jamais bloquer ou altérer le run TCT/CT canonique.
+Une panne V24.3.0 ne doit jamais bloquer ou altérer le run TCT/CT canonique.
 
 ### 4.2 WEEKLY_HEAVY
 
-Workflow : `committee_master_daily.yml`, désormais workflow lourd hebdomadaire.
+Workflow : `committee_master_daily.yml`, workflow lourd hebdomadaire.
 
 Cadence : vendredi.
 
@@ -154,84 +225,101 @@ Rôle : MT/LT, ETF MT, Gold, IPO, Sector/Theme, Comité complet, Risk/Bêta, exp
 
 ### 4.3 ETF MT diagnostic
 
-`etf_mt_v20_8_daily.yml` n’est plus planifié quotidiennement. Il reste disponible à la demande pour validation/diagnostic. Le calcul ETF MT de production appartient au run hebdomadaire lourd.
+`etf_mt_v20_8_daily.yml` reste disponible à la demande pour validation/diagnostic. Le calcul ETF MT utile au Comité appartient au run hebdomadaire lourd.
 
 ### 4.4 Cache et artefacts
 
 - cache pip activé ;
 - cache OHLCV journalier persistant ;
-- cache intraday 5 minutes séparé pour le challenger TCT ;
+- **aucun cache intraday TCT actif** ;
 - provenance et états V21.8/TCT réutilisés ;
-- ledger PIT des signaux V24.2.0 : `state/TCT_V24_2_0_SIGNAL_LEDGER.csv` ;
-- ledger PIT des observations : `state/TCT_V24_2_0_INTRADAY_OBSERVATIONS.csv` ;
-- concurrence avec `cancel-in-progress` pour éviter les runs obsolètes ;
+- concurrence avec `cancel-in-progress` ;
 - artefact quotidien compact, rétention 7 jours ;
 - artefact hebdomadaire complet, rétention 14 jours.
 
-## 5. Benchmark coût/performance disponible
+## 5. Coût / performance
 
-Le benchmark statique validé par les tests de workflow établit :
+L'architecture conserve la cadence quotidienne adaptée au TCT tout en évitant les coûts inutiles :
 
-- full Committee lourd planifié : **5 fois/semaine → 1 fois/semaine**, soit -80 % de déclenchements lourds planifiés ;
-- ETF MT standalone planifié : **5 fois/semaine → 0**, désormais on-demand, le calcul utile restant intégré au weekly heavy ;
-- TCT/CT : conservation d’une cadence quotidienne adaptée au timing ;
-- V24.2.x : collecte limitée aux candidats TCT concernés et exécution SHADOW non bloquante afin d'éviter un recalcul intraday de tout l'univers ;
-- suppression du full Committee automatique sur chaque push du workflow lourd ; la validation code reste assurée par les CI dédiées ;
-- réutilisation des caches et réduction de la rétention des artefacts.
+- aucun téléchargement 1m/5m ;
+- aucun flux quasi temps réel ;
+- aucun fournisseur supplémentaire requis par V24.3.0 ;
+- aucun carnet d'ordres ou Level 2 ;
+- calcul weekly dérivé localement du daily ;
+- réutilisation du cache OHLCV quotidien déjà nécessaire ;
+- suppression de l'ancien cache 5 minutes restauré lorsqu'il existe.
 
-Ce benchmark ne prétend pas convertir ces réductions en euros tant qu’un historique suffisant de la nouvelle architecture n’existe pas. La mesure de référence à maintenir après mise en production est : minutes runner/jour et semaine, appels API, cache hit, taille artefacts, fraîcheur, couverture et stabilité des décisions.
+Le benchmark global conserve par ailleurs le full Committee lourd à une cadence hebdomadaire et l'ETF MT standalone en mode diagnostic/on-demand.
 
-## 6. Validation de non-dégradation
+La mesure de référence à maintenir est : minutes runner, appels API, taille caches/artefacts, fraîcheur, couverture et stabilité des décisions.
 
-Audit final de la baseline V21.8.1 :
+## 6. Validation et historique du chantier
 
-- Full audit GitHub Actions #32119662770 : **SUCCESS** ; compilation, Ruff, audit statique, intégrité référentielle/gouvernance et suite pytest complète verts.
-- ETF MT validation #32119662757 : **SUCCESS** ; configuration, compilation et tests de régression/workflow ETF MT verts.
-- Aucune modification de poids/seuil pendant la correction finale.
+### 6.1 Baseline V21.8.1
+
+- Full audit GitHub Actions #32119662770 : **SUCCESS**.
+- ETF MT validation #32119662757 : **SUCCESS**.
 - Aucun déverrouillage du holdout.
 - Aucun ordre réel.
 
-Validation du challenger TCT V24.2.x :
+### 6.2 V24.2.x — expérimentation abandonnée
 
-- PR #79 — V24.2.0 Intraday/Scalping SHADOW : full audit #32187851396 **SUCCESS** ; ETF MT non-régression #32187851393 **SUCCESS** ; tests dédiés de causalité, isolation du canonique et intégration J→J+1 verts ; merge `f5c1616`.
-- PR #80 — V24.2.1 Analytics SHADOW : full audit #32188361478 **SUCCESS** ; compilation, Ruff, audit statique, intégrité et suite pytest complète verts ; merge `5515ac8`.
-- Aucun changement des pondérations ou seuils de production.
-- Aucun déverrouillage du holdout.
-- Aucun ordre réel.
-- Les résultats statistiques du challenger restent **NON VALIDÉS** tant que l'échantillon PIT réel n'a pas atteint les seuils de maturité pré-enregistrés et subi une validation séparée.
+Les PR historiques #79/#80 puis les corrections associées ont démontré que le code intraday pouvait être isolé techniquement, mais cette direction ne correspond pas au besoin fonctionnel final : l'objectif est une aide TCT quotidienne/hebdomadaire, pas un système de day trading/scalping.
 
-Les tests dédiés couvrent notamment : câblage Android/PC, gouvernance des critères, cadence quotidienne/hebdomadaire, caches persistants, optimisation batch GDELT/consensus/OHLCV, daily TCT/CT, non-régression ETF MT, causalité intraday, interdiction d'exécution same-day après un signal journalier, isolation SHADOW et maturité analytique sans retuning.
+Conséquences :
+
+- V24.2.x est retirée du runtime actif ;
+- ses caches, ledgers, runners, analytics et tests spécifiques sont supprimés du HEAD ;
+- ses résultats éventuels ne doivent jamais être utilisés comme preuve de performance ;
+- l'historique Git est conservé uniquement pour traçabilité.
+
+### 6.3 V24.3.0 — statut
+
+V24.3.0 est un challenger `SHADOW_RESEARCH_ONLY` sans autorité de production.
+
+Avant promotion éventuelle, il devra démontrer en PIT/OOS un gain robuste sur :
+
+- espérance par trade ;
+- taux positif ;
+- gain moyen/perte moyenne ;
+- profit factor ;
+- drawdown et queue de pertes ;
+- qualité des entrées ;
+- faux breakouts évités ;
+- valeur des retests ;
+- performance selon RVOL/volatilité ;
+- contribution de l'alignement weekly ;
+- pertes évitées ou réduites via les warnings de sortie.
+
+Le taux de réussite seul ne suffit pas. Aucun score, poids ou seuil V24.3.0 n'est promu avant cette validation.
 
 ## 7. Runbook opérationnel
 
 ### Chaque jour ouvré
 
-1. `PEA Daily Collect + TCT CT V21.8.1`.
-2. Vérifier audit de collecte, cache/provenance, qualité des données et synthèse Android TCT/CT canonique.
-3. Vérifier séparément `TCT_INTRADAY_V24_2_0_AUDIT.json` et `TCT_INTRADAY_V24_2_1_ANALYTICS.json` lorsque présents ; les traiter comme recherche SHADOW uniquement.
-4. En cas d’échec V24.2.x : conserver le run canonique s'il est vert et corriger la cause SHADOW démontrée ; ne pas propager l'échec au Comité.
-5. En cas d’échec canonique : corriger la cause démontrée ; ne pas déclencher les modules lourds par défaut.
+1. Exécuter `PEA Daily Collect + TCT CT V21.8.1` après clôture.
+2. Vérifier audit collecte, cache/provenance, qualité des données et synthèse Android TCT/CT canonique.
+3. Vérifier séparément `TCT_DAILY_TRADER_V24_3_0_AUDIT.json` et `ANDROID_TCT_DAILY_TRADER_SHADOW.md`.
+4. Traiter V24.3.0 uniquement comme information SHADOW.
+5. En cas d'échec V24.3.0 : conserver le run canonique s'il est vert et corriger uniquement la cause SHADOW démontrée.
+6. En cas d'échec canonique : corriger la cause démontrée sans déclencher les modules lourds par défaut.
 
 ### Chaque vendredi
 
-1. `PEA Weekly Heavy Committee V21.8.1`.
+1. Exécuter `PEA Weekly Heavy Committee V21.8.1`.
 2. Vérifier quality gates, Comité, ETF MT, Gold, IPO, Sector/Theme, Risk, Entry/Exit V21.8, audit des critères.
 3. Publier Android Comité complet et restitution PC explicative.
 
-### Sur événement matériel
-
-Recalcul ciblé uniquement si la donnée ou l’événement justifie de ne pas attendre la cadence normale. Éviter le full run si un module ciblé suffit.
-
 ### Release / audit
 
-Un full run ou PIT/OOS n’est déclenché que pour un changement runtime matériel, une release, une non-régression planifiée ou une question statistique qui ne peut pas être validée autrement.
+Un full run ou PIT/OOS n’est déclenché que pour un changement runtime matériel, une release, une non-régression planifiée ou une question statistique nécessitant cette validation.
 
-Pour V24.2.x, aucune optimisation n'est autorisée pendant la phase `ACCUMULATING_EARLY` ou `ACCUMULATING_DESCRIPTIVE_ONLY`. Lorsque la maturité minimale est atteinte, une hypothèse candidate doit être pré-enregistrée et gelée avant la prochaine validation.
+Pour V24.3.0, aucune optimisation opportuniste des poids/seuils n'est autorisée sur les premiers résultats. Une hypothèse candidate doit être gelée avant validation OOS.
 
-## 8. Règle WIP=1 après clôture
+## 8. Règle WIP=1
 
 Le processus reste WIP=1 : une seule amélioration active à la fois. Toute nouvelle idée est mise en file d'attente jusqu'à clôture auditée du chantier courant.
 
-**Chantier actif au 18/08/2026 : TCT V24.2.x Intraday/Scalping.** Le sous-bloc technique V24.2.0/V24.2.1 est intégré et validé en non-régression, mais le chantier statistique reste ouvert pendant l'accumulation PIT. Le CT reste gelé pendant cette phase.
+**Chantier actif au 19/08/2026 : TCT V24.3.x Daily/Weekly Trader Tools.**
 
-La prochaine optimisation des pondérations, le transfert au CT ou toute promotion TCT ne doit démarrer qu’après accumulation d’un historique PIT suffisant et démonstration OOS d’un gain robuste. La production V21.8.1 reste la référence tant qu’une nouvelle version n’a pas satisfait cette même Definition of Done.
+Le CT reste gelé pendant cette phase. La production V21.8.1 reste la référence tant qu'une nouvelle version n'a pas satisfait la Definition of Done : audit, correction, intégration, tests, validation PIT/OOS pertinente, run représentatif et synchronisation documentaire.
