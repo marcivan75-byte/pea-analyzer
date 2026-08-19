@@ -7,6 +7,7 @@ import pandas as pd
 
 from v182.audit.canonical_universe import EXPECTED_ACTIONS, filter_actions
 from v182.mapping.action_isin_resolver import apply_identity_overlay
+from v182.mapping.identity_overlay_store import materialize_identity_overlay
 
 IDENTITY_ONLY_STATUS="WHITELIST_ONLY_MISSING_METADATA"
 
@@ -15,11 +16,11 @@ def build_worklist(actions:pd.DataFrame)->pd.DataFrame:
     if "canonical_seed_status" not in actions.columns:
         return pd.DataFrame(columns=["isin","canonical_seed_status","hydration_state","required_action","scoring_eligible","source_provenance_required"])
     missing=actions[actions["canonical_seed_status"].astype(str).eq(IDENTITY_ONLY_STATUS)].copy()
-    preferred=[c for c in ("isin","name","yahoo_ticker","exchange","country","currency","identity_resolution_status","identity_source") if c in missing.columns]
+    preferred=[c for c in ("isin","name","yahoo_ticker","exchange","country","currency","identity_resolution_status","identity_source","yahoo_non_eea_symbol","yahoo_non_eea_exchange") if c in missing.columns]
     out=missing[preferred].copy()
     out["canonical_seed_status"]=IDENTITY_ONLY_STATUS
-    out["hydration_state"]="MISSING_OR_UNRESOLVED_IDENTITY_METADATA"
-    out["required_action"]="VALIDATE_ISIN_NAME_TICKER_EXCHANGE_WITH_ATTRIBUTED_SOURCE"
+    out["hydration_state"]="IDENTIFIED_BUT_EEA_MARKET_TICKER_UNRESOLVED"
+    out["required_action"]="VALIDATE_EEA_MARKET_TICKER_WITH_ATTRIBUTED_SOURCE"
     out["scoring_eligible"]=False
     out["source_provenance_required"]=True
     return out.sort_values("isin").reset_index(drop=True)
@@ -28,11 +29,15 @@ def build_worklist(actions:pd.DataFrame)->pd.DataFrame:
 def run(root:Path)->dict:
     master_path=root/"inputs"/"V18.2_PEA_ACTIONS_MASTER.csv"
     whitelist=root/"config"/"V21_3_ACTION_UNIVERSE_1829_ISINS.parts"
-    overlay_path=root/"config"/"V21_9_ACTION_IDENTITY_MAP.csv"
     if not master_path.exists(): raise FileNotFoundError("ACTION_MASTER_NOT_FOUND")
     legacy=pd.read_csv(master_path,sep=";",encoding="utf-8-sig",dtype=str,low_memory=False)
     canonical=filter_actions(legacy,whitelist)
-    governed,overlay_audit=apply_identity_overlay(canonical.included,overlay_path)
+    overlay_path=materialize_identity_overlay(root)
+    if overlay_path is None:
+        governed=canonical.included.copy()
+        overlay_audit={"status":"NO_OVERLAY","applied":0}
+    else:
+        governed,overlay_audit=apply_identity_overlay(canonical.included,overlay_path)
     worklist=build_worklist(governed)
     outdir=root/"outputs"/"gaps"; outdir.mkdir(parents=True,exist_ok=True)
     csv_path=outdir/"ACTION_IDENTITY_HYDRATION_WORKLIST.csv"
@@ -47,7 +52,9 @@ def run(root:Path)->dict:
         "identity_overlay":overlay_audit,
         "identity_only_rows":int(len(worklist)),
         "market_data_eligible_rows":int(len(governed)-len(worklist)),
-        "scoring_policy":"IDENTITY_ONLY_ROWS_REMAIN_BLOCK_DATA_UNTIL_EXPLICIT_ATTRIBUTED_HYDRATION",
+        "identity_name_coverage_pct":round(governed["name"].notna().mean()*100.0,2) if "name" in governed.columns else 0.0,
+        "ticker_coverage_pct":round(governed["yahoo_ticker"].notna().mean()*100.0,2) if "yahoo_ticker" in governed.columns else 0.0,
+        "scoring_policy":"UNRESOLVED_EEA_MARKET_TICKER_ROWS_REMAIN_BLOCK_DATA_UNTIL_EXPLICIT_ATTRIBUTED_HYDRATION",
         "no_identity_invention":True,
         "worklist":str(csv_path.relative_to(root)),
     }
