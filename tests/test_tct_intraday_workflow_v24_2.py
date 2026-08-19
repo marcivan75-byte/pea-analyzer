@@ -17,11 +17,14 @@ def test_tct_intraday_shadow_is_non_blocking_and_persisted():
     assert "data/cache/actions_intraday_5m/history_manifest.json" not in workflow
 
 
-def test_tct_intraday_runner_enforces_post_signal_sessions_only():
+def test_tct_intraday_runner_enforces_post_signal_completed_sessions_only():
     source = (ROOT / "src" / "v182" / "reporting" / "tct_intraday_shadow_run.py").read_text(encoding="utf-8")
-    assert 'future_sessions = [s for s in sessions if s > str(signal["signal_date"])]' in source
+    assert "def _eligible_completed_sessions" in source
     assert "minimum_lag = max(1" in source
-    assert "minimum_lag - 1:minimum_lag - 1 + max_sessions" in source
+    assert "current_calendar_session_persistence_forbidden" in source
+    assert "future = [s for s in future if s < current]" in source
+    assert 'if result.status == "SESSION_INCOMPLETE"' in source
+    assert '"completed_sessions_only":' in source
     assert '"decision_influence": 0.0' in source
     assert '"score_influence": 0.0' in source
     assert '"sizing_execution_influence": 0.0' in source
