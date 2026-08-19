@@ -31,5 +31,10 @@ def test_lineage_config_forbids_synthetic_historical_replay_and_requires_quality
     assert lineage["snapshot_fingerprint_required"] is True
     assert lineage["fail_closed_on_fingerprint_mismatch"] is True
     assert lineage["historical_replay_without_historical_tct_snapshots_forbidden"] is True
-    assert cfg["governance"]["production_influence"] == 0.0
-    assert cfg["governance"]["promotion_authority"] is False
+    governance = cfg["governance"]
+    assert governance["decision_influence"] == 0.0
+    assert governance["score_influence"] == 0.0
+    assert governance["sizing_influence"] == 0.0
+    assert governance["stop_loss_influence"] == 0.0
+    assert governance["ct_influence"] == 0.0
+    assert governance["promotion_authority"] is False
