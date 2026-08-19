@@ -6,16 +6,22 @@ import pandas as pd
 from v182.audit.canonical_universe import filter_actions, load_compressed_isins
 from v182.audit.identity_hydration import build_worklist
 from v182.decision.committee_master import score_horizon
+from v182.mapping.action_isin_resolver import apply_identity_overlay
+from v182.mapping.identity_overlay_store import materialize_identity_overlay
 
 
-def test_real_master_generates_exact_explicit_identity_only_worklist():
+def test_real_master_generates_exact_governed_residual_identity_worklist():
     root=Path(__file__).resolve().parents[1]
     legacy=pd.read_csv(root/"inputs"/"V18.2_PEA_ACTIONS_MASTER.csv",sep=";",encoding="utf-8-sig",dtype=str,low_memory=False)
     result=filter_actions(legacy,root/"config"/"V21_3_ACTION_UNIVERSE_1829_ISINS.parts")
-    worklist=build_worklist(result.included)
-    assert len(worklist)==result.materialized_missing_count
-    assert len(worklist)>0
+    overlay_path=materialize_identity_overlay(root)
+    assert overlay_path is not None
+    governed,audit=apply_identity_overlay(result.included,overlay_path)
+    worklist=build_worklist(governed)
+    assert audit["fully_hydrated"]==360
+    assert len(worklist)==39
     assert worklist["isin"].is_unique
+    assert worklist["name"].notna().all()
     assert not worklist["scoring_eligible"].any()
     assert worklist["source_provenance_required"].all()
     if "yahoo_ticker" in worklist.columns:
