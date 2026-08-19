@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 import json
 import os
 
@@ -36,6 +37,27 @@ def _read_csv(path: Path) -> pd.DataFrame:
 def _write_csv(frame: pd.DataFrame, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(path, sep=";", index=False, encoding="utf-8-sig")
+
+
+def _seed_anchor_date(seed: pd.DataFrame) -> str | None:
+    if seed is None or seed.empty or "as_of_date" not in seed.columns:
+        return None
+    parsed = pd.to_datetime(seed["as_of_date"], errors="coerce").dropna()
+    if parsed.empty:
+        return None
+    return pd.Timestamp(parsed.max()).date().isoformat()
+
+
+def _seed_staleness_days(seed_anchor: str | None, now: datetime, cfg: dict) -> int | None:
+    if not seed_anchor:
+        return None
+    try:
+        anchor_day = pd.Timestamp(seed_anchor).date()
+    except (TypeError, ValueError):
+        return None
+    tz = ZoneInfo(str(cfg["data_policy"].get("timezone", "Europe/Paris")))
+    local_day = now.astimezone(tz).date()
+    return int((local_day - anchor_day).days)
 
 
 def _label_preopen_outcomes(ledger: pd.DataFrame, seed: pd.DataFrame, generated_at: str) -> tuple[pd.DataFrame, int]:
@@ -89,10 +111,9 @@ def _label_preopen_outcomes(ledger: pd.DataFrame, seed: pd.DataFrame, generated_
         out.at[idx, "outcome_labeled_at_utc"] = generated_at
         labeled_indices.append(idx)
 
-    # Rank realized absolute moves only within each original PREOPEN snapshot.
     if labeled_indices:
         labeled = out.loc[labeled_indices].copy()
-        for snapshot_time, group in labeled.groupby("snapshot_generated_at_utc", dropna=False):
+        for _, group in labeled.groupby("snapshot_generated_at_utc", dropna=False):
             ranks = pd.to_numeric(group["realized_abs_return_pct"], errors="coerce").rank(method="min", ascending=False)
             for idx, rank in ranks.items():
                 out.at[idx, "realized_abs_move_rank_within_snapshot"] = float(rank)
@@ -189,6 +210,8 @@ def run(root: Path = ROOT, *, phase: str | None = None, now: datetime | None = N
 
     seed_path = root / cfg["state"]["context_seed_path"]
     seed = _read_csv(seed_path)
+    seed_anchor = _seed_anchor_date(seed)
+    seed_staleness = _seed_staleness_days(seed_anchor, current, cfg)
     outdir = root / "outputs" / "daily_tct_ct"
     auditdir = root / "outputs" / "audit"
     mobile = root / "outputs" / "mobile"
@@ -196,14 +219,29 @@ def run(root: Path = ROOT, *, phase: str | None = None, now: datetime | None = N
     auditdir.mkdir(parents=True, exist_ok=True)
     mobile.mkdir(parents=True, exist_ok=True)
     generated_at = current.isoformat()
-    window_start, window_end = catalyst_window(selected_phase, current, cfg)
+    window_start, window_end = catalyst_window(selected_phase, current, cfg, anchor_date=seed_anchor)
 
     errors: list[str] = []
+    stale_limit = int(cfg["data_policy"].get("max_preopen_seed_staleness_calendar_days", 5))
+    stale_preopen = bool(selected_phase == "PREOPEN" and seed_staleness is not None and seed_staleness > stale_limit)
+    local_day = current.astimezone(ZoneInfo(str(cfg["data_policy"].get("timezone", "Europe/Paris")))).date().isoformat()
+    stale_postmarket = bool(selected_phase == "POSTMARKET" and seed_anchor and seed_anchor != local_day)
+
     if seed.empty:
         candidates = pd.DataFrame()
         output = pd.DataFrame()
         market = GlobalMarketSnapshot(None, None, {}, {}, "NOT_FETCHED_NO_SEED", ())
         errors.append("TCT_DAILY_CONTEXT_SEED_MISSING")
+    elif stale_preopen:
+        candidates = pd.DataFrame()
+        output = pd.DataFrame()
+        market = GlobalMarketSnapshot(None, None, {}, {}, "NOT_FETCHED_STALE_PREOPEN_SEED", ())
+        errors.append("PREOPEN_SEED_TOO_STALE")
+    elif stale_postmarket:
+        candidates = pd.DataFrame()
+        output = pd.DataFrame()
+        market = GlobalMarketSnapshot(None, None, {}, {}, "NOT_FETCHED_NO_COMPLETED_EU_SESSION", ())
+        errors.append("POSTMARKET_SEED_NOT_CURRENT_SESSION")
     else:
         candidates = select_catalyst_candidates(seed, cfg)
         if candidates.empty:
@@ -256,6 +294,8 @@ def run(root: Path = ROOT, *, phase: str | None = None, now: datetime | None = N
         "generated_at_utc": generated_at,
         "window_start_utc": window_start.isoformat(),
         "window_end_utc": window_end.isoformat(),
+        "seed_anchor_date": seed_anchor,
+        "seed_staleness_calendar_days": seed_staleness,
         "seed_rows": int(len(seed)),
         "candidate_rows": int(len(candidates)),
         "output_rows": int(len(output)),
