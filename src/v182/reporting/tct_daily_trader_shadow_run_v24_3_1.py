@@ -60,6 +60,16 @@ def _completed_daily_history(history: pd.DataFrame, cfg: dict, now: datetime | N
     return history, False
 
 
+def _latest_completed_close(history: pd.DataFrame) -> float | None:
+    if history is None or history.empty:
+        return None
+    for column in history.columns:
+        if str(column).strip().lower() == "close":
+            series = pd.to_numeric(history[column], errors="coerce").dropna()
+            return None if series.empty else float(series.iloc[-1])
+    return None
+
+
 def _flatten(base: pd.Series, snapshot: dict) -> dict:
     entry_components = snapshot.pop("entry_components", {}) or {}
     exit_components = snapshot.pop("exit_components", {}) or {}
@@ -184,6 +194,7 @@ def run(root: Path = ROOT) -> dict:
                 snap = {
                     "status": "DATA_INSUFFICIENT",
                     "bars": 0,
+                    "reference_close": None,
                     "intraday_data_used": False,
                     "new_market_data_downloads_required": False,
                     "decision_influence": 0.0,
@@ -196,11 +207,13 @@ def run(root: Path = ROOT) -> dict:
                 deferred_current_day += int(deferred)
                 try:
                     snap = compute_daily_weekly_trader_snapshot(history, cfg)
+                    snap["reference_close"] = _latest_completed_close(history)
                 except Exception as exc:
                     errors.append(f"{ticker}:{type(exc).__name__}:{str(exc)[:160]}")
                     snap = {
                         "status": "ERROR_SHADOW",
                         "bars": int(len(history)),
+                        "reference_close": _latest_completed_close(history),
                         "intraday_data_used": False,
                         "new_market_data_downloads_required": False,
                         "decision_influence": 0.0,
@@ -234,6 +247,7 @@ def run(root: Path = ROOT) -> dict:
         "quasi_realtime_data_used": False,
         "new_market_data_downloads_required": False,
         "context_seed_persisted": True,
+        "context_seed_reference_close_persisted": True,
         "decision_influence": 0.0,
         "score_influence": 0.0,
         "sizing_influence": 0.0,
