@@ -1,0 +1,108 @@
+name: TCT V24.2 one-shot real-data smoke
+
+on:
+  push:
+    branches:
+      - agent/tct-v24-2-real-smoke
+    paths:
+      - .github/workflows/tct_v24_2_real_smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PEA_PROVENANCE_PATH: state/provenance/OBSERVATION_PROVENANCE.csv
+      FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
+      ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+      EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore latest production OHLCV cache read-only
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cache/
+          key: smoke-ohlcv-${{ github.run_id }}
+          restore-keys: |
+            ohlcv-v3-
+
+      - name: Restore latest TCT state read-only
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            state/TCT_V24_1_7_T1_STATE.json
+            state/TCT_V24_2_0_SIGNAL_LEDGER.csv
+            state/TCT_V24_2_0_INTRADAY_OBSERVATIONS.csv
+          key: smoke-tct-state-${{ github.run_id }}
+          restore-keys: |
+            daily-tct-state-
+            tct-v2417-state-
+
+      - name: Restore provenance read-only
+        uses: actions/cache/restore@v4
+        with:
+          path: state/provenance/
+          key: smoke-provenance-${{ github.run_id }}
+          restore-keys: |
+            daily-provenance-v2181-
+            provenance-v2161-
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Compile runtime
+        run: python -m compileall -q src
+
+      - name: Real-data collection
+        run: python -m v182.reporting.run
+
+      - name: Canonical TCT CT calculation
+        run: python -m v182.reporting.daily_tct_ct_runner
+
+      - name: TCT V24.2 real-data shadow
+        run: python -m v182.reporting.tct_intraday_shadow_run
+
+      - name: TCT V24.2.1 analytics
+        run: python -m v182.reporting.tct_intraday_shadow_analysis
+
+      - name: Show smoke audits
+        if: always()
+        run: |
+          echo '--- DAILY_TCT_CT_AUDIT ---'
+          test -f outputs/audit/DAILY_TCT_CT_AUDIT.json && cat outputs/audit/DAILY_TCT_CT_AUDIT.json || true
+          echo '--- TCT_INTRADAY_V24_2_0_AUDIT ---'
+          test -f outputs/audit/TCT_INTRADAY_V24_2_0_AUDIT.json && cat outputs/audit/TCT_INTRADAY_V24_2_0_AUDIT.json || true
+          echo '--- TCT_INTRADAY_V24_2_1_ANALYTICS ---'
+          test -f outputs/audit/TCT_INTRADAY_V24_2_1_ANALYTICS.json && cat outputs/audit/TCT_INTRADAY_V24_2_1_ANALYTICS.json || true
+
+      - name: Upload isolated smoke artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tct-v24-2-real-smoke-${{ github.run_id }}
+          path: |
+            outputs/daily_tct_ct/
+            outputs/audit/DAILY_TCT_CT_AUDIT.json
+            outputs/audit/TCT_INTRADAY_V24_2_0_AUDIT.json
+            outputs/audit/TCT_INTRADAY_V24_2_1_ANALYTICS.json
+            outputs/mobile/ANDROID_DAILY_TCT_CT.md
+            outputs/mobile/ANDROID_TCT_INTRADAY_SHADOW.md
+            outputs/mobile/ANDROID_TCT_INTRADAY_ANALYTICS.md
+            state/TCT_V24_2_0_SIGNAL_LEDGER.csv
+            state/TCT_V24_2_0_INTRADAY_OBSERVATIONS.csv
+          if-no-files-found: warn
+          retention-days: 3
