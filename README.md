@@ -1,87 +1,74 @@
-# V18.2 — Completeness First
+# PEA Analyzer — V21.8.1 production / Data Integrity V21.9
 
-V18.2 conserve la doctrine et les moteurs de la V18.1, mais change la priorité :
-la première mission est de compléter réellement les deux référentiels.
+Le moteur conserve les collecteurs V18.2 comme socle technique, mais l'univers de référence et la gouvernance sont désormais ceux de la chaîne V21.x.
 
-## Séquence
+## Univers canoniques
+
+- **Actions PEA : 1 829 ISIN exacts**, protégés par la whitelist `config/V21_3_ACTION_UNIVERSE_1829_ISINS.parts` et son SHA-256.
+- **ETF PEA : 102 ISIN** dans `inputs/V18.2_PEA_ETF_MASTER.csv`.
+- Les lignes Actions présentes dans la whitelist mais absentes du master historique sont matérialisées comme `WHITELIST_ONLY_MISSING_METADATA` : elles conservent l'identité canonique mais restent **BLOCK_DATA / non scorables** jusqu'à hydratation sourcée. Aucun ticker ni attribut n'est inventé.
+
+## Séquence de collecte
 
 1. `yfinance` bulk sur les historiques Actions.
 2. `yfinance` bulk sur les historiques ETF.
-3. Calcul local de tous les indicateurs dérivables.
-4. `yfinance` info sur les Actions prioritaires.
-5. Consensus Boursorama/Zonebourse en bulk.
-6. ETF ABC Bourse/Boursorama/émetteurs.
-7. Sources officielles pour validation et conflits.
+3. Calcul local des indicateurs dérivables.
+4. `yfinance` info sur les Actions.
+5. Consensus Finnhub lorsque disponible.
+6. Enrichissement ETF via sources publiques/émetteurs et données de marché.
+7. Sources officielles ou attribuées pour validation et conflits.
 8. Scénarios et asymétrie sur les short-lists.
 
-Aucune nouvelle demande systématique des clés déjà transmises.
-Aucune clé n'est stockée dans le package.
+Aucune clé API n'est stockée dans le dépôt. Les valeurs manquantes restent manquantes ; l'imputation neutre est interdite.
+
+## Intégrité de la base maître
+
+Le contrat `config/MASTER_DATA_CONTRACT_V21_9.json` distingue le snapshot courant des données PIT historiques.
+
+Le CI exécute désormais :
+
+- validation format + checksum des ISIN ;
+- unicité des ISIN ;
+- cohérence de l'identité et des statuts de validation ;
+- provenance obligatoire pour les corrections ISIN et identités finales ;
+- contrôle des dates futures ;
+- contrôle de plausibilité des principales variables quantitatives ;
+- profil de couverture des champs d'identité, qualitatifs, fondamentaux et marché ;
+- tests complets Python/référentiels.
+
+Les résultats sont publiés sous `outputs/audit/MASTER_DATA_AUDIT.json`, `MASTER_DATA_AUDIT_ISSUES.csv`, `MASTER_DATA_PROFILE.json` et `MASTER_DATA_FIELD_COVERAGE.csv` dans les artefacts CI.
+
+## Règle backtests / anti-look-ahead
+
+Le master courant est un **snapshot actuel**, pas une reconstruction historique. Les champs dynamiques du master courant ne peuvent donc jamais être utilisés comme vérité historique à une date simulée.
+
+Pour un backtest, toute variable dynamique doit provenir d'une observation horodatée disponible au plus tard à l'instant de décision simulé. Les rendements futurs, MAE/MFE et labels postérieurs sont des résultats uniquement et ne peuvent pas devenir des features. Les holdouts gouvernés restent verrouillés jusqu'à décision explicite.
 
 ## Exécuter en ligne (GitHub Actions)
 
-1. Pousser ce dossier comme repo GitHub.
-2. Settings → Secrets and variables → Actions → ajouter (celles que vous avez) :
-   `MARKETSTACK_API_KEY`, `ALPHA_VANTAGE_API_KEY`, `FINNHUB_API_KEY`, `FRED_API_KEY`, `EIA_API_KEY`,
-   `OPENFIGI_API_KEY` (optionnelle, augmente le débit de résolution des tickers ETF).
-   Seule `FINNHUB_API_KEY` est nécessaire pour la Wave 05 ; les Waves 00-04, 06 et 08 fonctionnent
-   sans aucune clé (yfinance, OpenFIGI en mode gratuit, calculs internes).
-3. Onglet Actions → "V18.2 Completeness First" → "Run workflow" (ou attendre le cron du lundi au vendredi).
-4. Le run pousse dans `outputs/` : les référentiels enrichis, le rapport de couverture avant/après,
-   et dans `outputs/gaps/` les lignes qui restent `INPUT_REQUIRED` (ex : ETF sans ticker mappé,
-   conflits non résolus).
+Secrets/variables possibles : `MARKETSTACK_API_KEY`, `ALPHA_VANTAGE_API_KEY`, `FINNHUB_API_KEY`, `FRED_API_KEY`, `EIA_API_KEY`, `OPENFIGI_API_KEY`.
 
-## Points d'attention avant le premier run
+Les traitements utilisent les sources disponibles selon la politique de fallback du référentiel. OpenFIGI peut servir à la résolution d'identité/ticker ; un résultat non résolu reste en gap et n'est jamais remplacé par un ticker inventé.
 
-- **ETF sans `yahoo_ticker`** : résolu automatiquement en Wave 00 via l'API
-  OpenFIGI (gratuite, ISIN -> ticker par place de cotation), voir
-  `src/v182/mapping/etf_isin_resolver.py`. Aucune clé requise pour démarrer ;
-  définir `OPENFIGI_API_KEY` en secret GitHub augmente le débit autorisé.
-  Les ISIN non résolus (place de cotation non couverte par la table de
-  correspondance interne) partent dans
-  `outputs/gaps/V18.2_ETF_TICKER_OPENFIGI_GAPS.csv` — jamais de ticker inventé.
-  On peut aussi compléter `config/V18.2_ETF_TICKER_MAP.csv` à la main.
-- **Waves 05/06 (consensus & ETF)** : le scraping Boursorama/Zonebourse/ABC Bourse prévu à l'origine
-  a été remplacé par des sources plus fiables, faute d'avoir pu valider la structure HTML réelle de
-  ces sites (pages rendues dynamiquement, sélecteurs CSS non vérifiables sans navigateur réel) :
-  - **Wave 05** (consensus Actions hors champs `*_yf`) : API Finnhub (`FINNHUB_API_KEY`), gratuite,
-    60 req/min. Alimente `consensus`, `consensus_rating`, `consensus_score`, `buy_n`, `hold_n`,
-    `sell_n`, `n_analysts`, `target_price`, `consensus_period`.
-  - **Wave 06** (ETF) : la majorité des colonnes ETF manquantes (`perf_1y/3y/5y_pct`) sont en fait
-    couvertes par la **Wave 03** dès que la Wave 00 a résolu le ticker Yahoo de l'ETF — pas besoin de
-    scraping. Seul `dividend_yield_pct`/`dividend_data_status` est complété ici via yfinance.
-  - **Gap connu, sans solution gratuite identifiée** : `morningstar_rating` et `rank_cat_1y/3y/5y`
-    sont des métriques propriétaires Morningstar. Elles restent `NON_OBSERVE` plutôt que d'être
-    scrapées de façon non fiable ou devinées. Si vous avez un accès Morningstar Direct/Office, c'est
-    la seule voie fiable pour ces colonnes.
-  - Le squelette de scraping générique (`waves.wave_public_table`, piloté par
-    `config/V18.2_SCRAPE_SELECTORS.json`) reste disponible en repli optionnel si vous voulez
-    tenter Boursorama/ABC Bourse malgré tout — à vos risques, sélecteurs non validés.
-- **Wave 08 (scénarios)** : formule interne simplifiée basée sur l'ATR14, à valider/affiner —
-  ce n'est pas une prédiction, seulement un remplissage cohérent à partir de la volatilité
-  observée (voir docstring de `wave8_scenarios`).
-- **Wave 07** : ne résout un conflit en quarantaine que si une valeur validée est fournie dans
-  `config/V18.2_MANUAL_OVERRIDES.csv` — jamais de valeur inventée. Aucune API officielle gratuite
-  et automatisable n'existe (Euronext Reference Data et l'AMF GECO sont consultables manuellement
-  mais pas via API publique) : Wave 07 génère donc en plus une **check-list humaine**
-  (`outputs/gaps/V18.2_WAVE07_WORKLIST.csv`) avec, pour chaque conflit non résolu et chaque gap
-  critique PEA (`pea_confidence`, `broker_pea_confirmed`, `corporate_status`), un lien direct vers
-  la fiche Euronext officielle (réutilise `euronext_link`, déjà présent pour 97% des Actions) et
-  un lien vers la base GECO de l'AMF. Une fois vérifié à la main, reporter la valeur dans
-  `V18.2_MANUAL_OVERRIDES.csv` pour qu'elle soit appliquée avec evidence A au run suivant.
+## Sources et données propriétaires
+
+- Les performances et données de marché observables sont calculées/récupérées via les sources autorisées configurées.
+- `morningstar_rating` et les rangs de catégorie restent `NON_OBSERVE` lorsqu'aucune source attribuée/autorisée n'est disponible ; ils ne sont pas devinés.
+- Les conflits de données sont mis en quarantaine et ne sont remplacés automatiquement que par une observation de meilleure preuve, ou plus fraîche à niveau de preuve égal.
+- Les contrôles manuels officiels passent par des worklists et des overrides sourcés, jamais par une valeur libre non attribuée.
 
 ## Exécuter en local
 
-```
+```bash
 pip install -e .[test]
+python -m v182.audit.master_data --root . --fail-fatal
+python -m v182.audit.master_data_profile
 pytest -q
-python -m v182.reporting.run
 ```
 
+## Gouvernance
 
-## Release corrigée opérationnelle
-
-- Référentiels intégrés : 1 486 actions avec tickers consolidés et 102 ETF avec identité validée.
-- Checkpoints isolés par identifiant de run.
-- Seuils bloquants : 100 % tickers, absence de régression, au moins 90 % de succès OHLCV.
-- Les résultats sont publiés comme artefacts Excel et via pull request, jamais poussés directement sur la branche principale.
-- `OPENFIGI_API_KEY` est transmis par secret GitHub, sans être stocké dans le dépôt.
+- Publication des changements par pull request ; pas de modification directe de `main` par les runs automatiques.
+- Les anomalies **FATAL** bloquent la validation.
+- Les anomalies **BLOCK_DATA** mettent la donnée concernée hors influence jusqu'à correction sourcée.
+- Aucune correction factuelle (ISIN, ticker, identité, qualitatif) n'est inventée ; seule une normalisation déterministe de format peut être automatisée sans source externe.
