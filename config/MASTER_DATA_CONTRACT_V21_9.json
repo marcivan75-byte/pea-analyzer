@@ -37,11 +37,16 @@
     "morningstar_rating_range": [1, 5],
     "risk_indicator_range": [1, 7],
     "percentage_rank_range": [0, 100],
+    "ohlcv_last_semantics": "PRICE_NOT_TIMESTAMP",
+    "last_close_semantics": "PRICE",
     "out_of_domain_policy": "BLOCK_DATA_PENDING_SOURCE_REVIEW"
   },
   "time_and_provenance": {
     "future_evidence_timestamp": "FATAL",
     "per_field_provenance": true,
+    "freshness_comparison": "PARSED_UTC_TIMESTAMP_ONLY",
+    "numeric_value_as_timestamp": "FORBIDDEN",
+    "ohlcv_timestamp_field": "ohlcv_as_of_OR_EXPLICIT_TA_PERF_AS_OF",
     "current_snapshot_is_historical_truth": false
   },
   "backtest": {
@@ -55,6 +60,8 @@
   "automation": {
     "run_master_integrity_in_ci": true,
     "run_field_coverage_profile_in_ci": true,
+    "run_identity_hydration_gap_report_in_ci": true,
+    "run_excluded_legacy_quarantine_report_in_ci": true,
     "input_master_changes_trigger_ci": true,
     "fatal_issues_block_merge": true,
     "block_data_issues_do_not_receive_neutral_values": true
