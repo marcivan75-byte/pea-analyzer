@@ -277,7 +277,12 @@ def resolve_identity_rows(
         quotes = [raw_quotes] if isinstance(raw_quotes, dict) else list(raw_quotes or [])
         quote, rank, search_similarity = _select_eea_quote(quotes, matches)
         if quote is None:
-            non_eea = next((q for q in quotes if str(q.get("quoteType") or "").upper() == "EQUITY" and str(q.get("symbol") or "").strip()), None)
+            non_eea = next((
+                q for q in quotes
+                if str(q.get("quoteType") or "").upper() == "EQUITY"
+                and str(q.get("symbol") or "").strip()
+                and not _is_eea_yahoo_quote(q)
+            ), None)
             overlay_rows.append({
                 "isin": isin,
                 "name": representative_name,
