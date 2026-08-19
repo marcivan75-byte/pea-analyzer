@@ -42,6 +42,20 @@ def _normalized_value(value):
     except InvalidOperation: return ("TEXT",text.casefold())
 
 
+def _as_of_timestamp(value) -> pd.Timestamp | None:
+    """Parse freshness metadata; arbitrary strings/numbers are never dates."""
+    if is_missing_value(value):
+        return None
+    text=str(value).strip()
+    # Guard legacy numeric price cells such as "64.14" from pandas epoch parsing.
+    try:
+        Decimal(text)
+    except InvalidOperation:
+        parsed=pd.to_datetime(text,errors="coerce",utc=True)
+        return None if pd.isna(parsed) else parsed
+    return None
+
+
 def values_equal(left,right) -> bool:
     return _normalized_value(left)==_normalized_value(right)
 
@@ -60,8 +74,13 @@ def decide(existing: dict | None, incoming: dict) -> MergeDecision:
         return MergeDecision("REPLACE","HIGHER_EVIDENCE")
     if new_rank<old_rank:
         return MergeDecision("KEEP","LOWER_EVIDENCE")
-    if str(incoming.get("as_of","") or "")>str(existing.get("as_of","") or ""):
+
+    old_as_of=_as_of_timestamp(existing.get("as_of"))
+    new_as_of=_as_of_timestamp(incoming.get("as_of"))
+    if new_as_of is not None and (old_as_of is None or new_as_of>old_as_of):
         return MergeDecision("REPLACE","FRESHER_EQUAL_EVIDENCE")
     if not values_equal(incoming_value,existing.get("value")):
+        if new_as_of is None and incoming.get("as_of") not in (None,""):
+            return MergeDecision("QUARANTINE","INVALID_FRESHNESS_TIMESTAMP")
         return MergeDecision("QUARANTINE","CONFLICT_EQUAL_EVIDENCE")
     return MergeDecision("KEEP","NO_CHANGE")

@@ -1,9 +1,11 @@
-name: Committee Master V21.7.0 full audit validation
+name: Committee Master V21.8.1 data and code audit validation
 
 on:
   pull_request:
     paths:
       - "config/**"
+      - "inputs/*.csv"
+      - "schemas/**"
       - "src/**/*.py"
       - "tests/**/*.py"
       - "pyproject.toml"
@@ -31,6 +33,14 @@ jobs:
         run: ruff check src tests
       - name: Static Python safety audit
         run: python -m v182.audit.static_code_audit --root . --output outputs/audit/PYTHON_STATIC_AUDIT.json --fail-high
+      - name: Master data integrity audit
+        run: python -m v182.audit.master_data --root . --fail-fatal
+      - name: Qualitative and quantitative coverage profile
+        run: python -m v182.audit.master_data_profile
+      - name: Canonical identity hydration worklist
+        run: python -m v182.audit.identity_hydration
+      - name: Audit excluded legacy Action rows
+        run: python -m v182.audit.master_data_exclusions
       - name: Referential and governance integrity
         run: |
           python - <<'PY'
@@ -50,6 +60,7 @@ jobs:
           sr=json.loads(Path("config/SECTOR_ROTATION_V2_SHADOW.json").read_text())
           integrity=json.loads(Path("config/FULL_REFERENTIAL_INTEGRITY.json").read_text())
           master=json.loads(Path("config/V18.2_MASTER_CONFIG.json").read_text())
+          data_contract=json.loads(Path("config/MASTER_DATA_CONTRACT_V21_9.json").read_text())
           assert a["criteria_count"] == 633 == integrity["actions"]["criteria_count"]
           assert integrity["actions"]["universe_count"] == 1829
           assert e["criteria_count"] == 268 == integrity["etf"]["criteria_count"]
@@ -58,6 +69,10 @@ jobs:
           assert master["quality_gates"]["actions_min_rows"] == 1829
           assert master["dynamic_weighting"]["enabled"] is True
           assert master["collection_audit"]["after_each_wave"] is True
+          assert data_contract["universes"]["ACTION"]["expected_count"] == 1829
+          assert data_contract["universes"]["ETF"]["expected_count"] == 102
+          assert data_contract["backtest"]["look_ahead"] == "FAIL_CLOSED"
+          assert data_contract["backtest"]["current_master_dynamic_values_for_historical_dates"] == "FORBIDDEN"
           for h in ("CT","MT","LT","SHORT","TOP_DOWN"):
               assert abs(sum(a["weights"][h].values())-1.0) < 1e-6
           assert a["governance"]["positive_unvalidated_overlay_can_create_buy"] is False
@@ -97,15 +112,24 @@ jobs:
           for key in ("RLS","AVCR","RARS_OPPORTUNITY","DQS"):
               assert abs(sum(sr["score_weights"][key].values())-1.0) < 1e-9
           assert sr["valuation_thresholds"]["promising_but_overvalued_avcr_min"] < sr["valuation_thresholds"]["no_chase_avcr_min"]
-          print("V21.7.0 integrity OK: 1829/633 Actions, 102/268 ETF, exact TCT, Gold 102/11, Sector Rotation V2 shadow, bias-safe virtual book")
+          print("V21.8.1 integrity OK: 1829/633 Actions, 102/268 ETF, exact TCT, Gold 102/11, Sector Rotation V2 shadow, PIT-safe master contract")
           PY
       - name: Full pytest suite
         run: pytest -q
-      - name: Upload static audit
+      - name: Upload audit outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: python-static-audit-${{ github.run_id }}
-          path: outputs/audit/PYTHON_STATIC_AUDIT.json
+          name: committee-master-audit-${{ github.run_id }}
+          path: |
+            outputs/audit/PYTHON_STATIC_AUDIT.json
+            outputs/audit/MASTER_DATA_AUDIT.json
+            outputs/audit/MASTER_DATA_AUDIT_ISSUES.csv
+            outputs/audit/MASTER_DATA_PROFILE.json
+            outputs/audit/MASTER_DATA_FIELD_COVERAGE.csv
+            outputs/audit/MASTER_DATA_EXCLUDED_LEGACY_ACTIONS.csv
+            outputs/audit/MASTER_DATA_EXCLUSIONS_SUMMARY.json
+            outputs/gaps/ACTION_IDENTITY_HYDRATION_WORKLIST.csv
+            outputs/gaps/ACTION_IDENTITY_HYDRATION_SUMMARY.json
           if-no-files-found: warn
           retention-days: 30

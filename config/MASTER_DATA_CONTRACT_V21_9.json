@@ -1,0 +1,69 @@
+{
+  "version": "V21.9_DATA_INTEGRITY_2026_08_19",
+  "status": "GOVERNED_REFERENCE_CONTRACT",
+  "scope": ["PEA_ACTIONS", "PEA_ETF", "MODULE_INPUTS", "BACKTEST_IDENTITY"],
+  "primary_key": "isin",
+  "universes": {
+    "ACTION": {
+      "expected_count": 1829,
+      "canonical_source": "config/V21_3_ACTION_UNIVERSE_1829_ISINS.parts",
+      "identity_only_policy": "BLOCK_DATA_UNTIL_ATTRIBUTED_HYDRATION"
+    },
+    "ETF": {
+      "expected_count": 102,
+      "canonical_source": "inputs/V18.2_PEA_ETF_MASTER.csv",
+      "identity_only_policy": "NOT_ALLOWED_FOR_FINAL_VALIDATED_STATUS"
+    }
+  },
+  "isin": {
+    "format": "ISO_6166_12_CHAR_ALPHANUMERIC_WITH_NUMERIC_CHECK_DIGIT",
+    "checksum": "LUHN_MOD10_AFTER_ALPHA_EXPANSION",
+    "normalization_allowed": ["UPPERCASE", "REMOVE_WHITESPACE"],
+    "checksum_failure": "FATAL",
+    "duplicate": "FATAL",
+    "correction_policy": "NEVER_GUESS; REQUIRE_ORIGINAL_ISIN_ATTRIBUTED_SOURCE_AND_VALIDATION_DATE"
+  },
+  "qualitative": {
+    "principle": "MISSING_REMAINS_MISSING",
+    "neutral_imputation": false,
+    "conflicting_evidence": "QUARANTINE",
+    "final_identity_requires_provenance": true,
+    "source_priority": "HIGHER_EVIDENCE_THEN_FRESHER_EQUAL_EVIDENCE"
+  },
+  "quantitative": {
+    "principle": "PARSEABLE_FINITE_AND_DOMAIN_PLAUSIBLE",
+    "negative_ter_allowed": false,
+    "negative_aum_allowed": false,
+    "morningstar_rating_range": [1, 5],
+    "risk_indicator_range": [1, 7],
+    "percentage_rank_range": [0, 100],
+    "ohlcv_last_semantics": "PRICE_NOT_TIMESTAMP",
+    "last_close_semantics": "PRICE",
+    "out_of_domain_policy": "BLOCK_DATA_PENDING_SOURCE_REVIEW"
+  },
+  "time_and_provenance": {
+    "future_evidence_timestamp": "FATAL",
+    "per_field_provenance": true,
+    "freshness_comparison": "PARSED_UTC_TIMESTAMP_ONLY",
+    "numeric_value_as_timestamp": "FORBIDDEN",
+    "ohlcv_timestamp_field": "ohlcv_as_of_OR_EXPLICIT_TA_PERF_AS_OF",
+    "current_snapshot_is_historical_truth": false
+  },
+  "backtest": {
+    "identity_join_key": "isin",
+    "dynamic_feature_rule": "OBSERVATION_TIMESTAMP_MUST_BE_LESS_THAN_OR_EQUAL_TO_SIMULATED_DECISION_TIMESTAMP",
+    "current_master_dynamic_values_for_historical_dates": "FORBIDDEN",
+    "forward_returns": "OUTCOME_ONLY_NEVER_FEATURE",
+    "final_holdout": "LOCKED_UNTIL_GOVERNED_RELEASE",
+    "look_ahead": "FAIL_CLOSED"
+  },
+  "automation": {
+    "run_master_integrity_in_ci": true,
+    "run_field_coverage_profile_in_ci": true,
+    "run_identity_hydration_gap_report_in_ci": true,
+    "run_excluded_legacy_quarantine_report_in_ci": true,
+    "input_master_changes_trigger_ci": true,
+    "fatal_issues_block_merge": true,
+    "block_data_issues_do_not_receive_neutral_values": true
+  }
+}

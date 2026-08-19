@@ -1,6 +1,6 @@
 {
-  "version": "2026-08-12_V21.4",
-  "purpose": "Prevent silent reduction of complete Actions/ETF/Gold referentials, preserve the 1829 universe, and separate validated/reference weights from unvalidated challengers.",
+  "version": "2026-08-19_V21.8.1_DATA_INTEGRITY",
+  "purpose": "Prevent silent reduction of complete Actions/ETF/Gold referentials, preserve the 1829/102 canonical universes, enforce master-data integrity, and separate validated/reference weights from unvalidated challengers.",
   "actions": {
     "source": "MATRICE_MAITRE_REPONDERATION_PEA_ACTIONS_ETF_TOUS_CRITERES_2026-08-11.xlsx / 02_Actions_633",
     "criteria_count": 633,
@@ -12,7 +12,7 @@
     "reference_weights": {"path":"config/V21_ACTIONS_REFERENCE_V21_0.json","version":"V21.0_REFERENCE_PRE_V21_3","role":"FINAL_REFERENCE_UNTIL_CHALLENGER_VALIDATION"},
     "challenger_weights": {"path":"config/V21_ACTIONS_CRITERIA_REGISTRY.json","version":"V21.4_ACTIONS_AUDIT_HARDENED_2026_08_12","role":"SHADOW_CHALLENGER_NO_PERFORMANCE_ATTRIBUTION"},
     "derived_decision_factors_v21_4": ["morningstar_action_score","target_upside_gt4_score","target_upside_growth_score","dividend_gt4_score","total_return_potential_score_AUDIT_ONLY","sector_rotation_score","sector_catchup_score","action_catchup_score","market_high_regime_score","distance_high_52w_pct","catchup_52w_score","high_52w_bonus_malus_points"],
-    "rule": "All 633 master criteria and all 1829 exact Action ISINs remain. V21.4 derived factors never delete source criteria. V21.0 weights remain final reference until V21.4 passes dedicated PIT/OOS validation."
+    "rule": "All 633 master criteria and all 1829 exact Action ISINs remain. Identity-only canonical rows are BLOCK_DATA until attributed hydration. Derived factors never delete source criteria. V21.0 weights remain final reference until challengers pass dedicated PIT/OOS validation."
   },
   "etf": {
     "source": "MATRICE_MAITRE_REPONDERATION_PEA_ACTIONS_ETF_TOUS_CRITERES_2026-08-11.xlsx / 03_ETF_268",
@@ -32,8 +32,20 @@
     "intra_block_weights": "PROVISIONAL_RECONSTRUCTION_NOT_BACKTEST_OPTIMISED",
     "rule": "All 102 Gold criteria remain traceable. Missing data stay MISSING. No performance claim until dedicated PIT backtest."
   },
+  "master_data_integrity": {
+    "contract": "config/MASTER_DATA_CONTRACT_V21_9.json",
+    "primary_key": "isin",
+    "isin_checksum_required": true,
+    "duplicate_isin_fatal": true,
+    "current_snapshot_is_historical_truth": false,
+    "numeric_value_as_timestamp_forbidden": true,
+    "ohlcv_last_semantics": "PRICE_NOT_TIMESTAMP",
+    "identity_only_rows_scoring_eligible": false,
+    "excluded_legacy_rows_scoring_eligible": false,
+    "input_csv_changes_trigger_ci": true
+  },
   "dynamic_weighting": {"policy":"AVAILABLE_ACTIVE_CRITERIA_RENORMALIZED_TO_100_PERCENT","minimum_coverage_gates_preserved":true,"neutral_imputation_forbidden":true,"tct_setup_exception":"SETUP intentionally inactive; available active TCT pillars renormalize in V24.1.8"},
-  "provenance": {"per_field":true,"persistent_state":"state/provenance/OBSERVATION_PROVENANCE.csv","actual_source_separate_from_theoretical_hint":true},
-  "performance": {"bias_safe_next_run_entry":true,"single_position_per_isin":true,"model_version_cohorts":true,"stale_committee_transactions_forbidden":true},
+  "provenance": {"per_field":true,"persistent_state":"state/provenance/OBSERVATION_PROVENANCE.csv","actual_source_separate_from_theoretical_hint":true,"freshness_comparison":"PARSED_UTC_TIMESTAMPS_ONLY"},
+  "performance": {"bias_safe_next_run_entry":true,"single_position_per_isin":true,"model_version_cohorts":true,"stale_committee_transactions_forbidden":true,"current_master_dynamic_values_for_historical_backtests":"FORBIDDEN"},
   "t1_t2": {"scope":"ACTION_TCT_ONLY","etf_forbidden":true,"gold_forbidden":true,"actions_non_tct_forbidden":true}
 }

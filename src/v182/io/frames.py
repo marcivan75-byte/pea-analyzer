@@ -53,11 +53,21 @@ def _cell(frame:pd.DataFrame,isin,field:str):
 
 
 def _latest_as_of(frame:pd.DataFrame,isin,candidates:tuple[str,...])->str:
-    values=[]
+    """Return the latest parseable UTC evidence timestamp from candidate columns.
+
+    Values that are not timestamps are deliberately ignored. This prevents a
+    price-like legacy cell from being promoted to freshness metadata.
+    """
+    values: list[tuple[pd.Timestamp, str]]=[]
     for field in candidates:
         value=_cell(frame,isin,field)
-        if not is_missing(value): values.append(str(value).strip())
-    return max(values) if values else ""
+        if is_missing(value):
+            continue
+        parsed=pd.to_datetime(value,errors="coerce",utc=True)
+        if pd.isna(parsed):
+            continue
+        values.append((parsed,str(value).strip()))
+    return max(values,key=lambda item:item[0])[1] if values else ""
 
 
 def _has_yfinance_legacy_marker(frame:pd.DataFrame,isin)->bool:
@@ -85,7 +95,9 @@ def _legacy_field_metadata(frame:pd.DataFrame,isin,field:str,incoming:dict)->dic
 
     source=str(incoming.get("source") or "").strip().upper()
     if source=="INTERNAL_FROM_OHLCV" and field in OHLCV_BOOTSTRAP_FIELDS:
-        as_of=_latest_as_of(frame,isin,("ta_as_of","ohlcv_last","perf_as_of","as_of_date"))
+        # ohlcv_last in the legacy master is a price, not a timestamp. Never use
+        # it as freshness evidence. Prefer explicit technical/performance dates.
+        as_of=_latest_as_of(frame,isin,("ta_as_of","perf_as_of","as_of_date"))
         return {"evidence_level":"C","as_of":as_of,"bootstrap":"LEGACY_OHLCV_C"}
 
     if source=="YFINANCE" and field in YFINANCE_SELF_DESCRIBING_FIELDS:
