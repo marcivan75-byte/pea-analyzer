@@ -36,6 +36,9 @@ jobs:
           restore-keys: |
             ohlcv-v3-
 
+      - name: Purge obsolete intraday cache
+        run: rm -rf data/cache/actions_intraday_5m
+
       - name: Restore TCT state
         uses: actions/cache/restore@v4
         with:
