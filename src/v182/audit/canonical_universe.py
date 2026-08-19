@@ -66,7 +66,7 @@ def filter_actions(frame: pd.DataFrame, path: str | Path, *, materialize_missing
         skeleton["isin"]=missing
         if "asset_class" in skeleton.columns: skeleton["asset_class"]="ACTION"
         skeleton["canonical_seed_status"]=IDENTITY_ONLY_STATUS
-        included=pd.concat([included,skeleton],ignore_index=True)
+        included=pd.concat([included,skeleton],ignore_index=True).copy()
     if len(included)!=EXPECTED_ACTIONS or included["isin"].nunique()!=EXPECTED_ACTIONS:
         raise RuntimeError(f"V21_3_ACTION_UNIVERSE_FILTER_COUNT:{len(included)}:{included['isin'].nunique()}")
     order={isin:i for i,isin in enumerate(isins)}; included["_canonical_order"]=included["isin"].map(order)
