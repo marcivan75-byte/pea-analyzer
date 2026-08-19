@@ -1,0 +1,160 @@
+name: Final Governed Data Hydration Audit 2026-08-19
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: final-governed-data-hydration-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  hydrate-audit-final:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PEA_PROVENANCE_PATH: state/provenance/OBSERVATION_PROVENANCE.csv
+      FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
+      ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+      EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+      OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore persistent OHLCV cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cache/
+          key: final-hydration-ohlcv-${{ github.run_id }}
+          restore-keys: |
+            ohlcv-v3-
+
+      - name: Restore field provenance
+        uses: actions/cache/restore@v4
+        with:
+          path: state/provenance/
+          key: final-hydration-provenance-${{ github.run_id }}
+          restore-keys: |
+            provenance-v2181-
+            daily-provenance-v2181-
+            provenance-v2161-
+            provenance-v216-
+            provenance-v215-
+            provenance-v214-
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install project
+        run: pip install -e ".[test]"
+
+      - name: Governed pre-run baseline
+        run: |
+          python -m v182.audit.master_data --root . --fail-fatal
+          python -m v182.audit.master_data_profile
+          python -m v182.audit.identity_hydration
+          pytest -q tests/test_identity_overlay_store.py tests/test_numeric_domain_quarantine.py tests/test_master_data_integrity.py
+
+      - name: Run full unified enrichment pipeline
+        id: unified
+        continue-on-error: true
+        run: python -m v182.reporting.unified_runner
+
+      - name: Post-hydration governed audit
+        if: always()
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from datetime import datetime, timezone
+          import json
+          import pandas as pd
+          from v182.audit.master_data import audit_frame
+          from v182.audit.master_data_profile import profile_frame
+          from v182.io.frames import is_missing
+
+          root=Path('.')
+          outdir=root/'outputs'/'audit'; outdir.mkdir(parents=True,exist_ok=True)
+          paths={
+              'ACTION':root/'outputs'/'V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv',
+              'ETF':root/'outputs'/'V18.2_PEA_ETF_MASTER_ENRICHED.csv',
+          }
+          payload={'generated_at_utc':datetime.now(timezone.utc).isoformat(),'universes':{}}
+          issue_frames=[]; coverage_frames=[]; fatal=0; numeric_block=0
+          for universe,path in paths.items():
+              if not path.exists():
+                  payload['universes'][universe]={'status':'MISSING_OUTPUT','path':str(path)}
+                  fatal+=1
+                  continue
+              frame=pd.read_csv(path,sep=';',encoding='utf-8-sig',dtype=str,low_memory=False)
+              result=audit_frame(frame,universe)
+              coverage,coverage_summary=profile_frame(frame,universe)
+              issues=result.issues.copy()
+              if not issues.empty:
+                  issues['source_file']=str(path)
+                  issue_frames.append(issues)
+                  numeric_block += int(issues['code'].astype(str).str.startswith('NUMERIC_').sum())
+              coverage['source_file']=str(path); coverage_frames.append(coverage)
+              fatal += int(result.summary['issue_counts']['FATAL'])
+              payload['universes'][universe]={
+                  'status':'AUDITED','path':str(path),'integrity':result.summary,
+                  'coverage':coverage_summary,
+                  'critical_identity_missing':{
+                      field:int(frame[field].map(is_missing).sum()) if field in frame.columns else len(frame)
+                      for field in ('name','yahoo_ticker')
+                  },
+              }
+          issues_all=pd.concat(issue_frames,ignore_index=True) if issue_frames else pd.DataFrame(columns=['universe','row','isin','field','code','severity','value','detail','source_file'])
+          coverage_all=pd.concat(coverage_frames,ignore_index=True) if coverage_frames else pd.DataFrame()
+          issues_all.to_csv(outdir/'FINAL_HYDRATION_ISSUES.csv',sep=';',encoding='utf-8-sig',index=False)
+          coverage_all.to_csv(outdir/'FINAL_HYDRATION_FIELD_COVERAGE.csv',sep=';',encoding='utf-8-sig',index=False)
+          payload['fatal_count']=fatal
+          payload['numeric_domain_issue_count']=numeric_block
+          payload['unified_summary_exists']=(root/'outputs'/'unified'/'UNIFIED_SUMMARY_LATEST.json').exists()
+          (outdir/'FINAL_HYDRATION_AUDIT.json').write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding='utf-8')
+          print(json.dumps(payload,ensure_ascii=False,indent=2))
+          if fatal: raise SystemExit(f'FINAL_HYDRATION_FATAL:{fatal}')
+          if numeric_block: raise SystemExit(f'FINAL_HYDRATION_NUMERIC_DOMAIN_ISSUES:{numeric_block}')
+          PY
+
+      - name: Decision-weighted data coverage
+        if: always()
+        run: python -m v182.audit.weighted_coverage
+
+      - name: Full regression suite
+        if: always()
+        run: pytest -q
+
+      - name: Show unified summary
+        if: always()
+        run: |
+          if [ -f outputs/unified/UNIFIED_SUMMARY_LATEST.json ]; then cat outputs/unified/UNIFIED_SUMMARY_LATEST.json; fi
+
+      - name: Upload final evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-data-hydration-audit-${{ github.run_id }}
+          path: |
+            outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv
+            outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
+            outputs/audit/FINAL_HYDRATION_AUDIT.json
+            outputs/audit/FINAL_HYDRATION_ISSUES.csv
+            outputs/audit/FINAL_HYDRATION_FIELD_COVERAGE.csv
+            outputs/audit/WEIGHTED_INPUT_COVERAGE.json
+            outputs/audit/WEIGHTED_INPUT_COVERAGE.csv
+            outputs/unified/UNIFIED_SUMMARY_LATEST.json
+            outputs/data_audit/
+            outputs/gaps/
+            state/provenance/
+          if-no-files-found: warn
+          retention-days: 30
