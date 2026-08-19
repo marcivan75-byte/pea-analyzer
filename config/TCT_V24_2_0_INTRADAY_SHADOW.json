@@ -31,6 +31,8 @@
     "minimum_lag_sessions": 1,
     "max_execution_sessions_after_signal": 3,
     "same_session_execution_forbidden": true,
+    "completed_sessions_only": true,
+    "current_calendar_session_persistence_forbidden": true,
     "ledger_path": "state/TCT_V24_2_0_SIGNAL_LEDGER.csv",
     "observation_ledger_path": "state/TCT_V24_2_0_INTRADAY_OBSERVATIONS.csv"
   },
