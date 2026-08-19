@@ -59,13 +59,14 @@ jobs:
             src/v182/sources/global_market_snapshot.py \
             src/v182/features/tct_catalyst_context_v24_4.py \
             src/v182/reporting/tct_next_session_catalyst_run.py \
-            src/v182/reporting/tct_v24_4_pit_validator.py
+            src/v182/reporting/tct_v24_4_pit_validator.py \
+            src/v182/reporting/tct_v24_4_pit_validator_runtime.py
 
       - name: Run one next-session catalyst snapshot
         run: python -m v182.reporting.tct_next_session_catalyst_run
 
       - name: Validate accumulated V24.4 PIT ledger
-        run: python -m v182.reporting.tct_v24_4_pit_validator
+        run: python -m v182.reporting.tct_v24_4_pit_validator_runtime
 
       - name: Publish catalyst summary
         if: always()
