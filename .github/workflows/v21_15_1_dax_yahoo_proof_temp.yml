@@ -1,0 +1,110 @@
+name: V21.15.1 TEMP DAX Yahoo proof
+
+on:
+  push:
+    branches:
+      - data/etf-dax-ticker-v21-15-1
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v21-15-1-dax-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove-dax-yahoo-history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: pyproject.toml
+
+      - name: Install project
+        run: python -m pip install -e .
+
+      - name: Prove governed DAX mapping and real Yahoo history
+        run: |
+          python - <<'PY'
+          from datetime import datetime, timezone
+          from pathlib import Path
+          import json
+
+          import pandas as pd
+          import yfinance as yf
+
+          mapping = pd.read_csv(
+              'config/V18.2_ETF_TICKER_MAP.csv',
+              sep=';', encoding='utf-8-sig', dtype=str,
+          )
+          row = mapping.loc[mapping['isin'].eq('LU0252633754')]
+          assert len(mapping) == 102
+          assert mapping['isin'].nunique() == 102
+          assert len(row) == 1
+          ticker = row.iloc[0]['yahoo_ticker']
+          assert ticker == 'DAX.PA', ticker
+          assert row.iloc[0]['ticker_primary'] == 'DAX'
+          assert row.iloc[0]['mic'] == 'XPAR'
+
+          frame = yf.download(
+              ticker,
+              start='2020-01-01',
+              interval='1d',
+              auto_adjust=True,
+              actions=False,
+              progress=False,
+              threads=False,
+              timeout=30,
+          )
+          assert not frame.empty, 'DAX.PA returned no Yahoo OHLCV'
+
+          if isinstance(frame.columns, pd.MultiIndex):
+              close = frame['Close'][ticker] if ticker in frame['Close'].columns else frame['Close'].iloc[:, 0]
+          else:
+              close = frame['Close']
+          close = pd.to_numeric(close, errors='coerce').dropna()
+          assert not close.empty, 'DAX.PA has no numeric Close'
+
+          first = pd.Timestamp(close.index.min()).tz_localize(None)
+          last = pd.Timestamp(close.index.max()).tz_localize(None)
+          assert first <= pd.Timestamp('2020-01-07'), first
+          assert last >= pd.Timestamp('2026-08-13'), last
+          assert len(close) >= 1500, len(close)
+
+          payload = {
+              'status': 'SUCCESS',
+              'version': 'V21.15.1_DAX_YAHOO_NETWORK_PROOF',
+              'generated_at_utc': datetime.now(timezone.utc).isoformat(),
+              'isin': 'LU0252633754',
+              'ticker': ticker,
+              'first_close_date': first.date().isoformat(),
+              'last_close_date': last.date().isoformat(),
+              'numeric_close_sessions': int(len(close)),
+              'requested_start': '2020-01-01',
+              'mapping_rows': int(len(mapping)),
+              'unique_isins': int(mapping['isin'].nunique()),
+              'weight_or_threshold_changes': False,
+              'real_orders_enabled': False,
+          }
+          out = Path('outputs/audit/V21_15_1_DAX_YAHOO_NETWORK_PROOF.json')
+          out.parent.mkdir(parents=True, exist_ok=True)
+          out.write_text(json.dumps(payload, indent=2), encoding='utf-8')
+          print(json.dumps(payload, indent=2))
+          PY
+
+      - name: Upload proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: V21_15_1_DAX_YAHOO_NETWORK_PROOF_${{ github.run_id }}
+          path: outputs/audit/V21_15_1_DAX_YAHOO_NETWORK_PROOF.json
+          if-no-files-found: error
+          retention-days: 14
