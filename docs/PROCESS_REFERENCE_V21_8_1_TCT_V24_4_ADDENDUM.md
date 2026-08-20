@@ -1,17 +1,23 @@
 # Process V21.8.1 — Addendum normatif TCT V24.4.0
 
 Date : 19/08/2026
+Mise à jour de statut WIP : 20/08/2026
 
-Cet addendum complète le process de référence V21.8.1 et la note V24.3.1. En cas d'ambiguïté sur le chantier TCT courant, les règles ci-dessous sont normatives pour V24.4.0.
+Cet addendum complète le process de référence V21.8.1 et la note V24.3.1. En cas d'ambiguïté sur le chantier TCT courant, les règles ci-dessous sont normatives pour V24.4.0. La règle globale de distinction entre chantier actif et accumulation de preuves est précisée dans `PROCESS_GOVERNANCE_STATUS_2026_08_20.md`.
 
 ## Statut
 
 - Production canonique : **V21.8.1 inchangée**.
 - Challenger TCT daily/weekly : **V24.3.1 SHADOW**.
 - Couche de contexte prochaine séance : **V24.4.0 Next-Session Catalyst Cycle SHADOW**.
-- WIP actif : amélioration TCT ; CT reste gelé.
+- Développement TCT V24.4.0 : **IMPLEMENTATION_CLOSED**.
+- Validation prospective : **SHADOW_EVIDENCE_ACCUMULATION**.
+- Slot WIP de développement : **libéré** ; l'accumulation PIT passive ne constitue pas un chantier actif.
+- CT reste gelé ; aucun transfert vers CT sans validation spécifique ultérieure.
 - Holdout final : fermé.
 - Ordres réels : désactivés.
+
+Toute modification des poids, seuils, logique, sources structurantes ou critères de promotion de V24.4.0 réouvre un chantier WIP. Une promotion éventuelle constitue également un nouveau chantier distinct.
 
 ## Règle fonctionnelle
 
@@ -57,3 +63,5 @@ Le workflow V24.4.0 est séparé du run complet : il ne relance ni la collecte g
 Les seuils de maturité sont pré-enregistrés dans `config/TCT_V24_4_0_VALIDATION_GATES.json`. Aucun retuning n'est autorisé avant maturité et aucune promotion automatique n'est possible après maturité.
 
 La prochaine promotion TCT éventuelle devra démontrer en PIT/OOS que V24.4.0 améliore réellement l'identification des mouvements quotidiens importants par rapport à V24.3.1 seul.
+
+Tant que cette maturité n'est pas atteinte, V24.4.0 reste gelé en `SHADOW_EVIDENCE_ACCUMULATION` et n'occupe pas le slot WIP de développement.
