@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -37,9 +37,8 @@ def load_worklist(path: str | Path = DEFAULT_WORKLIST) -> pd.DataFrame:
 
 
 def _candidate_listing_date(candidate: dict[str, Any]) -> date | None:
-    # The Euronext table date is already an official listing/IPO date. When an
-    # official detail page exposes its own IPO date, require agreement rather
-    # than silently preferring one source representation over the other.
+    # Euronext's table date is official. If the official detail page also
+    # exposes an IPO date, require exact agreement instead of choosing one.
     table_date = _parse_date(candidate.get("expected_date"))
     detail_date = _parse_date(candidate.get("euronext_ipo_date_text"))
     if table_date and detail_date and table_date != detail_date:
@@ -54,7 +53,7 @@ def qualify_euronext_candidates(
     as_of: date,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     targets = {
-        str(row["isin"]).strip(): {
+        str(row["isin"]).strip().upper(): {
             "ticker": str(row.get("ticker") or "").strip(),
             "first_observed_date": _parse_date(row.get("first_observed_date")),
         }
@@ -82,23 +81,26 @@ def qualify_euronext_candidates(
         rows = grouped.get(isin, [])
         if not rows:
             continue
+
         parsed_rows: list[tuple[date, dict[str, Any]]] = []
-        malformed = False
+        malformed_rows: list[dict[str, Any]] = []
         for candidate in rows:
             listing_date = _candidate_listing_date(candidate)
             if listing_date is None:
-                malformed = True
-                quarantine.append({
-                    "isin": isin,
-                    "ticker": target["ticker"],
-                    "status": "QUARANTINE",
-                    "reason": "OFFICIAL_LISTING_DATE_MISSING_OR_CONFLICTING",
-                    "source_name": "EURONEXT_OFFICIAL_IPO_SHOWCASE",
-                    "source_url": str(candidate.get("euronext_showcase_url") or EURONEXT_IPO_ALL),
-                })
-                continue
-            parsed_rows.append((listing_date, candidate))
-        if malformed and not parsed_rows:
+                malformed_rows.append(candidate)
+            else:
+                parsed_rows.append((listing_date, candidate))
+
+        # Any ambiguous official representation for this ISIN blocks the ISIN.
+        if malformed_rows:
+            quarantine.append({
+                "isin": isin,
+                "ticker": target["ticker"],
+                "status": "QUARANTINE",
+                "reason": "OFFICIAL_LISTING_DATE_MISSING_OR_CONFLICTING",
+                "source_name": "EURONEXT_OFFICIAL_IPO_SHOWCASE",
+                "source_url": str(malformed_rows[0].get("euronext_showcase_url") or EURONEXT_IPO_ALL),
+            })
             continue
 
         unique_dates = sorted({value for value, _ in parsed_rows})
@@ -139,7 +141,7 @@ def qualify_euronext_candidates(
                 "source_url": EURONEXT_IPO_ALL,
             })
             continue
-        if listing_date > first_observed + pd.Timedelta(days=LISTING_CONFLICT_TOLERANCE_DAYS):
+        if listing_date > first_observed + timedelta(days=LISTING_CONFLICT_TOLERANCE_DAYS):
             quarantine.append({
                 "isin": isin,
                 "ticker": target["ticker"],
