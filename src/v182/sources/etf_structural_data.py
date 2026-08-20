@@ -21,8 +21,8 @@ HSBC_FACTSHEET_URL = (
     "{isin_lower}/fi/en/factsheet"
 )
 
-# Small providers whose official product page does not expose a stable ISIN-only
-# route. Every page is still validated against the exact ISIN before extraction.
+# Small providers whose official page does not expose a stable ISIN-only route.
+# Every response is still validated against the exact ISIN before extraction.
 OFFICIAL_HTML_URLS: dict[str, str] = {
     "IE00B910VR50": "https://www.ssga.com/fr/fr/intermediary/etfs/state-street-spdr-msci-emu-ucits-etf-zpre-gy",
     "IE00B5M1WJ87": "https://www.ssga.com/fr/fr/intermediary/etfs/state-street-spdr-sp-euro-dividend-aristocrats-ucits-etf-dist-spyw-gy",
@@ -35,8 +35,8 @@ PCT_LABELS = (
     r"Ongoing charge figure",
     r"Ongoing charges figure",
     r"Total expense ratio",
-    r"\bTER\b",
     r"Total des Frais sur Encours",
+    r"\bTER\b",
 )
 FUND_ASSET_LABELS = (
     r"Actif géré",
@@ -52,12 +52,10 @@ def _clean_text(value: str) -> str:
     return re.sub(r"[\u00a0\u202f\t]+", " ", str(value or "")).replace("\r", "\n")
 
 
-def _finite(value: Any) -> float | None:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
+def _html_text(value: str) -> str:
+    from bs4 import BeautifulSoup
+
+    return BeautifulSoup(str(value or ""), "lxml").get_text(" ", strip=True)
 
 
 def _localized_number(token: str, *, percent: bool = False) -> float | None:
@@ -77,6 +75,7 @@ def _localized_number(token: str, *, percent: bool = False) -> float | None:
             text = text.replace(",", "")
         else:
             left, right = text.split(",", 1)
+            # English fund sizes commonly use one thousands separator: 1,092 m.
             text = left + right if len(right) == 3 and len(left.lstrip("-")) <= 3 else left + "." + right
     try:
         number = float(text)
@@ -104,7 +103,7 @@ def _eur_m_after_label(text: str, labels: tuple[str, ...]) -> float | None:
             continue
         snippet = clean[start.end(): start.end() + 180]
 
-        # Currency before value, with optional explicit scale: EUR 1,092 m.
+        # Currency before value, optional explicit scale: EUR 1,092 m / €4.76 B.
         before = re.search(
             r"(?:EUR|€)\s*([0-9][0-9 .,'\u00a0\u202f]*)\s*(bn|billion|milliards?|b|mn|millions?|m)?\b",
             snippet,
@@ -118,7 +117,7 @@ def _eur_m_after_label(text: str, labels: tuple[str, ...]) -> float | None:
                     return round(number * 1000.0, 6)
                 if scale in {"mn", "million", "millions", "m"}:
                     return round(number, 6)
-                # No scale means an absolute EUR amount.
+                # No scale means an absolute EUR amount, never a unitless guess.
                 if number >= 1_000_000:
                     return round(number / 1_000_000.0, 6)
 
@@ -154,7 +153,6 @@ def _source_date(text: str, fallback: str) -> str:
 
 
 def _observation(isin: str, field: str, value: Any, *, source: str, source_url: str, evidence: str, as_of: str) -> dict:
-    now = datetime.now(timezone.utc).isoformat()
     return {
         "universe": "ETF",
         "isin": isin,
@@ -163,7 +161,7 @@ def _observation(isin: str, field: str, value: Any, *, source: str, source_url: 
         "source": source,
         "source_url": source_url,
         "evidence_level": evidence,
-        "collected_at": now,
+        "collected_at": datetime.now(timezone.utc).isoformat(),
         "as_of": as_of,
         "validation_status": "EXACT_ISIN_SOURCE_MATCH",
     }
@@ -269,7 +267,7 @@ def _collect_official_html(session, isin: str, today: date) -> tuple[list[dict],
         response.raise_for_status()
         observations = _observations_from_text(
             isin,
-            response.text,
+            _html_text(response.text),
             source="Issuer official product page",
             source_url=url,
             evidence="A",
@@ -290,7 +288,7 @@ def _collect_justetf(session, isin: str, today: date, wanted_fields: set[str]) -
         response.raise_for_status()
         parsed = _observations_from_text(
             isin,
-            response.text,
+            _html_text(response.text),
             source="justETF exact-ISIN profile",
             source_url=url,
             evidence="B",
