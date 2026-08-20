@@ -38,6 +38,7 @@ jobs:
 
           from v182.audit.master_data import audit_frame
           from v182.io.frames import apply_observations, is_missing, load_master
+          from v182.reporting.etf_structure_refresh import _governed_structural_observations
           from v182.sources.etf_structural_data import collect_etf_structural_data
 
           root=Path('.')
@@ -50,14 +51,18 @@ jobs:
               return round(float((~frame[field].apply(is_missing)).mean()*100.0),2)
 
           before={field:coverage(master,field) for field in ('ter_pct','fund_total_assets_eur_m','aum_m')}
-          observations,failures,collector=collect_etf_structural_data(master,today=date(2026,8,20),delay_seconds=0.02)
+          raw_observations,failures,collector=collect_etf_structural_data(master,today=date(2026,8,20),delay_seconds=0.02)
+          observations=_governed_structural_observations(raw_observations)
           enriched,quarantine=apply_observations(master,observations)
           integrity=audit_frame(enriched,'ETF').summary
           after={field:coverage(enriched,field) for field in ('ter_pct','fund_total_assets_eur_m','aum_m')}
 
-          obs=pd.DataFrame(observations)
-          if not obs.empty:
-              obs.to_csv(out/'ETF_STRUCTURAL_OBSERVATIONS.csv',sep=';',encoding='utf-8-sig',index=False)
+          raw=pd.DataFrame(raw_observations)
+          governed=pd.DataFrame(observations)
+          if not raw.empty:
+              raw.to_csv(out/'ETF_STRUCTURAL_OBSERVATIONS_RAW.csv',sep=';',encoding='utf-8-sig',index=False)
+          if not governed.empty:
+              governed.to_csv(out/'ETF_STRUCTURAL_OBSERVATIONS_GOVERNED.csv',sep=';',encoding='utf-8-sig',index=False)
           pd.DataFrame(failures).to_csv(out/'ETF_STRUCTURAL_FAILURES.csv',sep=';',encoding='utf-8-sig',index=False)
           pd.DataFrame(quarantine).to_csv(out/'ETF_STRUCTURAL_QUARANTINE.csv',sep=';',encoding='utf-8-sig',index=False)
           enriched.to_csv(out/'ETF_MASTER_ENRICHED_AUDIT.csv',sep=';',encoding='utf-8-sig',index=False)
@@ -66,7 +71,9 @@ jobs:
               'generated_at_utc':datetime.now(timezone.utc).isoformat(),
               'rows':len(master),'unique_isin':int(master['isin'].nunique()),
               'coverage_before_pct':before,'coverage_after_pct':after,
-              'collector':collector,'failures':len(failures),'quarantined':len(quarantine),
+              'collector':collector,'raw_observations':len(raw_observations),
+              'governed_observations':len(observations),
+              'failures':len(failures),'quarantined':len(quarantine),
               'integrity':integrity,
           }
           (out/'V21_10_ETF_STRUCTURAL_REAL_AUDIT.json').write_text(json.dumps(payload,ensure_ascii=False,indent=2,default=str),encoding='utf-8')
@@ -74,11 +81,14 @@ jobs:
 
           assert len(master)==102 and master['isin'].nunique()==102
           assert integrity['issue_counts']['FATAL']==0
-          assert len(observations)>0
-          for row in observations:
-              assert row['isin'] in set(master['isin'].astype(str))
-              assert row['evidence_level'] in {'A','B'}
-              assert row['validation_status']=='EXACT_ISIN_SOURCE_MATCH'
+          assert len(raw_observations)>0
+          assert len(observations)==len(raw_observations)
+          for raw_row,row in zip(raw_observations,observations,strict=True):
+              assert raw_row['isin'] in set(master['isin'].astype(str))
+              assert raw_row['evidence_level'] in {'A','B'}
+              assert raw_row['validation_status']=='EXACT_ISIN_SOURCE_MATCH'
+              assert row['validation_status']=='ISIN_MATCHED'
+              assert row['identity_validation_detail']=='EXACT_ISIN_SOURCE_MATCH'
               assert row['field'] in {'ter_pct','fund_total_assets_eur_m','aum_m'}
               if row['field']=='ter_pct':
                   assert 0 <= float(row['value']) <= 10
