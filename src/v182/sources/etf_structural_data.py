@@ -136,18 +136,29 @@ def _eur_m_after_label(text: str, labels: tuple[str, ...]) -> float | None:
 
 
 def _source_date(text: str, fallback: str) -> str:
+    """Extract a source observation date without accepting unrelated future dates.
+
+    Product pages can contain future distribution/rebalance dates that are not the
+    observation date of the structural facts. The caller-provided fallback is the
+    latest date the source can legitimately represent for this collection pass.
+    Parsed dates more than one day after it are ignored rather than promoted into
+    provenance. If no eligible labelled/generic date remains, the fallback is kept.
+    """
     clean = _clean_text(text)
+    fallback_ts = pd.to_datetime(fallback, errors="coerce", dayfirst=True)
+    latest_allowed = None if pd.isna(fallback_ts) else fallback_ts + pd.Timedelta(days=1)
     patterns = (
         r"Date de VL et d['’]actif géré\s*([0-3]?\d/[01]?\d/20\d{2})",
         r"(?:data as at|as of|au)\s*([0-3]?\d\s+[A-Za-zÀ-ÿ]+\s+20\d{2})",
         r"([0-3]?\d/[01]?\d/20\d{2})",
     )
     for pattern in patterns:
-        match = re.search(pattern, clean, flags=re.I)
-        if not match:
-            continue
-        parsed = pd.to_datetime(match.group(1), errors="coerce", dayfirst=True)
-        if pd.notna(parsed):
+        for match in re.finditer(pattern, clean, flags=re.I):
+            parsed = pd.to_datetime(match.group(1), errors="coerce", dayfirst=True)
+            if pd.isna(parsed):
+                continue
+            if latest_allowed is not None and parsed > latest_allowed:
+                continue
             return parsed.date().isoformat()
     return fallback
 

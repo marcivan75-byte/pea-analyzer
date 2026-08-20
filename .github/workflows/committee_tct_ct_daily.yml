@@ -63,6 +63,7 @@ jobs:
           key: daily-provenance-v2181-${{ github.run_id }}
           restore-keys: |
             daily-provenance-v2181-
+            provenance-v2181-
             provenance-v2161-
 
       - uses: actions/setup-python@v5
@@ -79,6 +80,10 @@ jobs:
 
       - name: Daily collection and enrichment
         run: python -m v182.reporting.run
+
+      - name: Replay governed ETF structural state V21.15
+        continue-on-error: true
+        run: python -m v182.reporting.etf_structure_state_replay
 
       - name: ETF CT LT V21.14 shadow context
         continue-on-error: true
@@ -115,6 +120,9 @@ jobs:
         run: |
           if [ -f outputs/audit/DAILY_TCT_CT_AUDIT.json ]; then
             cat outputs/audit/DAILY_TCT_CT_AUDIT.json
+          fi
+          if [ -f outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json ]; then
+            cat outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json
           fi
           if [ -f outputs/audit/ETF_CT_LT_V21_14_SHADOW.json ]; then
             cat outputs/audit/ETF_CT_LT_V21_14_SHADOW.json
@@ -172,11 +180,13 @@ jobs:
             outputs/mobile/ETF_CT_LT_SHADOW.md
             outputs/mobile/ANDROID_TCT_DAILY_TRADER_SHADOW.md
             outputs/audit/DAILY_TCT_CT_AUDIT.json
+            outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json
             outputs/audit/ETF_CT_LT_V21_14_SHADOW.json
             outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json
             outputs/audit/TCT_V24_4_0_PIT_CLOSE_LEDGER_AUDIT.json
             outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json
             outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx
+            state/provenance/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv
             state/tct_context/TCT_DAILY_TRADER_LATEST.csv
             state/tct_context/TCT_DAILY_CLOSE_LEDGER.csv
             data/cache/actions/history_manifest.json

@@ -109,17 +109,61 @@ def test_exact_isin_collector_proof_maps_to_existing_governed_merge_status():
         "source_url":"https://issuer.example/factsheet.pdf",
         "evidence_level":"A",
         "as_of":"2026-06-30",
+        "collected_at":"2026-08-20T10:00:00Z",
         "validation_status":"EXACT_ISIN_SOURCE_MATCH",
     }]
-    rows=_governed_structural_observations(raw)
+    rows=_governed_structural_observations(raw,now="2026-08-20T12:00:00Z")
     assert rows[0]["validation_status"] == "ISIN_MATCHED"
     assert rows[0]["identity_validation_detail"] == "EXACT_ISIN_SOURCE_MATCH"
     assert raw[0]["validation_status"] == "EXACT_ISIN_SOURCE_MATCH"
 
 
+def test_future_structural_as_of_is_rejected_before_master_merge():
+    raw=[{
+        "universe":"ETF",
+        "isin":"IE00B910VR50",
+        "field":"ter_pct",
+        "value":0.08,
+        "source":"Issuer official product page",
+        "source_url":"https://issuer.example/product",
+        "evidence_level":"A",
+        "as_of":"2026-11-30",
+        "collected_at":"2026-08-20T10:00:00Z",
+        "validation_status":"EXACT_ISIN_SOURCE_MATCH",
+    }]
+    rows=_governed_structural_observations(raw,now="2026-08-20T12:00:00Z")
+    assert rows[0]["validation_status"] == "TEMPORAL_REJECTED_FUTURE_AS_OF"
+    assert rows[0]["temporal_validation_detail"] == "STRUCTURAL_FUTURE_AS_OF_REJECTED"
+    assert "identity_validation_detail" not in rows[0]
+
+
+def test_unparseable_structural_as_of_is_rejected_before_master_merge():
+    raw=[{
+        "universe":"ETF",
+        "isin":"IE00B910VR50",
+        "field":"ter_pct",
+        "value":0.08,
+        "source":"issuer",
+        "evidence_level":"A",
+        "as_of":"not-a-date",
+        "collected_at":"2026-08-20T10:00:00Z",
+        "validation_status":"EXACT_ISIN_SOURCE_MATCH",
+    }]
+    rows=_governed_structural_observations(raw,now="2026-08-20T12:00:00Z")
+    assert rows[0]["validation_status"] == "TEMPORAL_REJECTED_AS_OF_UNPARSEABLE"
+    assert rows[0]["temporal_validation_detail"] == "STRUCTURAL_AS_OF_UNPARSEABLE"
+
+
 def test_unexpected_structural_validation_status_remains_fail_closed():
-    raw=[{"validation_status":"UNEXPECTED_STATUS","isin":"FR0013380607","field":"ter_pct","value":0.25}]
-    rows=_governed_structural_observations(raw)
+    raw=[{
+        "validation_status":"UNEXPECTED_STATUS",
+        "isin":"FR0013380607",
+        "field":"ter_pct",
+        "value":0.25,
+        "as_of":"2026-06-30",
+        "collected_at":"2026-08-20T10:00:00Z",
+    }]
+    rows=_governed_structural_observations(raw,now="2026-08-20T12:00:00Z")
     assert rows[0]["validation_status"] == "UNEXPECTED_STATUS"
     assert "identity_validation_detail" not in rows[0]
 
