@@ -45,8 +45,8 @@ jobs:
       - name: Validate V21.16 integrity logic
         run: |
           python -m compileall -q src/v182/features/etf_fund_flows_v1.py src/v182/sources/etf_fund_flows.py src/v182/reporting/etf_fund_flows_shadow_run.py
-          ruff check src/v182/features/etf_fund_flows_v1.py src/v182/sources/etf_fund_flows.py tests/test_etf_fund_flows_v1.py tests/test_etf_fund_flows_v21_16_window_readiness.py tests/test_etf_fund_flows_v21_16_temporal_integrity.py
-          pytest -q tests/test_etf_fund_flows_v1.py tests/test_etf_fund_flows_v21_16_window_readiness.py tests/test_etf_fund_flows_v21_16_temporal_integrity.py
+          ruff check src/v182/features/etf_fund_flows_v1.py src/v182/sources/etf_fund_flows.py tests/test_etf_fund_flows_v1.py tests/test_etf_fund_flows_v21_16_window_readiness.py tests/test_etf_fund_flows_v21_16_temporal_integrity.py tests/test_etf_fund_flows_v21_16_blackrock_dates.py
+          pytest -q tests/test_etf_fund_flows_v1.py tests/test_etf_fund_flows_v21_16_window_readiness.py tests/test_etf_fund_flows_v21_16_temporal_integrity.py tests/test_etf_fund_flows_v21_16_blackrock_dates.py
 
       - name: Audit restored PIT history before run
         env:
