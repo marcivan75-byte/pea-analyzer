@@ -63,6 +63,24 @@ def test_split_keeps_covid_stress_library_out_of_primary_calibration():
     assert set(split.stress["date"].dt.year) == {2020, 2021, 2022}
 
 
+def test_stress_end_date_includes_the_entire_last_calendar_day():
+    frame = pd.DataFrame(
+        {
+            "date": [
+                "2022-12-31 00:00:00+00:00",
+                "2022-12-31 23:59:59+00:00",
+                "2023-01-01 00:00:00+00:00",
+            ],
+            "value": [1, 2, 3],
+        }
+    )
+    split = split_frame(frame, date_col="date", as_of="2026-08-20", policy=_policy())
+
+    assert split.stress["value"].tolist() == [1, 2]
+    assert split.primary["value"].tolist() == [3]
+    assert split.outside.empty
+
+
 def test_primary_calibration_fails_closed_if_stress_rows_are_mixed_in():
     frame = pd.DataFrame({"date": ["2021-06-01", "2024-06-01"], "score": [1.0, 2.0]})
     with pytest.raises(ValueError, match="STRESS_ROWS_FORBIDDEN_IN_PRIMARY_CALIBRATION"):
