@@ -1,13 +1,14 @@
 ﻿ID;Source;Mode;Evidence;Freshness days;Universe;Coverage;Priority rank
-SRC001;Yahoo Finance / yfinance;NO_KEY_BULK;C;1;Actions+ETF;OHLCV, volumes, corporate information, estimates when exposed;1
+SRC001;Yahoo Finance / yfinance;NO_KEY_BULK;C;1;Actions+ETF;OHLCV, volumes, corporate information, estimates when exposed, raw ETF metadata;1
 SRC002;Marketstack;API;B;1;Actions+ETF;OHLCV gap filling and validation;2
 SRC003;Alpha Vantage;API;B;1;Actions+ETF;OHLCV and fundamentals gap filling;3
 SRC004;Boursorama Bulk;PUBLIC_TABLE;B;7;Actions+ETF;Consensus, Morningstar, market and ETF tables;2
 SRC005;Zonebourse Bulk;PUBLIC_TABLE;B;7;Actions;Consensus, estimates and revisions;2
-SRC006;ABC Bourse Bulk;PUBLIC_TABLE;B;30;ETF;TER, AUM, benchmark, distribution, theme;2
-SRC007;Issuer / KID / Factsheet;OFFICIAL;A;90;Actions+ETF;Official structure and fundamentals;3
+SRC006;ABC Bourse Bulk;PUBLIC_TABLE;B;30;ETF;TER, AUM, benchmark, distribution, theme;4
+SRC007;Issuer / KID / Factsheet;OFFICIAL;A;90;Actions+ETF;Official ETF TER, fund assets, structure and fundamentals;1
 SRC008;AMF / Euronext;OFFICIAL;A;1;Actions+ETF;Regulatory events and identity;2
-SRC009;Finnhub;API;B;1;Actions;Consensus, news and intermarket gaps;3
+SRC009;Finnhub;API;B;1;Actions;Consensus recommendations, revisions and price targets;3
 SRC010;FRED;OFFICIAL_API;A;7;Actions+ETF;Macro Regime Score;2
 SRC011;EIA;OFFICIAL_API;A;7;Actions+ETF;Energy Transmission Score;2
 SRC012;GDELT;PUBLIC_API;C;1;Actions;Bulk news discovery;4
+SRC013;justETF exact-ISIN profile;PUBLIC_PROFILE;B;7;ETF;TER and explicit EUR fund size fallback after issuer source;2
