@@ -13,11 +13,23 @@ from bs4 import BeautifulSoup
 USER_AGENT = "Mozilla/5.0 (compatible; PEA-Analyzer/1.0; +https://github.com/)"
 BLACKROCK_DATE_RE = re.compile(r"as of\s+(\d{1,2}/[A-Za-z]{3}/\d{4})", re.IGNORECASE)
 CONFIDENCE_RANK = {"A": 4, "B": 3, "C": 2, "D": 1, "QUARANTINE": 0}
+VALUE_DATE_FLAGS = {
+    "aum": "aum_as_of_explicit",
+    "nav": "nav_as_of_explicit",
+    "shares_outstanding": "shares_as_of_explicit",
+    "market_price": "market_price_as_of_explicit",
+}
 
 
 def _nonempty(value: object) -> str:
     text = str(value or "").strip()
     return "" if text.lower() in {"", "nan", "none", "<na>", "n/a", "na", "null"} else text
+
+
+def _boolish(value: object) -> bool:
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "oui"}
 
 
 def _parse_number(text: str) -> float | None:
@@ -37,6 +49,28 @@ def _parse_blackrock_date(text: str) -> str:
         except ValueError:
             return datetime.now(timezone.utc).date().isoformat()
     return datetime.now(timezone.utc).date().isoformat()
+
+
+def _blackrock_date_is_explicit(text: str) -> bool:
+    match = BLACKROCK_DATE_RE.search(text)
+    if not match:
+        return False
+    try:
+        datetime.strptime(match.group(1), "%d/%b/%Y")
+    except ValueError:
+        return False
+    return True
+
+
+def _last_market_as_of(history: pd.DataFrame) -> tuple[str, bool]:
+    fallback = datetime.now(timezone.utc).date().isoformat()
+    if history.empty:
+        return fallback, False
+    parsed = pd.to_datetime(history.index, errors="coerce", utc=True)
+    valid = parsed[pd.notna(parsed)]
+    if len(valid) == 0:
+        return fallback, False
+    return valid.max().date().isoformat(), True
 
 
 def _canonical_economic_family(benchmark: str, category: str, geo: str, name: str) -> str:
@@ -144,11 +178,16 @@ def _blackrock_official_snapshot(row: pd.Series, timeout_seconds: float = 20.0) 
     if "aum" not in values and "shares_outstanding" not in values:
         return None, {"instrument_id": row.get("instrument_id"), "stage": "OFFICIAL", "reason": "OFFICIAL_PAGE_FIELDS_NOT_PARSED", "url": url}
     currency_match = re.search(r"Base Currency\s+(USD|EUR|GBP|CHF)", text, flags=re.IGNORECASE)
+    explicit_date = _blackrock_date_is_explicit(text)
     observation = {key: row.get(key, "") for key in row.index}
     observation.update({
         "as_of": _parse_blackrock_date(text), "aum": values.get("aum"), "nav": values.get("nav"),
         "shares_outstanding": values.get("shares_outstanding"), "market_price": np.nan,
         "distribution_per_share": 0.0,
+        "aum_as_of_explicit": explicit_date and values.get("aum") is not None,
+        "nav_as_of_explicit": explicit_date and values.get("nav") is not None,
+        "shares_as_of_explicit": explicit_date and values.get("shares_outstanding") is not None,
+        "market_price_as_of_explicit": False,
         "currency": currency_match.group(1).upper() if currency_match else _nonempty(row.get("currency")),
         "source": "issuer_official", "source_type": "ISSUER_OFFICIAL", "source_url": url,
         "confidence": "A", "source_priority": 100,
@@ -166,6 +205,7 @@ def _yfinance_snapshot(row: pd.Series) -> tuple[dict | None, dict | None]:
         info = instrument.info or {}
         history = instrument.history(period="5d", auto_adjust=False)
         price = None
+        market_as_of, market_date_explicit = _last_market_as_of(history)
         if not history.empty and "Close" in history.columns:
             closes = pd.to_numeric(history["Close"], errors="coerce").dropna()
             price = float(closes.iloc[-1]) if not closes.empty else None
@@ -174,8 +214,12 @@ def _yfinance_snapshot(row: pd.Series) -> tuple[dict | None, dict | None]:
             return None, {"instrument_id": row.get("instrument_id"), "stage": "YFINANCE", "reason": "NO_FLOW_SNAPSHOT_FIELDS"}
         observation = {key: row.get(key, "") for key in row.index}
         observation.update({
-            "as_of": datetime.now(timezone.utc).date().isoformat(), "aum": aum, "nav": nav,
+            "as_of": market_as_of, "aum": aum, "nav": nav,
             "shares_outstanding": shares, "market_price": price, "distribution_per_share": 0.0,
+            "aum_as_of_explicit": False,
+            "nav_as_of_explicit": False,
+            "shares_as_of_explicit": False,
+            "market_price_as_of_explicit": bool(market_date_explicit and price is not None),
             "currency": info.get("currency") or info.get("financialCurrency") or _nonempty(row.get("currency")),
             "source": "yfinance.info/history", "source_type": "YFINANCE",
             "source_url": f"https://finance.yahoo.com/quote/{ticker}/", "confidence": "C", "source_priority": 50,
@@ -200,6 +244,10 @@ def load_official_observations(path: Path) -> pd.DataFrame:
     if "source_priority" not in frame.columns:
         frame["source_priority"] = 100
     frame["source_priority"] = pd.to_numeric(frame["source_priority"], errors="coerce").fillna(100)
+    for value_field, flag_field in VALUE_DATE_FLAGS.items():
+        if flag_field not in frame.columns:
+            values = frame[value_field] if value_field in frame.columns else pd.Series("", index=frame.index)
+            frame[flag_field] = values.fillna("").astype(str).str.strip().ne("")
     return frame
 
 
@@ -218,6 +266,8 @@ def _merge_same_day_observations(snapshot: pd.DataFrame) -> pd.DataFrame:
     for _, group in snapshot.groupby(["instrument_id", "as_of"], sort=False):
         ranked = group.sort_values(["source_priority", "_confidence_rank"], ascending=[False, False])
         merged = ranked.iloc[0].to_dict()
+        for flag_field in VALUE_DATE_FLAGS.values():
+            merged[flag_field] = _boolish(merged.get(flag_field))
         used_confidences = [str(merged.get("confidence") or "D").upper()]
         components = [str(merged.get("source") or "")]
         for _, candidate in ranked.iloc[1:].iterrows():
@@ -225,6 +275,9 @@ def _merge_same_day_observations(snapshot: pd.DataFrame) -> pd.DataFrame:
             for field in fill_fields:
                 if _missing_value(merged.get(field)) and not _missing_value(candidate.get(field)):
                     merged[field] = candidate.get(field)
+                    flag_field = VALUE_DATE_FLAGS.get(field)
+                    if flag_field:
+                        merged[flag_field] = _boolish(candidate.get(flag_field))
                     used = True
             if used:
                 used_confidences.append(str(candidate.get("confidence") or "D").upper())
