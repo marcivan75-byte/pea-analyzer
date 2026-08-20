@@ -152,14 +152,12 @@ def _daily_flow(current: pd.Series, previous: pd.Series) -> tuple[float | None, 
     confidence = _min_confidence(current.get("confidence"), previous.get("confidence"))
     if confidence in {"D", "QUARANTINE"}:
         return None, "UNSCORABLE_LOW_CONFIDENCE", confidence
-
     current_shares = _num(current.get("shares_outstanding"))
     previous_shares = _num(previous.get("shares_outstanding"))
     current_nav = _num(current.get("nav"))
     previous_nav = _num(previous.get("nav"))
     if any(value is not None and value <= 0 for value in (current_shares, previous_shares, current_nav, previous_nav)):
         return None, "QUARANTINED_NON_POSITIVE_STRUCTURE", "QUARANTINE"
-
     if current_shares is not None and previous_shares is not None and current_nav is not None:
         if previous_shares > 0 and previous_nav is not None and current_nav > 0:
             share_ratio = current_shares / previous_shares
@@ -168,7 +166,6 @@ def _daily_flow(current: pd.Series, previous: pd.Series) -> tuple[float | None, 
             if split_like:
                 return None, "QUARANTINED_SPLIT_LIKE_EVENT", "QUARANTINE"
         return (current_shares - previous_shares) * current_nav, "SHARES_NAV", confidence
-
     current_aum = _num(current.get("aum"))
     previous_aum = _num(previous.get("aum"))
     if any(value is not None and value <= 0 for value in (current_aum, previous_aum)):
@@ -232,6 +229,7 @@ def _rolling_features(group: pd.DataFrame) -> pd.DataFrame:
     first_aum = aum.groupby(years).transform("first")
     group["organic_flow_rate_ytd"] = group["flow_ytd"] / first_aum.replace(0.0, np.nan)
     group["history_observations"] = np.arange(1, len(group) + 1)
+    group["flow_observations"] = flow.notna().cumsum()
     return group
 
 
@@ -240,6 +238,17 @@ def add_rolling_features(daily: pd.DataFrame) -> pd.DataFrame:
         return daily.copy()
     groups = [_rolling_features(group.copy()) for _, group in daily.groupby("instrument_id", sort=False)]
     return pd.concat(groups, ignore_index=True) if groups else daily.copy()
+
+
+def _family_flow_share(group: pd.DataFrame) -> pd.Series:
+    currencies = {str(value).strip() for value in group["currency"] if str(value).strip()}
+    if len(currencies) != 1:
+        return pd.Series(np.nan, index=group.index, dtype=float)
+    flows = pd.to_numeric(group["flow_20d"], errors="coerce")
+    denominator = flows.abs().sum(min_count=1)
+    if pd.isna(denominator) or denominator == 0:
+        return pd.Series(np.nan, index=group.index, dtype=float)
+    return flows.div(denominator).mul(100.0)
 
 
 def _current_instruments(rolling: pd.DataFrame, cfg: dict) -> pd.DataFrame:
@@ -255,13 +264,7 @@ def _current_instruments(rolling: pd.DataFrame, cfg: dict) -> pd.DataFrame:
         "economic_family"
     )["organic_flow_rate_20d"].transform("median")
     current["score_peer_relative"] = _rank_score(current["peer_relative_raw"])
-    family_abs_flow = current.groupby("economic_family")["flow_20d"].transform(
-        lambda values: pd.to_numeric(values, errors="coerce").abs().sum(min_count=1)
-    )
-    current["flow_share_family_20d_pct"] = (
-        pd.to_numeric(current["flow_20d"], errors="coerce") / family_abs_flow.replace(0.0, np.nan) * 100.0
-    )
-
+    current["flow_share_family_20d_pct"] = current.groupby("economic_family", group_keys=False).apply(_family_flow_share)
     confirmation_scores = []
     confirmation_states = []
     for _, row in current.iterrows():
@@ -270,7 +273,6 @@ def _current_instruments(rolling: pd.DataFrame, cfg: dict) -> pd.DataFrame:
         confirmation_states.append(state)
     current["score_flow_price_confirmation"] = confirmation_scores
     current["flow_price_state"] = confirmation_states
-
     weights = cfg["score_weights"]
     score_columns = {
         "flow_5d": "score_flow_5d",
@@ -286,15 +288,15 @@ def _current_instruments(rolling: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     min_preliminary = int(cfg.get("preliminary_score_min_observations", 20))
     min_mature = int(cfg.get("mature_score_min_observations", 60))
     for _, row in current.iterrows():
-        history_count = int(row.get("history_observations", 0))
-        if history_count < min_preliminary:
+        flow_count = int(row.get("flow_observations", 0))
+        if flow_count < min_preliminary:
             scores.append(np.nan)
             readiness.append("DATA_INSUFFICIENT_LT20")
             continue
         weighted = [(_num(row.get(column)), float(weights[key])) for key, column in score_columns.items()]
         score = _weighted_mean(weighted)
         scores.append(round(score, 4) if score is not None else np.nan)
-        readiness.append("MATURE_60_PLUS" if history_count >= min_mature else "PRELIMINARY_20_59")
+        readiness.append("MATURE_60_PLUS" if flow_count >= min_mature else "PRELIMINARY_20_59")
     current["efs_shadow"] = scores
     current["efs_readiness"] = readiness
     current["efs_status"] = pd.cut(
@@ -361,7 +363,7 @@ def add_pea_overlay(instruments: pd.DataFrame, families: pd.DataFrame, cfg: dict
         if not bool(row.get("is_pea", False)):
             overlays.append(np.nan)
             continue
-        weights = cfg["pea_overlay_weights"]["young_history"] if int(row.get("history_observations", 0)) < threshold else cfg["pea_overlay_weights"]["mature"]
+        weights = cfg["pea_overlay_weights"]["young_history"] if int(row.get("flow_observations", 0)) < threshold else cfg["pea_overlay_weights"]["mature"]
         overlay = _weighted_mean(
             [
                 (_num(row.get("efs_shadow")), weights["own"]),
@@ -479,7 +481,6 @@ def build_gold_crypto_summary(instruments: pd.DataFrame, cfg: dict) -> dict:
             "gold_flow_composite_shadow": round(composite, 4) if composite is not None else None,
             "decision_influence": 0.0,
         }
-
     crypto_payload = {}
     if not crypto.empty:
         for family, group in crypto.groupby("economic_family"):
