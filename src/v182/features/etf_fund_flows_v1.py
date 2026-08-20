@@ -13,6 +13,9 @@ REQUIRED_SNAPSHOT_COLUMNS = {
     "instrument_id", "as_of", "name", "universe", "asset_class",
     "economic_family", "region", "source", "source_type", "confidence",
 }
+DATE_FLAG_COLUMNS = (
+    "aum_as_of_explicit", "nav_as_of_explicit", "shares_as_of_explicit", "market_price_as_of_explicit",
+)
 
 
 @dataclass(frozen=True)
@@ -34,6 +37,12 @@ def _num(value) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if math.isfinite(number) else None
+
+
+def _boolish(value: object) -> bool:
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "oui"}
 
 
 def _confidence_grade(value: object) -> str:
@@ -99,11 +108,9 @@ def _normalise_snapshot(snapshot: pd.DataFrame) -> pd.DataFrame:
         frame[col] = pd.to_numeric(frame[col], errors="coerce")
 
     def parse_bool(value: object) -> bool:
-        if isinstance(value, bool):
-            return value
-        return str(value or "").strip().lower() in {"1", "true", "yes", "y", "oui"}
+        return _boolish(value)
 
-    for col in ("is_pea", "is_inverse_or_leveraged", "is_synthetic"):
+    for col in ("is_pea", "is_inverse_or_leveraged", "is_synthetic") + DATE_FLAG_COLUMNS:
         if col not in frame.columns:
             frame[col] = False
         frame[col] = frame[col].map(parse_bool)
@@ -121,12 +128,29 @@ def _normalise_snapshot(snapshot: pd.DataFrame) -> pd.DataFrame:
 
 def _derive_period_return(current: pd.Series, previous: pd.Series) -> float | None:
     current_nav, previous_nav = _num(current.get("nav")), _num(previous.get("nav"))
+    current_price, previous_price = _num(current.get("market_price")), _num(previous.get("market_price"))
     distribution = _num(current.get("distribution_per_share")) or 0.0
+    nav_explicit = _boolish(current.get("nav_as_of_explicit")) and _boolish(previous.get("nav_as_of_explicit"))
+    price_explicit = _boolish(current.get("market_price_as_of_explicit")) and _boolish(previous.get("market_price_as_of_explicit"))
+    if nav_explicit and current_nav is not None and previous_nav not in (None, 0.0):
+        return (current_nav + distribution) / previous_nav - 1.0
+    if price_explicit and current_price is not None and previous_price not in (None, 0.0):
+        return current_price / previous_price - 1.0
     if current_nav is not None and previous_nav not in (None, 0.0):
         return (current_nav + distribution) / previous_nav - 1.0
-    current_price, previous_price = _num(current.get("market_price")), _num(previous.get("market_price"))
     if current_price is not None and previous_price not in (None, 0.0):
         return current_price / previous_price - 1.0
+    return None
+
+
+def _flow_denominator(previous: pd.Series) -> float | None:
+    previous_aum = _num(previous.get("aum"))
+    if previous_aum is not None and previous_aum > 0:
+        return previous_aum
+    previous_shares = _num(previous.get("shares_outstanding"))
+    previous_nav = _num(previous.get("nav"))
+    if previous_shares is not None and previous_nav is not None and previous_shares > 0 and previous_nav > 0:
+        return previous_shares * previous_nav
     return None
 
 
@@ -148,9 +172,18 @@ def _daily_flow(current: pd.Series, previous: pd.Series) -> tuple[float | None, 
     current_aum, previous_aum = _num(current.get("aum")), _num(previous.get("aum"))
     if any(value is not None and value <= 0 for value in (current_aum, previous_aum)):
         return None, "QUARANTINED_NON_POSITIVE_AUM", "QUARANTINE"
+    aum_explicit = _boolish(current.get("aum_as_of_explicit")) and _boolish(previous.get("aum_as_of_explicit"))
+    if (
+        current_aum is not None
+        and previous_aum is not None
+        and not aum_explicit
+        and math.isclose(current_aum, previous_aum, rel_tol=1e-12, abs_tol=1e-9)
+    ):
+        return None, "UNSCORABLE_UNDATED_AUM_UNCHANGED", confidence
     performance = _derive_period_return(current, previous)
     if current_aum is not None and previous_aum is not None and performance is not None:
-        return current_aum - previous_aum * (1.0 + performance), "AUM_PERFORMANCE_ADJUSTED", confidence
+        method = "AUM_PERFORMANCE_ADJUSTED" if aum_explicit else "AUM_PERFORMANCE_ADJUSTED_UNDATED_VENDOR_UPDATE"
+        return current_aum - previous_aum * (1.0 + performance), method, confidence
     return None, "DATA_INSUFFICIENT", confidence
 
 
@@ -166,9 +199,9 @@ def compute_daily_flows(snapshot_history: pd.DataFrame) -> pd.DataFrame:
                 previous = ordered.iloc[index - 1]
                 flow, method, confidence = _daily_flow(current, previous)
                 row["flow"], row["flow_method"], row["flow_confidence"] = (flow if flow is not None else np.nan), method, confidence
-                previous_aum = _num(previous.get("aum"))
-                if flow is not None and previous_aum not in (None, 0.0):
-                    row["organic_flow_rate"] = flow / previous_aum
+                denominator = _flow_denominator(previous)
+                if flow is not None and denominator not in (None, 0.0):
+                    row["organic_flow_rate"] = flow / denominator
                 period_return = _derive_period_return(current, previous)
                 row["period_return"] = period_return if period_return is not None else np.nan
             row["instrument_id"] = instrument_id
@@ -259,14 +292,17 @@ def build_family_scores(instruments: pd.DataFrame) -> pd.DataFrame:
     for (family_name, region), group in eligible.groupby(["economic_family", "region"], dropna=False):
         currencies = sorted({str(value).strip() for value in group["currency"] if str(value).strip()})
         comparable = len(currencies) == 1
+        rates20 = pd.to_numeric(group["organic_flow_rate_20d"], errors="coerce")
+        valid_rates20 = rates20.dropna()
         rows.append({
             "economic_family": family_name, "region": region, "instruments": int(group["instrument_id"].nunique()),
+            "valid_20d_instruments": int(valid_rates20.shape[0]),
             "currency": currencies[0] if comparable else "MIXED_OR_UNKNOWN", "absolute_flow_comparable": comparable,
             "flow_5d": pd.to_numeric(group["flow_5d"], errors="coerce").sum(min_count=1) if comparable else np.nan,
             "flow_20d": pd.to_numeric(group["flow_20d"], errors="coerce").sum(min_count=1) if comparable else np.nan,
             "flow_60d": pd.to_numeric(group["flow_60d"], errors="coerce").sum(min_count=1) if comparable else np.nan,
-            "mean_organic_flow_rate_20d": pd.to_numeric(group["organic_flow_rate_20d"], errors="coerce").mean(),
-            "breadth_positive_20d_pct": pd.to_numeric(group["organic_flow_rate_20d"], errors="coerce").gt(0).mean() * 100.0,
+            "mean_organic_flow_rate_20d": rates20.mean(),
+            "breadth_positive_20d_pct": valid_rates20.gt(0).mean() * 100.0 if not valid_rates20.empty else np.nan,
             "mean_efs_shadow": pd.to_numeric(group["efs_shadow"], errors="coerce").mean(),
             "mean_price_return_20d": pd.to_numeric(group["price_return_20d"], errors="coerce").mean(),
         })
@@ -305,30 +341,39 @@ def add_pea_overlay(instruments: pd.DataFrame, families: pd.DataFrame, cfg: dict
 def build_rotation_scores(instruments: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     if instruments.empty:
         return pd.DataFrame()
+    min_preliminary = int(cfg.get("preliminary_score_min_observations", 20))
+    flow_counts = pd.to_numeric(instruments.get("flow_observations"), errors="coerce").fillna(0)
     eligible = instruments[
         ~instruments["is_inverse_or_leveraged"].fillna(False).astype(bool)
         & ~instruments["flow_confidence"].isin(["D", "QUARANTINE"])
         & instruments["sector_or_theme"].astype(str).str.len().gt(0)
+        & flow_counts.ge(min_preliminary)
+        & pd.to_numeric(instruments["efs_shadow"], errors="coerce").notna()
     ].copy()
+    if eligible.empty:
+        return pd.DataFrame()
     rows: list[dict] = []
     for label, group in eligible.groupby("sector_or_theme", sort=True):
         rates5 = pd.to_numeric(group["organic_flow_rate_5d"], errors="coerce")
         rates20 = pd.to_numeric(group["organic_flow_rate_20d"], errors="coerce")
         rates60 = pd.to_numeric(group["organic_flow_rate_60d"], errors="coerce")
         price = pd.to_numeric(group["price_return_20d"], errors="coerce")
+        valid20 = rates20.notna()
         flow_price, state = _flow_price_score(_num(rates20.mean()), _num(price.mean()))
         currencies = sorted({str(value).strip() for value in group["currency"] if str(value).strip()})
         comparable = len(currencies) == 1
-        positive_regions = group.loc[rates20.gt(0), "region"].astype(str).replace("", np.nan).dropna().nunique()
-        total_regions = group["region"].astype(str).replace("", np.nan).dropna().nunique()
+        valid_regions = group.loc[valid20, "region"].astype(str).replace("", np.nan).dropna()
+        positive_regions = group.loc[valid20 & rates20.gt(0), "region"].astype(str).replace("", np.nan).dropna().nunique()
+        total_regions = valid_regions.nunique()
         rows.append({
             "sector_or_theme": label, "instrument_count": int(group["instrument_id"].nunique()),
+            "valid_20d_instruments": int(valid20.sum()),
             "currency": currencies[0] if comparable else "MIXED_OR_UNKNOWN", "absolute_flow_comparable": comparable,
             "aggregate_flow_5d": float(pd.to_numeric(group["flow_5d"], errors="coerce").sum(min_count=1)) if comparable else np.nan,
             "aggregate_flow_20d": float(pd.to_numeric(group["flow_20d"], errors="coerce").sum(min_count=1)) if comparable else np.nan,
             "aggregate_flow_60d": float(pd.to_numeric(group["flow_60d"], errors="coerce").sum(min_count=1)) if comparable else np.nan,
             "mean_rate_5d": rates5.mean(), "mean_rate_20d": rates20.mean(), "mean_rate_60d": rates60.mean(),
-            "breadth_positive_20d_pct": rates20.gt(0).mean() * 100.0 if rates20.notna().any() else np.nan,
+            "breadth_positive_20d_pct": rates20.loc[valid20].gt(0).mean() * 100.0 if valid20.any() else np.nan,
             "mean_acceleration": pd.to_numeric(group["flow_acceleration"], errors="coerce").mean(),
             "mean_persistence_20d_pct": pd.to_numeric(group["positive_days_20d_pct"], errors="coerce").mean(),
             "regional_confirmation_pct": positive_regions / total_regions * 100.0 if total_regions else np.nan,
@@ -398,12 +443,15 @@ def build_flow_computation(snapshot_history: pd.DataFrame, cfg: dict) -> FlowCom
     families = build_family_scores(instruments)
     instruments = add_pea_overlay(instruments, families, cfg)
     rotations = build_rotation_scores(instruments, cfg)
+    flow_methods = daily.get("flow_method", pd.Series(dtype=str)).astype(str)
     diagnostics = {
         "version": cfg["version"], "mode": cfg["mode"], "observations": int(len(rolling)),
         "instruments": int(instruments["instrument_id"].nunique()) if not instruments.empty else 0,
         "scorable_instruments": int(pd.to_numeric(instruments.get("efs_shadow"), errors="coerce").notna().sum()) if not instruments.empty else 0,
         "pea_instruments": int(instruments["is_pea"].fillna(False).astype(bool).sum()) if not instruments.empty else 0,
         "quarantined_or_d_grade": int(instruments["flow_confidence"].isin(["D", "QUARANTINE"]).sum()) if not instruments.empty else 0,
+        "undated_unchanged_aum_skipped": int(flow_methods.eq("UNSCORABLE_UNDATED_AUM_UNCHANGED").sum()),
+        "srfs_scorable_sectors": int(pd.to_numeric(rotations.get("srfs_shadow"), errors="coerce").notna().sum()) if not rotations.empty else 0,
         "gold_crypto": build_gold_crypto_summary(instruments, cfg), "decision_influence": 0.0, "live_orders_enabled": False,
     }
     return FlowComputation(rolling, instruments, families, rotations, diagnostics)
