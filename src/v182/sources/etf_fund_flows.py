@@ -47,7 +47,11 @@ def build_pea_flow_universe(master: pd.DataFrame) -> pd.DataFrame:
         isin = _nonempty(row.get("isin"))
         if not isin:
             continue
-        ticker = _nonempty(row.get("yahoo_ticker")) or _nonempty(row.get("ticker_yahoo_final")) or _nonempty(row.get("ticker_yahoo"))
+        ticker = (
+            _nonempty(row.get("yahoo_ticker"))
+            or _nonempty(row.get("ticker_yahoo_final"))
+            or _nonempty(row.get("ticker_yahoo"))
+        )
         benchmark = _nonempty(row.get("official_benchmark"))
         category = _nonempty(row.get("category"))
         geo = _nonempty(row.get("geo_exposure"))
@@ -94,6 +98,7 @@ def build_pea_flow_universe(master: pd.DataFrame) -> pd.DataFrame:
                 "sector_or_theme": sector_theme,
                 "benchmark": benchmark,
                 "provider": _nonempty(row.get("provider")),
+                "currency": _nonempty(row.get("base_currency")) or _nonempty(row.get("currency")) or _nonempty(row.get("trading_currency")),
                 "is_pea": True,
                 "pea_status": _nonempty(row.get("pea_type")),
                 "pea_status_confidence": _nonempty(row.get("pea_confidence")),
@@ -155,6 +160,8 @@ def _blackrock_official_snapshot(row: pd.Series, timeout_seconds: float = 20.0) 
                 if parsed is not None:
                     values[field] = parsed
                     break
+    currency_match = re.search(r"Base Currency\s+(USD|EUR|GBP|CHF)", text, flags=re.IGNORECASE)
+    currency = currency_match.group(1).upper() if currency_match else _nonempty(row.get("currency"))
     if "aum" not in values and "shares_outstanding" not in values:
         return None, {
             "instrument_id": row.get("instrument_id"),
@@ -171,6 +178,7 @@ def _blackrock_official_snapshot(row: pd.Series, timeout_seconds: float = 20.0) 
             "shares_outstanding": values.get("shares_outstanding"),
             "market_price": np.nan,
             "distribution_per_share": 0.0,
+            "currency": currency,
             "source": "issuer_official",
             "source_type": "ISSUER_OFFICIAL",
             "source_url": url,
@@ -209,6 +217,7 @@ def _yfinance_snapshot(row: pd.Series) -> tuple[dict | None, dict | None]:
                 "shares_outstanding": shares,
                 "market_price": price,
                 "distribution_per_share": 0.0,
+                "currency": info.get("currency") or info.get("financialCurrency") or _nonempty(row.get("currency")),
                 "source": "yfinance.info/history",
                 "source_type": "YFINANCE",
                 "source_url": f"https://finance.yahoo.com/quote/{ticker}/",
@@ -236,10 +245,8 @@ def load_official_observations(path: Path) -> pd.DataFrame:
     missing = required - set(frame.columns)
     if missing:
         raise ValueError(f"OFFICIAL_FLOW_INPUT_MISSING_COLUMNS:{','.join(sorted(missing))}")
-    if "source_type" not in frame.columns:
-        frame["source_type"] = "ISSUER_OFFICIAL"
-    source_priority = frame["source_priority"] if "source_priority" in frame.columns else pd.Series(100, index=frame.index)
-    frame["source_priority"] = pd.to_numeric(source_priority, errors="coerce").fillna(100)
+    frame["source_type"] = frame.get("source_type", "ISSUER_OFFICIAL")
+    frame["source_priority"] = pd.to_numeric(frame.get("source_priority", 100), errors="coerce").fillna(100)
     return frame
 
 
