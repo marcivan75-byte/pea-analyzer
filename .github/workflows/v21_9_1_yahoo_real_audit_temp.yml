@@ -1,0 +1,117 @@
+name: TEMP V21.9.1 Yahoo Real Coverage Audit
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: v2191-yahoo-real-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  yahoo-real-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      PYTHONUNBUFFERED: "1"
+      PEA_PROVENANCE_PATH: state/provenance/OBSERVATION_PROVENANCE_V2191_YAHOO_AUDIT.csv
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install project
+        run: pip install -e ".[test]"
+
+      - name: Real Yahoo collection and governed audit
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from datetime import datetime, timezone
+          import json
+          import pandas as pd
+          from v182.audit.canonical_universe import filter_actions, IDENTITY_ONLY_STATUS
+          from v182.audit.master_data import audit_frame
+          from v182.audit.master_data_profile import profile_frame
+          from v182.io.frames import load_master, apply_observations
+          from v182.mapping.action_isin_resolver import apply_identity_overlay
+          from v182.mapping.identity_overlay_store import materialize_identity_overlay
+          from v182.mapping.action_yahoo_ticker import qualify_action_yahoo_tickers
+          from v182.reporting.waves import resolve_etf_tickers, wave4_info_actions, wave6_etf_info
+
+          root=Path('.')
+          out=root/'outputs'/'audit'/'v21_9_1_yahoo_real'; out.mkdir(parents=True,exist_ok=True)
+          cfg=json.loads((root/'config/V18.2_MASTER_CONFIG.json').read_text(encoding='utf-8'))
+          legacy=load_master(root/'inputs/V18.2_PEA_ACTIONS_MASTER.csv')
+          canonical=filter_actions(legacy,root/'config/V21_3_ACTION_UNIVERSE_1829_ISINS.parts').included
+          overlay_path=materialize_identity_overlay(root)
+          if overlay_path is None: raise SystemExit('IDENTITY_OVERLAY_MISSING')
+          actions,overlay=apply_identity_overlay(canonical,overlay_path)
+          qualify_action_yahoo_tickers(actions)
+          etf=load_master(root/'inputs/V18.2_PEA_ETF_MASTER.csv')
+          etf_resolved,etf_gaps=resolve_etf_tickers(etf,root/'config/V18.2_ETF_TICKER_MAP.csv')
+
+          action_obs,action_failures=wave4_info_actions(actions,cfg)
+          actions_enriched,action_quarantine=apply_observations(actions,action_obs)
+          etf_obs,etf_failures=wave6_etf_info(etf_resolved,cfg)
+          etf_enriched,etf_quarantine=apply_observations(etf,etf_obs)
+          action_detail,action_profile=profile_frame(actions_enriched,'ACTION')
+          etf_detail,etf_profile=profile_frame(etf_enriched,'ETF')
+          action_integrity=audit_frame(actions_enriched,'ACTION').summary
+          etf_integrity=audit_frame(etf_enriched,'ETF').summary
+
+          def coverage(frame,field):
+              if field not in frame.columns: return 0.0
+              raw=frame[field].astype(str).str.strip().str.lower()
+              valid=~raw.isin({'','nan','none','n/a','na','null','missing','unknown','non_observe','<na>'})
+              return round(float(valid.mean()*100.0),2)
+
+          payload={
+              'generated_at_utc':datetime.now(timezone.utc).isoformat(),
+              'overlay':overlay,
+              'actions':{
+                  'rows':len(actions_enriched),
+                  'identity_only':int(actions_enriched['canonical_seed_status'].astype(str).eq(IDENTITY_ONLY_STATUS).sum()),
+                  'observations':len(action_obs),'failures':len(action_failures),'quarantined':len(action_quarantine),
+                  'exchange_yf_pct':coverage(actions_enriched,'exchange_yf'),
+                  'currency_yf_pct':coverage(actions_enriched,'currency_yf'),
+                  'sector_yf_pct':coverage(actions_enriched,'sector_yf'),
+                  'industry_yf_pct':coverage(actions_enriched,'industry_yf'),
+                  'profile':action_profile,'integrity':action_integrity,
+              },
+              'etf':{
+                  'rows':len(etf_enriched),'ticker_gaps':len(etf_gaps),
+                  'observations':len(etf_obs),'failures':len(etf_failures),'quarantined':len(etf_quarantine),
+                  'ter_pct':coverage(etf_enriched,'ter_pct'),
+                  'aum_m':coverage(etf_enriched,'aum_m'),
+                  'fund_total_assets_eur_m':coverage(etf_enriched,'fund_total_assets_eur_m'),
+                  'raw_expense_ratio':coverage(etf_enriched,'annual_report_expense_ratio_yf'),
+                  'raw_total_assets':coverage(etf_enriched,'total_assets_yf'),
+                  'currency_yf':coverage(etf_enriched,'currency_yf'),
+                  'profile':etf_profile,'integrity':etf_integrity,
+              },
+          }
+          (out/'YAHOO_REAL_AUDIT.json').write_text(json.dumps(payload,ensure_ascii=False,indent=2,default=str),encoding='utf-8')
+          action_detail.to_csv(out/'ACTION_PROFILE.csv',sep=';',encoding='utf-8-sig',index=False)
+          etf_detail.to_csv(out/'ETF_PROFILE.csv',sep=';',encoding='utf-8-sig',index=False)
+          print(json.dumps(payload,ensure_ascii=False,indent=2,default=str))
+          assert action_integrity['issue_counts']['FATAL']==0
+          assert etf_integrity['issue_counts']['FATAL']==0
+          PY
+
+      - name: Full regression
+        run: pytest -q
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v21-9-1-yahoo-real-audit-${{ github.run_id }}
+          path: outputs/audit/v21_9_1_yahoo_real/
+          if-no-files-found: error
+          retention-days: 30
