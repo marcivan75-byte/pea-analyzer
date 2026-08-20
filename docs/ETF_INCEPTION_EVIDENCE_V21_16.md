@@ -35,6 +35,8 @@ Pour un historique commençant après l'ancre 01/01/2023 :
 
 `reported_first_nav_date` n'est jamais utilisé pour choisir l'un de ces statuts.
 
+Le gate conflit V21.16 concerne la qualification des historiques courts. Une extension ultérieure pourra auditer systématiquement les contradictions d'inception sur les ETF disposant déjà d'une fenêtre OHLCV complète ; elle ne devra jamais promouvoir un instrument ni fabriquer des cours.
+
 ## Calibration
 
 V21.16 ne modifie pas le gate de calibration. Seul `PRIMARY_FULL_FROM_ANCHOR` reste éligible à la calibration principale complète.
@@ -81,4 +83,4 @@ Les quatre cas pré-ancre restent des lacunes de continuité/ticker/fournisseur 
 
 Le nombre d'instruments éligibles à la calibration principale est resté strictement identique avant/après l'ajout des preuves d'inception dans le run : V21.16 explique les historiques courts mais ne les promeut pas.
 
-CI du head de preuve `1b39be4d4d4f5cbe011ad66adaba72b4351f3bf8` : Committee Master #627 = SUCCESS et Action Identity #126 = SUCCESS, full suites incluses. Le workflow réseau temporaire doit être supprimé avant la validation finale du head destiné à la fusion.
+CI du head de preuve `1b39be4d4d4f5cbe011ad66adaba72b4351f3bf8` : Committee Master #627 = SUCCESS et Action Identity #126 = SUCCESS, full suites incluses. Le workflow réseau temporaire a ensuite été supprimé. Le head final destiné à la fusion doit à son tour obtenir les deux CI permanents au vert.
