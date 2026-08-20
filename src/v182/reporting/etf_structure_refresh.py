@@ -7,6 +7,11 @@ import pandas as pd
 from v182.io.frames import apply_observations, is_missing
 from v182.sources.etf_structural_data import collect_etf_structural_data
 from v182.sources.yfinance_funds import collect_fund_structure
+from v182.state.etf_structure_state import (
+    load_replay_observations,
+    load_state_config,
+    write_structural_state_snapshot,
+)
 
 ROOT=Path(__file__).resolve().parents[3]
 
@@ -79,12 +84,12 @@ def _coverage(frame:pd.DataFrame,field:str)->float:
 
 
 def run(root: Path=ROOT) -> dict:
-    """Enrich ETF structural data before ETF MT scoring.
+    """Enrich ETF structural data before ETF MT scoring and persist governed state.
 
-    V21.10 adds TER and explicit-EUR fund assets through issuer evidence A and
-    exact-ISIN justETF fallback B. The pre-existing yfinance fund-structure
-    collector remains evidence C. Every source uses the same provenance merge;
-    missing values stay missing and stronger evidence cannot be silently replaced.
+    V21.15 first replays only fresh structural values whose actual value is bound
+    to retained provenance. The V21.10 network collectors then refresh evidence;
+    the resulting governed snapshot is persisted for daily replay. No missing
+    value is imputed and weaker evidence cannot replace stronger evidence.
     """
     outputs=root/"outputs"
     source=outputs/"V18.2_PEA_ETF_MASTER_ENRICHED.csv"
@@ -95,6 +100,12 @@ def run(root: Path=ROOT) -> dict:
     df=_read_csv(source)
     if "isin" not in df.columns or "yahoo_ticker" not in df.columns:
         raise RuntimeError("ETF_MASTER_MISSING_ISIN_OR_YAHOO_TICKER")
+
+    state_cfg=load_state_config(root/"config"/"ETF_STRUCTURE_STATE_V21_15.json")
+    state_replay_obs,state_replay_diag=load_replay_observations(state_cfg,root=root)
+    state_replay_quarantined=[]
+    if state_replay_obs:
+        df,state_replay_quarantined=apply_observations(df,state_replay_obs)
 
     # V21.10 structural TER/AUM layer. Unit tests with reduced frames that do not
     # contain a provider column deliberately skip network collection.
@@ -124,9 +135,14 @@ def run(root: Path=ROOT) -> dict:
     yfinance_changed=sum(_changed(before.get(key),after.get(key)) for key in before)
 
     df.to_csv(outputs/"V18.2_PEA_ETF_MASTER_ENRICHED.csv",sep=";",index=False,encoding="utf-8-sig")
+    state_write=write_structural_state_snapshot(df,state_cfg,root=root)
     audit_dir=outputs/"audit"; audit_dir.mkdir(parents=True,exist_ok=True)
+    state_write_path=root/str(state_cfg["audit_write_path"])
+    state_write_path.parent.mkdir(parents=True,exist_ok=True)
+    state_write_path.write_text(json.dumps(state_write,ensure_ascii=False,indent=2),encoding="utf-8")
+
     gaps_dir=outputs/"gaps"; gaps_dir.mkdir(parents=True,exist_ok=True)
-    merge_failures=[{**q,"source_stage":"PROVENANCE_MERGE"} for q in structural_quarantined+quarantined]
+    merge_failures=[{**q,"source_stage":"PROVENANCE_MERGE"} for q in state_replay_quarantined+structural_quarantined+quarantined]
     failures=structural_failures+collector_failures+merge_failures
     if failures:
         pd.DataFrame(failures).to_csv(gaps_dir/"V21_10_ETF_STRUCTURE_FAILURES.csv",sep=";",index=False,encoding="utf-8-sig")
@@ -137,10 +153,12 @@ def run(root: Path=ROOT) -> dict:
     )}
     payload={
         "status":"SUCCESS",
-        "version":"V21.10_ETF_STRUCTURAL_DATA",
+        "version":"V21.15_ETF_STRUCTURAL_DATA_STATE",
         "generated_at_utc":datetime.now(timezone.utc).isoformat(),
         "source":str(source.relative_to(root)),
         "tickers_requested":len(ticker_to_isin),
+        "state_replay":state_replay_diag,
+        "state_replay_merge_quarantined":len(state_replay_quarantined),
         "structural_source":structural_metrics,
         "structural_merge_observations":len(structural_observations),
         "structural_changed_cells":int(structural_changed),
@@ -150,13 +168,16 @@ def run(root: Path=ROOT) -> dict:
         "yfinance_changed_cells":int(yfinance_changed),
         "changed_cells":int(structural_changed+yfinance_changed),
         "collector_failures":len(structural_failures)+len(collector_failures),
-        "merge_quarantined":len(structural_quarantined)+len(quarantined),
+        "merge_quarantined":len(state_replay_quarantined)+len(structural_quarantined)+len(quarantined),
         "failures":len(failures),
         "coverage_pct":coverage,
+        "state_write":state_write,
         "governance":{
             "mt_dynamic_38_unchanged":True,
             "weights_unchanged":True,
+            "thresholds_unchanged":True,
             "missing_structure_not_imputed":True,
+            "daily_structural_network_scrape":False,
             "provenance_merge_enabled":True,
             "issuer_structural_evidence_level":"A",
             "justetf_structural_evidence_level":"B",
@@ -174,8 +195,6 @@ def run(root: Path=ROOT) -> dict:
     }
     encoded=json.dumps(payload,ensure_ascii=False,indent=2)
     (audit_dir/"V21_10_ETF_STRUCTURAL_DATA.json").write_text(encoded,encoding="utf-8")
-    # Keep the legacy audit path for downstream consumers while publishing the
-    # explicit V21.10 path above.
     (audit_dir/"V21_ETF_FUND_STRUCTURE.json").write_text(encoded,encoding="utf-8")
     print(encoded)
     return payload
