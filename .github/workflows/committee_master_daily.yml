@@ -63,6 +63,13 @@ jobs:
           key: sector-rotation-v2-${{ github.run_id }}
           restore-keys: |
             sector-rotation-v2-
+      - name: Restore ETF Fund Flow V1 PIT history
+        uses: actions/cache/restore@v4
+        with:
+          path: state/etf_fund_flows/
+          key: etf-fund-flow-v1-${{ github.run_id }}
+          restore-keys: |
+            etf-fund-flow-v1-
       - name: Restore field provenance and V21.8 temporal state
         uses: actions/cache/restore@v4
         with:
@@ -105,6 +112,7 @@ jobs:
           srp=json.loads(Path("config/SECTOR_ROTATION_V2_PIT_OOS_PROTOCOL.json").read_text())
           risk=json.loads(Path("config/BETA_CORRELATION_RISK_ENGINE.json").read_text())
           risk_validation=json.loads(Path("config/BETA_RISK_ROBUST_VALIDATION_STATUS.json").read_text())
+          ff=json.loads(Path("config/ETF_FUND_FLOW_V1_SHADOW.json").read_text())
           assert a["criteria_count"] == 633 == integrity["actions"]["criteria_count"]
           assert integrity["actions"]["universe_count"] == 1829
           assert e["criteria_count"] == 268 == integrity["etf"]["criteria_count"]
@@ -165,12 +173,23 @@ jobs:
           assert risk_validation["production_policy"]["beta_only_position_sizing_promoted"] is False
           assert risk_validation["production_policy"]["regime_v1_1_sizing_promoted"] is False
           assert risk_validation["production_policy"]["regime_v1_2_sizing_promoted"] is False
-          print(f"V21.8.1 integrity OK: Actions 1829/633 (materialized identity-only={materialized.materialized_missing_count}), ETF 102/268, TCT, Gold, IPO Radar, Sector Rotation V2 PIT/OOS shadow, RISK V1.1 context-only, Entry/Exit V21.8 baseline")
+          assert ff["mode"] == "SHADOW_ONLY"
+          assert ff["governance"]["decision_influence"] == 0.0
+          assert ff["governance"]["etf_mt_reference_score_influence"] == 0.0
+          assert ff["governance"]["sector_rotation_v2_score_influence"] == 0.0
+          assert ff["governance"]["can_trigger_orders"] is False
+          assert ff["governance"]["can_trigger_sales"] is False
+          assert ff["anti_false_signal"]["mixed_currency_absolute_aggregation_forbidden"] is True
+          assert ff["anti_false_signal"]["coinshares_weekly_control_not_added_to_primary_flows"] is True
+          print(f"V21.8.1 integrity OK: Actions 1829/633 (materialized identity-only={materialized.materialized_missing_count}), ETF 102/268, TCT, Gold, IPO Radar, Sector Rotation V2 PIT/OOS shadow, Fund Flows V1 shadow, RISK V1.1 context-only, Entry/Exit V21.8 baseline")
           PY
       - name: Publish Action identity hydration worklist
         run: python -m v182.audit.identity_hydration
       - name: Run weekly unified Committee pipeline
         run: python -m v182.reporting.unified_runner
+      - name: Run ETF Fund Flows V1 SHADOW context
+        continue-on-error: true
+        run: python -m v182.reporting.etf_fund_flows_shadow_run
       - name: Audit criteria governance
         run: python -m v182.reporting.criteria_governance_audit
       - name: Show unified summary
@@ -201,6 +220,10 @@ jobs:
         if: always()
         run: |
           if [ -f outputs/audit/V2_SECTOR_ROTATION_PIT_OOS_STATUS.json ]; then cat outputs/audit/V2_SECTOR_ROTATION_PIT_OOS_STATUS.json; fi
+      - name: Show ETF Fund Flows V1 shadow audit
+        if: always()
+        run: |
+          if [ -f outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json ]; then cat outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json; fi
       - name: Show RISK V1.1 audit
         if: always()
         run: |
@@ -212,6 +235,10 @@ jobs:
             cat outputs/mobile/ANDROID_CI_CONTROL_CENTER.md >> "$GITHUB_STEP_SUMMARY"
           elif [ -f outputs/mobile/RISK_V1_1_CONTROL_CENTER.md ]; then
             cat outputs/mobile/RISK_V1_1_CONTROL_CENTER.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f outputs/mobile/ETF_FUND_FLOWS_SHADOW.md ]; then
+            printf '\n\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+            cat outputs/mobile/ETF_FUND_FLOWS_SHADOW.md >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Save persistent OHLCV cache
         if: ${{ success() && hashFiles('data/cache/**') != '' }}
@@ -243,6 +270,12 @@ jobs:
         with:
           path: state/sector_rotation_v2/
           key: sector-rotation-v2-${{ github.run_id }}
+      - name: Save ETF Fund Flow V1 PIT history
+        if: ${{ always() && hashFiles('state/etf_fund_flows/**') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: state/etf_fund_flows/
+          key: etf-fund-flow-v1-${{ github.run_id }}
       - name: Save field provenance and V21.8 temporal state
         if: ${{ always() && hashFiles('state/provenance/**') != '' }}
         uses: actions/cache/save@v4
@@ -258,6 +291,7 @@ jobs:
             outputs/unified/
             outputs/committee_master/
             outputs/etf_mt_v2081/
+            outputs/etf_fund_flows/
             outputs/gold_v1_1/
             outputs/ipo_radar/
             outputs/sector_rotation/
@@ -275,6 +309,7 @@ jobs:
             state/GOLD_V1_1_SHADOW_HISTORY.csv
             state/ipo_radar/
             state/sector_rotation_v2/
+            state/etf_fund_flows/
             state/provenance/
           if-no-files-found: warn
           retention-days: 14

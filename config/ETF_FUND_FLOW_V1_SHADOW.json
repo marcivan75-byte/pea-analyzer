@@ -1,0 +1,97 @@
+{
+  "version": "ETF_FUND_FLOWS_V1.0_SHADOW",
+  "mode": "SHADOW_ONLY",
+  "enabled": true,
+  "horizons_trading_observations": [
+    1,
+    5,
+    20,
+    60,
+    252
+  ],
+  "minimum_observations": {
+    "score_5d": 5,
+    "score_20d": 20,
+    "score_60d": 60,
+    "score_252d": 252
+  },
+  "flow_method_priority": [
+    "SHARES_NAV",
+    "AUM_PERFORMANCE_ADJUSTED"
+  ],
+  "score_weights": {
+    "flow_5d": 0.15,
+    "flow_20d": 0.15,
+    "flow_60d": 0.1,
+    "acceleration": 0.2,
+    "persistence": 0.15,
+    "peer_relative": 0.15,
+    "flow_price_confirmation": 0.1
+  },
+  "pea_overlay_weights": {
+    "mature": {
+      "own": 0.5,
+      "global_family": 0.3,
+      "pea_family": 0.2
+    },
+    "young_history": {
+      "own": 0.25,
+      "global_family": 0.45,
+      "pea_family": 0.3
+    },
+    "young_history_threshold_observations": 60
+  },
+  "sector_rotation_flow_weights": {
+    "aggregate_flow": 0.3,
+    "breadth": 0.2,
+    "acceleration": 0.15,
+    "regional_confirmation": 0.15,
+    "persistence": 0.1,
+    "price_confirmation": 0.1
+  },
+  "gold_flow_composite_weights": {
+    "us_physical": 0.5,
+    "eu_physical": 0.3,
+    "gold_miners": 0.1,
+    "price_confirmation": 0.1
+  },
+  "confidence": {
+    "A": 1.0,
+    "B": 0.85,
+    "C": 0.6,
+    "D": 0.0,
+    "QUARANTINE": 0.0
+  },
+  "source_priority": {
+    "ISSUER_OFFICIAL": 100,
+    "ETFBOOK_TRACKINSIGHT_VERIFIED": 95,
+    "ISSUER_RECONSTRUCTED": 85,
+    "YFINANCE": 50,
+    "OTHER": 20
+  },
+  "anti_false_signal": {
+    "one_day_cannot_drive_decision": true,
+    "exclude_inverse_leveraged_from_main": true,
+    "multiple_listings_deduplicate_by_instrument_id": true,
+    "synthetic_pea_maps_to_economic_benchmark_not_collateral": true,
+    "distributions_adjust_fallback_return": true,
+    "splits_and_discontinuities_quarantine": true,
+    "quarantined_data_score_influence": 0.0,
+    "mixed_currency_absolute_aggregation_forbidden": true,
+    "coinshares_weekly_control_not_added_to_primary_flows": true
+  },
+  "governance": {
+    "decision_influence": 0.0,
+    "etf_mt_reference_score_influence": 0.0,
+    "sector_rotation_v2_score_influence": 0.0,
+    "gold_v1_1_score_influence": 0.0,
+    "crypto_order_influence": 0.0,
+    "can_trigger_orders": false,
+    "can_trigger_sales": false,
+    "live_orders_enabled": false,
+    "promotion_requires_dedicated_pit_oos": true,
+    "historical_backfill_from_current_snapshot_forbidden": true
+  },
+  "preliminary_score_min_observations": 20,
+  "mature_score_min_observations": 60
+}
