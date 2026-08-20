@@ -16,6 +16,7 @@ from v182.backtest.calibration_windows import load_policy, resolve_primary_windo
 ROOT = Path(__file__).resolve().parents[3]
 PRIMARY_ANCHOR_TOLERANCE_DAYS = 7
 FRESHNESS_TOLERANCE_DAYS = 7
+INCEPTION_CONFLICT_TOLERANCE_DAYS = 7
 STRESS_START = pd.Timestamp("2020-01-01", tz="UTC")
 STRESS_END_EXCLUSIVE = pd.Timestamp("2023-01-01", tz="UTC")
 PRIMARY_CALIBRATION_ELIGIBLE_STATUS = "PRIMARY_FULL_FROM_ANCHOR"
@@ -33,6 +34,13 @@ def _utc(value: Any) -> pd.Timestamp:
     if ts.tzinfo is None:
         return ts.tz_localize("UTC")
     return ts.tz_convert("UTC")
+
+
+def _optional_utc(value: Any) -> pd.Timestamp | None:
+    if value is None or str(value).strip() in {"", "nan", "None", "<NA>", "N/A", "NA", "NULL"}:
+        return None
+    parsed = pd.to_datetime(value, errors="coerce", utc=True)
+    return None if pd.isna(parsed) else parsed
 
 
 def _month_key(ts: pd.Timestamp) -> str:
@@ -108,12 +116,26 @@ def _load_universes(root: Path) -> dict[str, pd.DataFrame]:
         ).included.reset_index(drop=True)
         qualify_action_yahoo_tickers(actions)
 
-    etf = _read_semicolon(root / "inputs" / "V18.2_PEA_ETF_MASTER.csv")
+    enriched_etf = root / "outputs" / "V18.2_PEA_ETF_MASTER_ENRICHED.csv"
+    etf = _read_semicolon(enriched_etf if enriched_etf.exists() else root / "inputs" / "V18.2_PEA_ETF_MASTER.csv")
     mapping = _read_semicolon(root / "config" / "V18.2_ETF_TICKER_MAP.csv")
     if not etf.empty and not mapping.empty and {"isin", "yahoo_ticker"}.issubset(mapping.columns):
         lookup = mapping[["isin", "yahoo_ticker"]].drop_duplicates("isin")
         etf = etf.drop(columns=["yahoo_ticker"], errors="ignore").merge(lookup, on="isin", how="left")
     return {"ACTION": actions, "ETF": etf}
+
+
+def _trusted_inception(
+    share_class_inception_date: Any,
+    listing_or_launch_date: Any,
+) -> tuple[pd.Timestamp | None, str | None]:
+    class_date = _optional_utc(share_class_inception_date)
+    if class_date is not None:
+        return class_date, "share_class_inception_date"
+    launch = _optional_utc(listing_or_launch_date)
+    if launch is not None:
+        return launch, "listing_or_launch_date"
+    return None, None
 
 
 def _instrument_row(
@@ -124,9 +146,17 @@ def _instrument_row(
     *,
     primary_start: pd.Timestamp,
     as_of: pd.Timestamp,
+    share_class_inception_date: Any = None,
+    listing_or_launch_date: Any = None,
+    reported_first_nav_date: Any = None,
 ) -> dict[str, Any]:
     expected_primary_months = _months_between(primary_start, as_of)
     expected_stress_months = _months_between(STRESS_START, STRESS_END_EXCLUSIVE - pd.Timedelta(days=1))
+    trusted_inception, trusted_source = _trusted_inception(
+        share_class_inception_date,
+        listing_or_launch_date,
+    )
+    first_nav = _optional_utc(reported_first_nav_date)
     base: dict[str, Any] = {
         "asset_class": asset_class,
         "isin": isin,
@@ -135,8 +165,22 @@ def _instrument_row(
         "primary_end": as_of.date().isoformat(),
         "expected_primary_months": len(expected_primary_months),
         "expected_stress_months": len(expected_stress_months),
-        "launch_date": None,
-        "launch_date_source": None,
+        "launch_date": trusted_inception.date().isoformat() if trusted_inception is not None else None,
+        "launch_date_source": trusted_source,
+        "share_class_inception_date": (
+            _optional_utc(share_class_inception_date).date().isoformat()
+            if _optional_utc(share_class_inception_date) is not None
+            else None
+        ),
+        "listing_or_launch_date": (
+            _optional_utc(listing_or_launch_date).date().isoformat()
+            if _optional_utc(listing_or_launch_date) is not None
+            else None
+        ),
+        "reported_first_nav_date": first_nav.date().isoformat() if first_nav is not None else None,
+        "reported_first_nav_authoritative_for_history_start": False,
+        "inception_evidence_changes_calibration_eligibility": False,
+        "synthetic_pre_inception_history": False,
         "primary_calibration_eligible": False,
         "stress_library_eligible": False,
     }
@@ -165,7 +209,16 @@ def _instrument_row(
     if primary.empty:
         primary_status = "NO_PRIMARY_HISTORY"
     elif not anchor_ok:
-        primary_status = "START_AFTER_ANCHOR_UNRESOLVED"
+        if trusted_inception is None:
+            primary_status = "START_AFTER_ANCHOR_UNRESOLVED"
+        elif trusted_inception > as_of + pd.Timedelta(days=1):
+            primary_status = "INCEPTION_EVIDENCE_CONFLICT_FUTURE"
+        elif trusted_inception > first + pd.Timedelta(days=INCEPTION_CONFLICT_TOLERANCE_DAYS):
+            primary_status = "INCEPTION_EVIDENCE_CONFLICT_AFTER_FIRST_OBSERVATION"
+        elif trusted_inception > primary_start:
+            primary_status = "POST_ANCHOR_INCEPTION_CONFIRMED"
+        else:
+            primary_status = "PRE_ANCHOR_INCEPTION_HISTORY_GAP_CONFIRMED"
     elif not fresh_ok:
         primary_status = "STALE_END"
     elif missing_primary:
@@ -179,6 +232,16 @@ def _instrument_row(
         stress_status = "NO_STRESS_HISTORY"
     else:
         stress_status = "STRESS_PARTIAL"
+
+    short_history_reason = None
+    if primary_status == "START_AFTER_ANCHOR_UNRESOLVED":
+        short_history_reason = "NEEDS_TRUSTED_LISTING_OR_INCEPTION_DATE"
+    elif primary_status == "POST_ANCHOR_INCEPTION_CONFIRMED":
+        short_history_reason = "TRUSTED_POST_ANCHOR_INCEPTION_NO_SYNTHETIC_HISTORY"
+    elif primary_status == "PRE_ANCHOR_INCEPTION_HISTORY_GAP_CONFIRMED":
+        short_history_reason = "TRUSTED_PRE_ANCHOR_INCEPTION_PROVIDER_OR_LISTING_HISTORY_GAP"
+    elif primary_status.startswith("INCEPTION_EVIDENCE_CONFLICT"):
+        short_history_reason = "INCEPTION_EVIDENCE_CONFLICT_BLOCK_DATA"
 
     return {
         **base,
@@ -197,11 +260,7 @@ def _instrument_row(
         "stress_status": stress_status,
         "primary_calibration_eligible": primary_status == PRIMARY_CALIBRATION_ELIGIBLE_STATUS,
         "stress_library_eligible": stress_status == STRESS_LIBRARY_ELIGIBLE_STATUS,
-        "short_history_reason": (
-            "NEEDS_TRUSTED_LISTING_OR_INCEPTION_DATE"
-            if primary_status == "START_AFTER_ANCHOR_UNRESOLVED"
-            else None
-        ),
+        "short_history_reason": short_history_reason,
     }
 
 
@@ -241,6 +300,9 @@ def run(root: Path = ROOT, as_of: Any | None = None) -> dict[str, Any]:
                     series_by_ticker.get(ticker),
                     primary_start=primary_window.start,
                     as_of=resolved_as_of,
+                    share_class_inception_date=instrument.get("share_class_inception_date"),
+                    listing_or_launch_date=instrument.get("listing_or_launch_date"),
+                    reported_first_nav_date=instrument.get("reported_first_nav_date"),
                 )
             )
 
@@ -252,11 +314,15 @@ def run(root: Path = ROOT, as_of: Any | None = None) -> dict[str, Any]:
 
     primary_counts = Counter(audit.get("primary_status", pd.Series(dtype=str)).dropna().astype(str))
     stress_counts = Counter(audit.get("stress_status", pd.Series(dtype=str)).dropna().astype(str))
-    unresolved = audit[audit.get("primary_status", pd.Series(index=audit.index, dtype=str)).eq("START_AFTER_ANCHOR_UNRESOLVED")]
+    status_series = audit.get("primary_status", pd.Series(index=audit.index, dtype=str))
+    unresolved = audit[status_series.eq("START_AFTER_ANCHOR_UNRESOLVED")]
+    post_anchor_confirmed = audit[status_series.eq("POST_ANCHOR_INCEPTION_CONFIRMED")]
+    pre_anchor_gap = audit[status_series.eq("PRE_ANCHOR_INCEPTION_HISTORY_GAP_CONFIRMED")]
+    conflicts = audit[status_series.astype(str).str.startswith("INCEPTION_EVIDENCE_CONFLICT", na=False)]
     primary_eligible = audit.get("primary_calibration_eligible", pd.Series(False, index=audit.index)).fillna(False).astype(bool)
     stress_eligible = audit.get("stress_library_eligible", pd.Series(False, index=audit.index)).fillna(False).astype(bool)
     summary = {
-        "version": "V21.13_OHLCV_HISTORY_DEPTH_AUDIT",
+        "version": "V21.16_OHLCV_HISTORY_DEPTH_WITH_INCEPTION_EVIDENCE",
         "status": "SUCCESS" if not audit.empty else "NO_AUDIT_ROWS",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "as_of": resolved_as_of.date().isoformat(),
@@ -278,7 +344,12 @@ def run(root: Path = ROOT, as_of: Any | None = None) -> dict[str, Any]:
         "stress_library_eligibility_policy": f"ONLY_{STRESS_LIBRARY_ELIGIBLE_STATUS}",
         "missing_or_short_history_imputation_allowed": False,
         "short_history_unresolved_count": int(len(unresolved)),
-        "short_history_policy": "DO_NOT_ASSUME_POST_2023_LAUNCH_WITHOUT_TRUSTED_LISTING_OR_INCEPTION_DATE",
+        "post_anchor_inception_confirmed_count": int(len(post_anchor_confirmed)),
+        "pre_anchor_inception_history_gap_confirmed_count": int(len(pre_anchor_gap)),
+        "inception_evidence_conflict_count": int(len(conflicts)),
+        "short_history_policy": "TRUSTED_CLASS_OR_LISTING_DATE_MAY_EXPLAIN_SHORT_HISTORY_BUT_NEVER_CREATES_SYNTHETIC_HISTORY_OR_FULL_WINDOW_ELIGIBILITY",
+        "reported_first_nav_authoritative_for_history_start": False,
+        "inception_evidence_changes_calibration_eligibility": False,
         "cache_read_failures": cache_failures,
         "stress_calibration_weight": 0.0,
         "weight_or_threshold_changes": False,
@@ -290,7 +361,7 @@ def run(root: Path = ROOT, as_of: Any | None = None) -> dict[str, Any]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Audit actual OHLCV depth for V21.12/V21.13 calibration governance")
+    parser = argparse.ArgumentParser(description="Audit actual OHLCV depth with governed ETF inception evidence")
     parser.add_argument("--as-of", default=None)
     args = parser.parse_args()
     print(json.dumps(run(as_of=args.as_of), ensure_ascii=False, indent=2))
