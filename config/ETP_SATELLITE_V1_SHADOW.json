@@ -1,0 +1,35 @@
+{
+  "version": "ETP_SATELLITE_V1.0_SHADOW",
+  "mode": "SHADOW_ONLY",
+  "enabled": true,
+  "scope": {
+    "pea_core_separate": true,
+    "gold_asset_classes": ["GOLD_ETC", "GOLD_ETF", "GOLD_MINERS_ETF"],
+    "crypto_long_asset_classes": ["CRYPTO_ETP", "CRYPTO_ETF"],
+    "crypto_short_asset_classes": ["CRYPTO_SHORT_ETF"],
+    "generic_external_etf_excluded": true
+  },
+  "inputs": {
+    "external_universe": "config/ETF_FUND_FLOW_EXTERNAL_UNIVERSE_V1.csv",
+    "flow_instruments": "outputs/etf_fund_flows/ETF_FLOW_INSTRUMENTS_SHADOW.csv",
+    "gold_decision_optional": "outputs/gold_v1_1/GOLD_V1_1_DECISION.json"
+  },
+  "governance": {
+    "decision_influence": 0.0,
+    "pea_score_influence": 0.0,
+    "cross_lane_ranking_allowed": false,
+    "real_orders_allowed": false,
+    "live_orders_enabled": false,
+    "promotion_allowed": false,
+    "t1_t2_forbidden": true,
+    "neutral_imputation_forbidden": true,
+    "crypto_alpha_engine_status": "NOT_IMPLEMENTED_PIT_OOS",
+    "gold_engine_role": "CONTEXT_ONLY",
+    "crypto_flow_role": "CONTEXT_ONLY",
+    "short_inverse_separate_lane": true
+  },
+  "flow_context_thresholds": {
+    "inflow_support_min": 65.0,
+    "outflow_warning_max": 35.0
+  }
+}

@@ -35,35 +35,48 @@ jobs:
           cache-dependency-path: pyproject.toml
       - name: Install project
         run: pip install -e ".[test]"
-      - name: Validate Fund Flow V1 engine
+      - name: Validate Fund Flow V1 and ETP Satellite V1 engines
         run: |
-          python -m compileall -q src/v182/features/etf_fund_flows_v1.py src/v182/sources/etf_fund_flows.py src/v182/reporting/etf_fund_flows_shadow_run.py
-          pytest -q tests/test_etf_fund_flows_v1.py
+          python -m compileall -q src/v182/features/etf_fund_flows_v1.py src/v182/sources/etf_fund_flows.py src/v182/reporting/etf_fund_flows_shadow_run.py src/v182/features/etp_satellite_v1.py src/v182/reporting/etp_satellite_shadow_run.py
+          pytest -q tests/test_etf_fund_flows_v1.py tests/test_etp_satellite_v1.py
       - name: Collect and compute ETF Fund Flows V1 SHADOW
         run: python -m v182.reporting.etf_fund_flows_shadow_run
+      - name: Build ETP Satellite V1 Gold Crypto SHADOW context
+        run: python -m v182.reporting.etp_satellite_shadow_run
       - name: Show Fund Flow governance audit
         if: always()
         run: |
           if [ -f outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json ]; then cat outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json; fi
-      - name: Publish mobile Fund Flow shadow summary
+      - name: Show ETP Satellite governance audit
+        if: always()
+        run: |
+          if [ -f outputs/audit/ETP_SATELLITE_V1_SHADOW.json ]; then cat outputs/audit/ETP_SATELLITE_V1_SHADOW.json; fi
+      - name: Publish mobile Fund Flow and ETP Satellite shadow summaries
         if: always()
         run: |
           if [ -f outputs/mobile/ETF_FUND_FLOWS_SHADOW.md ]; then cat outputs/mobile/ETF_FUND_FLOWS_SHADOW.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ -f outputs/mobile/ETP_SATELLITES_SHADOW.md ]; then
+            printf '\n\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+            cat outputs/mobile/ETP_SATELLITES_SHADOW.md >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Save ETF fund flow PIT history
         if: ${{ always() && hashFiles('state/etf_fund_flows/**') != '' }}
         uses: actions/cache/save@v4
         with:
           path: state/etf_fund_flows/
           key: etf-fund-flow-v1-${{ github.run_id }}
-      - name: Upload compact Fund Flow shadow outputs
+      - name: Upload compact Fund Flow and ETP Satellite shadow outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: etf-fund-flows-v1-${{ github.run_id }}
           path: |
             outputs/etf_fund_flows/
+            outputs/etp_satellite/
             outputs/mobile/ETF_FUND_FLOWS_SHADOW.md
+            outputs/mobile/ETP_SATELLITES_SHADOW.md
             outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json
+            outputs/audit/ETP_SATELLITE_V1_SHADOW.json
             outputs/gaps/ETF_FUND_FLOW_COLLECTION_FAILURES.csv
           if-no-files-found: warn
           retention-days: 14
