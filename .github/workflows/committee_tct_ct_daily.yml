@@ -83,6 +83,10 @@ jobs:
       - name: Daily TCT CT scoring and V21.8
         run: python -m v182.reporting.daily_tct_ct_runner
 
+      - name: ETF PEA CT LT V21.13 shadow diagnostics
+        continue-on-error: true
+        run: python -m v182.reporting.etf_ct_lt_shadow_run
+
       - name: TCT V24.3.1 robust daily weekly trader-tools shadow
         continue-on-error: true
         run: python -m v182.reporting.tct_daily_trader_shadow_run_v24_3_1
@@ -97,6 +101,10 @@ jobs:
           if [ -f outputs/mobile/ANDROID_DAILY_TCT_CT.md ]; then
             cat outputs/mobile/ANDROID_DAILY_TCT_CT.md >> "$GITHUB_STEP_SUMMARY"
           fi
+          if [ -f outputs/mobile/ETF_CT_LT_SHADOW.md ]; then
+            printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+            cat outputs/mobile/ETF_CT_LT_SHADOW.md >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [ -f outputs/mobile/ANDROID_TCT_DAILY_TRADER_SHADOW.md ]; then
             printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
             cat outputs/mobile/ANDROID_TCT_DAILY_TRADER_SHADOW.md >> "$GITHUB_STEP_SUMMARY"
@@ -107,6 +115,9 @@ jobs:
         run: |
           if [ -f outputs/audit/DAILY_TCT_CT_AUDIT.json ]; then
             cat outputs/audit/DAILY_TCT_CT_AUDIT.json
+          fi
+          if [ -f outputs/audit/ETF_CT_LT_V21_13_SHADOW.json ]; then
+            cat outputs/audit/ETF_CT_LT_V21_13_SHADOW.json
           fi
           if [ -f outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json ]; then
             cat outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json
@@ -156,9 +167,12 @@ jobs:
           name: pea-daily-tct-ct-${{ github.run_id }}
           path: |
             outputs/daily_tct_ct/
+            outputs/etf_ct_lt_shadow/
             outputs/mobile/ANDROID_DAILY_TCT_CT.md
+            outputs/mobile/ETF_CT_LT_SHADOW.md
             outputs/mobile/ANDROID_TCT_DAILY_TRADER_SHADOW.md
             outputs/audit/DAILY_TCT_CT_AUDIT.json
+            outputs/audit/ETF_CT_LT_V21_13_SHADOW.json
             outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json
             outputs/audit/TCT_V24_4_0_PIT_CLOSE_LEDGER_AUDIT.json
             outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json
