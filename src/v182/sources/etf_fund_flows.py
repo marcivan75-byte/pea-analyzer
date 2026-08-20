@@ -10,7 +10,6 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
-
 USER_AGENT = "Mozilla/5.0 (compatible; PEA-Analyzer/1.0; +https://github.com/)"
 BLACKROCK_DATE_RE = re.compile(r"as of\s+(\d{1,2}/[A-Za-z]{3}/\d{4})", re.IGNORECASE)
 CONFIDENCE_RANK = {"A": 4, "B": 3, "C": 2, "D": 1, "QUARANTINE": 0}
@@ -22,7 +21,7 @@ def _nonempty(value: object) -> str:
 
 
 def _parse_number(text: str) -> float | None:
-    cleaned = re.sub(r"[^0-9.\-]", "", text.replace(",", ""))
+    cleaned = re.sub(r"[^0-9.\-]", "", str(text).replace(",", ""))
     try:
         value = float(cleaned)
     except (TypeError, ValueError):
@@ -32,12 +31,12 @@ def _parse_number(text: str) -> float | None:
 
 def _parse_blackrock_date(text: str) -> str:
     match = BLACKROCK_DATE_RE.search(text)
-    if not match:
-        return datetime.now(timezone.utc).date().isoformat()
-    try:
-        return datetime.strptime(match.group(1), "%d/%b/%Y").date().isoformat()
-    except ValueError:
-        return datetime.now(timezone.utc).date().isoformat()
+    if match:
+        try:
+            return datetime.strptime(match.group(1), "%d/%b/%Y").date().isoformat()
+        except ValueError:
+            return datetime.now(timezone.utc).date().isoformat()
+    return datetime.now(timezone.utc).date().isoformat()
 
 
 def _canonical_economic_family(benchmark: str, category: str, geo: str, name: str) -> str:
@@ -64,72 +63,40 @@ def _canonical_economic_family(benchmark: str, category: str, geo: str, name: st
 def build_pea_flow_universe(master: pd.DataFrame) -> pd.DataFrame:
     if "isin" not in master.columns:
         raise ValueError("PEA_ETF_MASTER_MISSING_ISIN")
-    rows = []
+    rows: list[dict] = []
+    sector_terms = {
+        "technology": "TECHNOLOGY", "technologie": "TECHNOLOGY", "semiconductor": "SEMICONDUCTORS",
+        "semi-conduct": "SEMICONDUCTORS", "health": "HEALTHCARE", "santé": "HEALTHCARE",
+        "bank": "BANKS", "banque": "BANKS", "energy": "ENERGY", "énergie": "ENERGY",
+        "defence": "DEFENSE", "defense": "DEFENSE", "aerospace": "DEFENSE", "utilities": "UTILITIES",
+        "immobilier": "REAL_ESTATE", "real estate": "REAL_ESTATE", "industrial": "INDUSTRIALS",
+        "consumer": "CONSUMER",
+    }
     for _, row in master.iterrows():
         isin = _nonempty(row.get("isin"))
         if not isin:
             continue
-        ticker = (
-            _nonempty(row.get("yahoo_ticker"))
-            or _nonempty(row.get("ticker_yahoo_final"))
-            or _nonempty(row.get("ticker_yahoo"))
-        )
+        ticker = _nonempty(row.get("yahoo_ticker")) or _nonempty(row.get("ticker_yahoo_final")) or _nonempty(row.get("ticker_yahoo"))
         benchmark = _nonempty(row.get("official_benchmark"))
         category = _nonempty(row.get("category"))
         geo = _nonempty(row.get("geo_exposure"))
         name = _nonempty(row.get("name")) or isin
-        family = _canonical_economic_family(benchmark, category, geo, name) or isin
         replication = _nonempty(row.get("replication_hint")).upper()
         text = f"{name} {category}".lower()
-        is_inverse_or_leveraged = bool(re.search(r"\b(short|inverse|leveraged|2x|3x|-1x|-2x|-3x)\b", text))
-        sector_theme = ""
-        governed_sector_terms = {
-            "technology": "TECHNOLOGY",
-            "technologie": "TECHNOLOGY",
-            "semiconductor": "SEMICONDUCTORS",
-            "semi-conduct": "SEMICONDUCTORS",
-            "health": "HEALTHCARE",
-            "santé": "HEALTHCARE",
-            "bank": "BANKS",
-            "banque": "BANKS",
-            "energy": "ENERGY",
-            "énergie": "ENERGY",
-            "defence": "DEFENSE",
-            "defense": "DEFENSE",
-            "aerospace": "DEFENSE",
-            "utilities": "UTILITIES",
-            "immobilier": "REAL_ESTATE",
-            "real estate": "REAL_ESTATE",
-            "industrial": "INDUSTRIALS",
-            "consumer": "CONSUMER",
-        }
-        for term, label in governed_sector_terms.items():
-            if term in text:
-                sector_theme = label
-                break
-        rows.append(
-            {
-                "instrument_id": f"ISIN:{isin}",
-                "isin": isin,
-                "ticker": ticker,
-                "name": name,
-                "universe": "PEA_ETF",
-                "asset_class": "ETF",
-                "economic_family": family,
-                "region": geo or _nonempty(row.get("region_domicile")) or "EU",
-                "sector_or_theme": sector_theme,
-                "benchmark": benchmark,
-                "provider": _nonempty(row.get("provider")),
-                "currency": _nonempty(row.get("base_currency")) or _nonempty(row.get("currency")) or _nonempty(row.get("trading_currency")),
-                "is_pea": True,
-                "pea_status": _nonempty(row.get("pea_type")),
-                "pea_status_confidence": _nonempty(row.get("pea_confidence")),
-                "is_synthetic": "SYNTH" in replication or "SWAP" in replication,
-                "is_inverse_or_leveraged": is_inverse_or_leveraged,
-                "official_adapter": "",
-                "official_url": _nonempty(row.get("source_url")),
-            }
-        )
+        sector_theme = next((label for term, label in sector_terms.items() if term in text), "")
+        rows.append({
+            "instrument_id": f"ISIN:{isin}", "isin": isin, "ticker": ticker, "name": name,
+            "universe": "PEA_ETF", "asset_class": "ETF",
+            "economic_family": _canonical_economic_family(benchmark, category, geo, name) or isin,
+            "region": geo or _nonempty(row.get("region_domicile")) or "EU",
+            "sector_or_theme": sector_theme, "benchmark": benchmark, "provider": _nonempty(row.get("provider")),
+            "currency": _nonempty(row.get("base_currency")) or _nonempty(row.get("currency")) or _nonempty(row.get("trading_currency")),
+            "is_pea": True, "pea_status": _nonempty(row.get("pea_type")),
+            "pea_status_confidence": _nonempty(row.get("pea_confidence")),
+            "is_synthetic": "SYNTH" in replication or "SWAP" in replication,
+            "is_inverse_or_leveraged": bool(re.search(r"\b(short|inverse|leveraged|2x|3x|-1x|-2x|-3x)\b", text)),
+            "official_adapter": "", "official_url": _nonempty(row.get("source_url")),
+        })
     return pd.DataFrame(rows)
 
 
@@ -152,14 +119,8 @@ def _blackrock_official_snapshot(row: pd.Series, timeout_seconds: float = 20.0) 
         response = requests.get(url, timeout=timeout_seconds, headers={"User-Agent": USER_AGENT})
         response.raise_for_status()
     except requests.RequestException as exc:
-        return None, {
-            "instrument_id": row.get("instrument_id"),
-            "stage": "OFFICIAL",
-            "reason": type(exc).__name__,
-            "detail": str(exc)[:180],
-        }
+        return None, {"instrument_id": row.get("instrument_id"), "stage": "OFFICIAL", "reason": type(exc).__name__, "detail": str(exc)[:180]}
     text = " ".join(BeautifulSoup(response.text, "lxml").stripped_strings)
-    as_of = _parse_blackrock_date(text)
     patterns = {
         "aum": [
             r"(?:Net Assets of Fund|Series Value)\s+as of\s+\d{1,2}/[A-Za-z]{3}/\d{4}\s+(?:USD|EUR|GBP|CHF)\s*([0-9,]+(?:\.[0-9]+)?)",
@@ -169,9 +130,7 @@ def _blackrock_official_snapshot(row: pd.Series, timeout_seconds: float = 20.0) 
             r"(?:Shares Outstanding|Securities Outstanding)\s+as of\s+\d{1,2}/[A-Za-z]{3}/\d{4}\s+([0-9,]+(?:\.[0-9]+)?)",
             r"(?:Shares Outstanding|Securities Outstanding).*?([0-9][0-9,]+(?:\.[0-9]+)?)",
         ],
-        "nav": [
-            r"NAV as of\s+\d{1,2}/[A-Za-z]{3}/\d{4}\s+(?:USD|EUR|GBP|CHF)\s*([0-9,]+(?:\.[0-9]+)?)",
-        ],
+        "nav": [r"NAV as of\s+\d{1,2}/[A-Za-z]{3}/\d{4}\s+(?:USD|EUR|GBP|CHF)\s*([0-9,]+(?:\.[0-9]+)?)"],
     }
     values: dict[str, float] = {}
     for field, regexes in patterns.items():
@@ -182,32 +141,18 @@ def _blackrock_official_snapshot(row: pd.Series, timeout_seconds: float = 20.0) 
                 if parsed is not None:
                     values[field] = parsed
                     break
-    currency_match = re.search(r"Base Currency\s+(USD|EUR|GBP|CHF)", text, flags=re.IGNORECASE)
-    currency = currency_match.group(1).upper() if currency_match else _nonempty(row.get("currency"))
     if "aum" not in values and "shares_outstanding" not in values:
-        return None, {
-            "instrument_id": row.get("instrument_id"),
-            "stage": "OFFICIAL",
-            "reason": "OFFICIAL_PAGE_FIELDS_NOT_PARSED",
-            "url": url,
-        }
+        return None, {"instrument_id": row.get("instrument_id"), "stage": "OFFICIAL", "reason": "OFFICIAL_PAGE_FIELDS_NOT_PARSED", "url": url}
+    currency_match = re.search(r"Base Currency\s+(USD|EUR|GBP|CHF)", text, flags=re.IGNORECASE)
     observation = {key: row.get(key, "") for key in row.index}
-    observation.update(
-        {
-            "as_of": as_of,
-            "aum": values.get("aum"),
-            "nav": values.get("nav"),
-            "shares_outstanding": values.get("shares_outstanding"),
-            "market_price": np.nan,
-            "distribution_per_share": 0.0,
-            "currency": currency,
-            "source": "issuer_official",
-            "source_type": "ISSUER_OFFICIAL",
-            "source_url": url,
-            "confidence": "A",
-            "source_priority": 100,
-        }
-    )
+    observation.update({
+        "as_of": _parse_blackrock_date(text), "aum": values.get("aum"), "nav": values.get("nav"),
+        "shares_outstanding": values.get("shares_outstanding"), "market_price": np.nan,
+        "distribution_per_share": 0.0,
+        "currency": currency_match.group(1).upper() if currency_match else _nonempty(row.get("currency")),
+        "source": "issuer_official", "source_type": "ISSUER_OFFICIAL", "source_url": url,
+        "confidence": "A", "source_priority": 100,
+    })
     return observation, None
 
 
@@ -217,44 +162,27 @@ def _yfinance_snapshot(row: pd.Series) -> tuple[dict | None, dict | None]:
         return None, {"instrument_id": row.get("instrument_id"), "stage": "YFINANCE", "reason": "MISSING_TICKER"}
     try:
         import yfinance as yf
-
         instrument = yf.Ticker(ticker)
         info = instrument.info or {}
         history = instrument.history(period="5d", auto_adjust=False)
         price = None
         if not history.empty and "Close" in history.columns:
-            series = pd.to_numeric(history["Close"], errors="coerce").dropna()
-            price = float(series.iloc[-1]) if not series.empty else None
-        aum = info.get("totalAssets")
-        nav = info.get("navPrice")
-        shares = info.get("sharesOutstanding")
+            closes = pd.to_numeric(history["Close"], errors="coerce").dropna()
+            price = float(closes.iloc[-1]) if not closes.empty else None
+        aum, nav, shares = info.get("totalAssets"), info.get("navPrice"), info.get("sharesOutstanding")
         if aum is None and nav is None and shares is None and price is None:
             return None, {"instrument_id": row.get("instrument_id"), "stage": "YFINANCE", "reason": "NO_FLOW_SNAPSHOT_FIELDS"}
         observation = {key: row.get(key, "") for key in row.index}
-        observation.update(
-            {
-                "as_of": datetime.now(timezone.utc).date().isoformat(),
-                "aum": aum,
-                "nav": nav,
-                "shares_outstanding": shares,
-                "market_price": price,
-                "distribution_per_share": 0.0,
-                "currency": info.get("currency") or info.get("financialCurrency") or _nonempty(row.get("currency")),
-                "source": "yfinance.info/history",
-                "source_type": "YFINANCE",
-                "source_url": f"https://finance.yahoo.com/quote/{ticker}/",
-                "confidence": "C",
-                "source_priority": 50,
-            }
-        )
+        observation.update({
+            "as_of": datetime.now(timezone.utc).date().isoformat(), "aum": aum, "nav": nav,
+            "shares_outstanding": shares, "market_price": price, "distribution_per_share": 0.0,
+            "currency": info.get("currency") or info.get("financialCurrency") or _nonempty(row.get("currency")),
+            "source": "yfinance.info/history", "source_type": "YFINANCE",
+            "source_url": f"https://finance.yahoo.com/quote/{ticker}/", "confidence": "C", "source_priority": 50,
+        })
         return observation, None
     except Exception as exc:
-        return None, {
-            "instrument_id": row.get("instrument_id"),
-            "stage": "YFINANCE",
-            "reason": type(exc).__name__,
-            "detail": str(exc)[:180],
-        }
+        return None, {"instrument_id": row.get("instrument_id"), "stage": "YFINANCE", "reason": type(exc).__name__, "detail": str(exc)[:180]}
 
 
 def load_official_observations(path: Path) -> pd.DataFrame:
@@ -267,31 +195,32 @@ def load_official_observations(path: Path) -> pd.DataFrame:
     missing = required - set(frame.columns)
     if missing:
         raise ValueError(f"OFFICIAL_FLOW_INPUT_MISSING_COLUMNS:{','.join(sorted(missing))}")
-    frame["source_type"] = frame.get("source_type", "ISSUER_OFFICIAL")
-    frame["source_priority"] = pd.to_numeric(frame.get("source_priority", 100), errors="coerce").fillna(100)
+    if "source_type" not in frame.columns:
+        frame["source_type"] = "ISSUER_OFFICIAL"
+    if "source_priority" not in frame.columns:
+        frame["source_priority"] = 100
+    frame["source_priority"] = pd.to_numeric(frame["source_priority"], errors="coerce").fillna(100)
     return frame
 
 
 def _missing_value(value: object) -> bool:
     if value is None:
         return True
-    try:
-        if pd.isna(value):
-            return True
-    except (TypeError, ValueError):
-        pass
-    return isinstance(value, str) and not _nonempty(value)
+    if isinstance(value, str):
+        return not _nonempty(value)
+    missing = pd.isna(value)
+    return bool(missing) if isinstance(missing, (bool, np.bool_)) else False
 
 
 def _merge_same_day_observations(snapshot: pd.DataFrame) -> pd.DataFrame:
     fill_fields = ("aum", "nav", "shares_outstanding", "market_price", "distribution_per_share", "currency")
-    rows = []
-    for (_, _), group in snapshot.groupby(["instrument_id", "as_of"], sort=False):
-        group = group.sort_values(["source_priority", "_confidence_rank"], ascending=[False, False])
-        merged = group.iloc[0].to_dict()
+    rows: list[dict] = []
+    for _, group in snapshot.groupby(["instrument_id", "as_of"], sort=False):
+        ranked = group.sort_values(["source_priority", "_confidence_rank"], ascending=[False, False])
+        merged = ranked.iloc[0].to_dict()
         used_confidences = [str(merged.get("confidence") or "D").upper()]
         components = [str(merged.get("source") or "")]
-        for _, candidate in group.iloc[1:].iterrows():
+        for _, candidate in ranked.iloc[1:].iterrows():
             used = False
             for field in fill_fields:
                 if _missing_value(merged.get(field)) and not _missing_value(candidate.get(field)):
@@ -311,23 +240,22 @@ def collect_current_snapshot(
     official_input: pd.DataFrame | None = None,
     delay_seconds: float = 0.05,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    observations = []
-    failures = []
+    observations: list[dict] = []
+    failures: list[dict] = []
     if official_input is not None and not official_input.empty:
         observations.extend(official_input.to_dict(orient="records"))
     for _, row in universe.iterrows():
-        adapter = _nonempty(row.get("official_adapter")).upper()
-        if adapter == "BLACKROCK_HTML":
-            official_observation, failure = _blackrock_official_snapshot(row)
-            if official_observation is not None:
-                observations.append(official_observation)
+        if _nonempty(row.get("official_adapter")).upper() == "BLACKROCK_HTML":
+            official, failure = _blackrock_official_snapshot(row)
+            if official is not None:
+                observations.append(official)
             if failure is not None:
                 failures.append(failure)
-        yahoo_observation, yahoo_failure = _yfinance_snapshot(row)
-        if yahoo_observation is not None:
-            observations.append(yahoo_observation)
-        if yahoo_failure is not None:
-            failures.append(yahoo_failure)
+        yahoo, failure = _yfinance_snapshot(row)
+        if yahoo is not None:
+            observations.append(yahoo)
+        if failure is not None:
+            failures.append(failure)
         if delay_seconds > 0:
             time.sleep(delay_seconds)
     snapshot = pd.DataFrame(observations)
@@ -338,6 +266,5 @@ def collect_current_snapshot(
     snapshot["as_of"] = snapshot["as_of"].dt.date.astype(str)
     snapshot["source_priority"] = pd.to_numeric(snapshot["source_priority"], errors="coerce").fillna(0)
     snapshot["_confidence_rank"] = snapshot["confidence"].astype(str).str.upper().map(CONFIDENCE_RANK).fillna(0)
-    snapshot = _merge_same_day_observations(snapshot)
-    snapshot = snapshot.drop(columns="_confidence_rank", errors="ignore")
+    snapshot = _merge_same_day_observations(snapshot).drop(columns="_confidence_rank", errors="ignore")
     return snapshot.reset_index(drop=True), pd.DataFrame(failures)
