@@ -10,10 +10,10 @@
     252
   ],
   "minimum_observations": {
-    "score_5d": 3,
-    "score_20d": 10,
-    "score_60d": 20,
-    "score_252d": 60
+    "score_5d": 5,
+    "score_20d": 20,
+    "score_60d": 60,
+    "score_252d": 252
   },
   "flow_method_priority": [
     "SHARES_NAV",
@@ -76,7 +76,9 @@
     "synthetic_pea_maps_to_economic_benchmark_not_collateral": true,
     "distributions_adjust_fallback_return": true,
     "splits_and_discontinuities_quarantine": true,
-    "quarantined_data_score_influence": 0.0
+    "quarantined_data_score_influence": 0.0,
+    "mixed_currency_absolute_aggregation_forbidden": true,
+    "coinshares_weekly_control_not_added_to_primary_flows": true
   },
   "governance": {
     "decision_influence": 0.0,
@@ -89,5 +91,7 @@
     "live_orders_enabled": false,
     "promotion_requires_dedicated_pit_oos": true,
     "historical_backfill_from_current_snapshot_forbidden": true
-  }
+  },
+  "preliminary_score_min_observations": 20,
+  "mature_score_min_observations": 60
 }
