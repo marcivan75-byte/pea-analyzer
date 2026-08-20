@@ -1,0 +1,55 @@
+{
+  "version": "V21.14_ETF_CT_LT_SHADOW_2026_08_20",
+  "mode": "SHADOW_ONLY",
+  "source_registry": "config/V20_7_1_ETF_CRITERIA_REGISTRY.json",
+  "input": "outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv",
+  "horizons": {
+    "CT": {
+      "legacy_engine": "V20.7.1_CT_69PCT_ACTIVE",
+      "minimum_weighted_coverage": 0.70,
+      "legacy_high_score_threshold": 77.0,
+      "legacy_watch_threshold": 70.0,
+      "historical_performance_attribution": "NONE_UNTIL_DEDICATED_PIT_OOS_VALIDATION"
+    },
+    "LT": {
+      "legacy_engine": "V20.7_LT_BASELINE",
+      "minimum_weighted_coverage": 0.70,
+      "legacy_high_score_threshold": 77.0,
+      "legacy_watch_threshold": 70.0,
+      "historical_performance_attribution": "NONE_UNTIL_DEDICATED_PIT_OOS_VALIDATION"
+    }
+  },
+  "scoring": {
+    "method": "CURRENT_SNAPSHOT_CROSS_SECTIONAL_PERCENTILE_RANK",
+    "missing_policy": "AVAILABLE_OBSERVED_CRITERIA_RENORMALIZED_TO_100_PERCENT",
+    "neutral_imputation": false,
+    "categorical_numeric_inference": false,
+    "distribution_policy_numeric_mapping": "FORBIDDEN_UNTIL_GOVERNED_DEFINITION",
+    "minimum_cross_section_observed_fraction": 0.20,
+    "cross_section_quality_role": "DATA_QUALITY_GATE_NOT_WEIGHT_TUNING",
+    "threshold_role": "CONTEXT_BANDS_ONLY_NOT_BUY_RULES"
+  },
+  "validation": {
+    "current_snapshot_only": true,
+    "dedicated_pit_oos_required_before_promotion": true,
+    "v21_13_history_depth_gates_apply_to_future_validation": true,
+    "primary_calibration_eligible_status": "PRIMARY_FULL_FROM_ANCHOR",
+    "stress_library_eligible_status": "STRESS_FULL_2020_2022",
+    "stress_calibration_weight": 0.0
+  },
+  "governance": {
+    "pea_universe_only": true,
+    "decision_influence": 0.0,
+    "mt_reference_score_influence": 0.0,
+    "real_orders_allowed": false,
+    "live_orders_enabled": false,
+    "promotion_allowed": false,
+    "can_create_buy": false,
+    "can_create_sell": false,
+    "t1_t2_forbidden": true,
+    "current_snapshot_is_historical_truth": false,
+    "final_holdouts_untouched": true,
+    "weights_changed": false,
+    "thresholds_changed": false
+  }
+}
