@@ -20,7 +20,7 @@ Cette base peut servir à la recherche/calibration des critères, poids et seuil
 
 ## 3. Bibliothèque de stress indépendante
 
-La période **01/01/2020–31/12/2022** est conservée durablement dans une bibliothèque de stress séparée.
+La période **01/01/2020–31/12/2022** est conservée durablement dans une bibliothèque de stress séparée. Les dates de début et de fin sont des bornes calendaires : **toute la journée du 31/12/2022 est incluse**, y compris lorsqu'une observation possède une heure intrajournalière.
 
 Elle sert notamment à analyser :
 
@@ -77,7 +77,8 @@ Le code fournit notamment :
 - partition d'un DataFrame en `primary`, `stress`, `outside` ;
 - rejet explicite d'une calibration principale contenant des lignes de stress ;
 - rejet explicite des lignes futures ;
-- validation que le stress possède un poids de calibration nul et ne chevauche jamais la base principale.
+- validation que le stress possède un poids de calibration nul et ne chevauche jamais la base principale ;
+- interprétation inclusive de la date de fin de chaque période de stress.
 
 ## 7. PIT / anti-look-ahead
 
