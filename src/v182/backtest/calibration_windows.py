@@ -9,7 +9,7 @@ import pandas as pd
 
 
 ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_POLICY_PATH = ROOT / "config" / "CALIBRATION_WINDOWS_V21_11.json"
+DEFAULT_POLICY_PATH = ROOT / "config" / "CALIBRATION_WINDOWS_V21_12.json"
 
 
 @dataclass(frozen=True)
