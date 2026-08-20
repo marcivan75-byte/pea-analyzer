@@ -101,6 +101,9 @@ def _normalise_snapshot(snapshot: pd.DataFrame) -> pd.DataFrame:
     frame["as_of"] = pd.to_datetime(frame["as_of"], errors="coerce", utc=True)
     if frame["as_of"].isna().any():
         raise ValueError("ETF_FLOW_INVALID_AS_OF")
+    today = pd.Timestamp.now(tz="UTC").normalize()
+    if frame["as_of"].gt(today).any():
+        raise ValueError("ETF_FLOW_FUTURE_AS_OF_FORBIDDEN")
     frame["confidence"] = frame["confidence"].map(_confidence_grade)
     for col in ("aum", "nav", "shares_outstanding", "market_price", "distribution_per_share"):
         if col not in frame.columns:
@@ -123,11 +126,12 @@ def _normalise_snapshot(snapshot: pd.DataFrame) -> pd.DataFrame:
         frame[col] = frame[col].fillna("").astype(str)
     source_priority = frame["source_priority"] if "source_priority" in frame.columns else pd.Series(0, index=frame.index)
     frame["source_priority"] = pd.to_numeric(source_priority, errors="coerce").fillna(0.0)
+    frame["_confidence_rank"] = frame["confidence"].map(CONFIDENCE_ORDER).fillna(0)
     frame = frame.sort_values(
-        ["instrument_id", "as_of", "source_priority", "confidence"],
+        ["instrument_id", "as_of", "source_priority", "_confidence_rank"],
         ascending=[True, True, False, False],
     )
-    frame = frame.drop_duplicates(["instrument_id", "as_of"], keep="first").reset_index(drop=True)
+    frame = frame.drop_duplicates(["instrument_id", "as_of"], keep="first").drop(columns="_confidence_rank").reset_index(drop=True)
     return frame
 
 
@@ -148,15 +152,29 @@ def _daily_flow(current: pd.Series, previous: pd.Series) -> tuple[float | None, 
     confidence = _min_confidence(current.get("confidence"), previous.get("confidence"))
     if confidence in {"D", "QUARANTINE"}:
         return None, "UNSCORABLE_LOW_CONFIDENCE", confidence
+
     current_shares = _num(current.get("shares_outstanding"))
     previous_shares = _num(previous.get("shares_outstanding"))
     current_nav = _num(current.get("nav"))
-    if current_shares is not None and previous_shares is not None and current_nav is not None and current_nav > 0:
+    previous_nav = _num(previous.get("nav"))
+    if any(value is not None and value <= 0 for value in (current_shares, previous_shares, current_nav, previous_nav)):
+        return None, "QUARANTINED_NON_POSITIVE_STRUCTURE", "QUARANTINE"
+
+    if current_shares is not None and previous_shares is not None and current_nav is not None:
+        if previous_shares > 0 and previous_nav is not None and current_nav > 0:
+            share_ratio = current_shares / previous_shares
+            nav_ratio = current_nav / previous_nav
+            split_like = (share_ratio >= 1.5 or share_ratio <= (2.0 / 3.0)) and abs(share_ratio * nav_ratio - 1.0) <= 0.08
+            if split_like:
+                return None, "QUARANTINED_SPLIT_LIKE_EVENT", "QUARANTINE"
         return (current_shares - previous_shares) * current_nav, "SHARES_NAV", confidence
+
     current_aum = _num(current.get("aum"))
     previous_aum = _num(previous.get("aum"))
+    if any(value is not None and value <= 0 for value in (current_aum, previous_aum)):
+        return None, "QUARANTINED_NON_POSITIVE_AUM", "QUARANTINE"
     performance = _derive_period_return(current, previous)
-    if current_aum is not None and previous_aum is not None and previous_aum > 0 and performance is not None:
+    if current_aum is not None and previous_aum is not None and performance is not None:
         return current_aum - previous_aum * (1.0 + performance), "AUM_PERFORMANCE_ADJUSTED", confidence
     return None, "DATA_INSUFFICIENT", confidence
 
@@ -195,19 +213,24 @@ def _rolling_features(group: pd.DataFrame) -> pd.DataFrame:
     aum = pd.to_numeric(group["aum"], errors="coerce")
     returns = pd.to_numeric(group["period_return"], errors="coerce")
     for horizon in (5, 20, 60, 252):
-        min_periods = max(2, min(horizon, 3 if horizon == 5 else 10 if horizon == 20 else 20 if horizon == 60 else 60))
-        group[f"flow_{horizon}d"] = flow.rolling(horizon, min_periods=min_periods).sum()
+        group[f"flow_{horizon}d"] = flow.rolling(horizon, min_periods=horizon).sum()
         start_aum = aum.shift(horizon - 1)
         group[f"organic_flow_rate_{horizon}d"] = group[f"flow_{horizon}d"] / start_aum.replace(0.0, np.nan)
-        group[f"price_return_{horizon}d"] = (1.0 + returns.fillna(0.0)).rolling(horizon, min_periods=min_periods).apply(np.prod, raw=True) - 1.0
+        group[f"price_return_{horizon}d"] = (
+            (1.0 + returns).rolling(horizon, min_periods=horizon).apply(np.prod, raw=True) - 1.0
+        )
     positive = flow.gt(0).where(flow.notna())
-    group["positive_days_20d_pct"] = positive.rolling(20, min_periods=5).mean().mul(100.0)
+    group["positive_days_20d_pct"] = positive.rolling(20, min_periods=20).mean().mul(100.0)
     group["flow_acceleration"] = group["organic_flow_rate_5d"].div(5.0) - group["organic_flow_rate_20d"].div(20.0)
     group["daily_flow_percentile_252d"] = (
         pd.to_numeric(group["organic_flow_rate"], errors="coerce")
-        .rolling(252, min_periods=20)
+        .rolling(252, min_periods=60)
         .apply(lambda values: pd.Series(values).rank(pct=True).iloc[-1] * 100.0, raw=False)
     )
+    years = group["as_of"].dt.year
+    group["flow_ytd"] = flow.groupby(years).cumsum()
+    first_aum = aum.groupby(years).transform("first")
+    group["organic_flow_rate_ytd"] = group["flow_ytd"] / first_aum.replace(0.0, np.nan)
     group["history_observations"] = np.arange(1, len(group) + 1)
     return group
 
@@ -232,6 +255,12 @@ def _current_instruments(rolling: pd.DataFrame, cfg: dict) -> pd.DataFrame:
         "economic_family"
     )["organic_flow_rate_20d"].transform("median")
     current["score_peer_relative"] = _rank_score(current["peer_relative_raw"])
+    family_abs_flow = current.groupby("economic_family")["flow_20d"].transform(
+        lambda values: pd.to_numeric(values, errors="coerce").abs().sum(min_count=1)
+    )
+    current["flow_share_family_20d_pct"] = (
+        pd.to_numeric(current["flow_20d"], errors="coerce") / family_abs_flow.replace(0.0, np.nan) * 100.0
+    )
 
     confirmation_scores = []
     confirmation_states = []
@@ -253,11 +282,21 @@ def _current_instruments(rolling: pd.DataFrame, cfg: dict) -> pd.DataFrame:
         "flow_price_confirmation": "score_flow_price_confirmation",
     }
     scores = []
+    readiness = []
+    min_preliminary = int(cfg.get("preliminary_score_min_observations", 20))
+    min_mature = int(cfg.get("mature_score_min_observations", 60))
     for _, row in current.iterrows():
+        history_count = int(row.get("history_observations", 0))
+        if history_count < min_preliminary:
+            scores.append(np.nan)
+            readiness.append("DATA_INSUFFICIENT_LT20")
+            continue
         weighted = [(_num(row.get(column)), float(weights[key])) for key, column in score_columns.items()]
         score = _weighted_mean(weighted)
         scores.append(round(score, 4) if score is not None else np.nan)
+        readiness.append("MATURE_60_PLUS" if history_count >= min_mature else "PRELIMINARY_20_59")
     current["efs_shadow"] = scores
+    current["efs_readiness"] = readiness
     current["efs_status"] = pd.cut(
         current["efs_shadow"],
         bins=[-np.inf, 30, 45, 55, 65, 80, np.inf],
@@ -279,17 +318,27 @@ def build_family_scores(instruments: pd.DataFrame) -> pd.DataFrame:
     ].copy()
     if eligible.empty:
         return pd.DataFrame()
-    grouped = eligible.groupby(["economic_family", "region"], dropna=False)
-    family = grouped.agg(
-        instruments=("instrument_id", "nunique"),
-        flow_5d=("flow_5d", "sum"),
-        flow_20d=("flow_20d", "sum"),
-        flow_60d=("flow_60d", "sum"),
-        mean_organic_flow_rate_20d=("organic_flow_rate_20d", "mean"),
-        breadth_positive_20d_pct=("organic_flow_rate_20d", lambda values: pd.to_numeric(values, errors="coerce").gt(0).mean() * 100.0),
-        mean_efs_shadow=("efs_shadow", "mean"),
-        mean_price_return_20d=("price_return_20d", "mean"),
-    ).reset_index()
+    rows = []
+    for (family_name, region), group in eligible.groupby(["economic_family", "region"], dropna=False):
+        currencies = sorted({str(value).strip() for value in group["currency"] if str(value).strip()})
+        absolute_comparable = len(currencies) == 1
+        rows.append(
+            {
+                "economic_family": family_name,
+                "region": region,
+                "instruments": int(group["instrument_id"].nunique()),
+                "currency": currencies[0] if absolute_comparable else "MIXED_OR_UNKNOWN",
+                "absolute_flow_comparable": absolute_comparable,
+                "flow_5d": pd.to_numeric(group["flow_5d"], errors="coerce").sum(min_count=1) if absolute_comparable else np.nan,
+                "flow_20d": pd.to_numeric(group["flow_20d"], errors="coerce").sum(min_count=1) if absolute_comparable else np.nan,
+                "flow_60d": pd.to_numeric(group["flow_60d"], errors="coerce").sum(min_count=1) if absolute_comparable else np.nan,
+                "mean_organic_flow_rate_20d": pd.to_numeric(group["organic_flow_rate_20d"], errors="coerce").mean(),
+                "breadth_positive_20d_pct": pd.to_numeric(group["organic_flow_rate_20d"], errors="coerce").gt(0).mean() * 100.0,
+                "mean_efs_shadow": pd.to_numeric(group["efs_shadow"], errors="coerce").mean(),
+                "mean_price_return_20d": pd.to_numeric(group["price_return_20d"], errors="coerce").mean(),
+            }
+        )
+    family = pd.DataFrame(rows)
     family["family_flow_score"] = _rank_score(family["mean_organic_flow_rate_20d"])
     family["decision_influence"] = 0.0
     return family
@@ -347,13 +396,17 @@ def build_rotation_scores(instruments: pd.DataFrame, cfg: dict) -> pd.DataFrame:
         regions = group.loc[rates_20.gt(0), "region"].astype(str).replace("", np.nan).dropna().nunique()
         total_regions = group["region"].astype(str).replace("", np.nan).dropna().nunique()
         flow_price, state = _flow_price_score(_num(rates_20.mean()), _num(price.mean()))
+        currencies = sorted({str(value).strip() for value in group["currency"] if str(value).strip()})
+        absolute_comparable = len(currencies) == 1
         rows.append(
             {
                 "sector_or_theme": label,
                 "instrument_count": int(group["instrument_id"].nunique()),
-                "aggregate_flow_5d": float(pd.to_numeric(group["flow_5d"], errors="coerce").sum(min_count=1)),
-                "aggregate_flow_20d": float(pd.to_numeric(group["flow_20d"], errors="coerce").sum(min_count=1)),
-                "aggregate_flow_60d": float(pd.to_numeric(group["flow_60d"], errors="coerce").sum(min_count=1)),
+                "currency": currencies[0] if absolute_comparable else "MIXED_OR_UNKNOWN",
+                "absolute_flow_comparable": absolute_comparable,
+                "aggregate_flow_5d": float(pd.to_numeric(group["flow_5d"], errors="coerce").sum(min_count=1)) if absolute_comparable else np.nan,
+                "aggregate_flow_20d": float(pd.to_numeric(group["flow_20d"], errors="coerce").sum(min_count=1)) if absolute_comparable else np.nan,
+                "aggregate_flow_60d": float(pd.to_numeric(group["flow_60d"], errors="coerce").sum(min_count=1)) if absolute_comparable else np.nan,
                 "mean_rate_5d": rates_5.mean(),
                 "mean_rate_20d": rates_20.mean(),
                 "mean_rate_60d": rates_60.mean(),
@@ -401,6 +454,7 @@ def build_gold_crypto_summary(instruments: pd.DataFrame, cfg: dict) -> dict:
         return {"gold": {}, "crypto": {}}
     gold = instruments[instruments["asset_class"].astype(str).str.upper().isin(["GOLD_ETC", "GOLD_ETF", "GOLD_MINERS_ETF"])].copy()
     crypto = instruments[instruments["asset_class"].astype(str).str.upper().isin(["CRYPTO_ETP", "CRYPTO_ETF"])].copy()
+    crypto_short = instruments[instruments["asset_class"].astype(str).str.upper().eq("CRYPTO_SHORT_ETF")].copy()
 
     def group_score(frame: pd.DataFrame, mask: pd.Series) -> float | None:
         values = pd.to_numeric(frame.loc[mask, "efs_shadow"], errors="coerce")
@@ -435,7 +489,16 @@ def build_gold_crypto_summary(instruments: pd.DataFrame, cfg: dict) -> dict:
                 "flow_score_shadow": None if pd.isna(score) else round(float(score), 4),
                 "decision_influence": 0.0,
             }
-    return {"gold": gold_payload, "crypto": crypto_payload}
+    short_payload = {}
+    if not crypto_short.empty:
+        short_score = pd.to_numeric(crypto_short["efs_shadow"], errors="coerce").mean()
+        short_payload = {
+            "instrument_count": int(crypto_short["instrument_id"].nunique()),
+            "speculative_short_flow_score_shadow": None if pd.isna(short_score) else round(float(short_score), 4),
+            "main_rotation_score_influence": 0.0,
+            "kept_separate_from_long_crypto_flows": True,
+        }
+    return {"gold": gold_payload, "crypto": crypto_payload, "crypto_short": short_payload}
 
 
 def build_flow_computation(snapshot_history: pd.DataFrame, cfg: dict) -> FlowComputation:
