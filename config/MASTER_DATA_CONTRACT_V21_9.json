@@ -1,5 +1,5 @@
 {
-  "version": "V21.9_DATA_INTEGRITY_2026_08_19",
+  "version": "V21.9.1_DATA_QUALITY_2026_08_20",
   "status": "GOVERNED_REFERENCE_CONTRACT",
   "scope": ["PEA_ACTIONS", "PEA_ETF", "MODULE_INPUTS", "BACKTEST_IDENTITY"],
   "primary_key": "isin",
@@ -44,7 +44,8 @@
     "neutral_imputation": false,
     "conflicting_evidence": "QUARANTINE",
     "final_identity_requires_provenance": true,
-    "source_priority": "HIGHER_EVIDENCE_THEN_FRESHER_EQUAL_EVIDENCE"
+    "source_priority": "HIGHER_EVIDENCE_THEN_FRESHER_EQUAL_EVIDENCE",
+    "coverage_audit_policy": "SEMANTIC_EQUIVALENT_ALIASES_MAY_BE_COALESCED_FOR_REPORTING_ONLY_WITHOUT_COPYING_VALUES_OR_CHANGING_SCORING"
   },
   "quantitative": {
     "principle": "PARSEABLE_FINITE_AND_DOMAIN_PLAUSIBLE",
@@ -60,7 +61,18 @@
     "last_close_semantics": "PRICE",
     "out_of_domain_policy": "QUARANTINE_BEFORE_MERGE_AND_EXCLUDE_FROM_AUTOMATED_SCORING_PENDING_SOURCE_REVIEW",
     "clipping_forbidden": true,
-    "neutral_replacement_forbidden": true
+    "neutral_replacement_forbidden": true,
+    "yahoo_etf_expense_ratio_rule": "annualReportExpenseRatio accepted only as finite decimal ratio in [0,1] then multiplied by 100 into ter_pct",
+    "yahoo_etf_total_assets_rule": "totalAssets converted to EUR millions only when Yahoo currency is explicitly EUR; otherwise raw value retained but no EUR AUM field fabricated"
+  },
+  "source_security": {
+    "api_credentials_in_logs_or_artifacts": "FORBIDDEN",
+    "query_secret_redaction_required": true,
+    "bearer_secret_redaction_required": true,
+    "auth_or_entitlement_401_403_policy": "FAIL_FAST_AFTER_SOURCE_PREFLIGHT",
+    "mass_retry_after_source_auth_denial": false,
+    "valid_cache_after_source_denial": "MAY_BE_USED_ONLY_WITHIN_EXISTING_MAX_AGE_WITH_ORIGINAL_TIMESTAMP",
+    "stale_cache_extension": false
   },
   "time_and_provenance": {
     "future_evidence_timestamp": "FATAL",
@@ -87,6 +99,8 @@
     "reject_out_of_domain_numeric_observations_at_ingestion": true,
     "input_master_changes_trigger_ci": true,
     "fatal_issues_block_merge": true,
-    "block_data_issues_do_not_receive_neutral_values": true
+    "block_data_issues_do_not_receive_neutral_values": true,
+    "test_secret_redaction_and_source_auth_circuit_breaker": true,
+    "test_safe_etf_unit_conversions": true
   }
 }
