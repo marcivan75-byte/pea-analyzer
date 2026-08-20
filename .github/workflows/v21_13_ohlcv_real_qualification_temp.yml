@@ -1,4 +1,4 @@
-name: V21.13 TEMP real 10y OHLCV qualification
+name: V21.13 TEMP real start-2020 OHLCV qualification
 
 on:
   push:
@@ -54,7 +54,7 @@ jobs:
       - name: Install project
         run: python -m pip install -e .[test]
 
-      - name: Rebuild real Actions and ETF history with V21.13 config
+      - name: Rebuild real Actions and ETF history from 2020-01-01
         run: |
           python - <<'PY'
           import json
@@ -62,14 +62,18 @@ jobs:
           from v182.io.frames import load_master
           from v182.audit.canonical_universe import filter_actions
           from v182.reporting import waves
+          from v182.sources.yfinance_bulk import DEFAULT_BOOTSTRAP_START
 
           root = Path('.')
           cfg = json.loads((root/'config/V18.2_MASTER_CONFIG.json').read_text(encoding='utf-8'))
           yf = cfg['yfinance']
-          assert yf['history_period'] == '10y'
+          assert yf['history_start'] == '2020-01-01'
           assert yf['required_history_start'] == '2020-01-01'
-          assert int(yf['actions_batch_size']) == 96
-          assert int(yf['etf_batch_size']) == 48
+          assert yf['cache_generation'] == 'V21.13_START_2020_STRESS_READY'
+          assert yf['history_period'] == '5y'
+          assert int(yf['actions_batch_size']) == 100
+          assert int(yf['etf_batch_size']) == 50
+          assert DEFAULT_BOOTSTRAP_START == yf['history_start']
 
           actions_legacy = load_master(root/'inputs/V18.2_PEA_ACTIONS_MASTER.csv')
           actions = filter_actions(actions_legacy, root/'config/V21_3_ACTION_UNIVERSE_1829_ISINS.parts').included.reset_index(drop=True)
@@ -97,17 +101,19 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
-          expected = {'actions': 96, 'etf': 48}
+          expected = {'actions': 100, 'etf': 50}
           for universe, batch in expected.items():
               path = Path('data/cache')/universe/'history_manifest.json'
               payload = json.loads(path.read_text(encoding='utf-8'))
               assert payload['mode'] == 'FULL_BOOTSTRAP', (universe, payload['mode'])
-              assert payload['bootstrap_period'] == '10y', (universe, payload['bootstrap_period'])
+              assert payload['bootstrap_start'] == '2020-01-01', (universe, payload.get('bootstrap_start'))
+              assert payload['bootstrap_period_fallback'] == '5y', (universe, payload.get('bootstrap_period_fallback'))
               assert int(payload['batch_size']) == batch, (universe, payload['batch_size'])
               assert payload['cache_format_version'] == 3
               print('V21_13_MANIFEST', universe, json.dumps({
                   'mode': payload['mode'],
-                  'bootstrap_period': payload['bootstrap_period'],
+                  'bootstrap_start': payload['bootstrap_start'],
+                  'bootstrap_period_fallback': payload['bootstrap_period_fallback'],
                   'batch_size': payload['batch_size'],
                   'requested': payload['requested'],
                   'successful': len(payload['successful']),
@@ -130,7 +136,7 @@ jobs:
           assert s['status'] == 'SUCCESS'
           assert s['rows'] == 1931, s['rows']
           assert s['rows_by_asset_class'] == {'ACTION': 1829, 'ETF': 102}, s['rows_by_asset_class']
-          assert s['history_period_configured'] == '10y'
+          assert s['history_period_configured'] == '5y'
           assert s['required_history_start'] == '2020-01-01'
           assert float(s['stress_calibration_weight']) == 0.0
           assert s['weight_or_threshold_changes'] is False
