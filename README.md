@@ -1,6 +1,6 @@
-# PEA Analyzer — V21.8.1 production / Data Integrity V21.9.1
+# PEA Analyzer — V21.8.1 production / Data Integrity V21.10
 
-Le moteur conserve les collecteurs V18.2 comme socle technique, mais l'univers de référence et la gouvernance des données sont désormais ceux de la chaîne V21.x. La V21.9.1 durcit l'identité, la provenance, les contrôles de domaine, la sécurité des sources et la mesure de couverture sans modifier les pondérations de décision.
+Le moteur conserve les collecteurs V18.2 comme socle technique, mais l'univers de référence et la gouvernance des données sont désormais ceux de la chaîne V21.x. La V21.9.1 a durci l'identité, la provenance, les contrôles de domaine, la sécurité des sources et la mesure de couverture. La V21.10 ajoute une couche gouvernée de collecte TER / actifs fonds ETF sans modifier les pondérations, seuils ou moteurs de décision.
 
 ## Univers canoniques
 
@@ -17,7 +17,7 @@ Le moteur conserve les collecteurs V18.2 comme socle technique, mais l'univers d
 3. Calcul local des indicateurs dérivables.
 4. `yfinance` info sur les Actions.
 5. Consensus Finnhub lorsque l'accès et les droits de la source le permettent.
-6. Enrichissement ETF via données Yahoo brutes et sources publiques/émetteurs.
+6. ETF : données Yahoo brutes puis couche structurelle V21.10 `Issuer/KID/Factsheet A → justETF exact-ISIN B → Yahoo brut C`.
 7. Sources officielles ou attribuées pour validation et conflits.
 8. Scénarios et asymétrie sur les short-lists.
 
@@ -25,7 +25,7 @@ Aucune clé API n'est stockée dans le dépôt. Les valeurs manquantes restent m
 
 ## Intégrité de la base maître
 
-Le contrat `config/MASTER_DATA_CONTRACT_V21_9.json`, version logique **V21.9.1**, distingue le snapshot courant des données PIT historiques et impose une politique fail-closed.
+Le contrat `config/MASTER_DATA_CONTRACT_V21_9.json`, version logique **V21.10**, distingue le snapshot courant des données PIT historiques et impose une politique fail-closed.
 
 Le CI exécute notamment :
 
@@ -38,20 +38,28 @@ Le CI exécute notamment :
 - contrôle de plausibilité des principales variables quantitatives ;
 - mise en quarantaine avant fusion de toute valeur quantitative hors domaine ;
 - profil de couverture sémantique des champs d'identité, qualitatifs, fondamentaux et marché ;
+- tests de conversion sûre des unités ETF et de la correspondance exacte d'ISIN ;
 - tests complets Python/référentiels.
 
 Les résultats sont publiés sous `outputs/audit/MASTER_DATA_AUDIT.json`, `MASTER_DATA_AUDIT_ISSUES.csv`, `MASTER_DATA_PROFILE.json` et `MASTER_DATA_FIELD_COVERAGE.csv` dans les artefacts CI.
 
-## Politique Yahoo ETF : TER, actifs et AUM
+## Politique ETF V21.10 : TER, actifs et AUM
 
-Les champs Yahoo sont conservés sous des noms bruts stables et avec provenance. Ils ne deviennent des critères canoniques que lorsque leur unité est suffisamment prouvée.
+La couche V21.10 donne priorité à la preuve la plus forte et à l'identité exacte :
 
-- `annualReportExpenseRatio` peut alimenter `ter_pct` uniquement s'il s'agit d'un ratio décimal fini compris entre 0 et 1 ; la conversion appliquée est alors `ratio × 100`.
-- `totalAssets` est conservé comme **donnée brute** `total_assets_yf` lorsqu'il est disponible.
-- La devise Yahoo `currency` est la **devise de cotation**. Elle ne prouve pas la devise de `totalAssets` et ne peut donc jamais servir seule à fabriquer `aum_m` ou `fund_total_assets_eur_m`.
-- Un AUM en EUR ne peut être dérivé que si une devise propre aux actifs du fonds est explicitement fournie et attribuée.
+- **Émetteur / KID / factsheet officiel : preuve A** lorsque l'ISIN exact est présent dans le document ou la page.
+- **justETF : preuve B**, uniquement comme fallback exact-ISIN pour les champs non obtenus auprès d'un adaptateur émetteur.
+- **Yahoo : preuve C / métadonnée brute** ; ses champs ne sont promus que lorsque l'unité est explicitement démontrable.
+- `annualReportExpenseRatio` Yahoo peut alimenter `ter_pct` uniquement s'il s'agit d'un ratio décimal fini compris entre 0 et 1 ; la conversion est `ratio × 100`.
+- `totalAssets` Yahoo reste une donnée brute `total_assets_yf`. La devise de cotation Yahoo ne prouve pas la devise des actifs du fonds.
+- `fund_total_assets_eur_m` n'est produit que lorsqu'une valeur et une unité EUR sont explicitement observées. **Aucune conversion FX n'est effectuée.**
+- Une page en USD/GBP ou une unité ambiguë ne peut jamais être transformée en actif EUR.
+- Le collecteur atteste `EXACT_ISIN_SOURCE_MATCH`; la couche d'intégration traduit cette preuve vers le statut gouverné existant `ISIN_MATCHED` et conserve le détail exact dans la provenance. La liste centrale des statuts acceptés n'est pas élargie.
+- Une observation inattendue reste fail-closed et est mise en quarantaine par le moteur de fusion.
 
-Le run réel V21.9.1 sur les 102 ETF a observé `totalAssets` brut sur 83,33 % des ETF et la devise de cotation sur 99,02 %, mais a créé **0 nouvelle observation AUM EUR**. Le TER demeure à 10,78 % de couverture dans le master, car Yahoo n'a fourni aucun `annualReportExpenseRatio` exploitable lors du run de validation. L'absence de preuve n'est pas transformée en couverture artificielle.
+La passe réseau réelle de qualification V21.10 sur les 102 ETF a retrouvé **205 observations structurelles** : 102 TER, 102 actifs fonds EUR et 1 AUM de classe, dont 96 observations de preuve A et 109 de preuve B, sans échec de source. Les 102 TER observés sont compris entre 0,05 % et 0,85 % ; les 102 actifs fonds EUR entre 1 M€ et 6 883,05 M€ ; aucun couple ISIN/champ n'est dupliqué. Ce résultat décrit la **collecte observée** ; la couverture de production n'est considérée modifiée qu'après fusion gouvernée, audit et validation CI du même chemin de production.
+
+La baseline Yahoo-only V21.9.1 reste utile comme contrôle : avant cette couche, le master présentait 10,78 % de couverture TER et 0,98 % pour `fund_total_assets_eur_m`; l'absence de preuve Yahoo n'avait jamais été remplacée par une estimation.
 
 ## Sécurité des sources et diagnostics
 

@@ -2,7 +2,7 @@
 OHLCV;yfinance;Marketstack;Alpha Vantage;Issuer/Euronext
 FUNDAMENTALS_ACTIONS;yfinance;Alpha Vantage;Issuer;Zonebourse
 CONSENSUS_ACTIONS;Boursorama;Zonebourse;yfinance;Finnhub
-ETF_COSTS_AUM;ABC Bourse;Issuer/KID;Boursorama;
+ETF_COSTS_AUM;Issuer/KID/Factsheet;justETF exact-ISIN profile;ABC Bourse/Boursorama manual reference;
 ETF_MORNINGSTAR;Boursorama;Morningstar-authorized source;;
 NEWS_EVENTS;AMF/Issuer;Finnhub;GDELT;Boursorama/Zonebourse
 MACRO;FRED;;;
