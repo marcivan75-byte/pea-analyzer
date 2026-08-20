@@ -13,7 +13,7 @@ Cet addendum complète le process de référence V21.8.1 et la note V24.3.1. En 
 - Développement TCT V24.4.0 : **IMPLEMENTATION_CLOSED**.
 - Validation prospective : **SHADOW_EVIDENCE_ACCUMULATION**.
 - Slot WIP de développement : **libéré** ; l'accumulation PIT passive ne constitue pas un chantier actif.
-- CT reste inchangé ; aucun transfert vers CT sans validation spécifique ultérieure.
+- CT reste gelé ; aucun transfert vers CT sans validation spécifique ultérieure.
 - Holdout final : fermé.
 - Ordres réels : désactivés.
 
