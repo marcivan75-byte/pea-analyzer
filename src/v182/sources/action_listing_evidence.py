@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
+import re
 from typing import Any
 
 import pandas as pd
@@ -15,11 +16,20 @@ LISTING_CONFLICT_TOLERANCE_DAYS = 7
 
 
 def _parse_date(value: Any) -> date | None:
-    if value is None or str(value).strip() in {"", "nan", "None", "<NA>", "N/A", "NA", "NULL"}:
+    if value is None:
         return None
-    parsed = pd.to_datetime(value, errors="coerce", dayfirst=False)
-    if pd.isna(parsed):
-        parsed = pd.to_datetime(value, errors="coerce", dayfirst=True)
+    text = str(value).strip()
+    if text in {"", "nan", "None", "<NA>", "N/A", "NA", "NULL"}:
+        return None
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        try:
+            return date.fromisoformat(text)
+        except ValueError:
+            return None
+    # Euronext detail pages use European day-first representations such as
+    # "Thu 09/07/2026". Treat slash/dot dates as day-first deterministically.
+    dayfirst = bool(re.search(r"\d{1,2}[/.]\d{1,2}[/.]\d{4}", text))
+    parsed = pd.to_datetime(text, errors="coerce", dayfirst=dayfirst)
     if pd.isna(parsed):
         return None
     return parsed.date()
@@ -37,8 +47,6 @@ def load_worklist(path: str | Path = DEFAULT_WORKLIST) -> pd.DataFrame:
 
 
 def _candidate_listing_date(candidate: dict[str, Any]) -> date | None:
-    # Euronext's table date is official. If the official detail page also
-    # exposes an IPO date, require exact agreement instead of choosing one.
     table_date = _parse_date(candidate.get("expected_date"))
     detail_date = _parse_date(candidate.get("euronext_ipo_date_text"))
     if table_date and detail_date and table_date != detail_date:
@@ -91,7 +99,6 @@ def qualify_euronext_candidates(
             else:
                 parsed_rows.append((listing_date, candidate))
 
-        # Any ambiguous official representation for this ISIN blocks the ISIN.
         if malformed_rows:
             quarantine.append({
                 "isin": isin,
