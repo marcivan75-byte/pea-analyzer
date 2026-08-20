@@ -83,4 +83,4 @@ Les quatre cas pré-ancre restent des lacunes de continuité/ticker/fournisseur 
 
 Le nombre d'instruments éligibles à la calibration principale est resté strictement identique avant/après l'ajout des preuves d'inception dans le run : V21.16 explique les historiques courts mais ne les promeut pas.
 
-Le workflow réseau temporaire a été supprimé. Le head propre `95ae82ac5a9320065ac3c3e748838b6b866e742a` a obtenu Committee Master #630 = SUCCESS et Action Identity #129 = SUCCESS, full suites incluses. `main` est resté sur `bccdc300134ec358d710f5519ab8e1add09db776` pendant ce contrôle.
+Le workflow réseau temporaire a été supprimé. Le head propre destiné à la fusion a obtenu Committee Master et Action Identity au vert avec leurs full suites. Les identifiants exacts du dernier head sont consignés dans la PR afin de ne pas créer un nouveau commit documentaire uniquement pour modifier des références de CI.
