@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 
 USER_AGENT = "Mozilla/5.0 (compatible; PEA-Analyzer/1.0; +https://github.com/)"
 BLACKROCK_DATE_RE = re.compile(r"as of\s+(\d{1,2}/[A-Za-z]{3}/\d{4})", re.IGNORECASE)
+CONFIDENCE_RANK = {"A": 4, "B": 3, "C": 2, "D": 1, "QUARANTINE": 0}
 
 
 def _nonempty(value: object) -> str:
@@ -271,6 +272,40 @@ def load_official_observations(path: Path) -> pd.DataFrame:
     return frame
 
 
+def _missing_value(value: object) -> bool:
+    if value is None:
+        return True
+    try:
+        if pd.isna(value):
+            return True
+    except (TypeError, ValueError):
+        pass
+    return isinstance(value, str) and not _nonempty(value)
+
+
+def _merge_same_day_observations(snapshot: pd.DataFrame) -> pd.DataFrame:
+    fill_fields = ("aum", "nav", "shares_outstanding", "market_price", "distribution_per_share", "currency")
+    rows = []
+    for (_, _), group in snapshot.groupby(["instrument_id", "as_of"], sort=False):
+        group = group.sort_values(["source_priority", "_confidence_rank"], ascending=[False, False])
+        merged = group.iloc[0].to_dict()
+        used_confidences = [str(merged.get("confidence") or "D").upper()]
+        components = [str(merged.get("source") or "")]
+        for _, candidate in group.iloc[1:].iterrows():
+            used = False
+            for field in fill_fields:
+                if _missing_value(merged.get(field)) and not _missing_value(candidate.get(field)):
+                    merged[field] = candidate.get(field)
+                    used = True
+            if used:
+                used_confidences.append(str(candidate.get("confidence") or "D").upper())
+                components.append(str(candidate.get("source") or ""))
+        merged["confidence"] = min(used_confidences, key=lambda grade: CONFIDENCE_RANK.get(grade, 0))
+        merged["source_components"] = "|".join(dict.fromkeys(filter(None, components)))
+        rows.append(merged)
+    return pd.DataFrame(rows)
+
+
 def collect_current_snapshot(
     universe: pd.DataFrame,
     official_input: pd.DataFrame | None = None,
@@ -302,11 +337,7 @@ def collect_current_snapshot(
     snapshot = snapshot[snapshot["as_of"].notna()].copy()
     snapshot["as_of"] = snapshot["as_of"].dt.date.astype(str)
     snapshot["source_priority"] = pd.to_numeric(snapshot["source_priority"], errors="coerce").fillna(0)
-    confidence_rank = snapshot["confidence"].astype(str).str.upper().map({"A": 4, "B": 3, "C": 2, "D": 1}).fillna(0)
-    snapshot["_confidence_rank"] = confidence_rank
-    snapshot = snapshot.sort_values(
-        ["instrument_id", "as_of", "source_priority", "_confidence_rank"],
-        ascending=[True, True, False, False],
-    )
-    snapshot = snapshot.drop_duplicates(["instrument_id", "as_of"], keep="first").drop(columns="_confidence_rank")
+    snapshot["_confidence_rank"] = snapshot["confidence"].astype(str).str.upper().map(CONFIDENCE_RANK).fillna(0)
+    snapshot = _merge_same_day_observations(snapshot)
+    snapshot = snapshot.drop(columns="_confidence_rank", errors="ignore")
     return snapshot.reset_index(drop=True), pd.DataFrame(failures)
