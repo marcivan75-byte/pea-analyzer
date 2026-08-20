@@ -1,5 +1,5 @@
 {
-  "version": "V21.9.1_DATA_QUALITY_2026_08_20",
+  "version": "V21.10_ETF_STRUCTURAL_DATA_2026_08_20",
   "status": "GOVERNED_REFERENCE_CONTRACT",
   "scope": ["PEA_ACTIONS", "PEA_ETF", "MODULE_INPUTS", "BACKTEST_IDENTITY"],
   "primary_key": "isin",
@@ -65,6 +65,25 @@
     "yahoo_etf_expense_ratio_rule": "annualReportExpenseRatio accepted only as finite decimal ratio in [0,1] then multiplied by 100 into ter_pct",
     "yahoo_etf_total_assets_rule": "totalAssets is retained as raw Yahoo evidence only; Yahoo quote currency is not accepted as the denomination of totalAssets, so no EUR AUM is derived unless a dedicated fund-assets currency is explicitly provided"
   },
+  "etf_structural_data": {
+    "version": "V21.10",
+    "fields": ["ter_pct", "fund_total_assets_eur_m", "aum_m"],
+    "source_priority": ["ISSUER_KID_FACTSHEET_A", "JUSTETF_EXACT_ISIN_B", "YAHOO_RAW_METADATA_C"],
+    "issuer_exact_isin_required": true,
+    "secondary_exact_isin_required": true,
+    "collector_identity_marker": "EXACT_ISIN_SOURCE_MATCH",
+    "merge_validation_status": "ISIN_MATCHED",
+    "collector_marker_preserved_as_provenance_detail": true,
+    "core_merge_accepted_statuses_are_not_widened": true,
+    "ter_unit": "PERCENT",
+    "fund_assets_canonical_unit": "EUR_MILLIONS",
+    "explicit_eur_required_for_fund_assets": true,
+    "fx_conversion_allowed": false,
+    "quote_currency_can_define_fund_asset_currency": false,
+    "missing_imputation": false,
+    "stronger_retained_evidence_can_be_overwritten_by_weaker_source": false,
+    "same_evidence_conflict_without_fresher_timestamp": "QUARANTINE"
+  },
   "source_security": {
     "api_credentials_in_logs_or_artifacts": "FORBIDDEN",
     "query_secret_redaction_required": true,
@@ -101,6 +120,8 @@
     "fatal_issues_block_merge": true,
     "block_data_issues_do_not_receive_neutral_values": true,
     "test_secret_redaction_and_source_auth_circuit_breaker": true,
-    "test_safe_etf_unit_conversions": true
+    "test_safe_etf_unit_conversions": true,
+    "test_etf_exact_isin_source_match_to_governed_merge_status": true,
+    "test_unexpected_etf_validation_status_remains_fail_closed": true
   }
 }
