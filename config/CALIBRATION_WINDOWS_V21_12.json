@@ -1,0 +1,57 @@
+{
+  "version": "V21.12_CALIBRATION_WINDOWS_2026_08_20",
+  "status": "ACTIVE_GOVERNANCE_REFERENCE",
+  "scope": "ALL_PARAMETER_CALIBRATION_AND_BACKTEST_RESEARCH",
+  "primary_calibration": {
+    "start": "2023-01-01",
+    "mode_before_2028": "EXPANDING_POST_COVID",
+    "mode_from_2028": "ROLLING_60_MONTHS",
+    "rolling_months": 60,
+    "rolling_activation_date": "2028-01-01",
+    "weight": 1.0,
+    "purpose": [
+      "CRITERIA_CALIBRATION",
+      "WEIGHT_CALIBRATION",
+      "THRESHOLD_RESEARCH",
+      "WALK_FORWARD_OOS"
+    ]
+  },
+  "stress_library": {
+    "calibration_weight": 0.0,
+    "optimization_allowed": false,
+    "parameter_retuning_from_stress_results": false,
+    "periods": [
+      {
+        "id": "COVID_AND_POST_COVID_STRESS_2020_2022",
+        "start": "2020-01-01",
+        "end": "2022-12-31",
+        "purpose": [
+          "STOP_ROBUSTNESS",
+          "MAX_DRAWDOWN",
+          "REGIME_CHANGE",
+          "VOLATILITY_SHOCK",
+          "GAP_RISK",
+          "LIQUIDITY_STRESS",
+          "PROTECTION_SYSTEMS"
+        ]
+      }
+    ]
+  },
+  "governance": {
+    "stress_rows_may_enter_primary_calibration": false,
+    "stress_results_may_optimize_normal_weights": false,
+    "stress_results_may_optimize_normal_thresholds": false,
+    "stress_may_reject_fragile_candidate": true,
+    "stress_may_trigger_protection_review": true,
+    "pit_required": true,
+    "anti_lookahead_required": true,
+    "final_holdout_remains_module_specific_and_locked": true,
+    "future_outcomes_are_features": false,
+    "missing_data_imputation_for_calibration": false
+  },
+  "transition": {
+    "as_of_2026_08_20_calendar_months_touched": 44,
+    "target_calendar_months": 60,
+    "note": "The primary sample expands from 2023-01-01 until 2028-01-01, then becomes an exact 60-month rolling window. The 2020-2022 stress library remains permanently separate."
+  }
+}
