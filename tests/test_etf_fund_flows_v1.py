@@ -154,7 +154,7 @@ def test_pea_universe_uses_isin_and_economic_benchmark_for_synthetic_etf():
     row = universe.iloc[0]
     assert row["instrument_id"] == "ISIN:FR0014000001"
     assert row["economic_family"] == "MSCI World"
-    assert row["is_synthetic"] is True
+    assert bool(row["is_synthetic"]) is True
 
 
 def test_config_weights_are_pre_registered_and_sum_to_one():
