@@ -63,7 +63,7 @@
     "clipping_forbidden": true,
     "neutral_replacement_forbidden": true,
     "yahoo_etf_expense_ratio_rule": "annualReportExpenseRatio accepted only as finite decimal ratio in [0,1] then multiplied by 100 into ter_pct",
-    "yahoo_etf_total_assets_rule": "totalAssets converted to EUR millions only when Yahoo currency is explicitly EUR; otherwise raw value retained but no EUR AUM field fabricated"
+    "yahoo_etf_total_assets_rule": "totalAssets is retained as raw Yahoo evidence only; Yahoo quote currency is not accepted as the denomination of totalAssets, so no EUR AUM is derived unless a dedicated fund-assets currency is explicitly provided"
   },
   "source_security": {
     "api_credentials_in_logs_or_artifacts": "FORBIDDEN",
