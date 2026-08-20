@@ -1,6 +1,6 @@
 {
   "version": "V21.15_ETF_STRUCTURE_STATE_2026_08_20",
-  "state_path": "state/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv",
+  "state_path": "state/provenance/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv",
   "audit_write_path": "outputs/audit/V21_15_ETF_STRUCTURE_STATE_WRITE.json",
   "audit_replay_path": "outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json",
   "accepted_validation_statuses": ["ATTRIBUTED", "AUTO_MATCH", "ISIN_MATCHED", "VALIDATED"],
@@ -17,9 +17,11 @@
   },
   "governance": {
     "network_refresh_owner": "WEEKLY_UNIFIED_ETF_STRUCTURE_REFRESH",
+    "persistent_cache_owner": "EXISTING_STATE_PROVENANCE_CACHE",
     "daily_behavior": "REPLAY_FRESH_GOVERNED_STATE_ONLY",
     "daily_network_structural_scrape": false,
     "new_cron_created": false,
+    "new_cache_family_created": false,
     "actual_value_persisted_with_provenance_hash": true,
     "matching_retained_provenance_required_to_persist": true,
     "validation_status_contract_may_not_widen": true,
