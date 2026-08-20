@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from v182.audit.master_data_profile import profile_frame
+from v182.reporting import waves
 from v182.reporting.waves import _yahoo_expense_ratio_pct, _yahoo_total_assets_eur_m
 from v182.sources import finnhub_consensus
 from v182.sources.yfinance_info import FIELDS
@@ -61,10 +62,27 @@ def test_yahoo_etf_expense_ratio_conversion_is_unit_safe():
     assert _yahoo_expense_ratio_pct("not-a-number") is None
 
 
-def test_yahoo_etf_assets_conversion_requires_explicit_eur():
+def test_yahoo_etf_assets_conversion_requires_dedicated_asset_currency():
     assert _yahoo_total_assets_eur_m(832_159_936,"EUR") == 832.159936
     assert _yahoo_total_assets_eur_m(832_159_936,"USD") is None
+    assert _yahoo_total_assets_eur_m(832_159_936,None) is None
     assert _yahoo_total_assets_eur_m(-1,"EUR") is None
+
+
+def test_yahoo_quote_currency_does_not_promote_total_assets_to_eur_aum(monkeypatch):
+    frame=pd.DataFrame([{"isin":"FR0010000001","name":"ETF","yahoo_ticker":"ETF.PA"}])
+    raw=[
+        {"ticker":"ETF.PA","field":"total_assets_yf","value":832_159_936,"source":"yfinance"},
+        {"ticker":"ETF.PA","field":"currency_yf","value":"EUR","source":"yfinance"},
+    ]
+    monkeypatch.setattr(waves,"collect_info",lambda *args,**kwargs:(raw,[]))
+    observations,failures=waves.wave6_etf_info(frame,{"yfinance":{"info_delay_seconds":0}})
+    assert failures == []
+    fields={row["field"] for row in observations}
+    assert "total_assets_yf" in fields
+    assert "currency_yf" in fields
+    assert "aum_m" not in fields
+    assert "fund_total_assets_eur_m" not in fields
 
 
 def test_yfinance_collects_venue_and_raw_etf_fields():
