@@ -18,6 +18,8 @@ PRIMARY_ANCHOR_TOLERANCE_DAYS = 7
 FRESHNESS_TOLERANCE_DAYS = 7
 STRESS_START = pd.Timestamp("2020-01-01", tz="UTC")
 STRESS_END_EXCLUSIVE = pd.Timestamp("2023-01-01", tz="UTC")
+PRIMARY_CALIBRATION_ELIGIBLE_STATUS = "PRIMARY_FULL_FROM_ANCHOR"
+STRESS_LIBRARY_ELIGIBLE_STATUS = "STRESS_FULL_2020_2022"
 
 
 def _read_semicolon(path: Path) -> pd.DataFrame:
@@ -135,6 +137,8 @@ def _instrument_row(
         "expected_stress_months": len(expected_stress_months),
         "launch_date": None,
         "launch_date_source": None,
+        "primary_calibration_eligible": False,
+        "stress_library_eligible": False,
     }
     if not ticker:
         return {**base, "primary_status": "NO_TICKER", "stress_status": "NO_TICKER"}
@@ -167,10 +171,10 @@ def _instrument_row(
     elif missing_primary:
         primary_status = "PRIMARY_MISSING_CALENDAR_MONTHS"
     else:
-        primary_status = "PRIMARY_FULL_FROM_ANCHOR"
+        primary_status = PRIMARY_CALIBRATION_ELIGIBLE_STATUS
 
     if not stress.empty and not missing_stress:
-        stress_status = "STRESS_FULL_2020_2022"
+        stress_status = STRESS_LIBRARY_ELIGIBLE_STATUS
     elif stress.empty:
         stress_status = "NO_STRESS_HISTORY"
     else:
@@ -191,6 +195,8 @@ def _instrument_row(
         "missing_stress_months": ",".join(missing_stress),
         "primary_status": primary_status,
         "stress_status": stress_status,
+        "primary_calibration_eligible": primary_status == PRIMARY_CALIBRATION_ELIGIBLE_STATUS,
+        "stress_library_eligible": stress_status == STRESS_LIBRARY_ELIGIBLE_STATUS,
         "short_history_reason": (
             "NEEDS_TRUSTED_LISTING_OR_INCEPTION_DATE"
             if primary_status == "START_AFTER_ANCHOR_UNRESOLVED"
@@ -207,8 +213,10 @@ def run(root: Path = ROOT, as_of: Any | None = None) -> dict[str, Any]:
         raise ValueError("PRIMARY_WINDOW_DRIFT")
 
     config = json.loads((root / "config" / "V18.2_MASTER_CONFIG.json").read_text(encoding="utf-8"))
-    history_period = str(config.get("yfinance", {}).get("history_period", ""))
-    required_history_start = str(config.get("yfinance", {}).get("required_history_start", ""))
+    yfinance_config = config.get("yfinance", {})
+    history_start = str(yfinance_config.get("history_start", ""))
+    history_period = str(yfinance_config.get("history_period", ""))
+    required_history_start = str(yfinance_config.get("required_history_start", ""))
 
     universes = _load_universes(root)
     rows: list[dict[str, Any]] = []
@@ -245,6 +253,8 @@ def run(root: Path = ROOT, as_of: Any | None = None) -> dict[str, Any]:
     primary_counts = Counter(audit.get("primary_status", pd.Series(dtype=str)).dropna().astype(str))
     stress_counts = Counter(audit.get("stress_status", pd.Series(dtype=str)).dropna().astype(str))
     unresolved = audit[audit.get("primary_status", pd.Series(index=audit.index, dtype=str)).eq("START_AFTER_ANCHOR_UNRESOLVED")]
+    primary_eligible = audit.get("primary_calibration_eligible", pd.Series(False, index=audit.index)).fillna(False).astype(bool)
+    stress_eligible = audit.get("stress_library_eligible", pd.Series(False, index=audit.index)).fillna(False).astype(bool)
     summary = {
         "version": "V21.13_OHLCV_HISTORY_DEPTH_AUDIT",
         "status": "SUCCESS" if not audit.empty else "NO_AUDIT_ROWS",
@@ -252,13 +262,21 @@ def run(root: Path = ROOT, as_of: Any | None = None) -> dict[str, Any]:
         "as_of": resolved_as_of.date().isoformat(),
         "primary_window_start": primary_window.start.date().isoformat(),
         "primary_window_end": primary_window.end.date().isoformat(),
-        "history_period_configured": history_period,
+        "history_start_configured": history_start,
+        "history_period_fallback_configured": history_period,
         "required_history_start": required_history_start,
         "rows": int(len(audit)),
         "rows_by_asset_class": {str(k): int(v) for k, v in audit.get("asset_class", pd.Series(dtype=str)).value_counts().to_dict().items()},
         "cache_tickers_by_asset_class": cache_ticker_counts,
         "primary_status_counts": {key: int(value) for key, value in sorted(primary_counts.items())},
         "stress_status_counts": {key: int(value) for key, value in sorted(stress_counts.items())},
+        "primary_calibration_eligible_count": int(primary_eligible.sum()),
+        "primary_calibration_excluded_count": int((~primary_eligible).sum()),
+        "primary_calibration_eligibility_policy": f"ONLY_{PRIMARY_CALIBRATION_ELIGIBLE_STATUS}",
+        "stress_library_eligible_count": int(stress_eligible.sum()),
+        "stress_library_excluded_count": int((~stress_eligible).sum()),
+        "stress_library_eligibility_policy": f"ONLY_{STRESS_LIBRARY_ELIGIBLE_STATUS}",
+        "missing_or_short_history_imputation_allowed": False,
         "short_history_unresolved_count": int(len(unresolved)),
         "short_history_policy": "DO_NOT_ASSUME_POST_2023_LAUNCH_WITHOUT_TRUSTED_LISTING_OR_INCEPTION_DATE",
         "cache_read_failures": cache_failures,
