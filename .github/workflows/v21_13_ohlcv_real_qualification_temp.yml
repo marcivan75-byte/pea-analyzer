@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - audit/ohlcv-history-depth-v21-13
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
