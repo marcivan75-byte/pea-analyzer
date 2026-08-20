@@ -38,6 +38,24 @@ def _merge_ready_observations(raw:list[dict],ticker_to_isin:dict[str,str],as_of:
     return ready
 
 
+def _governed_structural_observations(raw:list[dict])->list[dict]:
+    """Map the collector's exact-ISIN proof onto the existing merge contract.
+
+    The core merge engine already governs ISIN_MATCHED. V21.10 keeps the more
+    specific EXACT_ISIN_SOURCE_MATCH marker as provenance detail rather than
+    widening ACCEPTED_VALIDATION_STATUSES. Unexpected statuses are left intact
+    so the merge engine can continue to fail closed.
+    """
+    ready=[]
+    for obs in raw:
+        row=dict(obs)
+        if row.get("validation_status") == "EXACT_ISIN_SOURCE_MATCH":
+            row["identity_validation_detail"]="EXACT_ISIN_SOURCE_MATCH"
+            row["validation_status"]="ISIN_MATCHED"
+        ready.append(row)
+    return ready
+
+
 def _snapshot(frame:pd.DataFrame,observations:list[dict])->dict[tuple[str,str],object]:
     indexed=frame.set_index(frame["isin"].astype(str),drop=False)
     out={}
@@ -86,7 +104,8 @@ def run(root: Path=ROOT) -> dict:
     structural_quarantined=[]
     structural_changed=0
     if "provider" in df.columns:
-        structural_observations,structural_failures,structural_metrics=collect_etf_structural_data(df)
+        raw_structural_observations,structural_failures,structural_metrics=collect_etf_structural_data(df)
+        structural_observations=_governed_structural_observations(raw_structural_observations)
         before_structural=_snapshot(df,structural_observations)
         df,structural_quarantined=apply_observations(df,structural_observations)
         after_structural=_snapshot(df,structural_observations)
@@ -143,6 +162,9 @@ def run(root: Path=ROOT) -> dict:
             "justetf_structural_evidence_level":"B",
             "yfinance_structure_evidence_level":"C",
             "exact_isin_source_match_required":True,
+            "exact_isin_detail_preserved_in_provenance":True,
+            "merge_validation_status":"ISIN_MATCHED",
+            "core_accepted_validation_statuses_unchanged":True,
             "fx_conversion_for_fund_assets":False,
             "quote_currency_used_as_asset_currency":False,
             "stronger_retained_evidence_cannot_be_silently_overwritten":True,
