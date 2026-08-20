@@ -114,6 +114,10 @@ def _normalise_snapshot(snapshot: pd.DataFrame) -> pd.DataFrame:
         if col not in frame.columns:
             frame[col] = False
         frame[col] = frame[col].map(parse_bool)
+    frame["shares_outstanding_undated_suppressed"] = (
+        frame["shares_outstanding"].notna() & ~frame["shares_as_of_explicit"]
+    )
+    frame.loc[frame["shares_outstanding_undated_suppressed"], "shares_outstanding"] = np.nan
     for col in ("sector_or_theme", "currency", "benchmark", "ticker", "isin", "provider"):
         if col not in frame.columns:
             frame[col] = ""
@@ -135,12 +139,23 @@ def _derive_period_return(current: pd.Series, previous: pd.Series) -> float | No
     if nav_explicit and current_nav is not None and previous_nav not in (None, 0.0):
         return (current_nav + distribution) / previous_nav - 1.0
     if price_explicit and current_price is not None and previous_price not in (None, 0.0):
-        return current_price / previous_price - 1.0
+        return (current_price + distribution) / previous_price - 1.0
     if current_nav is not None and previous_nav not in (None, 0.0):
         return (current_nav + distribution) / previous_nav - 1.0
     if current_price is not None and previous_price not in (None, 0.0):
-        return current_price / previous_price - 1.0
+        return (current_price + distribution) / previous_price - 1.0
     return None
+
+
+def _explicit_return_pair_available(current: pd.Series, previous: pd.Series) -> bool:
+    current_nav, previous_nav = _num(current.get("nav")), _num(previous.get("nav"))
+    current_price, previous_price = _num(current.get("market_price")), _num(previous.get("market_price"))
+    nav_explicit = _boolish(current.get("nav_as_of_explicit")) and _boolish(previous.get("nav_as_of_explicit"))
+    price_explicit = _boolish(current.get("market_price_as_of_explicit")) and _boolish(previous.get("market_price_as_of_explicit"))
+    return bool(
+        (nav_explicit and current_nav is not None and previous_nav not in (None, 0.0))
+        or (price_explicit and current_price is not None and previous_price not in (None, 0.0))
+    )
 
 
 def _flow_denominator(previous: pd.Series) -> float | None:
@@ -173,13 +188,11 @@ def _daily_flow(current: pd.Series, previous: pd.Series) -> tuple[float | None, 
     if any(value is not None and value <= 0 for value in (current_aum, previous_aum)):
         return None, "QUARANTINED_NON_POSITIVE_AUM", "QUARANTINE"
     aum_explicit = _boolish(current.get("aum_as_of_explicit")) and _boolish(previous.get("aum_as_of_explicit"))
-    if (
-        current_aum is not None
-        and previous_aum is not None
-        and not aum_explicit
-        and math.isclose(current_aum, previous_aum, rel_tol=1e-12, abs_tol=1e-9)
-    ):
-        return None, "UNSCORABLE_UNDATED_AUM_UNCHANGED", confidence
+    if current_aum is not None and previous_aum is not None and not aum_explicit:
+        if math.isclose(current_aum, previous_aum, rel_tol=1e-12, abs_tol=1e-9):
+            return None, "UNSCORABLE_UNDATED_AUM_UNCHANGED", confidence
+        if not _explicit_return_pair_available(current, previous):
+            return None, "UNSCORABLE_UNDATED_AUM_WITHOUT_DATED_RETURN", confidence
     performance = _derive_period_return(current, previous)
     if current_aum is not None and previous_aum is not None and performance is not None:
         method = "AUM_PERFORMANCE_ADJUSTED" if aum_explicit else "AUM_PERFORMANCE_ADJUSTED_UNDATED_VENDOR_UPDATE"
@@ -213,18 +226,23 @@ def _rolling_features(group: pd.DataFrame) -> pd.DataFrame:
     group = group.sort_values("as_of").copy()
     flow = pd.to_numeric(group["flow"], errors="coerce")
     aum = pd.to_numeric(group["aum"], errors="coerce")
+    shares = pd.to_numeric(group["shares_outstanding"], errors="coerce")
+    nav = pd.to_numeric(group["nav"], errors="coerce")
+    implied_value = shares * nav
+    fund_value = aum.where(aum.gt(0), implied_value.where(implied_value.gt(0)))
     returns = pd.to_numeric(group["period_return"], errors="coerce")
+    group["flow_denominator_value"] = fund_value
     for horizon in (5, 20, 60, 252):
         group[f"flow_{horizon}d"] = flow.rolling(horizon, min_periods=horizon).sum()
-        group[f"organic_flow_rate_{horizon}d"] = group[f"flow_{horizon}d"] / aum.shift(horizon).replace(0.0, np.nan)
+        group[f"organic_flow_rate_{horizon}d"] = group[f"flow_{horizon}d"] / fund_value.shift(horizon).replace(0.0, np.nan)
         group[f"price_return_{horizon}d"] = (1.0 + returns).rolling(horizon, min_periods=horizon).apply(np.prod, raw=True) - 1.0
     positive = flow.gt(0).where(flow.notna())
     group["positive_days_20d_pct"] = positive.rolling(20, min_periods=20).mean().mul(100.0)
     group["flow_acceleration"] = group["organic_flow_rate_5d"].div(5.0) - group["organic_flow_rate_20d"].div(20.0)
-    group["daily_flow_percentile_252d"] = flow.div(aum.shift(1).replace(0.0, np.nan)).rolling(252, min_periods=60).apply(lambda values: pd.Series(values).rank(pct=True).iloc[-1] * 100.0, raw=False)
+    group["daily_flow_percentile_252d"] = flow.div(fund_value.shift(1).replace(0.0, np.nan)).rolling(252, min_periods=60).apply(lambda values: pd.Series(values).rank(pct=True).iloc[-1] * 100.0, raw=False)
     years = group["as_of"].dt.year
     group["flow_ytd"] = flow.groupby(years).cumsum()
-    group["organic_flow_rate_ytd"] = group["flow_ytd"] / aum.groupby(years).transform("first").replace(0.0, np.nan)
+    group["organic_flow_rate_ytd"] = group["flow_ytd"] / fund_value.groupby(years).transform("first").replace(0.0, np.nan)
     group["history_observations"] = np.arange(1, len(group) + 1)
     group["flow_observations"] = flow.notna().cumsum()
     return group
@@ -459,13 +477,16 @@ def build_flow_computation(snapshot_history: pd.DataFrame, cfg: dict) -> FlowCom
     rotations = build_rotation_scores(instruments, cfg)
     flow_methods = daily.get("flow_method", pd.Series(dtype=str)).astype(str)
     readiness = instruments.get("efs_readiness", pd.Series(dtype=str)).astype(str) if not instruments.empty else pd.Series(dtype=str)
+    suppressed_shares = daily.get("shares_outstanding_undated_suppressed", pd.Series(dtype=bool))
     diagnostics = {
         "version": cfg["version"], "mode": cfg["mode"], "observations": int(len(rolling)),
         "instruments": int(instruments["instrument_id"].nunique()) if not instruments.empty else 0,
         "scorable_instruments": int(pd.to_numeric(instruments.get("efs_shadow"), errors="coerce").notna().sum()) if not instruments.empty else 0,
         "pea_instruments": int(instruments["is_pea"].fillna(False).astype(bool).sum()) if not instruments.empty else 0,
         "quarantined_or_d_grade": int(instruments["flow_confidence"].isin(["D", "QUARANTINE"]).sum()) if not instruments.empty else 0,
+        "undated_shares_suppressed": int(suppressed_shares.fillna(False).astype(bool).sum()),
         "undated_unchanged_aum_skipped": int(flow_methods.eq("UNSCORABLE_UNDATED_AUM_UNCHANGED").sum()),
+        "undated_aum_without_dated_return_skipped": int(flow_methods.eq("UNSCORABLE_UNDATED_AUM_WITHOUT_DATED_RETURN").sum()),
         "current_20d_window_incomplete": int(readiness.eq("DATA_INSUFFICIENT_CURRENT_20D_WINDOW").sum()),
         "mature_60d_window_incomplete": int(readiness.eq("PRELIMINARY_GAPPED_60_PLUS").sum()),
         "srfs_scorable_sectors": int(pd.to_numeric(rotations.get("srfs_shadow"), errors="coerce").notna().sum()) if not rotations.empty else 0,
