@@ -5,6 +5,12 @@ US_TICKER:GLD;;GLD;SPDR Gold Shares;EXTERNAL;GOLD_ETF;GOLD_PHYSICAL;US;GOLD;LBMA
 US_TICKER:IAU;;IAU;iShares Gold Trust;EXTERNAL;GOLD_ETF;GOLD_PHYSICAL;US;GOLD;LBMA Gold Price;iShares;false;;;false;false;;https://www.ishares.com/
 US_TICKER:GLDM;;GLDM;SPDR Gold MiniShares Trust;EXTERNAL;GOLD_ETF;GOLD_PHYSICAL;US;GOLD;LBMA Gold Price;State Street;false;;;false;false;;https://www.ssga.com/
 US_TICKER:GDX;;GDX;VanEck Gold Miners ETF;EXTERNAL;GOLD_MINERS_ETF;GOLD_MINERS;US;GOLD_MINERS;NYSE Arca Gold Miners Index;VanEck;false;;;false;false;;https://www.vaneck.com/
+US_TICKER:URTH;;URTH;iShares MSCI World ETF;EXTERNAL;ETF;WORLD;GLOBAL;;MSCI World Index;iShares;false;;;false;false;BLACKROCK_HTML;https://www.ishares.com/us/products/239696/ishares-msci-world-etf/
+US_TICKER:ACWI;;ACWI;iShares MSCI ACWI ETF;EXTERNAL;ETF;ACWI;GLOBAL;;MSCI All Country World Index;iShares;false;;;false;false;BLACKROCK_HTML;https://www.ishares.com/us/products/239600/ishares-msci-acwi-etf
+US_TICKER:SPY;;SPY;SPDR S&P 500 ETF Trust;EXTERNAL;ETF;SP500;US;;S&P 500;State Street;false;;;false;false;;https://www.ssga.com/
+US_TICKER:QQQ;;QQQ;Invesco QQQ Trust;EXTERNAL;ETF;NASDAQ100;US;;NASDAQ-100;Invesco;false;;;false;false;;https://www.invesco.com/
+US_TICKER:IEUR;;IEUR;iShares Core MSCI Europe ETF;EXTERNAL;ETF;MSCI_EUROPE;EU;;MSCI Europe IMI Index;iShares;false;;;false;false;BLACKROCK_HTML;https://www.ishares.com/us/products/264617/IEUR
+US_TICKER:FEZ;;FEZ;SPDR EURO STOXX 50 ETF;EXTERNAL;ETF;EURO_STOXX_50;EU;;EURO STOXX 50;State Street;false;;;false;false;;https://www.ssga.com/
 ISIN:XS2940466316;XS2940466316;IB1T.PA;iShares Bitcoin ETP;EXTERNAL;CRYPTO_ETP;BITCOIN;EU;CRYPTO_BITCOIN;CME CF Bitcoin Reference Rate;iShares;false;;;false;false;BLACKROCK_HTML;https://www.ishares.com/uk/professionals/en/products/337088/ishares-bitcoin-etp
 ISIN:GB00BJYDH287;GB00BJYDH287;BTCW.PA;WisdomTree Physical Bitcoin;EXTERNAL;CRYPTO_ETP;BITCOIN;EU;CRYPTO_BITCOIN;CoinDesk Bitcoin Benchmark;WisdomTree;false;;;false;false;;https://www.wisdomtree.eu/
 ISIN:GB00BJYDH394;GB00BJYDH394;WETH.PA;WisdomTree Physical Ethereum;EXTERNAL;CRYPTO_ETP;ETHEREUM;EU;CRYPTO_ETHEREUM;CoinDesk Ethereum Benchmark;WisdomTree;false;;;false;false;;https://www.wisdomtree.eu/
