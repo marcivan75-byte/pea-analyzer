@@ -4,6 +4,7 @@ from datetime import date, datetime, timezone
 import json
 import math
 from pathlib import Path
+import re
 
 from v182.sources.rate_limit import StartRateLimiter
 
@@ -11,6 +12,18 @@ FINNHUB_BASE = "https://finnhub.io/api/v1"
 _SCORE_WEIGHTS = {"strongBuy": 5, "buy": 4, "hold": 3, "sell": 2, "strongSell": 1}
 CACHE_VERSION = "FINNHUB_CONSENSUS_CACHE_V1"
 _NO_DATA_REASONS = {"NO_RECOMMENDATION_DATA", "EMPTY_RECOMMENDATION_COUNTS"}
+_AUTH_DENIED_REASON = "FINNHUB_AUTH_OR_ENTITLEMENT_DENIED"
+_SOURCE_BLOCKED_REASON = "FINNHUB_SOURCE_DISABLED_AUTH_OR_ENTITLEMENT"
+_SECRET_QUERY_RE = re.compile(r"([?&](?:token|api[_-]?key|apikey|key)=)[^&\s]+", re.IGNORECASE)
+_BEARER_RE = re.compile(r"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s,;]+")
+
+
+def _sanitize_detail(value: object, limit: int = 160) -> str:
+    """Remove credentials from exception/HTTP text before it reaches logs/artifacts."""
+    text=str(value or "")
+    text=_SECRET_QUERY_RE.sub(r"\1<REDACTED>",text)
+    text=_BEARER_RE.sub(r"\1<REDACTED>",text)
+    return text[:limit]
 
 
 def _label_from_score(score: float) -> str:
@@ -65,6 +78,12 @@ def _fetch_one(ticker: str, api_key: str, requests, limiter: StartRateLimiter) -
             f"{FINNHUB_BASE}/stock/recommendation",
             params={"symbol": ticker, "token": api_key}, timeout=15,
         )
+        if reco_resp.status_code in {401,403}:
+            return [], [{
+                "ticker":ticker,
+                "reason":_AUTH_DENIED_REASON,
+                "detail":f"http_status={reco_resp.status_code}; endpoint=stock/recommendation",
+            }]
         reco_resp.raise_for_status()
         reco = reco_resp.json()
         if not reco:
@@ -112,7 +131,13 @@ def _fetch_one(ticker: str, api_key: str, requests, limiter: StartRateLimiter) -
             f"{FINNHUB_BASE}/stock/price-target",
             params={"symbol": ticker, "token": api_key}, timeout=15,
         )
-        if target_resp.ok:
+        if target_resp.status_code in {401,403}:
+            failures.append({
+                "ticker":ticker,
+                "reason":"FINNHUB_TARGET_AUTH_OR_ENTITLEMENT_DENIED",
+                "detail":f"http_status={target_resp.status_code}; endpoint=stock/price-target",
+            })
+        elif target_resp.ok:
             target = target_resp.json()
             if target.get("targetMean") is not None:
                 fields["target_price"] = target["targetMean"]
@@ -125,14 +150,14 @@ def _fetch_one(ticker: str, api_key: str, requests, limiter: StartRateLimiter) -
         ]
         return observations, failures
     except Exception as exc:
-        failures.append({"ticker": ticker, "reason": type(exc).__name__, "detail": str(exc)[:160]})
+        failures.append({"ticker": ticker, "reason": type(exc).__name__, "detail": _sanitize_detail(exc)})
         return [], failures
 
 
 def fetch_consensus(
     tickers: list[str], api_key: str, delay_seconds: float = 1.1, max_workers: int = 8,
 ) -> tuple[list[dict], list[dict]]:
-    """Collect consensus and 4-week revisions with rate-safe bounded concurrency."""
+    """Collect consensus with a source-auth preflight and bounded concurrency."""
     import requests
 
     unique = sorted({t for t in tickers if t})
@@ -141,13 +166,32 @@ def fetch_consensus(
     limiter = StartRateLimiter(delay_seconds)
     observations: list[dict] = []
     failures: list[dict] = []
-    workers = max(1, min(int(max_workers), len(unique)))
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(_fetch_one, ticker, api_key, requests, limiter) for ticker in unique]
-        for future in as_completed(futures):
-            obs, failed = future.result()
-            observations.extend(obs)
-            failures.extend(failed)
+
+    # One preflight prevents thousands of guaranteed-denied calls when the key
+    # or plan cannot access the endpoint. Unsupported symbols normally return an
+    # empty dataset, not HTTP 401/403, so NO_DATA does not trip this circuit.
+    first=unique[0]
+    first_obs,first_failures=_fetch_one(first,api_key,requests,limiter)
+    observations.extend(first_obs)
+    failures.extend(first_failures)
+    if any(str(row.get("reason") or "") == _AUTH_DENIED_REASON for row in first_failures):
+        failures.append({
+            "ticker":"*",
+            "reason":_SOURCE_BLOCKED_REASON,
+            "detail":f"preflight_ticker={first}; affected_tickers={len(unique)}; further_calls_skipped=true",
+        })
+        failures.sort(key=lambda row: (str(row.get("ticker", "")), str(row.get("reason", ""))))
+        return observations, failures
+
+    remaining=unique[1:]
+    workers = max(1, min(int(max_workers), len(remaining))) if remaining else 1
+    if remaining:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(_fetch_one, ticker, api_key, requests, limiter) for ticker in remaining]
+            for future in as_completed(futures):
+                obs, failed = future.result()
+                observations.extend(obs)
+                failures.extend(failed)
     observations.sort(key=lambda row: (str(row.get("ticker", "")), str(row.get("field", ""))))
     failures.sort(key=lambda row: (str(row.get("ticker", "")), str(row.get("reason", ""))))
     return observations, failures
@@ -232,11 +276,9 @@ def fetch_consensus_cached(
 ) -> tuple[list[dict], list[dict], dict]:
     """Return full-universe consensus using a timestamp-preserving persistent cache.
 
-    Bootstrap is exhaustive: every uncached ticker is fetched regardless of the refresh
-    budget, so coverage is never reduced to speed up the first run. Once populated,
-    the oldest positive entries are rotated with a bounded budget. Entries older than
-    `max_cache_age_days` are mandatory refreshes and are never emitted as current if a
-    refresh fails. Negative NO_DATA entries are retried after `negative_cache_days`.
+    Bootstrap is exhaustive when the source is usable. A source-level 401/403
+    trips a fail-fast circuit after one preflight request; current valid cache
+    entries may still be emitted, but no stale value is extended or fabricated.
     """
     unique = sorted({str(t).strip() for t in tickers if str(t).strip()})
     path = Path(cache_path)
@@ -278,6 +320,7 @@ def fetch_consensus_cached(
             delay_seconds=delay_seconds,
             max_workers=max_workers,
         )
+    source_blocked=any(str(row.get("reason") or "") == _SOURCE_BLOCKED_REASON for row in live_failures)
 
     obs_by_ticker: dict[str, list[dict]] = {}
     for row in live_observations:
@@ -287,7 +330,7 @@ def fetch_consensus_cached(
     failures_by_ticker: dict[str, list[dict]] = {}
     for failure in live_failures:
         ticker = str(failure.get("ticker") or "")
-        if ticker:
+        if ticker and ticker != "*":
             failures_by_ticker.setdefault(ticker, []).append(failure)
 
     refreshed_at = current.isoformat()
@@ -295,6 +338,7 @@ def fetch_consensus_cached(
     live_no_data = 0
     transient_fallbacks = 0
     expired_after_failure = 0
+    skipped_due_source_block=0
     for ticker in selected:
         rows = obs_by_ticker.get(ticker, [])
         ticker_failures = failures_by_ticker.get(ticker, [])
@@ -320,6 +364,14 @@ def fetch_consensus_cached(
             live_no_data += 1
             continue
         old_entry = entries.get(ticker)
+        if source_blocked:
+            skipped_due_source_block += 1
+            if old_entry and _age_days(old_entry, current) <= float(max_cache_age_days):
+                transient_fallbacks += 1
+            elif old_entry:
+                entries.pop(ticker, None)
+                expired_after_failure += 1
+            continue
         if old_entry and _age_days(old_entry, current) <= float(max_cache_age_days):
             transient_fallbacks += 1
             live_failures.append({
@@ -338,6 +390,8 @@ def fetch_consensus_cached(
         "negative_cache_days": float(negative_cache_days),
         "bootstrap_uncached_all": True,
         "stale_after_failure_forbidden": True,
+        "auth_or_entitlement_fail_fast":True,
+        "secret_redaction_required":True,
     }
     _save_cache(path, payload)
 
@@ -395,6 +449,9 @@ def fetch_consensus_cached(
         "refresh_budget": budget,
         "full_universe_preserved": True,
         "cached_timestamp_preserved": True,
+        "source_auth_or_entitlement_blocked":source_blocked,
+        "network_calls_skipped_due_source_block":max(0,skipped_due_source_block-1) if source_blocked else 0,
+        "secret_redaction_required":True,
     }
     observations.sort(key=lambda row: (str(row.get("ticker", "")), str(row.get("field", ""))))
     live_failures.sort(key=lambda row: (str(row.get("ticker", "")), str(row.get("reason", ""))))
