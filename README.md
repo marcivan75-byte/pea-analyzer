@@ -57,7 +57,7 @@ La couche V21.10 donne priorité à la preuve la plus forte et à l'identité ex
 - Le collecteur atteste `EXACT_ISIN_SOURCE_MATCH`; la couche d'intégration traduit cette preuve vers le statut gouverné existant `ISIN_MATCHED` et conserve le détail exact dans la provenance. La liste centrale des statuts acceptés n'est pas élargie.
 - Une observation inattendue reste fail-closed et est mise en quarantaine par le moteur de fusion.
 
-La passe réseau réelle de qualification V21.10 sur les 102 ETF a retrouvé **205 observations structurelles** : 102 TER, 102 actifs fonds EUR et 1 AUM de classe, dont 96 observations de preuve A et 109 de preuve B, sans échec de source. Ce résultat décrit la **collecte observée** ; la couverture de production n'est considérée modifiée qu'après fusion gouvernée, audit et validation CI du même chemin de production.
+La passe réseau réelle de qualification V21.10 sur les 102 ETF a retrouvé **205 observations structurelles** : 102 TER, 102 actifs fonds EUR et 1 AUM de classe, dont 96 observations de preuve A et 109 de preuve B, sans échec de source. Les 102 TER observés sont compris entre 0,05 % et 0,85 % ; les 102 actifs fonds EUR entre 1 M€ et 6 883,05 M€ ; aucun couple ISIN/champ n'est dupliqué. Ce résultat décrit la **collecte observée** ; la couverture de production n'est considérée modifiée qu'après fusion gouvernée, audit et validation CI du même chemin de production.
 
 La baseline Yahoo-only V21.9.1 reste utile comme contrôle : avant cette couche, le master présentait 10,78 % de couverture TER et 0,98 % pour `fund_total_assets_eur_m`; l'absence de preuve Yahoo n'avait jamais été remplacée par une estimation.
 
