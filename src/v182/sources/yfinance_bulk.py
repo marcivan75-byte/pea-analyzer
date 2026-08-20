@@ -179,6 +179,7 @@ def _cache_is_usable(
     batch_size: int,
     auto_adjust: bool,
     actions_requested: bool,
+    bootstrap_start: str | None = None,
 ) -> bool:
     manifest = _read_manifest(cache)
     if not manifest or manifest.get("cache_format_version") != CACHE_FORMAT_VERSION:
@@ -192,6 +193,8 @@ def _cache_is_usable(
     if bool(manifest.get("auto_adjust")) != bool(auto_adjust):
         return False
     if bool(manifest.get("actions_requested")) != bool(actions_requested):
+        return False
+    if (manifest.get("bootstrap_start") or None) != (bootstrap_start or None):
         return False
     return True
 
@@ -238,10 +241,11 @@ def _download(
     actions_requested: bool,
     *,
     threads: bool,
+    start: str | None = None,
 ) -> pd.DataFrame:
+    window = {"start": start} if start else {"period": period}
     raw = yf.download(
         tickers=tickers,
-        period=period,
         interval=interval,
         group_by="ticker",
         auto_adjust=auto_adjust,
@@ -249,6 +253,7 @@ def _download(
         threads=threads,
         progress=False,
         timeout=30,
+        **window,
     )
     return _normalize_frame(raw, tickers)
 
@@ -260,6 +265,8 @@ def _download_one(
     interval: str,
     auto_adjust: bool,
     actions_requested: bool,
+    *,
+    start: str | None = None,
 ) -> pd.DataFrame:
     frame = _download(
         yf,
@@ -269,6 +276,7 @@ def _download_one(
         auto_adjust,
         actions_requested,
         threads=False,
+        start=start,
     )
     return frame if _contains_ticker(frame, ticker) else pd.DataFrame()
 
@@ -281,16 +289,21 @@ def download_history(
     batch_size: int = 100,
     auto_adjust: bool = True,
     include_actions: bool | None = None,
+    start: str | None = None,
 ) -> DownloadResult:
     """Maintain full OHLCV locally and refresh it incrementally without data loss.
 
     First use (or an incompatible cache) bootstraps the configured full history.
-    Subsequent runs fetch only a recent overlap window, merge it cell-by-cell, and
-    retain the complete long history required by all indicators.
+    When ``start`` is provided, the bootstrap is anchored to that explicit date
+    instead of a relative Yahoo period. Subsequent runs fetch only a recent
+    overlap window, merge it cell-by-cell, and retain the complete long history.
+
+    The explicit bootstrap start is part of cache compatibility. Changing it, or
+    migrating from a legacy manifest without it, forces a full reconstruction.
 
     If adjusted prices in already closed overlap sessions materially change,
-    the affected batch is automatically rebuilt over the full configured period.
-    This protects against split/dividend/vendor re-adjustments.
+    the affected batch is automatically rebuilt from the same explicit start
+    (or over the configured fallback period when no start is supplied).
 
     Set PEA_YF_FORCE_REFRESH=1 to refresh again on the same UTC day.
     Set PEA_YF_FORCE_FULL_HISTORY=1 for an explicit complete reconstruction.
@@ -307,9 +320,21 @@ def download_history(
         os.environ.get("PEA_YF_INCREMENTAL_PERIOD", DEFAULT_INCREMENTAL_PERIOD).strip()
         or DEFAULT_INCREMENTAL_PERIOD
     )
+    bootstrap_start = str(start).strip() if start else None
+    if bootstrap_start:
+        try:
+            pd.Timestamp(bootstrap_start)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"INVALID_YFINANCE_HISTORY_START:{bootstrap_start}") from exc
 
     usable = (not force_full) and _cache_is_usable(
-        cache, clean, interval, batch_size, auto_adjust, actions_requested
+        cache,
+        clean,
+        interval,
+        batch_size,
+        auto_adjust,
+        actions_requested,
+        bootstrap_start,
     )
     prior_manifest = _read_manifest(cache) if usable else None
 
@@ -336,15 +361,16 @@ def download_history(
     failure_details: list[dict] = []
     rebased_batches: list[int] = []
 
-    for start in range(0, len(clean), batch_size):
-        batch = clean[start:start + batch_size]
-        output = cache / f"history_{start:05d}.parquet"
+    for batch_start in range(0, len(clean), batch_size):
+        batch = clean[batch_start:batch_start + batch_size]
+        output = cache / f"history_{batch_start:05d}.parquet"
         existing = (
             _read_cached_frame(output, batch)
             if mode == "INCREMENTAL"
             else pd.DataFrame()
         )
         request_period = incremental_period if not existing.empty else period
+        request_start = None if not existing.empty else bootstrap_start
         fresh = pd.DataFrame()
 
         try:
@@ -356,12 +382,14 @@ def download_history(
                 auto_adjust,
                 actions_requested,
                 threads=True,
+                start=request_start,
             )
             if not existing.empty and _overlap_rebase_detected(existing, fresh):
+                full_window = f"from {bootstrap_start}" if bootstrap_start else period
                 logger.warning(
                     "OHLCV adjusted-history revision detected in batch %s; rebuilding full %s",
-                    start,
-                    period,
+                    batch_start,
+                    full_window,
                 )
                 fresh = _download(
                     yf,
@@ -371,21 +399,23 @@ def download_history(
                     auto_adjust,
                     actions_requested,
                     threads=True,
+                    start=bootstrap_start,
                 )
                 existing = pd.DataFrame()
                 request_period = period
-                rebased_batches.append(start)
+                request_start = bootstrap_start
+                rebased_batches.append(batch_start)
         except Exception as exc:
             logger.warning(
                 "yfinance batch %s failed: %s: %s; individual retry",
-                start,
+                batch_start,
                 type(exc).__name__,
                 exc,
             )
             failure_details.append(
                 {
                     "scope": "batch",
-                    "batch_start": start,
+                    "batch_start": batch_start,
                     "error": type(exc).__name__,
                     "detail": str(exc)[:180],
                 }
@@ -407,6 +437,7 @@ def download_history(
                     interval,
                     auto_adjust,
                     actions_requested,
+                    start=request_start,
                 )
                 if retry.empty:
                     failed.append(ticker)
@@ -452,7 +483,7 @@ def download_history(
                 failure_details.append(
                     {
                         "scope": "cache_write",
-                        "batch_start": start,
+                        "batch_start": batch_start,
                         "error": type(exc).__name__,
                         "detail": str(exc)[:180],
                     }
@@ -480,7 +511,8 @@ def download_history(
         "interval": interval,
         "batch_size": int(batch_size),
         "auto_adjust": bool(auto_adjust),
-        "bootstrap_period": period,
+        "bootstrap_start": bootstrap_start,
+        "bootstrap_period_fallback": period,
         "incremental_period": incremental_period,
     }
     try:
