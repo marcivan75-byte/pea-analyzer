@@ -43,18 +43,36 @@ def _merge_ready_observations(raw:list[dict],ticker_to_isin:dict[str,str],as_of:
     return ready
 
 
-def _governed_structural_observations(raw:list[dict])->list[dict]:
-    """Map the collector's exact-ISIN proof onto the existing merge contract.
+def _governed_structural_observations(raw:list[dict],now=None)->list[dict]:
+    """Map exact-ISIN proof to the merge contract and reject temporal leakage.
 
     The core merge engine already governs ISIN_MATCHED. V21.10 keeps the more
     specific EXACT_ISIN_SOURCE_MATCH marker as provenance detail rather than
-    widening ACCEPTED_VALIDATION_STATUSES. Unexpected statuses are left intact
-    so the merge engine can continue to fail closed.
+    widening ACCEPTED_VALIDATION_STATUSES. V21.15 additionally fail-closes any
+    missing/unparseable/future structural ``as_of`` before it can enter the
+    weekly master. This protects PIT even when an issuer page contains unrelated
+    future calendar dates (for example a future distribution date).
     """
+    reference=pd.Timestamp(now or datetime.now(timezone.utc))
+    if reference.tzinfo is None:
+        reference=reference.tz_localize("UTC")
+    else:
+        reference=reference.tz_convert("UTC")
     ready=[]
     for obs in raw:
         row=dict(obs)
-        if row.get("validation_status") == "EXACT_ISIN_SOURCE_MATCH":
+        observed_at=pd.to_datetime(row.get("as_of"),errors="coerce",utc=True)
+        collected_at=pd.to_datetime(row.get("collected_at"),errors="coerce",utc=True)
+        ceiling=reference
+        if pd.notna(collected_at) and collected_at < ceiling:
+            ceiling=collected_at
+        if pd.isna(observed_at):
+            row["temporal_validation_detail"]="STRUCTURAL_AS_OF_UNPARSEABLE"
+            row["validation_status"]="TEMPORAL_REJECTED_AS_OF_UNPARSEABLE"
+        elif observed_at > ceiling + pd.Timedelta(days=1):
+            row["temporal_validation_detail"]="STRUCTURAL_FUTURE_AS_OF_REJECTED"
+            row["validation_status"]="TEMPORAL_REJECTED_FUTURE_AS_OF"
+        elif row.get("validation_status") == "EXACT_ISIN_SOURCE_MATCH":
             row["identity_validation_detail"]="EXACT_ISIN_SOURCE_MATCH"
             row["validation_status"]="ISIN_MATCHED"
         ready.append(row)
@@ -180,6 +198,7 @@ def run(root: Path=ROOT) -> dict:
             "weights_unchanged":True,
             "thresholds_unchanged":True,
             "missing_structure_not_imputed":True,
+            "future_structural_as_of_rejected_before_master":True,
             "daily_structural_network_scrape":False,
             "provenance_merge_enabled":True,
             "issuer_structural_evidence_level":"A",
