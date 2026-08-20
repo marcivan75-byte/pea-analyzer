@@ -31,7 +31,8 @@ Pour chaque Action/ETF :
 - mois manquants dans la fenêtre principale ;
 - nombre de séances et mois présents dans 2020–2022 ;
 - mois de stress manquants ;
-- statut principal et statut stress.
+- statut principal et statut stress ;
+- `primary_calibration_eligible` et `stress_library_eligible`.
 
 Statuts principaux :
 
@@ -43,26 +44,73 @@ Statuts principaux :
 
 Statuts stress : `STRESS_FULL_2020_2022`, `STRESS_PARTIAL`, `NO_STRESS_HISTORY`.
 
+## Gates d'éligibilité fail-closed
+
+L'audit de profondeur n'est pas un simple reporting. Il définit les ensembles utilisables par les futures calibrations :
+
+- calibration principale : **uniquement** `PRIMARY_FULL_FROM_ANCHOR` ;
+- bibliothèque de stress : **uniquement** `STRESS_FULL_2020_2022` ;
+- historique court, mois manquant, cache absent, ticker absent ou série stale : **exclusion** jusqu'à preuve/correction ;
+- aucune imputation neutre et aucune date de lancement inventée ;
+- le stress reste une bibliothèque de robustesse avec poids de calibration ordinaire égal à **0**.
+
+Ainsi, une série courte n'est jamais transformée silencieusement en série complète et une absence historique ne reçoit jamais une valeur synthétique.
+
 ## Instruments lancés après 2023
 
 V21.13 ne déduit jamais une date de lancement à partir de la seule première observation Yahoo. Un historique commençant en 2024/2025 peut représenter soit une introduction réelle, soit une lacune fournisseur.
 
-Les cas concernés restent `START_AFTER_ANCHOR_UNRESOLVED` jusqu'à attribution d'une date de cotation/inception issue d'une source suffisamment fiable (Euronext/issuer ou autre source gouvernée). Une introduction réellement postérieure à 2023 ne doit évidemment pas être pénalisée pour l'absence de données antérieures à son existence.
+Les cas concernés restent `START_AFTER_ANCHOR_UNRESOLVED` et sont exclus de la calibration principale jusqu'à attribution d'une date de cotation/inception issue d'une source suffisamment fiable (Euronext/issuer ou autre source gouvernée). Une future preuve de lancement postérieur à 2023 pourra conduire à une politique spécifique, mais ne sera jamais déduite de la seule première barre Yahoo.
+
+## Run réel de qualification du 20/08/2026
+
+Le workflow temporaire de preuve a restauré le cache antérieur `ohlcv-v3-32293890071`, puis a exécuté la migration sur l'univers complet. Les anciens manifests dépourvus de `bootstrap_start` ont été invalidés et les deux univers ont été reconstruits en `FULL_BOOTSTRAP` avec `bootstrap_start=2020-01-01`.
+
+Résultat de collecte :
+
+- Actions avec ticker demandé : 1 790 ; succès 1 783 ; échecs Yahoo 7 ;
+- ETF : 102 demandés ; succès 101 ; échec Yahoo 1 ;
+- 39 Actions restent sans ticker gouverné et ne sont donc pas requêtées ;
+- aucun échec de lecture des caches reconstruits.
+
+Profondeur observée sur les 1 931 instruments canoniques :
+
+- `PRIMARY_FULL_FROM_ANCHOR` : **1 687** ;
+- `START_AFTER_ANCHOR_UNRESOLVED` : **190** ;
+- `PRIMARY_MISSING_CALENDAR_MONTHS` : **7** ;
+- `NO_CACHE_HISTORY` : **8** ;
+- `NO_TICKER` : **39** ;
+- `STRESS_FULL_2020_2022` : **1 449** ;
+- `STRESS_PARTIAL` : **244** ;
+- `NO_STRESS_HISTORY` : **191** ;
+- `NO_CACHE_HISTORY` stress : **8** ;
+- `NO_TICKER` stress : **39**.
+
+En conséquence, au 20/08/2026 :
+
+- **1 687 instruments sont éligibles à la calibration principale** ;
+- **1 449 instruments sont éligibles à la bibliothèque de stress** ;
+- tous les autres restent fail-closed jusqu'à correction ou preuve complémentaire.
+
+Preuve du run : GitHub Actions run `32379163874`, artefact `V21_13_REAL_OHLCV_QUALIFICATION_32379163874`, SHA-256 de l'archive publiée `1121b0f96f3caaee0c645ea0cf9f89b3663e5fddd98f83dded0a76f87d6795e2`.
 
 ## Sorties
 
 - `outputs/audit/OHLCV_PRIMARY_HISTORY_DEPTH.csv`
 - `outputs/audit/OHLCV_PRIMARY_HISTORY_DEPTH_SUMMARY.json`
 
+Le résumé publie notamment la borne de bootstrap configurée, le fallback technique, les comptes par statut, les nombres éligibles/exclus et les politiques d'éligibilité.
+
 L'audit est appelé par `criteria_governance_audit`, donc par le Committee hebdomadaire après collecte/restauration du cache.
 
 ## Conditions de clôture
 
-La migration V21.13 n'est pas considérée validée sur les seuls tests synthétiques. Il faut :
+La migration V21.13 est clôturable lorsque :
 
-1. CI complet vert ;
-2. run représentatif avec restauration de l'ancien cache puis reconstruction explicite depuis le 01/01/2020 ;
-3. inspection des deux manifests Actions/ETF et présence de `bootstrap_start=2020-01-01` ;
-4. inspection du rapport réel de profondeur ;
-5. résolution ou classement explicite des historiques courts avant toute nouvelle calibration ;
-6. aucune utilisation du stress set dans l'optimisation ordinaire.
+1. CI complet du head final vert ;
+2. reconstruction réelle depuis le 01/01/2020 démontrée ;
+3. manifests Actions/ETF démontrant `bootstrap_start=2020-01-01` ;
+4. rapport réel de profondeur inspecté ;
+5. historiques incomplets classés fail-closed via les gates d'éligibilité ;
+6. stress exclu de l'optimisation ordinaire ;
+7. workflow temporaire de preuve supprimé avant fusion.
