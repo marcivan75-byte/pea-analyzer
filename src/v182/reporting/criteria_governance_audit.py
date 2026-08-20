@@ -6,6 +6,7 @@ import json
 import pandas as pd
 
 from v182.decision.committee_master import criterion_coverage_report, load_registry
+from v182.reporting import calibration_governance_audit
 
 ROOT = Path(__file__).resolve().parents[3]
 HORIZONS = ("CT", "MT", "LT", "SHORT", "TOP_DOWN")
@@ -126,6 +127,7 @@ def _context_only_rows() -> pd.DataFrame:
 
 
 def run(root: Path = ROOT) -> dict:
+    calibration = calibration_governance_audit.run(root)
     action_master = _read(root / "outputs" / "V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv")
     etf_master = _read(root / "outputs" / "V18.2_PEA_ETF_MASTER_ENRICHED.csv")
     action_reference = load_registry(root / "config" / "V21_ACTIONS_REFERENCE_V21_0.json")
@@ -149,6 +151,7 @@ def run(root: Path = ROOT) -> dict:
         "version": "CRITERIA_GOVERNANCE_AUDIT_V1",
         "rows": int(len(audit)),
         "counts_by_effective_status": {str(k): int(v) for k, v in counts.items()},
+        "calibration_governance": calibration,
         "weight_or_threshold_changes": False,
         "holdout_unlocked": False,
         "t1_t2_scope": "ACTION_TCT_ONLY",
