@@ -154,7 +154,22 @@ def test_pea_universe_uses_isin_and_economic_benchmark_for_synthetic_etf():
     row = universe.iloc[0]
     assert row["instrument_id"] == "ISIN:FR0014000001"
     assert row["economic_family"] == "MSCI World"
+    assert row["region"] == "World"
     assert bool(row["is_synthetic"]) is True
+
+
+def test_split_like_share_change_is_quarantined_not_counted_as_flow():
+    history = pd.DataFrame(
+        [
+            _base_row("A", "2026-08-18", aum=1000.0, nav=10.0, shares_outstanding=100.0, market_price=10.0),
+            _base_row("A", "2026-08-19", aum=1000.0, nav=5.0, shares_outstanding=200.0, market_price=5.0),
+        ]
+    )
+    daily = compute_daily_flows(history)
+    last = daily.iloc[-1]
+    assert last["flow_method"] == "QUARANTINED_SPLIT_LIKE_EVENT"
+    assert last["flow_confidence"] == "QUARANTINE"
+    assert pd.isna(last["flow"])
 
 
 def test_config_weights_are_pre_registered_and_sum_to_one():
@@ -164,5 +179,9 @@ def test_config_weights_are_pre_registered_and_sum_to_one():
     assert sum(cfg["gold_flow_composite_weights"].values()) == pytest.approx(1.0)
     assert sum(cfg["pea_overlay_weights"]["mature"].values()) == pytest.approx(1.0)
     assert sum(cfg["pea_overlay_weights"]["young_history"].values()) == pytest.approx(1.0)
+    assert cfg["preliminary_score_min_observations"] == 20
+    assert cfg["mature_score_min_observations"] == 60
+    assert cfg["anti_false_signal"]["mixed_currency_absolute_aggregation_forbidden"] is True
+    assert cfg["anti_false_signal"]["coinshares_weekly_control_not_added_to_primary_flows"] is True
     assert cfg["governance"]["decision_influence"] == 0.0
     assert cfg["governance"]["promotion_requires_dedicated_pit_oos"] is True
