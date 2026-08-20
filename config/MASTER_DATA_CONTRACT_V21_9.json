@@ -1,5 +1,5 @@
 {
-  "version": "V21.10_ETF_STRUCTURAL_DATA_2026_08_20",
+  "version": "V21.11_CALIBRATION_GOVERNANCE_2026_08_20",
   "status": "GOVERNED_REFERENCE_CONTRACT",
   "scope": ["PEA_ACTIONS", "PEA_ETF", "MODULE_INPUTS", "BACKTEST_IDENTITY"],
   "primary_key": "isin",
@@ -107,7 +107,24 @@
     "current_master_dynamic_values_for_historical_dates": "FORBIDDEN",
     "forward_returns": "OUTCOME_ONLY_NEVER_FEATURE",
     "final_holdout": "LOCKED_UNTIL_GOVERNED_RELEASE",
-    "look_ahead": "FAIL_CLOSED"
+    "look_ahead": "FAIL_CLOSED",
+    "historical_sample_governance": {
+      "reference": "config/CALIBRATION_WINDOWS_V21_11.json",
+      "implementation": "src/v182/backtest/calibration_windows.py",
+      "primary_start": "2023-01-01",
+      "primary_mode_before_2028": "EXPANDING_POST_COVID",
+      "primary_mode_from_2028": "ROLLING_60_MONTHS",
+      "rolling_activation_date": "2028-01-01",
+      "rolling_months": 60,
+      "stress_period": "2020-01-01/2022-12-31",
+      "stress_calibration_weight": 0.0,
+      "stress_rows_allowed_in_primary_calibration": false,
+      "stress_parameter_optimization_allowed": false,
+      "stress_threshold_retuning_allowed": false,
+      "stress_can_reject_fragile_candidate": true,
+      "stress_purpose": ["STOPS", "DRAWDOWNS", "REGIME_CHANGES", "VOLATILITY_SHOCKS", "GAP_RISK", "LIQUIDITY", "PROTECTION_SYSTEMS"],
+      "module_specific_oos_and_holdouts_preserved": true
+    }
   },
   "automation": {
     "run_master_integrity_in_ci": true,
@@ -122,6 +139,7 @@
     "test_secret_redaction_and_source_auth_circuit_breaker": true,
     "test_safe_etf_unit_conversions": true,
     "test_etf_exact_isin_source_match_to_governed_merge_status": true,
-    "test_unexpected_etf_validation_status_remains_fail_closed": true
+    "test_unexpected_etf_validation_status_remains_fail_closed": true,
+    "test_post_covid_calibration_stress_isolation": true
   }
 }
