@@ -14,6 +14,7 @@ US_TICKER:IBIT;;IBIT;iShares Bitcoin Trust ETF;EXTERNAL;CRYPTO_ETF;BITCOIN;US;CR
 US_TICKER:FBTC;;FBTC;Fidelity Wise Origin Bitcoin Fund;EXTERNAL;CRYPTO_ETF;BITCOIN;US;CRYPTO_BITCOIN;Bitcoin;Fidelity;false;;;false;false;;https://www.fidelity.com/
 US_TICKER:ETHA;;ETHA;iShares Ethereum Trust ETF;EXTERNAL;CRYPTO_ETF;ETHEREUM;US;CRYPTO_ETHEREUM;CME CF Ether-Dollar Reference Rate;iShares;false;;;false;false;;https://www.ishares.com/
 US_TICKER:FETH;;FETH;Fidelity Ethereum Fund;EXTERNAL;CRYPTO_ETF;ETHEREUM;US;CRYPTO_ETHEREUM;Ether;Fidelity;false;;;false;false;;https://www.fidelity.com/
+US_TICKER:BITI;;BITI;ProShares Short Bitcoin ETF;EXTERNAL;CRYPTO_SHORT_ETF;BITCOIN_SHORT;US;CRYPTO_SHORT;Short Bitcoin Strategy;ProShares;false;;;false;true;;https://www.proshares.com/
 US_TICKER:XLK;;XLK;Technology Select Sector SPDR Fund;EXTERNAL;ETF;US_TECHNOLOGY;US;TECHNOLOGY;Technology Select Sector Index;State Street;false;;;false;false;;
 US_TICKER:SOXX;;SOXX;iShares Semiconductor ETF;EXTERNAL;ETF;SEMICONDUCTORS;US;SEMICONDUCTORS;NYSE Semiconductor Index;iShares;false;;;false;false;;
 US_TICKER:SMH;;SMH;VanEck Semiconductor ETF;EXTERNAL;ETF;SEMICONDUCTORS;US;SEMICONDUCTORS;MVIS US Listed Semiconductor 25 Index;VanEck;false;;;false;false;;
