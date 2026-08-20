@@ -6,6 +6,8 @@ from v182.sources.rate_limit import StartRateLimiter
 
 # Raw yfinance fields are kept under stable V18.2 names. The Committee Master
 # resolves them to canonical V21 criteria through explicit semantic aliases.
+# ETF-specific values are kept raw here and converted only in the ETF wave when
+# their units/currency are explicit enough to do so without guessing.
 FIELDS = {
     "marketCap":"market_cap",
     "trailingPE":"per_ttm_yf",
@@ -35,7 +37,18 @@ FIELDS = {
     "sector":"sector_yf",
     "industry":"industry_yf",
     "country":"country_yf",
+    "exchange":"exchange_yf",
+    "fullExchangeName":"full_exchange_name_yf",
+    "currency":"currency_yf",
+    "longName":"long_name_yf",
     "quoteType":"quote_type_yf",
+    "annualReportExpenseRatio":"annual_report_expense_ratio_yf",
+    "totalAssets":"total_assets_yf",
+    "fundFamily":"fund_family_yf",
+    "category":"category_yf",
+    "legalType":"legal_type_yf",
+    "beta3Year":"beta3y_yf",
+    "yield":"yield_yf",
     "earningsTimestamp":"earnings_timestamp_yf",
     "earningsTimestampStart":"earnings_timestamp_start_yf",
     "earningsTimestampEnd":"earnings_timestamp_end_yf",
