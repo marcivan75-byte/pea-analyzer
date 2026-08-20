@@ -139,10 +139,10 @@ def _yahoo_expense_ratio_pct(value) -> float | None:
     return round(number*100.0,6)
 
 
-def _yahoo_total_assets_eur_m(value, currency) -> float | None:
-    """Convert Yahoo totalAssets to EUR millions only when Yahoo states EUR currency."""
+def _yahoo_total_assets_eur_m(value, asset_currency) -> float | None:
+    """Convert totalAssets only with a dedicated fund-assets currency, never quote currency."""
     number=_finite_float(value)
-    if number is None or number < 0 or str(currency or "").strip().upper() != "EUR":
+    if number is None or number < 0 or str(asset_currency or "").strip().upper() != "EUR":
         return None
     return round(number/1_000_000.0,6)
 
@@ -175,10 +175,13 @@ def wave6_etf_info(etf_with_tickers: pd.DataFrame, cfg: dict) -> tuple[list[dict
         ter=_yahoo_expense_ratio_pct(fields.get("annual_report_expense_ratio_yf"))
         if ter is not None:
             result.append(_obs("ETF",isin,"ter_pct",ter,"yfinance:annualReportExpenseRatio","C"))
-        assets=_yahoo_total_assets_eur_m(fields.get("total_assets_yf"),fields.get("currency_yf"))
+        # Yahoo exposes quote currency separately from totalAssets and does not
+        # provide a dedicated total-assets currency through get_info(). Preserve
+        # total_assets_yf raw, but never infer EUR AUM from currency_yf.
+        assets=_yahoo_total_assets_eur_m(fields.get("total_assets_yf"),fields.get("total_assets_currency_yf"))
         if assets is not None:
-            result.append(_obs("ETF",isin,"fund_total_assets_eur_m",assets,"yfinance:totalAssets+currency=EUR","C"))
-            result.append(_obs("ETF",isin,"aum_m",assets,"yfinance:totalAssets+currency=EUR","C"))
+            result.append(_obs("ETF",isin,"fund_total_assets_eur_m",assets,"yfinance:totalAssets+explicitAssetCurrency=EUR","C"))
+            result.append(_obs("ETF",isin,"aum_m",assets,"yfinance:totalAssets+explicitAssetCurrency=EUR","C"))
     return result,failures
 
 
