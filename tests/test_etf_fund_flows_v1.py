@@ -8,7 +8,8 @@ import pandas as pd
 import pytest
 
 from v182.features.etf_fund_flows_v1 import build_flow_computation, compute_daily_flows
-from v182.sources.etf_fund_flows import build_pea_flow_universe
+from v182.reporting.etf_fund_flows_shadow_run import _load_weekly_crypto_control
+from v182.sources.etf_fund_flows import _merge_same_day_observations, build_pea_flow_universe
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,12 +96,12 @@ def test_shadow_scores_never_gain_decision_influence():
     dates = pd.bdate_range("2026-05-01", periods=30)
     rows = []
     definitions = [
-        ("ISIN:PEA1", "EU", True, "WORLD", "TECHNOLOGY", 1_000_000.0, 5000.0),
-        ("GLOBAL1", "US", False, "WORLD", "TECHNOLOGY", 2_000_000.0, 10000.0),
-        ("GOLD1", "US", False, "GOLD_PHYSICAL", "GOLD", 1_500_000.0, 4000.0),
-        ("BTC1", "US", False, "BITCOIN", "CRYPTO_BITCOIN", 1_500_000.0, 6000.0),
+        ("ISIN:PEA1", "EU", True, "WORLD", "TECHNOLOGY", 1_000_000.0, 5000.0, "USD"),
+        ("GLOBAL1", "US", False, "WORLD", "TECHNOLOGY", 2_000_000.0, 10000.0, "USD"),
+        ("GOLD1", "US", False, "GOLD_PHYSICAL", "GOLD", 1_500_000.0, 4000.0, "USD"),
+        ("BTC1", "US", False, "BITCOIN", "CRYPTO_BITCOIN", 1_500_000.0, 6000.0, "USD"),
     ]
-    for instrument_id, region, is_pea, family, theme, initial_aum, daily_flow in definitions:
+    for instrument_id, region, is_pea, family, theme, initial_aum, daily_flow, currency in definitions:
         nav = 100.0
         shares = initial_aum / nav
         for index, date in enumerate(dates):
@@ -121,6 +122,7 @@ def test_shadow_scores_never_gain_decision_influence():
                     nav=nav,
                     shares_outstanding=shares,
                     market_price=nav,
+                    currency=currency,
                 )
             )
     result = build_flow_computation(pd.DataFrame(rows), _cfg())
@@ -129,6 +131,7 @@ def test_shadow_scores_never_gain_decision_influence():
     assert (result.rotations["decision_influence"] == 0.0).all()
     pea = result.instruments[result.instruments["is_pea"]].iloc[0]
     assert pd.notna(pea["pea_flow_overlay_shadow"])
+    assert pea["efs_readiness"] == "PRELIMINARY_20_59"
     assert result.diagnostics["live_orders_enabled"] is False
 
 
@@ -170,6 +173,68 @@ def test_split_like_share_change_is_quarantined_not_counted_as_flow():
     assert last["flow_method"] == "QUARANTINED_SPLIT_LIKE_EVENT"
     assert last["flow_confidence"] == "QUARANTINE"
     assert pd.isna(last["flow"])
+
+
+def test_same_day_official_evidence_can_be_supplemented_without_claiming_a_grade():
+    snapshot = pd.DataFrame(
+        [
+            {
+                **_base_row("A", "2026-08-19", source="issuer", confidence="A", source_priority=100, aum=1000.0, shares_outstanding=100.0),
+                "_confidence_rank": 4,
+            },
+            {
+                **_base_row("A", "2026-08-19", source="yahoo", source_type="YFINANCE", confidence="C", source_priority=50, nav=10.0),
+                "_confidence_rank": 2,
+            },
+        ]
+    )
+    merged = _merge_same_day_observations(snapshot)
+    row = merged.iloc[0]
+    assert row["aum"] == pytest.approx(1000.0)
+    assert row["nav"] == pytest.approx(10.0)
+    assert row["confidence"] == "C"
+    assert row["source_components"] == "issuer|yahoo"
+
+
+def test_mixed_currency_family_share_is_not_computed():
+    dates = pd.bdate_range("2026-05-01", periods=30)
+    rows = []
+    for instrument_id, currency in (("A", "USD"), ("B", "EUR")):
+        nav = 100.0
+        shares = 10_000.0
+        for index, date in enumerate(dates):
+            if index:
+                shares += 10.0
+            rows.append(
+                _base_row(
+                    instrument_id,
+                    date.date().isoformat(),
+                    economic_family="WORLD",
+                    currency=currency,
+                    aum=shares * nav,
+                    nav=nav,
+                    shares_outstanding=shares,
+                    market_price=nav,
+                )
+            )
+    result = build_flow_computation(pd.DataFrame(rows), _cfg())
+    assert result.instruments["flow_share_family_20d_pct"].isna().all()
+    family = result.families.iloc[0]
+    assert bool(family["absolute_flow_comparable"]) is False
+
+
+def test_weekly_crypto_control_stays_external_and_not_in_primary_flows(tmp_path: Path):
+    path = tmp_path / "control.csv"
+    path.write_text(
+        "week_end;asset;region;flow_usd_m;source;source_url;confidence;as_of;notes\n"
+        "2026-08-14;Bitcoin;Global;120.5;CoinShares;https://example.com/report;B;2026-08-17;weekly control\n",
+        encoding="utf-8",
+    )
+    control = _load_weekly_crypto_control(path)
+    assert control["status"] == "SUCCESS"
+    assert control["flow_usd_m_by_asset"]["Bitcoin"] == pytest.approx(120.5)
+    assert control["added_to_primary_flows"] is False
+    assert control["decision_influence"] == 0.0
 
 
 def test_config_weights_are_pre_registered_and_sum_to_one():
