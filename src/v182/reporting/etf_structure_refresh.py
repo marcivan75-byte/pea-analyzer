@@ -5,6 +5,7 @@ import json
 import pandas as pd
 
 from v182.io.frames import apply_observations, is_missing
+from v182.sources.etf_inception_data import collect_etf_inception_data
 from v182.sources.etf_structural_data import collect_etf_structural_data
 from v182.sources.yfinance_funds import collect_fund_structure
 from v182.state.etf_structure_state import (
@@ -50,8 +51,8 @@ def _governed_structural_observations(raw:list[dict],now=None)->list[dict]:
     specific EXACT_ISIN_SOURCE_MATCH marker as provenance detail rather than
     widening ACCEPTED_VALIDATION_STATUSES. V21.15 additionally fail-closes any
     missing/unparseable/future structural ``as_of`` before it can enter the
-    weekly master. This protects PIT even when an issuer page contains unrelated
-    future calendar dates (for example a future distribution date).
+    weekly master. V21.16 reuses exactly the same contract for static inception
+    evidence; the inception value itself never serves as the observation timestamp.
     """
     reference=pd.Timestamp(now or datetime.now(timezone.utc))
     if reference.tzinfo is None:
@@ -102,12 +103,12 @@ def _coverage(frame:pd.DataFrame,field:str)->float:
 
 
 def run(root: Path=ROOT) -> dict:
-    """Enrich ETF structural data before ETF MT scoring and persist governed state.
+    """Enrich ETF structural data and inception evidence, then persist governed state.
 
-    V21.15 first replays only fresh structural values whose actual value is bound
-    to retained provenance. The V21.10 network collectors then refresh evidence;
-    the resulting governed snapshot is persisted for daily replay. No missing
-    value is imputed and weaker evidence cannot replace stronger evidence.
+    Dynamic structural fields and static exact-ISIN inception evidence share the
+    existing governed state/provenance channel. Inception evidence only explains
+    short OHLCV histories; it cannot synthesize missing returns or change model
+    eligibility, weights, thresholds, Entry/Exit, holdouts or T1/T2 scope.
     """
     outputs=root/"outputs"
     source=outputs/"V18.2_PEA_ETF_MASTER_ENRICHED.csv"
@@ -135,6 +136,11 @@ def run(root: Path=ROOT) -> dict:
     structural_metrics={"status":"SKIPPED_PROVIDER_COLUMN_MISSING","requested":0}
     structural_quarantined=[]
     structural_changed=0
+    inception_observations=[]
+    inception_failures=[]
+    inception_metrics={"status":"SKIPPED_PROVIDER_COLUMN_MISSING","requested":0}
+    inception_quarantined=[]
+    inception_changed=0
     if "provider" in df.columns:
         raw_structural_observations,structural_failures,structural_metrics=collect_etf_structural_data(df)
         structural_observations=_governed_structural_observations(raw_structural_observations)
@@ -142,6 +148,13 @@ def run(root: Path=ROOT) -> dict:
         df,structural_quarantined=apply_observations(df,structural_observations)
         after_structural=_snapshot(df,structural_observations)
         structural_changed=sum(_changed(before_structural.get(key),after_structural.get(key)) for key in before_structural)
+
+        raw_inception_observations,inception_failures,inception_metrics=collect_etf_inception_data(df)
+        inception_observations=_governed_structural_observations(raw_inception_observations)
+        before_inception=_snapshot(df,inception_observations)
+        df,inception_quarantined=apply_observations(df,inception_observations)
+        after_inception=_snapshot(df,inception_observations)
+        inception_changed=sum(_changed(before_inception.get(key),after_inception.get(key)) for key in before_inception)
 
     valid=df[["isin","yahoo_ticker"]].dropna().copy()
     valid["yahoo_ticker"]=valid["yahoo_ticker"].astype(str).str.strip()
@@ -163,18 +176,22 @@ def run(root: Path=ROOT) -> dict:
     state_write_path.write_text(json.dumps(state_write,ensure_ascii=False,indent=2),encoding="utf-8")
 
     gaps_dir=outputs/"gaps"; gaps_dir.mkdir(parents=True,exist_ok=True)
-    merge_failures=[{**q,"source_stage":"PROVENANCE_MERGE"} for q in state_replay_quarantined+structural_quarantined+quarantined]
-    failures=structural_failures+collector_failures+merge_failures
+    merge_failures=[
+        {**q,"source_stage":"PROVENANCE_MERGE"}
+        for q in state_replay_quarantined+structural_quarantined+inception_quarantined+quarantined
+    ]
+    failures=structural_failures+inception_failures+collector_failures+merge_failures
     if failures:
         pd.DataFrame(failures).to_csv(gaps_dir/"V21_10_ETF_STRUCTURE_FAILURES.csv",sep=";",index=False,encoding="utf-8-sig")
 
     coverage={field:_coverage(df,field) for field in (
         "ter_pct","fund_total_assets_eur_m","aum_m","diversification_direct_score",
         "direct_sector_hhi","direct_top_holdings_concentration_pct","direct_holdings_count",
+        "share_class_inception_date","listing_or_launch_date","reported_first_nav_date",
     )}
     payload={
         "status":"SUCCESS",
-        "version":"V21.15_ETF_STRUCTURAL_DATA_STATE",
+        "version":"V21.16_ETF_STRUCTURAL_AND_INCEPTION_STATE",
         "generated_at_utc":datetime.now(timezone.utc).isoformat(),
         "source":str(source.relative_to(root)),
         "tickers_requested":len(ticker_to_isin),
@@ -184,12 +201,16 @@ def run(root: Path=ROOT) -> dict:
         "structural_merge_observations":len(structural_observations),
         "structural_changed_cells":int(structural_changed),
         "structural_merge_quarantined":len(structural_quarantined),
+        "inception_source":inception_metrics,
+        "inception_merge_observations":len(inception_observations),
+        "inception_changed_cells":int(inception_changed),
+        "inception_merge_quarantined":len(inception_quarantined),
         "yfinance_raw_observations":len(raw_observations),
         "yfinance_merge_observations":len(observations),
         "yfinance_changed_cells":int(yfinance_changed),
-        "changed_cells":int(structural_changed+yfinance_changed),
-        "collector_failures":len(structural_failures)+len(collector_failures),
-        "merge_quarantined":len(state_replay_quarantined)+len(structural_quarantined)+len(quarantined),
+        "changed_cells":int(structural_changed+inception_changed+yfinance_changed),
+        "collector_failures":len(structural_failures)+len(inception_failures)+len(collector_failures),
+        "merge_quarantined":len(state_replay_quarantined)+len(structural_quarantined)+len(inception_quarantined)+len(quarantined),
         "failures":len(failures),
         "coverage_pct":coverage,
         "state_write":state_write,
@@ -202,8 +223,10 @@ def run(root: Path=ROOT) -> dict:
             "daily_structural_network_scrape":False,
             "provenance_merge_enabled":True,
             "issuer_structural_evidence_level":"A",
+            "issuer_share_class_inception_evidence_level":"A",
             "justetf_structural_evidence_level":"B",
-            "yfinance_structure_evidence_level":"C",
+            "justetf_listing_launch_evidence_level":"B",
+            "reported_first_nav_context_only":True,
             "exact_isin_source_match_required":True,
             "exact_isin_detail_preserved_in_provenance":True,
             "merge_validation_status":"ISIN_MATCHED",
@@ -213,11 +236,15 @@ def run(root: Path=ROOT) -> dict:
             "stronger_retained_evidence_cannot_be_silently_overwritten":True,
             "diversification_formula":"100*(1-direct_sector_hhi)",
             "top_holdings_concentration_kept_separate":True,
+            "inception_evidence_changes_calibration_eligibility":False,
+            "synthetic_pre_inception_history":False,
+            "stress_calibration_weight":0.0,
         },
     }
     encoded=json.dumps(payload,ensure_ascii=False,indent=2)
     (audit_dir/"V21_10_ETF_STRUCTURAL_DATA.json").write_text(encoded,encoding="utf-8")
     (audit_dir/"V21_ETF_FUND_STRUCTURE.json").write_text(encoded,encoding="utf-8")
+    (audit_dir/"V21_16_ETF_INCEPTION_EVIDENCE.json").write_text(encoded,encoding="utf-8")
     print(encoded)
     return payload
 

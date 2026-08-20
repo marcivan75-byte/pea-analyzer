@@ -1,5 +1,5 @@
 {
-  "version": "V21.15_ETF_STRUCTURE_STATE_2026_08_20",
+  "version": "V21.16_ETF_STRUCTURE_AND_INCEPTION_STATE_2026_08_20",
   "state_path": "state/provenance/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv",
   "audit_write_path": "outputs/audit/V21_15_ETF_STRUCTURE_STATE_WRITE.json",
   "audit_replay_path": "outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json",
@@ -13,7 +13,10 @@
     "direct_sector_hhi": {"max_age_days": 14},
     "direct_top_holdings_concentration_pct": {"max_age_days": 14},
     "top_holdings_concentration_pct": {"max_age_days": 14},
-    "top_holdings_observed_count": {"max_age_days": 14}
+    "top_holdings_observed_count": {"max_age_days": 14},
+    "share_class_inception_date": {"max_age_days": 36525},
+    "listing_or_launch_date": {"max_age_days": 36525},
+    "reported_first_nav_date": {"max_age_days": 36525}
   },
   "governance": {
     "network_refresh_owner": "WEEKLY_UNIFIED_ETF_STRUCTURE_REFRESH",
@@ -30,6 +33,10 @@
     "missing_imputation": false,
     "neutral_imputation": false,
     "stronger_evidence_overwrite_forbidden": true,
+    "issuer_share_class_inception_preferred": true,
+    "reported_first_nav_context_only": true,
+    "inception_evidence_changes_calibration_eligibility": false,
+    "synthetic_pre_inception_history": false,
     "weights_changed": false,
     "thresholds_changed": false,
     "decision_influence_changed": false,
