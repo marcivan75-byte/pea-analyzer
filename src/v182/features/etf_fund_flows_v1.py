@@ -211,7 +211,7 @@ def _rolling_features(group: pd.DataFrame) -> pd.DataFrame:
     returns = pd.to_numeric(group["period_return"], errors="coerce")
     for horizon in (5, 20, 60, 252):
         group[f"flow_{horizon}d"] = flow.rolling(horizon, min_periods=horizon).sum()
-        start_aum = aum.shift(horizon - 1)
+        start_aum = aum.shift(horizon)
         group[f"organic_flow_rate_{horizon}d"] = group[f"flow_{horizon}d"] / start_aum.replace(0.0, np.nan)
         group[f"price_return_{horizon}d"] = (
             (1.0 + returns).rolling(horizon, min_periods=horizon).apply(np.prod, raw=True) - 1.0
