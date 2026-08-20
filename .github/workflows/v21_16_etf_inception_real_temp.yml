@@ -1,9 +1,9 @@
 name: V21.16 TEMP real ETF inception qualification
 
 on:
-  push:
+  pull_request:
     branches:
-      - data/etf-inception-evidence-v21-16
+      - main
 
 permissions:
   contents: read
