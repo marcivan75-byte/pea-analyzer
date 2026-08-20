@@ -4,60 +4,128 @@ Date : 20/08/2026
 
 ## Objet
 
-V21.16 durcit le module `ETF Fund Flows` avant accumulation supplémentaire de son historique PIT. Le module reste `SHADOW_ONLY` : influence décisionnelle, ordres réels et promotion restent à zéro.
+V21.16 durcit le module `ETF Fund Flows` avant l'accumulation de son historique PIT. Le module reste `SHADOW_ONLY` : influence décisionnelle, ventes, ordres réels et promotion restent à zéro.
 
-Aucun poids pré-enregistré n'est modifié. Les seuils restent 20 flux valides pour accéder au stade `PRELIMINARY` et 60 pour être candidat au stade `MATURE`, mais la fenêtre courante correspondante doit désormais être réellement complète.
+Aucun poids pré-enregistré n'est modifié. Les seuils restent 20 flux valides pour accéder au stade `PRELIMINARY` et 60 pour être candidat au stade `MATURE`, avec exigence supplémentaire que la fenêtre courante correspondante soit réellement complète.
 
-## Défaut 1 — AUM Yahoo sans date source explicite
+## Défaut 1 — AUM et shares Yahoo sans date source explicite
 
-Le collecteur Yahoo utilisait `totalAssets`, `navPrice` et `sharesOutstanding` avec une date d'observation égale au jour du run. Yahoo ne fournit cependant pas nécessairement une date source explicite pour ces champs.
+Yahoo peut fournir `totalAssets`, `navPrice` et `sharesOutstanding` sans date structurelle explicite. Attribuer automatiquement le jour du run à ces champs pouvait créer deux faux signaux :
 
-Si `totalAssets` restait inchangé alors que le prix ou le NAV variait, le fallback :
-
-`flow_t = AUM_t - AUM_t-1 × (1 + total_return_t)`
-
-pouvait produire un faux flux alors que l'AUM fournisseur était simplement inchangé ou rafraîchi à une fréquence différente.
+- un AUM inchangé combiné à un prix mobile pouvait produire un faux flux via `AUM_t - AUM_t-1 × (1 + total_return_t)` ;
+- des `sharesOutstanding` non datées et inchangées pouvaient produire artificiellement un flux nul quotidien et faire mûrir l'historique.
 
 ### Correction V21.16
 
 - la date du dernier cours réellement observé devient la date de marché Yahoo quand elle est disponible ;
 - AUM, NAV, shares et market price portent chacun un indicateur `*_as_of_explicit` ;
 - ces indicateurs suivent le champ lors d'une fusion de sources le même jour ;
-- un AUM non daté explicitement et inchangé entre deux snapshots devient `UNSCORABLE_UNDATED_AUM_UNCHANGED` ;
-- si l'AUM non daté change réellement, le calcul reste SHADOW mais est étiqueté `AUM_PERFORMANCE_ADJUSTED_UNDATED_VENDOR_UPDATE` ;
-- pour le rendement, un prix de marché explicitement daté est préféré à un NAV non daté ;
-- un flux `SHARES_NAV` peut utiliser `shares × NAV` comme dénominateur si l'AUM est absent.
+- les `sharesOutstanding` non datées restent auditables dans la collecte mais sont supprimées du calcul de flux ;
+- un AUM non daté et inchangé devient `UNSCORABLE_UNDATED_AUM_UNCHANGED` ;
+- un AUM non daté qui change exige un rendement NAV/cours explicitement daté ; sinon `UNSCORABLE_UNDATED_AUM_WITHOUT_DATED_RETURN` ;
+- lorsqu'un AUM non daté peut être utilisé avec un rendement daté, la méthode est explicitement `AUM_PERFORMANCE_ADJUSTED_UNDATED_VENDOR_UPDATE` ;
+- le rendement de marché inclut les distributions observées ;
+- un prix de marché daté est préféré à un NAV non daté ;
+- le dénominateur des flux roulants utilise l'AUM ou, à défaut, `shares × NAV`.
 
-Ce choix est volontairement fail-closed : une absence d'information temporelle ne devient jamais une hypothèse de flux.
+Le principe est fail-closed : une absence d'information temporelle ne devient jamais une hypothèse de flux.
 
 ## Défaut 2 — breadth / SRFS avec données manquantes
 
-La breadth utilisait `rates.gt(0).mean()`. En pandas, un `NaN` devient `False` dans cette comparaison. Un instrument sans historique 20 observations pouvait donc être compté comme un flux non positif.
+La breadth utilisait une comparaison qui transformait implicitement un `NaN` en valeur non positive. Un instrument sans historique 20 observations pouvait donc pénaliser artificiellement la breadth.
 
-De plus, `Sector Rotation Flow Score` pouvait être construit à partir de breadth et confirmation régionale égales artificiellement à zéro avant que les instruments aient atteint 20 flux valides.
+De plus, le `Sector Rotation Flow Score` pouvait être construit avant que les instruments aient atteint 20 flux valides.
 
 ### Correction V21.16
 
-- la breadth est calculée uniquement sur les taux 20 observations non manquants ;
-- le dénominateur de confirmation régionale ne contient que les régions ayant un taux 20 observations valide ;
-- SRFS exclut tout instrument sous le gate `PRELIMINARY` de 20 flux valides ;
-- si aucun instrument d'un secteur n'est prêt, aucun score sectoriel n'est produit ;
-- les diagnostics publient `undated_unchanged_aum_skipped` et `srfs_scorable_sectors`.
+- breadth calculée uniquement sur les taux 20 observations réellement disponibles ;
+- confirmation régionale calculée uniquement sur les régions disposant d'un taux 20 observations valide ;
+- SRFS exclut tout instrument sous le gate `PRELIMINARY` ;
+- aucun score sectoriel n'est produit si aucun instrument du secteur n'est prêt ;
+- les valeurs manquantes restent manquantes et ne sont jamais transformées en zéro négatif implicite.
 
 ## Défaut 3 — historique cumulatif long mais fenêtre courante trouée
 
-`flow_observations` est un cumul du nombre de flux calculables. Un instrument pouvait donc avoir plus de 20 flux valides au total tout en ayant un trou dans les 20 observations les plus récentes. Dans ce cas, les indicateurs 20 observations étaient `NaN`, mais `_weighted_mean` pouvait encore renormaliser EFS sur les seules composantes restantes.
+`flow_observations` est cumulatif. Un instrument pouvait donc avoir plus de 20 flux valides au total alors que les 20 observations les plus récentes contenaient un trou. EFS pouvait alors être renormalisé sur trop peu de composantes.
 
-Le même problème pouvait attribuer `MATURE_60_PLUS` à un instrument ayant au moins 60 flux valides cumulés alors que la fenêtre courante de 60 observations était incomplète.
+Le même risque existait pour l'étiquette `MATURE_60_PLUS`.
 
 ### Correction V21.16
 
-- `current_20d_window_complete` exige un taux organique 20 observations et une persistance 20 observations réellement calculables ;
-- si le cumul atteint 20 mais que cette fenêtre courante est incomplète, `efs_shadow` reste `NaN` avec `DATA_INSUFFICIENT_CURRENT_20D_WINDOW` ;
-- `MATURE_60_PLUS` exige à la fois au moins 60 flux valides cumulés et une fenêtre 60 observations complète ;
-- un historique ≥60 dont la fenêtre 20 est complète mais la fenêtre 60 est trouée reste `PRELIMINARY_GAPPED_60_PLUS` ;
-- les diagnostics comptent `current_20d_window_incomplete` et `mature_60d_window_incomplete` ;
-- les seuils numériques 20/60 ne sont pas modifiés : il s'agit d'une condition d'intégrité de fenêtre, pas d'un retuning.
+- `current_20d_window_complete` exige un taux organique 20 observations et une persistance 20 observations calculables ;
+- cumul ≥20 mais fenêtre courante incomplète : `efs_shadow = NaN` et `DATA_INSUFFICIENT_CURRENT_20D_WINDOW` ;
+- `MATURE_60_PLUS` exige cumul ≥60 et fenêtre courante 60 observations complète ;
+- cumul ≥60 mais fenêtre 60 observations trouée : `PRELIMINARY_GAPPED_60_PLUS` ;
+- les seuils numériques 20/60 restent inchangés : il s'agit d'une condition d'intégrité, pas d'un retuning.
+
+## Défaut 4 — provenance temporelle BlackRock / iShares
+
+L'ancien parseur pouvait trouver une date `as of` quelque part sur une page BlackRock/iShares et considérer ensuite AUM, NAV et shares comme explicitement datés, même lorsqu'un champ avait été extrait par un fallback sans sa propre date.
+
+### Correction V21.16
+
+- AUM, NAV et shares sont parsés avec leur propre couple `valeur + date` ;
+- une date trouvée pour un champ n'est jamais héritée par un autre champ ;
+- la date du snapshot officiel est choisie à partir de la couverture des champs explicitement datés ;
+- un champ explicitement daté à une date différente du snapshot est supprimé du snapshot utilisé pour les calculs ;
+- les champs non datés peuvent rester visibles mais leur flag explicite reste `false` ;
+- `official_field_dates`, `official_field_date_conflict` et `official_conflicting_fields_dropped` rendent les conflits auditables.
+
+Des tests couvrent notamment AUM/NAV/shares à dates identiques, AUM conflictuel, shares conflictuel et champs totalement non datés.
+
+## Persistance PIT durcie
+
+Le workflow quotidien conserve la logique de cache historique, mais V21.16 ajoute des protections opérationnelles :
+
+- les tests V21.16 et Ruff sont obligatoires avant collecte ;
+- les invariants SHADOW/fail-closed sont revérifiés après calcul ;
+- le cache PIT n'est sauvegardé que si le run complet est `SUCCESS` ;
+- un run partiellement échoué ne peut donc plus remplacer l'état PIT valide ;
+- chaque run produit `ETF_FUND_FLOW_STATE_AUDIT.json` avec nombre de lignes, nombre d'instruments, dates min/max, doublons, présence des flags temporels et SHA-256 ;
+- le CSV d'historique PIT est également conservé comme artifact pendant 30 jours en complément du cache.
+
+## Preuve réseau réelle V21.16
+
+Workflow de preuve : run `32414437190`, head `75618f538beccb783f7637d904a6f6aecd27d3d6`.
+
+Résultat : `SUCCESS` sur la collecte réelle et tous les invariants fail-closed.
+
+- univers : 142 instruments, dont 102 ETF PEA et 40 satellites/contrôles ;
+- snapshot réel retenu : 139 observations ;
+- instruments observés : 138 ;
+- ETF PEA observés : 100 ;
+- `sharesOutstanding` non datées neutralisées : 16 ;
+- instruments scorables : 0 ;
+- instruments matures : 0 ;
+- secteurs SRFS scorables : 0 ;
+- lignes rotation : 0 ;
+- `decision_influence = 0.0` ;
+- `live_orders_enabled = false` ;
+- 5 échecs de collecte explicites et séparés des données valides.
+
+L'absence de score est le comportement attendu : il n'existait pas encore assez d'historique PIT pour atteindre le gate 20 observations.
+
+Artifact réel : `V21_16_REAL_FUND_FLOW_SHADOW_32414437190`, digest `sha256:16f75f165e5d56f5cf6e6089550001e1ae2b0c192fb680ab90b342de29caf137`.
+
+## Preuve de persistance isolée
+
+Le même run a sauvegardé l'état produit dans un namespace de cache de test, sans muter le cache de production. Un second job indépendant a restauré exactement cette clé.
+
+Résultat `V21.16_CACHE_ROUNDTRIP_PROOF` :
+
+- `status = SUCCESS` ;
+- `exact_cache_hit = true` ;
+- 139 lignes restaurées ;
+- 138 instruments restaurés ;
+- `production_cache_mutated = false`.
+
+Artifact : `V21_16_CACHE_ROUNDTRIP_32414437190`, digest `sha256:885275f9527ee3b2ce92b506da70f82106037effb8138366e8f0ee0597a5ed3b`.
+
+## Pourquoi aucun cache Fund Flows de production n'était encore présent
+
+Le module Fund Flows V1.0 a été fusionné sur `main` le 20/08/2026 à 10:28 heure de Paris. Son workflow quotidien est planifié à `21:45 UTC`, soit 23:45 heure de Paris en été.
+
+Lors des preuves V21.16 effectuées avant cette première échéance, aucune exécution quotidienne de production n'avait donc encore pu créer le premier cache. Il ne s'agissait pas d'une perte d'historique : l'accumulation planifiée n'avait simplement pas encore commencé.
 
 ## Gouvernance inchangée
 
@@ -68,21 +136,22 @@ Le même problème pouvait attribuer `MATURE_60_PLUS` à un instrument ayant au 
 - Crypto sans influence ordre ;
 - T1/T2 non concernés ;
 - aucun holdout ouvert ;
-- aucun retuning des poids ou seuils.
+- aucun retuning des poids ou seuils ;
+- aucune promotion autorisée par V21.16.
 
-## Tests de régression
+## Validation
 
-V21.16 couvre :
+Sur le head de code testé :
 
-1. AUM Yahoo non daté et inchangé : aucun flux calculé ;
-2. AUM non daté mais réellement modifié : calcul conservé et explicitement étiqueté ;
-3. préférence du cours daté sur un NAV non daté pour le rendement ;
-4. date du dernier cours Yahoo ;
-5. `shares × NAV` comme dénominateur en absence d'AUM ;
-6. SRFS vide avant 20 flux valides ;
-7. breadth ignorant les valeurs manquantes ;
-8. provenance temporelle champ par champ lors du merge multi-source ;
-9. cumul ≥20 mais fenêtre courante 20 observations trouée : aucun EFS ;
-10. cumul ≥60 mais fenêtre 60 observations trouée : statut non mature.
+- compilation : PASS ;
+- Ruff : PASS ;
+- audit Python statique : PASS ;
+- intégrité master : PASS ;
+- intégrité référentiels/gouvernance : PASS ;
+- suite pytest complète : PASS ;
+- audit identité : PASS ;
+- collecte réelle SHADOW : PASS ;
+- invariants fail-closed : PASS ;
+- cache round-trip isolé : PASS.
 
-La promotion éventuelle du module reste conditionnée à un historique PIT/OOS suffisant et à une comparaison challenger/baseline dédiée.
+La promotion éventuelle de Fund Flows reste conditionnée à l'accumulation d'un historique PIT suffisant puis à une validation PIT/OOS dédiée. V21.16 sécurise la collecte et la maturité des données ; elle ne prétend pas démontrer une performance alpha.
