@@ -11,13 +11,51 @@ import requests
 from bs4 import BeautifulSoup
 
 USER_AGENT = "Mozilla/5.0 (compatible; PEA-Analyzer/1.0; +https://github.com/)"
-BLACKROCK_DATE_RE = re.compile(r"as of\s+(\d{1,2}/[A-Za-z]{3}/\d{4})", re.IGNORECASE)
 CONFIDENCE_RANK = {"A": 4, "B": 3, "C": 2, "D": 1, "QUARANTINE": 0}
+VALUE_DATE_FLAGS = {
+    "aum": "aum_as_of_explicit",
+    "nav": "nav_as_of_explicit",
+    "shares_outstanding": "shares_as_of_explicit",
+    "market_price": "market_price_as_of_explicit",
+}
+BLACKROCK_FIELD_WEIGHTS = {"aum": 2, "nav": 2, "shares_outstanding": 3}
+BLACKROCK_FIELD_PATTERNS = {
+    "aum": {
+        "dated": [
+            r"(?:Net Assets of Fund|Series Value)\s+as of\s+(?P<date>\d{1,2}/[A-Za-z]{3}/\d{4})\s+(?:USD|EUR|GBP|CHF)\s*(?P<value>[0-9,]+(?:\.[0-9]+)?)",
+        ],
+        "fallback": [
+            r"(?:Net Assets of Fund|Series Value).*?(?:USD|EUR|GBP|CHF)\s*(?P<value>[0-9,]+(?:\.[0-9]+)?)",
+        ],
+    },
+    "shares_outstanding": {
+        "dated": [
+            r"(?:Shares Outstanding|Securities Outstanding)\s+as of\s+(?P<date>\d{1,2}/[A-Za-z]{3}/\d{4})\s+(?P<value>[0-9,]+(?:\.[0-9]+)?)",
+        ],
+        "fallback": [
+            r"(?:Shares Outstanding|Securities Outstanding).*?(?P<value>[0-9][0-9,]+(?:\.[0-9]+)?)",
+        ],
+    },
+    "nav": {
+        "dated": [
+            r"NAV as of\s+(?P<date>\d{1,2}/[A-Za-z]{3}/\d{4})\s+(?:USD|EUR|GBP|CHF)\s*(?P<value>[0-9,]+(?:\.[0-9]+)?)",
+        ],
+        "fallback": [
+            r"NAV.*?(?:USD|EUR|GBP|CHF)\s*(?P<value>[0-9,]+(?:\.[0-9]+)?)",
+        ],
+    },
+}
 
 
 def _nonempty(value: object) -> str:
     text = str(value or "").strip()
     return "" if text.lower() in {"", "nan", "none", "<na>", "n/a", "na", "null"} else text
+
+
+def _boolish(value: object) -> bool:
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "oui"}
 
 
 def _parse_number(text: str) -> float | None:
@@ -29,14 +67,68 @@ def _parse_number(text: str) -> float | None:
     return value if np.isfinite(value) else None
 
 
-def _parse_blackrock_date(text: str) -> str:
-    match = BLACKROCK_DATE_RE.search(text)
-    if match:
-        try:
-            return datetime.strptime(match.group(1), "%d/%b/%Y").date().isoformat()
-        except ValueError:
-            return datetime.now(timezone.utc).date().isoformat()
-    return datetime.now(timezone.utc).date().isoformat()
+def _parse_blackrock_date_token(value: str) -> str | None:
+    try:
+        return datetime.strptime(value, "%d/%b/%Y").date().isoformat()
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_blackrock_field(text: str, field: str) -> tuple[float | None, str | None]:
+    patterns = BLACKROCK_FIELD_PATTERNS[field]
+    for regex in patterns["dated"]:
+        match = re.search(regex, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        parsed_value = _parse_number(match.group("value"))
+        parsed_date = _parse_blackrock_date_token(match.group("date"))
+        if parsed_value is not None and parsed_date is not None:
+            return parsed_value, parsed_date
+    for regex in patterns["fallback"]:
+        match = re.search(regex, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        parsed_value = _parse_number(match.group("value"))
+        if parsed_value is not None:
+            return parsed_value, None
+    return None, None
+
+
+def _choose_blackrock_observation_date(field_dates: dict[str, str | None]) -> str:
+    scores: dict[str, int] = {}
+    for field, date in field_dates.items():
+        if date:
+            scores[date] = scores.get(date, 0) + BLACKROCK_FIELD_WEIGHTS.get(field, 1)
+    if not scores:
+        return datetime.now(timezone.utc).date().isoformat()
+    return max(scores, key=lambda date: (scores[date], date))
+
+
+def _last_market_as_of(history: pd.DataFrame) -> tuple[str, bool]:
+    fallback = datetime.now(timezone.utc).date().isoformat()
+    if history.empty:
+        return fallback, False
+    candidate = history
+    if "Close" in history.columns:
+        closes = pd.to_numeric(history["Close"], errors="coerce")
+        candidate = history.loc[closes.notna()]
+    if candidate.empty:
+        return fallback, False
+    parsed = pd.to_datetime(candidate.index, errors="coerce", utc=True)
+    valid = parsed[pd.notna(parsed)]
+    if len(valid) == 0:
+        return fallback, False
+    return valid.max().date().isoformat(), True
+
+
+def _distribution_for_market_date(history: pd.DataFrame, as_of: str) -> float:
+    if history.empty or "Dividends" not in history.columns:
+        return 0.0
+    parsed = pd.to_datetime(history.index, errors="coerce", utc=True)
+    target = pd.Timestamp(as_of, tz="UTC").date()
+    mask = pd.Series([pd.notna(value) and value.date() == target for value in parsed], index=history.index)
+    values = pd.to_numeric(history.loc[mask.to_numpy(), "Dividends"], errors="coerce").dropna()
+    return float(values.iloc[-1]) if not values.empty else 0.0
 
 
 def _canonical_economic_family(benchmark: str, category: str, geo: str, name: str) -> str:
@@ -120,38 +212,50 @@ def _blackrock_official_snapshot(row: pd.Series, timeout_seconds: float = 20.0) 
         response.raise_for_status()
     except requests.RequestException as exc:
         return None, {"instrument_id": row.get("instrument_id"), "stage": "OFFICIAL", "reason": type(exc).__name__, "detail": str(exc)[:180]}
+
     text = " ".join(BeautifulSoup(response.text, "lxml").stripped_strings)
-    patterns = {
-        "aum": [
-            r"(?:Net Assets of Fund|Series Value)\s+as of\s+\d{1,2}/[A-Za-z]{3}/\d{4}\s+(?:USD|EUR|GBP|CHF)\s*([0-9,]+(?:\.[0-9]+)?)",
-            r"(?:Net Assets of Fund|Series Value).*?(?:USD|EUR|GBP|CHF)\s*([0-9,]+(?:\.[0-9]+)?)",
-        ],
-        "shares_outstanding": [
-            r"(?:Shares Outstanding|Securities Outstanding)\s+as of\s+\d{1,2}/[A-Za-z]{3}/\d{4}\s+([0-9,]+(?:\.[0-9]+)?)",
-            r"(?:Shares Outstanding|Securities Outstanding).*?([0-9][0-9,]+(?:\.[0-9]+)?)",
-        ],
-        "nav": [r"NAV as of\s+\d{1,2}/[A-Za-z]{3}/\d{4}\s+(?:USD|EUR|GBP|CHF)\s*([0-9,]+(?:\.[0-9]+)?)"],
-    }
-    values: dict[str, float] = {}
-    for field, regexes in patterns.items():
-        for regex in regexes:
-            match = re.search(regex, text, flags=re.IGNORECASE)
-            if match:
-                parsed = _parse_number(match.group(1))
-                if parsed is not None:
-                    values[field] = parsed
-                    break
-    if "aum" not in values and "shares_outstanding" not in values:
-        return None, {"instrument_id": row.get("instrument_id"), "stage": "OFFICIAL", "reason": "OFFICIAL_PAGE_FIELDS_NOT_PARSED", "url": url}
+    parsed = {field: _parse_blackrock_field(text, field) for field in BLACKROCK_FIELD_PATTERNS}
+    values = {field: value for field, (value, _) in parsed.items()}
+    field_dates = {field: date for field, (_, date) in parsed.items()}
+    if values.get("aum") is None and values.get("shares_outstanding") is None:
+        return None, {
+            "instrument_id": row.get("instrument_id"),
+            "stage": "OFFICIAL",
+            "reason": "OFFICIAL_PAGE_FIELDS_NOT_PARSED",
+            "url": url,
+        }
+
+    as_of = _choose_blackrock_observation_date(field_dates)
+    conflicting_fields = sorted(
+        field for field, field_date in field_dates.items() if field_date is not None and field_date != as_of
+    )
+    for field in conflicting_fields:
+        values[field] = None
+
     currency_match = re.search(r"Base Currency\s+(USD|EUR|GBP|CHF)", text, flags=re.IGNORECASE)
     observation = {key: row.get(key, "") for key in row.index}
     observation.update({
-        "as_of": _parse_blackrock_date(text), "aum": values.get("aum"), "nav": values.get("nav"),
-        "shares_outstanding": values.get("shares_outstanding"), "market_price": np.nan,
+        "as_of": as_of,
+        "aum": values.get("aum"),
+        "nav": values.get("nav"),
+        "shares_outstanding": values.get("shares_outstanding"),
+        "market_price": np.nan,
         "distribution_per_share": 0.0,
+        "aum_as_of_explicit": field_dates.get("aum") == as_of and values.get("aum") is not None,
+        "nav_as_of_explicit": field_dates.get("nav") == as_of and values.get("nav") is not None,
+        "shares_as_of_explicit": field_dates.get("shares_outstanding") == as_of and values.get("shares_outstanding") is not None,
+        "market_price_as_of_explicit": False,
+        "official_field_dates": "|".join(
+            f"{field}:{date or 'UNDATED'}" for field, date in sorted(field_dates.items()) if parsed[field][0] is not None
+        ),
+        "official_field_date_conflict": bool(conflicting_fields),
+        "official_conflicting_fields_dropped": "|".join(conflicting_fields),
         "currency": currency_match.group(1).upper() if currency_match else _nonempty(row.get("currency")),
-        "source": "issuer_official", "source_type": "ISSUER_OFFICIAL", "source_url": url,
-        "confidence": "A", "source_priority": 100,
+        "source": "issuer_official",
+        "source_type": "ISSUER_OFFICIAL",
+        "source_url": url,
+        "confidence": "A",
+        "source_priority": 100,
     })
     return observation, None
 
@@ -162,20 +266,27 @@ def _yfinance_snapshot(row: pd.Series) -> tuple[dict | None, dict | None]:
         return None, {"instrument_id": row.get("instrument_id"), "stage": "YFINANCE", "reason": "MISSING_TICKER"}
     try:
         import yfinance as yf
+
         instrument = yf.Ticker(ticker)
         info = instrument.info or {}
         history = instrument.history(period="5d", auto_adjust=False)
         price = None
+        market_as_of, market_date_explicit = _last_market_as_of(history)
         if not history.empty and "Close" in history.columns:
             closes = pd.to_numeric(history["Close"], errors="coerce").dropna()
             price = float(closes.iloc[-1]) if not closes.empty else None
+        distribution = _distribution_for_market_date(history, market_as_of) if market_date_explicit else 0.0
         aum, nav, shares = info.get("totalAssets"), info.get("navPrice"), info.get("sharesOutstanding")
         if aum is None and nav is None and shares is None and price is None:
             return None, {"instrument_id": row.get("instrument_id"), "stage": "YFINANCE", "reason": "NO_FLOW_SNAPSHOT_FIELDS"}
         observation = {key: row.get(key, "") for key in row.index}
         observation.update({
-            "as_of": datetime.now(timezone.utc).date().isoformat(), "aum": aum, "nav": nav,
-            "shares_outstanding": shares, "market_price": price, "distribution_per_share": 0.0,
+            "as_of": market_as_of, "aum": aum, "nav": nav,
+            "shares_outstanding": shares, "market_price": price, "distribution_per_share": distribution,
+            "aum_as_of_explicit": False,
+            "nav_as_of_explicit": False,
+            "shares_as_of_explicit": False,
+            "market_price_as_of_explicit": bool(market_date_explicit and price is not None),
             "currency": info.get("currency") or info.get("financialCurrency") or _nonempty(row.get("currency")),
             "source": "yfinance.info/history", "source_type": "YFINANCE",
             "source_url": f"https://finance.yahoo.com/quote/{ticker}/", "confidence": "C", "source_priority": 50,
@@ -200,6 +311,10 @@ def load_official_observations(path: Path) -> pd.DataFrame:
     if "source_priority" not in frame.columns:
         frame["source_priority"] = 100
     frame["source_priority"] = pd.to_numeric(frame["source_priority"], errors="coerce").fillna(100)
+    for value_field, flag_field in VALUE_DATE_FLAGS.items():
+        if flag_field not in frame.columns:
+            values = frame[value_field] if value_field in frame.columns else pd.Series("", index=frame.index)
+            frame[flag_field] = values.fillna("").astype(str).str.strip().ne("")
     return frame
 
 
@@ -218,6 +333,8 @@ def _merge_same_day_observations(snapshot: pd.DataFrame) -> pd.DataFrame:
     for _, group in snapshot.groupby(["instrument_id", "as_of"], sort=False):
         ranked = group.sort_values(["source_priority", "_confidence_rank"], ascending=[False, False])
         merged = ranked.iloc[0].to_dict()
+        for flag_field in VALUE_DATE_FLAGS.values():
+            merged[flag_field] = _boolish(merged.get(flag_field))
         used_confidences = [str(merged.get("confidence") or "D").upper()]
         components = [str(merged.get("source") or "")]
         for _, candidate in ranked.iloc[1:].iterrows():
@@ -225,6 +342,9 @@ def _merge_same_day_observations(snapshot: pd.DataFrame) -> pd.DataFrame:
             for field in fill_fields:
                 if _missing_value(merged.get(field)) and not _missing_value(candidate.get(field)):
                     merged[field] = candidate.get(field)
+                    flag_field = VALUE_DATE_FLAGS.get(field)
+                    if flag_field:
+                        merged[flag_field] = _boolish(candidate.get(flag_field))
                     used = True
             if used:
                 used_confidences.append(str(candidate.get("confidence") or "D").upper())

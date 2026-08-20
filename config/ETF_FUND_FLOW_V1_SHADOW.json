@@ -1,5 +1,5 @@
 {
-  "version": "ETF_FUND_FLOWS_V1.0_SHADOW",
+  "version": "ETF_FUND_FLOWS_V1.1_SHADOW_V21.16",
   "mode": "SHADOW_ONLY",
   "enabled": true,
   "horizons_trading_observations": [
@@ -78,7 +78,16 @@
     "splits_and_discontinuities_quarantine": true,
     "quarantined_data_score_influence": 0.0,
     "mixed_currency_absolute_aggregation_forbidden": true,
-    "coinshares_weekly_control_not_added_to_primary_flows": true
+    "coinshares_weekly_control_not_added_to_primary_flows": true,
+    "undated_unchanged_aum_fallback_forbidden": true,
+    "undated_aum_requires_dated_return": true,
+    "undated_shares_outstanding_for_flow_forbidden": true,
+    "dated_market_return_preferred_over_undated_nav": true,
+    "market_price_return_includes_distribution": true,
+    "rolling_denominator_uses_aum_or_shares_nav": true,
+    "breadth_missing_values_not_negative": true,
+    "srfs_requires_preliminary_instrument_readiness": true,
+    "current_window_required_for_readiness": true
   },
   "governance": {
     "decision_influence": 0.0,
@@ -90,7 +99,10 @@
     "can_trigger_sales": false,
     "live_orders_enabled": false,
     "promotion_requires_dedicated_pit_oos": true,
-    "historical_backfill_from_current_snapshot_forbidden": true
+    "historical_backfill_from_current_snapshot_forbidden": true,
+    "weights_changed_v21_16": false,
+    "thresholds_changed_v21_16": false,
+    "holdout_opened_v21_16": false
   },
   "preliminary_score_min_observations": 20,
   "mature_score_min_observations": 60

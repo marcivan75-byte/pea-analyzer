@@ -21,36 +21,110 @@ jobs:
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
     steps:
       - uses: actions/checkout@v4
+
       - name: Restore ETF fund flow PIT history
+        id: restore-flow-state
         uses: actions/cache/restore@v4
         with:
           path: state/etf_fund_flows/
           key: etf-fund-flow-v1-${{ github.run_id }}
           restore-keys: |
             etf-fund-flow-v1-
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: "pip"
           cache-dependency-path: pyproject.toml
+
       - name: Install project
         run: pip install -e ".[test]"
-      - name: Validate Fund Flow V1 and ETP Satellite V1 engines
+
+      - name: Validate Fund Flow V21.16 and ETP Satellite engines
         run: |
           python -m compileall -q src/v182/features/etf_fund_flows_v1.py src/v182/sources/etf_fund_flows.py src/v182/reporting/etf_fund_flows_shadow_run.py src/v182/features/etp_satellite_v1.py src/v182/reporting/etp_satellite_shadow_run.py
-          pytest -q tests/test_etf_fund_flows_v1.py tests/test_etp_satellite_v1.py
-      - name: Collect and compute ETF Fund Flows V1 SHADOW
+          ruff check src/v182/features/etf_fund_flows_v1.py src/v182/sources/etf_fund_flows.py src/v182/reporting/etf_fund_flows_shadow_run.py tests/test_etf_fund_flows_v1.py tests/test_etf_fund_flows_v21_16_window_readiness.py tests/test_etf_fund_flows_v21_16_temporal_integrity.py tests/test_etf_fund_flows_v21_16_blackrock_dates.py tests/test_etp_satellite_v1.py
+          pytest -q tests/test_etf_fund_flows_v1.py tests/test_etf_fund_flows_v21_16_window_readiness.py tests/test_etf_fund_flows_v21_16_temporal_integrity.py tests/test_etf_fund_flows_v21_16_blackrock_dates.py tests/test_etp_satellite_v1.py
+
+      - name: Collect and compute ETF Fund Flows V21.16 SHADOW
         run: python -m v182.reporting.etf_fund_flows_shadow_run
+
       - name: Build ETP Satellite V1 Gold Crypto SHADOW context
         run: python -m v182.reporting.etp_satellite_shadow_run
+
+      - name: Verify Fund Flow fail-closed governance
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          path=Path('outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json')
+          assert path.exists() and path.stat().st_size>0
+          payload=json.loads(path.read_text(encoding='utf-8'))
+          assert payload['version']=='ETF_FUND_FLOWS_V1.1_SHADOW_V21.16'
+          assert payload['status']=='SUCCESS'
+          assert payload['decision_influence']==0.0
+          assert payload['live_orders_enabled'] is False
+          governance=payload['governance']
+          assert governance['decision_influence']==0.0
+          assert governance['can_trigger_orders'] is False
+          assert governance['can_trigger_sales'] is False
+          assert governance['weights_changed_v21_16'] is False
+          assert governance['thresholds_changed_v21_16'] is False
+          assert governance['holdout_opened_v21_16'] is False
+          assert payload['historical_backfill_from_current_snapshot'] is False
+          PY
+
+      - name: Audit PIT state continuity
+        env:
+          EXACT_CACHE_HIT: ${{ steps.restore-flow-state.outputs.cache-hit }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import json
+          import os
+          import pandas as pd
+
+          state=Path('state/etf_fund_flows/ETF_FUND_FLOW_OBSERVATIONS.csv')
+          assert state.exists() and state.stat().st_size>0
+          df=pd.read_csv(state,sep=';',encoding='utf-8-sig',low_memory=False)
+          assert not df.empty
+          dates=pd.to_datetime(df['as_of'],errors='coerce',utc=True)
+          assert dates.notna().all()
+          duplicates=int(df.duplicated(['instrument_id','as_of']).sum())
+          assert duplicates==0
+          payload={
+              'version':'ETF_FUND_FLOW_STATE_AUDIT_V21.16',
+              'status':'SUCCESS',
+              'rows':int(len(df)),
+              'instruments':int(df['instrument_id'].astype(str).nunique()),
+              'min_as_of':dates.min().date().isoformat(),
+              'max_as_of':dates.max().date().isoformat(),
+              'duplicate_instrument_dates':duplicates,
+              'temporal_flag_columns_present':all(c in df.columns for c in ['aum_as_of_explicit','nav_as_of_explicit','shares_as_of_explicit','market_price_as_of_explicit']),
+              'exact_cache_hit':os.environ.get('EXACT_CACHE_HIT','').lower()=='true',
+              'sha256':hashlib.sha256(state.read_bytes()).hexdigest(),
+              'decision_influence':0.0,
+              'live_orders_enabled':False,
+          }
+          out=Path('outputs/audit/ETF_FUND_FLOW_STATE_AUDIT.json')
+          out.parent.mkdir(parents=True,exist_ok=True)
+          out.write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding='utf-8')
+          print(json.dumps(payload,ensure_ascii=False,indent=2))
+          PY
+
       - name: Show Fund Flow governance audit
         if: always()
         run: |
           if [ -f outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json ]; then cat outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json; fi
+          if [ -f outputs/audit/ETF_FUND_FLOW_STATE_AUDIT.json ]; then cat outputs/audit/ETF_FUND_FLOW_STATE_AUDIT.json; fi
+
       - name: Show ETP Satellite governance audit
         if: always()
         run: |
           if [ -f outputs/audit/ETP_SATELLITE_V1_SHADOW.json ]; then cat outputs/audit/ETP_SATELLITE_V1_SHADOW.json; fi
+
       - name: Publish mobile Fund Flow and ETP Satellite shadow summaries
         if: always()
         run: |
@@ -59,13 +133,15 @@ jobs:
             printf '\n\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
             cat outputs/mobile/ETP_SATELLITES_SHADOW.md >> "$GITHUB_STEP_SUMMARY"
           fi
-      - name: Save ETF fund flow PIT history
-        if: ${{ always() && hashFiles('state/etf_fund_flows/**') != '' }}
+
+      - name: Save ETF fund flow PIT history only after successful validation
+        if: ${{ success() && hashFiles('state/etf_fund_flows/**') != '' }}
         uses: actions/cache/save@v4
         with:
           path: state/etf_fund_flows/
           key: etf-fund-flow-v1-${{ github.run_id }}
-      - name: Upload compact Fund Flow and ETP Satellite shadow outputs
+
+      - name: Upload compact Fund Flow, PIT backup and ETP Satellite outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -76,7 +152,9 @@ jobs:
             outputs/mobile/ETF_FUND_FLOWS_SHADOW.md
             outputs/mobile/ETP_SATELLITES_SHADOW.md
             outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json
+            outputs/audit/ETF_FUND_FLOW_STATE_AUDIT.json
             outputs/audit/ETP_SATELLITE_V1_SHADOW.json
             outputs/gaps/ETF_FUND_FLOW_COLLECTION_FAILURES.csv
+            state/etf_fund_flows/ETF_FUND_FLOW_OBSERVATIONS.csv
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 30
