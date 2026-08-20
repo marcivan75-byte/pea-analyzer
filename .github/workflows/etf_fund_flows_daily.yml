@@ -43,8 +43,8 @@ jobs:
       - name: Validate Fund Flow V21.16 and ETP Satellite engines
         run: |
           python -m compileall -q src/v182/features/etf_fund_flows_v1.py src/v182/sources/etf_fund_flows.py src/v182/reporting/etf_fund_flows_shadow_run.py src/v182/features/etp_satellite_v1.py src/v182/reporting/etp_satellite_shadow_run.py
-          ruff check src/v182/features/etf_fund_flows_v1.py src/v182/sources/etf_fund_flows.py src/v182/reporting/etf_fund_flows_shadow_run.py tests/test_etf_fund_flows_v1.py tests/test_etf_fund_flows_v21_16_window_readiness.py tests/test_etf_fund_flows_v21_16_temporal_integrity.py tests/test_etp_satellite_v1.py
-          pytest -q tests/test_etf_fund_flows_v1.py tests/test_etf_fund_flows_v21_16_window_readiness.py tests/test_etf_fund_flows_v21_16_temporal_integrity.py tests/test_etp_satellite_v1.py
+          ruff check src/v182/features/etf_fund_flows_v1.py src/v182/sources/etf_fund_flows.py src/v182/reporting/etf_fund_flows_shadow_run.py tests/test_etf_fund_flows_v1.py tests/test_etf_fund_flows_v21_16_window_readiness.py tests/test_etf_fund_flows_v21_16_temporal_integrity.py tests/test_etf_fund_flows_v21_16_blackrock_dates.py tests/test_etp_satellite_v1.py
+          pytest -q tests/test_etf_fund_flows_v1.py tests/test_etf_fund_flows_v21_16_window_readiness.py tests/test_etf_fund_flows_v21_16_temporal_integrity.py tests/test_etf_fund_flows_v21_16_blackrock_dates.py tests/test_etp_satellite_v1.py
 
       - name: Collect and compute ETF Fund Flows V21.16 SHADOW
         run: python -m v182.reporting.etf_fund_flows_shadow_run
