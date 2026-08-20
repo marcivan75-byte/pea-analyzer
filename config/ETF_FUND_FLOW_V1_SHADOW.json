@@ -82,7 +82,8 @@
     "undated_unchanged_aum_fallback_forbidden": true,
     "dated_market_return_preferred_over_undated_nav": true,
     "breadth_missing_values_not_negative": true,
-    "srfs_requires_preliminary_instrument_readiness": true
+    "srfs_requires_preliminary_instrument_readiness": true,
+    "current_window_required_for_readiness": true
   },
   "governance": {
     "decision_influence": 0.0,
