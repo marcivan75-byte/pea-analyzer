@@ -10,9 +10,13 @@ Aucune pondération, aucun seuil, aucun score, aucune règle Entry/Exit et aucun
 
 ## Reconstruction historique
 
-La configuration Yahoo passe d'un bootstrap `5y` à `10y`. Au 20/08/2026, 5 ans ne suffisent pas à reconstruire le début de la période de stress 2020–2022. Dix ans couvrent intégralement 2020–2022 et la fenêtre post-COVID 2023+ à la date de migration.
+Le bootstrap Yahoo n'utilise plus une fenêtre relative plus large de type `10y`. La borne gouvernée devient explicitement **`start=2020-01-01`**.
 
-La génération de cache V21.13 utilise des tailles de lots 96 Actions / 48 ETF au lieu de 100 / 50. La taille de lot fait partie du manifeste de compatibilité du cache : les caches V21.12 restaurés sont donc déclarés incompatibles et font l'objet d'un `FULL_BOOTSTRAP` avec `history_period=10y` au premier run V21.13. Les runs suivants redeviennent incrémentaux et conservent l'historique long.
+Cette architecture télécharge uniquement la profondeur nécessaire à la bibliothèque de stress 2020–2022 et à la calibration post-COVID 2023+, sans charger 2016–2019 inutilement. Le paramètre historique `period=5y` reste seulement un fallback technique pour un appel explicitement effectué avec `start=None`; le processus PEA V21.13 utilise par défaut `2020-01-01`.
+
+La borne `bootstrap_start` fait désormais partie du manifeste de compatibilité du cache. Un cache V21.12 hérité, qui ne possède pas cette borne, est déclaré incompatible et déclenche automatiquement un `FULL_BOOTSTRAP` depuis le 01/01/2020 au premier run V21.13. Les tailles de lots historiques 100 Actions / 50 ETF sont conservées ; elles ne servent plus artificiellement à provoquer la reconstruction.
+
+Les runs suivants redeviennent incrémentaux et conservent l'historique long. En cas de révision matérielle de prix ajustés dans une zone déjà clôturée, le batch concerné est reconstruit depuis la même borne `2020-01-01`.
 
 `required_history_start=2020-01-01` est un invariant d'audit : si une future reconstruction ou éviction de cache ne permet plus de récupérer cette profondeur, le rapport V21.13 doit le rendre visible plutôt que considérer la bibliothèque de stress comme complète.
 
@@ -57,8 +61,8 @@ L'audit est appelé par `criteria_governance_audit`, donc par le Committee hebdo
 La migration V21.13 n'est pas considérée validée sur les seuls tests synthétiques. Il faut :
 
 1. CI complet vert ;
-2. run représentatif avec restauration de cache puis reconstruction 10 ans ;
-3. inspection des deux manifests Actions/ETF ;
+2. run représentatif avec restauration de l'ancien cache puis reconstruction explicite depuis le 01/01/2020 ;
+3. inspection des deux manifests Actions/ETF et présence de `bootstrap_start=2020-01-01` ;
 4. inspection du rapport réel de profondeur ;
 5. résolution ou classement explicite des historiques courts avant toute nouvelle calibration ;
 6. aucune utilisation du stress set dans l'optimisation ordinaire.
