@@ -54,11 +54,31 @@ V21.16 ne change :
 - aucune portée T1/T2 ;
 - aucune règle ETF MT de référence.
 
-## Validation requise avant fusion
+## Validation réelle du 20/08/2026
 
-1. CI complet vert ;
-2. collecte réseau réelle sur l'univers ETF ;
-3. relecture des preuves exact-ISIN ;
-4. nouveau comptage des 33 historiques courts entre confirmé post-ancre, gap pré-ancre, unresolved et conflit ;
-5. absence de changement du nombre d'ETF éligibles à la calibration pleine fenêtre du seul fait de V21.16 ;
-6. documentation et artefacts d'audit synchronisés.
+Le workflow temporaire de qualification réelle `32405246991` a exécuté la collecte sur les 102 ETF et a publié l'artefact `V21_16_REAL_ETF_INCEPTION_32405246991` (ZIP SHA-256 `8d62a054c7c72be87954147f9dc805319656b77523a5d37be2276bf23c40abe6`).
+
+Collecte gouvernée :
+
+- 102 ETF demandés ;
+- 147 observations exact-ISIN acceptées ;
+- 45 `share_class_inception_date` ;
+- 57 `listing_or_launch_date` ;
+- 45 `reported_first_nav_date` ;
+- 90 observations de niveau A et 57 de niveau B ;
+- 0 observation mise en quarantaine ;
+- 0 échec de collecte sur cette passe.
+
+Qualification des 33 historiques ETF courts :
+
+- 29 `POST_ANCHOR_INCEPTION_CONFIRMED` ;
+- 4 `PRE_ANCHOR_INCEPTION_HISTORY_GAP_CONFIRMED` ;
+- 0 `START_AFTER_ANCHOR_UNRESOLVED` parmi ces 33 ETF ;
+- 0 conflit d'inception ;
+- aucun historique synthétique créé.
+
+Les quatre cas pré-ancre restent des lacunes de continuité/ticker/fournisseur à traiter séparément ; leur existence antérieure ne permet pas d'inventer les cours manquants.
+
+Le nombre d'instruments éligibles à la calibration principale est resté strictement identique avant/après l'ajout des preuves d'inception dans le run : V21.16 explique les historiques courts mais ne les promeut pas.
+
+CI du head de preuve `1b39be4d4d4f5cbe011ad66adaba72b4351f3bf8` : Committee Master #627 = SUCCESS et Action Identity #126 = SUCCESS, full suites incluses. Le workflow réseau temporaire doit être supprimé avant la validation finale du head destiné à la fusion.
