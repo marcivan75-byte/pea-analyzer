@@ -1,0 +1,150 @@
+name: V21.13 TEMP real 10y OHLCV qualification
+
+on:
+  push:
+    branches:
+      - audit/ohlcv-history-depth-v21-13
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v21-13-real-ohlcv-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualify-real-history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+
+      - name: Restore prior OHLCV cache
+        id: cache_restore
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cache/
+          key: v21-13-real-ohlcv-${{ github.run_id }}
+          restore-keys: |
+            ohlcv-v3-
+
+      - name: Record restored-cache evidence
+        run: |
+          mkdir -p outputs/audit/pre_v21_13
+          printf 'cache_hit=%s\nmatched_key=%s\n' '${{ steps.cache_restore.outputs.cache-hit }}' '${{ steps.cache_restore.outputs.cache-matched-key }}' | tee outputs/audit/pre_v21_13/CACHE_RESTORE_STATUS.txt
+          if [ -f data/cache/actions/history_manifest.json ]; then cp data/cache/actions/history_manifest.json outputs/audit/pre_v21_13/ACTIONS_MANIFEST_BEFORE.json; fi
+          if [ -f data/cache/etf/history_manifest.json ]; then cp data/cache/etf/history_manifest.json outputs/audit/pre_v21_13/ETF_MANIFEST_BEFORE.json; fi
+          ls -la data/cache/actions 2>/dev/null || true
+          ls -la data/cache/etf 2>/dev/null || true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install project
+        run: python -m pip install -e .[test]
+
+      - name: Rebuild real Actions and ETF history with V21.13 config
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from v182.io.frames import load_master
+          from v182.audit.canonical_universe import filter_actions
+          from v182.reporting import waves
+
+          root = Path('.')
+          cfg = json.loads((root/'config/V18.2_MASTER_CONFIG.json').read_text(encoding='utf-8'))
+          yf = cfg['yfinance']
+          assert yf['history_period'] == '10y'
+          assert yf['required_history_start'] == '2020-01-01'
+          assert int(yf['actions_batch_size']) == 96
+          assert int(yf['etf_batch_size']) == 48
+
+          actions_legacy = load_master(root/'inputs/V18.2_PEA_ACTIONS_MASTER.csv')
+          actions = filter_actions(actions_legacy, root/'config/V21_3_ACTION_UNIVERSE_1829_ISINS.parts').included.reset_index(drop=True)
+          assert len(actions) == 1829 and actions['isin'].nunique() == 1829
+
+          etfs = load_master(root/'inputs/V18.2_PEA_ETF_MASTER.csv')
+          etfs_mapped, gaps = waves.resolve_etf_tickers(etfs, root/'config/V18.2_ETF_TICKER_MAP.csv')
+          assert len(etfs) == 102 and etfs['isin'].nunique() == 102
+          assert len(gaps) == 0
+
+          action_result = waves.wave_history(actions, 'ACTION', str(root/'data/cache/actions'), cfg)
+          etf_result = waves.wave_history(etfs_mapped, 'ETF', str(root/'data/cache/etf'), cfg)
+          print('REAL_HISTORY_DOWNLOAD', json.dumps({
+              'actions_requested': action_result.requested,
+              'actions_successful': len(action_result.successful),
+              'actions_failed': len(action_result.failed),
+              'etf_requested': etf_result.requested,
+              'etf_successful': len(etf_result.successful),
+              'etf_failed': len(etf_result.failed),
+          }, sort_keys=True))
+          PY
+
+      - name: Verify V21.13 manifests
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          expected = {'actions': 96, 'etf': 48}
+          for universe, batch in expected.items():
+              path = Path('data/cache')/universe/'history_manifest.json'
+              payload = json.loads(path.read_text(encoding='utf-8'))
+              assert payload['mode'] == 'FULL_BOOTSTRAP', (universe, payload['mode'])
+              assert payload['bootstrap_period'] == '10y', (universe, payload['bootstrap_period'])
+              assert int(payload['batch_size']) == batch, (universe, payload['batch_size'])
+              assert payload['cache_format_version'] == 3
+              print('V21_13_MANIFEST', universe, json.dumps({
+                  'mode': payload['mode'],
+                  'bootstrap_period': payload['bootstrap_period'],
+                  'batch_size': payload['batch_size'],
+                  'requested': payload['requested'],
+                  'successful': len(payload['successful']),
+                  'failed': len(payload['failed']),
+                  'cached_tickers': len(payload['cached_tickers']),
+                  'rebased_batches': payload['rebased_batches'],
+              }, sort_keys=True))
+          PY
+
+      - name: Run real OHLCV depth audit
+        run: python -m v182.audit.ohlcv_history_depth --as-of 2026-08-20
+
+      - name: Verify and display real depth summary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('outputs/audit/OHLCV_PRIMARY_HISTORY_DEPTH_SUMMARY.json')
+          s = json.loads(p.read_text(encoding='utf-8'))
+          assert s['status'] == 'SUCCESS'
+          assert s['rows'] == 1931, s['rows']
+          assert s['rows_by_asset_class'] == {'ACTION': 1829, 'ETF': 102}, s['rows_by_asset_class']
+          assert s['history_period_configured'] == '10y'
+          assert s['required_history_start'] == '2020-01-01'
+          assert float(s['stress_calibration_weight']) == 0.0
+          assert s['weight_or_threshold_changes'] is False
+          print('V21_13_REAL_DEPTH_SUMMARY')
+          print(json.dumps(s, ensure_ascii=False, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload real qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: V21_13_REAL_OHLCV_QUALIFICATION_${{ github.run_id }}
+          path: |
+            outputs/audit/pre_v21_13/
+            data/cache/actions/history_manifest.json
+            data/cache/etf/history_manifest.json
+            outputs/audit/OHLCV_PRIMARY_HISTORY_DEPTH.csv
+            outputs/audit/OHLCV_PRIMARY_HISTORY_DEPTH_SUMMARY.json
+          if-no-files-found: error
+          retention-days: 14
