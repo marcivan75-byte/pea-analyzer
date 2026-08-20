@@ -247,6 +247,11 @@ def _current_instruments(rolling: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     current["score_persistence"] = pd.to_numeric(current["positive_days_20d_pct"], errors="coerce")
     current["peer_relative_raw"] = pd.to_numeric(current["organic_flow_rate_20d"], errors="coerce") - current.groupby("economic_family")["organic_flow_rate_20d"].transform("median")
     current["score_peer_relative"] = _rank_score(current["peer_relative_raw"])
+    current["current_20d_window_complete"] = (
+        pd.to_numeric(current["organic_flow_rate_20d"], errors="coerce").notna()
+        & pd.to_numeric(current["positive_days_20d_pct"], errors="coerce").notna()
+    )
+    current["current_60d_window_complete"] = pd.to_numeric(current["organic_flow_rate_60d"], errors="coerce").notna()
 
     currency_count = current.groupby("economic_family")["currency"].transform(lambda values: len({str(value).strip() for value in values if str(value).strip()}))
     family_abs_flow = current.groupby("economic_family")["flow_20d"].transform(lambda values: pd.to_numeric(values, errors="coerce").abs().sum(min_count=1))
@@ -272,9 +277,18 @@ def _current_instruments(rolling: pd.DataFrame, cfg: dict) -> pd.DataFrame:
             scores.append(np.nan)
             readiness.append("DATA_INSUFFICIENT_LT20")
             continue
+        if not bool(row.get("current_20d_window_complete", False)):
+            scores.append(np.nan)
+            readiness.append("DATA_INSUFFICIENT_CURRENT_20D_WINDOW")
+            continue
         score = _weighted_mean([(_num(row.get(column)), float(cfg["score_weights"][key])) for key, column in score_columns.items()])
         scores.append(round(score, 4) if score is not None else np.nan)
-        readiness.append("MATURE_60_PLUS" if flow_count >= min_mature else "PRELIMINARY_20_59")
+        if flow_count >= min_mature and bool(row.get("current_60d_window_complete", False)):
+            readiness.append("MATURE_60_PLUS")
+        elif flow_count >= min_mature:
+            readiness.append("PRELIMINARY_GAPPED_60_PLUS")
+        else:
+            readiness.append("PRELIMINARY_20_59")
     current["efs_shadow"] = scores
     current["efs_readiness"] = readiness
     current["efs_status"] = pd.cut(current["efs_shadow"], bins=[-np.inf, 30, 45, 55, 65, 80, np.inf], labels=["STRONG_OUTFLOW", "OUTFLOW", "NEUTRAL", "MODERATE_INFLOW", "STRONG_INFLOW", "EXCEPTIONAL_ACCUMULATION"], right=False).astype("string")
@@ -444,6 +458,7 @@ def build_flow_computation(snapshot_history: pd.DataFrame, cfg: dict) -> FlowCom
     instruments = add_pea_overlay(instruments, families, cfg)
     rotations = build_rotation_scores(instruments, cfg)
     flow_methods = daily.get("flow_method", pd.Series(dtype=str)).astype(str)
+    readiness = instruments.get("efs_readiness", pd.Series(dtype=str)).astype(str) if not instruments.empty else pd.Series(dtype=str)
     diagnostics = {
         "version": cfg["version"], "mode": cfg["mode"], "observations": int(len(rolling)),
         "instruments": int(instruments["instrument_id"].nunique()) if not instruments.empty else 0,
@@ -451,6 +466,8 @@ def build_flow_computation(snapshot_history: pd.DataFrame, cfg: dict) -> FlowCom
         "pea_instruments": int(instruments["is_pea"].fillna(False).astype(bool).sum()) if not instruments.empty else 0,
         "quarantined_or_d_grade": int(instruments["flow_confidence"].isin(["D", "QUARANTINE"]).sum()) if not instruments.empty else 0,
         "undated_unchanged_aum_skipped": int(flow_methods.eq("UNSCORABLE_UNDATED_AUM_UNCHANGED").sum()),
+        "current_20d_window_incomplete": int(readiness.eq("DATA_INSUFFICIENT_CURRENT_20D_WINDOW").sum()),
+        "mature_60d_window_incomplete": int(readiness.eq("PRELIMINARY_GAPPED_60_PLUS").sum()),
         "srfs_scorable_sectors": int(pd.to_numeric(rotations.get("srfs_shadow"), errors="coerce").notna().sum()) if not rotations.empty else 0,
         "gold_crypto": build_gold_crypto_summary(instruments, cfg), "decision_influence": 0.0, "live_orders_enabled": False,
     }
