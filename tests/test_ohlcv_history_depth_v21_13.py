@@ -32,9 +32,11 @@ def test_full_history_covers_primary_and_stress():
         as_of=pd.Timestamp("2026-08-20", tz="UTC"),
     )
     assert row["primary_status"] == "PRIMARY_FULL_FROM_ANCHOR"
+    assert row["primary_calibration_eligible"] is True
     assert row["expected_primary_months"] == 44
     assert row["observed_primary_months"] == 44
     assert row["stress_status"] == "STRESS_FULL_2020_2022"
+    assert row["stress_library_eligible"] is True
     assert row["observed_stress_months"] == 36
 
 
@@ -49,11 +51,13 @@ def test_short_post_anchor_history_is_unresolved_not_assumed_new_listing():
         as_of=pd.Timestamp("2026-08-20", tz="UTC"),
     )
     assert row["primary_status"] == "START_AFTER_ANCHOR_UNRESOLVED"
+    assert row["primary_calibration_eligible"] is False
     assert row["short_history_reason"] == "NEEDS_TRUSTED_LISTING_OR_INCEPTION_DATE"
     assert row["stress_status"] == "NO_STRESS_HISTORY"
+    assert row["stress_library_eligible"] is False
 
 
-def test_missing_whole_primary_month_is_detected():
+def test_missing_whole_primary_month_is_detected_and_excluded():
     close = _business_monthly_series("2020-01-02", "2026-08-20")
     close = close.loc[~((close.index.year == 2024) & (close.index.month == 6))]
     row = _instrument_row(
@@ -65,7 +69,19 @@ def test_missing_whole_primary_month_is_detected():
         as_of=pd.Timestamp("2026-08-20", tz="UTC"),
     )
     assert row["primary_status"] == "PRIMARY_MISSING_CALENDAR_MONTHS"
+    assert row["primary_calibration_eligible"] is False
     assert "2024-06" in row["missing_primary_months"]
+    assert row["stress_library_eligible"] is True
+
+
+def test_no_ticker_and_no_cache_are_fail_closed():
+    as_of = pd.Timestamp("2026-08-20", tz="UTC")
+    primary_start = pd.Timestamp("2023-01-01", tz="UTC")
+    no_ticker = _instrument_row("ACTION", "FR0000000004", "", None, primary_start=primary_start, as_of=as_of)
+    no_cache = _instrument_row("ETF", "FR0000000005", "DDD.PA", None, primary_start=primary_start, as_of=as_of)
+    for row in (no_ticker, no_cache):
+        assert row["primary_calibration_eligible"] is False
+        assert row["stress_library_eligible"] is False
 
 
 def test_cache_reader_ignores_union_index_padding(tmp_path: Path):
