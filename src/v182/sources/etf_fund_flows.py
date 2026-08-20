@@ -90,7 +90,7 @@ def build_pea_flow_universe(master: pd.DataFrame) -> pd.DataFrame:
                 "universe": "PEA_ETF",
                 "asset_class": "ETF",
                 "economic_family": family,
-                "region": _nonempty(row.get("region_domicile")) or "EU",
+                "region": geo or _nonempty(row.get("region_domicile")) or "EU",
                 "sector_or_theme": sector_theme,
                 "benchmark": benchmark,
                 "provider": _nonempty(row.get("provider")),
