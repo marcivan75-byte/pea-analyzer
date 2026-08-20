@@ -80,7 +80,11 @@
     "mixed_currency_absolute_aggregation_forbidden": true,
     "coinshares_weekly_control_not_added_to_primary_flows": true,
     "undated_unchanged_aum_fallback_forbidden": true,
+    "undated_aum_requires_dated_return": true,
+    "undated_shares_outstanding_for_flow_forbidden": true,
     "dated_market_return_preferred_over_undated_nav": true,
+    "market_price_return_includes_distribution": true,
+    "rolling_denominator_uses_aum_or_shares_nav": true,
     "breadth_missing_values_not_negative": true,
     "srfs_requires_preliminary_instrument_readiness": true,
     "current_window_required_for_readiness": true
