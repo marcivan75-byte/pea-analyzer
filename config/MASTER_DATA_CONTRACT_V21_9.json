@@ -1,5 +1,5 @@
 {
-  "version": "V21.11_CALIBRATION_GOVERNANCE_2026_08_20",
+  "version": "V21.12_CALIBRATION_GOVERNANCE_2026_08_20",
   "status": "GOVERNED_REFERENCE_CONTRACT",
   "scope": ["PEA_ACTIONS", "PEA_ETF", "MODULE_INPUTS", "BACKTEST_IDENTITY"],
   "primary_key": "isin",
@@ -109,7 +109,7 @@
     "final_holdout": "LOCKED_UNTIL_GOVERNED_RELEASE",
     "look_ahead": "FAIL_CLOSED",
     "historical_sample_governance": {
-      "reference": "config/CALIBRATION_WINDOWS_V21_11.json",
+      "reference": "config/CALIBRATION_WINDOWS_V21_12.json",
       "implementation": "src/v182/backtest/calibration_windows.py",
       "primary_start": "2023-01-01",
       "primary_mode_before_2028": "EXPANDING_POST_COVID",
