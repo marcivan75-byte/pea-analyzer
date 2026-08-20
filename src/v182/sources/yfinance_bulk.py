@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 PRICE_FIELDS = {"open", "high", "low", "close", "adj close"}
 CACHE_FORMAT_VERSION = 3
 DEFAULT_INCREMENTAL_PERIOD = "1mo"
+DEFAULT_BOOTSTRAP_START = "2020-01-01"
 REBASE_RTOL = 1e-5
 REBASE_ATOL = 1e-8
 
@@ -289,14 +290,15 @@ def download_history(
     batch_size: int = 100,
     auto_adjust: bool = True,
     include_actions: bool | None = None,
-    start: str | None = None,
+    start: str | None = DEFAULT_BOOTSTRAP_START,
 ) -> DownloadResult:
     """Maintain full OHLCV locally and refresh it incrementally without data loss.
 
     First use (or an incompatible cache) bootstraps the configured full history.
-    When ``start`` is provided, the bootstrap is anchored to that explicit date
-    instead of a relative Yahoo period. Subsequent runs fetch only a recent
-    overlap window, merge it cell-by-cell, and retain the complete long history.
+    By default V21.13 anchors that bootstrap to 2020-01-01. A caller may pass an
+    explicit start date, or ``start=None`` to opt into the legacy relative-period
+    fallback. Subsequent runs fetch only a recent overlap window, merge it
+    cell-by-cell, and retain the complete long history.
 
     The explicit bootstrap start is part of cache compatibility. Changing it, or
     migrating from a legacy manifest without it, forces a full reconstruction.
