@@ -124,8 +124,8 @@ def _stress_mask(dates: pd.Series, policy: Mapping[str, Any]) -> pd.Series:
     mask = pd.Series(False, index=dates.index, dtype=bool)
     for period in policy["stress_library"]["periods"]:
         start = _utc_timestamp(period["start"])
-        end = _utc_timestamp(period["end"])
-        mask |= dates.between(start, end, inclusive="both")
+        end_exclusive = _utc_timestamp(period["end"]).normalize() + pd.Timedelta(days=1)
+        mask |= dates.ge(start) & dates.lt(end_exclusive)
     return mask
 
 
