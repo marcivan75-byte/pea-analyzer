@@ -39,6 +39,27 @@ def _parse_blackrock_date(text: str) -> str:
         return datetime.now(timezone.utc).date().isoformat()
 
 
+def _canonical_economic_family(benchmark: str, category: str, geo: str, name: str) -> str:
+    text = " ".join(filter(None, [benchmark, category, geo, name])).upper().replace("–", "-").replace("—", "-")
+    rules = (
+        (("MSCI ACWI", "ALL COUNTRY WORLD"), "ACWI"),
+        (("MSCI WORLD",), "WORLD"),
+        (("S&P 500", "SP 500", "S&P500"), "SP500"),
+        (("NASDAQ-100", "NASDAQ 100", "NASDAQ100"), "NASDAQ100"),
+        (("STOXX EUROPE 600",), "STOXX_EUROPE_600"),
+        (("EURO STOXX 50",), "EURO_STOXX_50"),
+        (("CAC 40", "CAC40"), "CAC40"),
+        (("MSCI EMU",), "MSCI_EMU"),
+        (("MSCI EUROPE",), "MSCI_EUROPE"),
+        (("EMERGING MARKET", "MARCHES EMERGENTS", "MARCHÉS ÉMERGENTS"), "EMERGING"),
+        (("JAPAN", "JAPON"), "JAPAN"),
+    )
+    for patterns, label in rules:
+        if any(pattern in text for pattern in patterns):
+            return label
+    return benchmark or category or geo or name
+
+
 def build_pea_flow_universe(master: pd.DataFrame) -> pd.DataFrame:
     if "isin" not in master.columns:
         raise ValueError("PEA_ETF_MASTER_MISSING_ISIN")
@@ -55,8 +76,8 @@ def build_pea_flow_universe(master: pd.DataFrame) -> pd.DataFrame:
         benchmark = _nonempty(row.get("official_benchmark"))
         category = _nonempty(row.get("category"))
         geo = _nonempty(row.get("geo_exposure"))
-        family = benchmark or category or geo or _nonempty(row.get("name")) or isin
         name = _nonempty(row.get("name")) or isin
+        family = _canonical_economic_family(benchmark, category, geo, name) or isin
         replication = _nonempty(row.get("replication_hint")).upper()
         text = f"{name} {category}".lower()
         is_inverse_or_leveraged = bool(re.search(r"\b(short|inverse|leveraged|2x|3x|-1x|-2x|-3x)\b", text))
