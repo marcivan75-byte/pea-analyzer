@@ -1,11 +1,11 @@
 {
-  "version": "2026-08-19_V21.9_DATA_INTEGRITY",
-  "purpose": "Prevent silent reduction of complete Actions/ETF/Gold referentials, preserve the 1829/102 canonical universes, enforce master-data integrity, and separate validated/reference weights from unvalidated challengers.",
+  "version": "2026-08-20_V21.9.1_DATA_QUALITY",
+  "purpose": "Prevent silent reduction of complete Actions/ETF/Gold referentials, preserve the 1829/102 canonical universes, enforce master-data integrity and source security, and separate validated/reference weights from unvalidated challengers.",
   "actions": {
     "source": "MATRICE_MAITRE_REPONDERATION_PEA_ACTIONS_ETF_TOUS_CRITERES_2026-08-11.xlsx / 02_Actions_633",
     "criteria_count": 633,
     "universe_count": 1829,
-    "universe_reference": "V21.3 exact 1829 ISIN canonical universe + V21.9 governed identity overlay",
+    "universe_reference": "V21.3 exact 1829 ISIN canonical universe + V21.9 governed identity overlay + V21.9.1 data-quality controls",
     "universe_isin_sha256": "1e95d51d5a8fa3e616e97ec3fec0a033b29e841d0971ff5a644efa4f5049c085",
     "identity_overlay_raw_sha256": "0dfecb6a4014c4c77b1b5e17379ebf202e427bc50f190b86a0d46967dceebd20",
     "identity_overlay_rows": 399,
@@ -25,7 +25,7 @@
     "universe_count": 102,
     "ordered_criteria_names_sha256": "40eabc1c49ac790835e7faa3676d2c0a266a47f4e677bee7e84c3ff4282db42f",
     "full_19_column_table_sha256": "03b37c02f3852d132b09584e85924818f729c7d60d49160f0293272950c30ea9",
-    "rule": "All 268 fields remain. V20.8.1 exact 38-PIT MT core retains the only 90.91% historical attribution; V20.8.2 remains challenger until dedicated validation."
+    "rule": "All 268 fields remain. V20.8.1 exact 38-PIT MT core retains the only 90.91% historical attribution; V20.8.2 remains challenger until dedicated validation. Yahoo totalAssets may be retained raw but quote currency cannot be used to infer EUR AUM."
   },
   "gold": {
     "source": "PROCESSUS_DECISIONNEL_COMITE_MAITRE_2026-08-11 + Cahier_des_charges_Complet_V9.5.2 + V18.4/V20.3 Gold Engine",
@@ -39,6 +39,7 @@
   },
   "master_data_integrity": {
     "contract": "config/MASTER_DATA_CONTRACT_V21_9.json",
+    "contract_logical_version": "V21.9.1_DATA_QUALITY_2026_08_20",
     "primary_key": "isin",
     "isin_checksum_required": true,
     "duplicate_isin_fatal": true,
@@ -49,7 +50,12 @@
     "numeric_out_of_domain_clipping_forbidden": true,
     "identity_only_rows_scoring_eligible": false,
     "excluded_legacy_rows_scoring_eligible": false,
-    "input_csv_changes_trigger_ci": true
+    "input_csv_changes_trigger_ci": true,
+    "semantic_aliases_for_coverage_reporting_only": true,
+    "yahoo_quote_currency_can_define_total_assets_currency": false,
+    "raw_yahoo_total_assets_may_be_retained": true,
+    "api_credentials_in_logs_or_artifacts_forbidden": true,
+    "source_auth_401_403_fail_fast": true
   },
   "dynamic_weighting": {"policy":"AVAILABLE_ACTIVE_CRITERIA_RENORMALIZED_TO_100_PERCENT","minimum_coverage_gates_preserved":true,"neutral_imputation_forbidden":true,"tct_setup_exception":"SETUP intentionally inactive; available active TCT pillars renormalize in V24.1.8"},
   "provenance": {"per_field":true,"persistent_state":"state/provenance/OBSERVATION_PROVENANCE.csv","actual_source_separate_from_theoretical_hint":true,"freshness_comparison":"PARSED_UTC_TIMESTAMPS_ONLY"},
