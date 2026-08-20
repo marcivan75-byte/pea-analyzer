@@ -1,0 +1,165 @@
+name: V21.16 TEMP real ETF Fund Flow integrity proof
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v21-16-fund-flow-proof-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  real-shadow-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+
+      - name: Restore existing ETF fund flow PIT history read-only
+        uses: actions/cache/restore@v4
+        with:
+          path: state/etf_fund_flows/
+          key: v21-16-proof-readonly-${{ github.run_id }}
+          restore-keys: |
+            etf-fund-flow-v1-
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
+      - name: Install project
+        run: pip install -e ".[test]"
+
+      - name: Validate V21.16 integrity logic
+        run: |
+          python -m compileall -q src/v182/features/etf_fund_flows_v1.py src/v182/sources/etf_fund_flows.py src/v182/reporting/etf_fund_flows_shadow_run.py
+          ruff check src/v182/features/etf_fund_flows_v1.py src/v182/sources/etf_fund_flows.py tests/test_etf_fund_flows_v1.py tests/test_etf_fund_flows_v21_16_window_readiness.py tests/test_etf_fund_flows_v21_16_temporal_integrity.py
+          pytest -q tests/test_etf_fund_flows_v1.py tests/test_etf_fund_flows_v21_16_window_readiness.py tests/test_etf_fund_flows_v21_16_temporal_integrity.py
+
+      - name: Audit restored PIT history before run
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import pandas as pd
+
+          path=Path('state/etf_fund_flows/ETF_FUND_FLOW_OBSERVATIONS.csv')
+          payload={'status':'NO_PRIOR_STATE','rows':0,'instruments':0}
+          if path.exists() and path.stat().st_size:
+              df=pd.read_csv(path,sep=';',encoding='utf-8-sig',low_memory=False)
+              dates=pd.to_datetime(df.get('as_of'),errors='coerce',utc=True)
+              payload={
+                  'status':'SUCCESS',
+                  'rows':int(len(df)),
+                  'instruments':int(df['instrument_id'].astype(str).nunique()) if 'instrument_id' in df else 0,
+                  'min_as_of':None if dates.isna().all() else dates.min().date().isoformat(),
+                  'max_as_of':None if dates.isna().all() else dates.max().date().isoformat(),
+                  'columns':int(len(df.columns)),
+                  'has_temporal_flags':all(c in df.columns for c in ['aum_as_of_explicit','nav_as_of_explicit','shares_as_of_explicit','market_price_as_of_explicit']),
+              }
+          Path('/tmp/V21_16_PRE_STATE.json').write_text(json.dumps(payload,indent=2),encoding='utf-8')
+          print(json.dumps(payload,indent=2))
+          PY
+
+      - name: Run real V21.16 Fund Flow SHADOW once
+        run: python -m v182.reporting.etf_fund_flows_shadow_run
+
+      - name: Verify fail-closed real shadow output
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import pandas as pd
+
+          audit_path=Path('outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json')
+          assert audit_path.exists() and audit_path.stat().st_size>0
+          audit=json.loads(audit_path.read_text(encoding='utf-8'))
+          assert audit['version']=='ETF_FUND_FLOWS_V1.1_SHADOW_V21.16'
+          assert audit['decision_influence']==0.0
+          assert audit['live_orders_enabled'] is False
+          assert audit['governance']['decision_influence']==0.0
+          assert audit['governance']['weights_changed_v21_16'] is False
+          assert audit['governance']['thresholds_changed_v21_16'] is False
+          assert audit['governance']['holdout_opened_v21_16'] is False
+          assert audit['historical_backfill_from_current_snapshot'] is False
+
+          instruments_path=Path('outputs/etf_fund_flows/ETF_FLOW_INSTRUMENTS_SHADOW.csv')
+          rotations_path=Path('outputs/etf_fund_flows/SECTOR_ROTATION_FLOW_OVERLAY_V1.csv')
+          state_path=Path('state/etf_fund_flows/ETF_FUND_FLOW_OBSERVATIONS.csv')
+          instruments=pd.read_csv(instruments_path,sep=';',encoding='utf-8-sig',low_memory=False) if instruments_path.exists() and instruments_path.stat().st_size else pd.DataFrame()
+          rotations=pd.read_csv(rotations_path,sep=';',encoding='utf-8-sig',low_memory=False) if rotations_path.exists() and rotations_path.stat().st_size else pd.DataFrame()
+          state=pd.read_csv(state_path,sep=';',encoding='utf-8-sig',low_memory=False) if state_path.exists() and state_path.stat().st_size else pd.DataFrame()
+
+          if not instruments.empty:
+              efs=pd.to_numeric(instruments.get('efs_shadow'),errors='coerce')
+              readiness=instruments.get('efs_readiness',pd.Series('',index=instruments.index)).astype(str)
+              current20=instruments.get('current_20d_window_complete',pd.Series(False,index=instruments.index)).astype(str).str.lower().isin(['true','1'])
+              current60=instruments.get('current_60d_window_complete',pd.Series(False,index=instruments.index)).astype(str).str.lower().isin(['true','1'])
+              suppressed=instruments.get('shares_outstanding_undated_suppressed',pd.Series(False,index=instruments.index)).astype(str).str.lower().isin(['true','1'])
+              shares=pd.to_numeric(instruments.get('shares_outstanding'),errors='coerce')
+              assert efs[readiness.eq('DATA_INSUFFICIENT_CURRENT_20D_WINDOW')].isna().all()
+              assert current60[readiness.eq('MATURE_60_PLUS')].all()
+              assert efs[~current20].isna().all()
+              assert shares[suppressed].isna().all()
+
+          if not rotations.empty:
+              assert (pd.to_numeric(rotations['valid_20d_instruments'],errors='coerce')>0).all()
+              assert (pd.to_numeric(rotations['decision_influence'],errors='coerce')==0.0).all()
+
+          pre=json.loads(Path('/tmp/V21_16_PRE_STATE.json').read_text(encoding='utf-8'))
+          dates=pd.to_datetime(state.get('as_of'),errors='coerce',utc=True) if not state.empty else pd.Series(dtype='datetime64[ns, UTC]')
+          summary={
+              'version':'V21.16_REAL_FUND_FLOW_SHADOW_PROOF',
+              'status':'SUCCESS',
+              'pre_state':pre,
+              'post_state_rows':int(len(state)),
+              'post_state_instruments':int(state['instrument_id'].astype(str).nunique()) if not state.empty else 0,
+              'post_state_min_as_of':None if state.empty or dates.isna().all() else dates.min().date().isoformat(),
+              'post_state_max_as_of':None if state.empty or dates.isna().all() else dates.max().date().isoformat(),
+              'audit':audit,
+              'current_instruments':int(len(instruments)),
+              'scorable_instruments':int(pd.to_numeric(instruments.get('efs_shadow'),errors='coerce').notna().sum()) if not instruments.empty else 0,
+              'mature_instruments':int(instruments.get('efs_readiness',pd.Series(dtype=str)).astype(str).eq('MATURE_60_PLUS').sum()) if not instruments.empty else 0,
+              'current_20d_window_incomplete':int(audit.get('current_20d_window_incomplete',0)),
+              'mature_60d_window_incomplete':int(audit.get('mature_60d_window_incomplete',0)),
+              'undated_shares_suppressed':int(audit.get('undated_shares_suppressed',0)),
+              'undated_unchanged_aum_skipped':int(audit.get('undated_unchanged_aum_skipped',0)),
+              'undated_aum_without_dated_return_skipped':int(audit.get('undated_aum_without_dated_return_skipped',0)),
+              'srfs_scorable_sectors':int(audit.get('srfs_scorable_sectors',0)),
+              'rotation_rows':int(len(rotations)),
+              'decision_influence':0.0,
+              'live_orders_enabled':False,
+              'cache_saved_by_proof':False,
+          }
+          out=Path('outputs/audit/V21_16_REAL_FUND_FLOW_SHADOW_PROOF.json')
+          out.write_text(json.dumps(summary,ensure_ascii=False,indent=2,default=str),encoding='utf-8')
+          print(json.dumps(summary,ensure_ascii=False,indent=2,default=str))
+          PY
+
+      - name: Upload V21.16 real shadow proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: V21_16_REAL_FUND_FLOW_SHADOW_${{ github.run_id }}
+          path: |
+            outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json
+            outputs/audit/V21_16_REAL_FUND_FLOW_SHADOW_PROOF.json
+            outputs/etf_fund_flows/ETF_FLOW_INSTRUMENTS_SHADOW.csv
+            outputs/etf_fund_flows/ETF_FLOW_FAMILIES_SHADOW.csv
+            outputs/etf_fund_flows/SECTOR_ROTATION_FLOW_OVERLAY_V1.csv
+            outputs/gaps/ETF_FUND_FLOW_COLLECTION_FAILURES.csv
+            state/etf_fund_flows/ETF_FUND_FLOW_OBSERVATIONS.csv
+            /tmp/V21_16_PRE_STATE.json
+          if-no-files-found: warn
+          retention-days: 14
