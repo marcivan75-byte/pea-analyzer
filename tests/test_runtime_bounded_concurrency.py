@@ -31,9 +31,10 @@ def test_finnhub_bounded_workers_preserve_consensus_and_target(monkeypatch):
     fake_requests=ModuleType("requests")
 
     class FakeResponse:
-        def __init__(self,payload,ok=True):
+        def __init__(self,payload,ok=True,status_code=200):
             self._payload=payload
             self.ok=ok
+            self.status_code=status_code
 
         def raise_for_status(self):
             if not self.ok:

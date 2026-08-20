@@ -123,13 +123,65 @@ def wave5_consensus_finnhub(actions_df: pd.DataFrame, api_key: str, top_n: int =
     return result,failures
 
 
+def _finite_float(value) -> float | None:
+    try:
+        number=float(value)
+    except (TypeError,ValueError):
+        return None
+    return number if np.isfinite(number) else None
+
+
+def _yahoo_expense_ratio_pct(value) -> float | None:
+    """Yahoo annualReportExpenseRatio is a decimal ratio; promote only safe raw values."""
+    number=_finite_float(value)
+    if number is None or number < 0 or number > 1:
+        return None
+    return round(number*100.0,6)
+
+
+def _yahoo_total_assets_eur_m(value, asset_currency) -> float | None:
+    """Convert totalAssets only with a dedicated fund-assets currency, never quote currency."""
+    number=_finite_float(value)
+    if number is None or number < 0 or str(asset_currency or "").strip().upper() != "EUR":
+        return None
+    return round(number/1_000_000.0,6)
+
+
 def wave6_etf_info(etf_with_tickers: pd.DataFrame, cfg: dict) -> tuple[list[dict], list[dict]]:
-    valid=etf_with_tickers[etf_with_tickers["yahoo_ticker"].apply(lambda v:not is_missing(v))]; ticker_to_isin=dict(zip(valid["yahoo_ticker"],valid["isin"])); obs_raw,failures=collect_info(list(ticker_to_isin),delay_seconds=cfg["yfinance"].get("info_delay_seconds",0.4)); result=[]; allowed={"dividend_yield_pct","sector_yf","industry_yf","country_yf"}
+    valid=etf_with_tickers[etf_with_tickers["yahoo_ticker"].apply(lambda v:not is_missing(v))]
+    ticker_to_isin=dict(zip(valid["yahoo_ticker"],valid["isin"]))
+    obs_raw,failures=collect_info(list(ticker_to_isin),delay_seconds=cfg["yfinance"].get("info_delay_seconds",0.4))
+    result=[]
+    allowed={
+        "dividend_yield_pct","sector_yf","industry_yf","country_yf","exchange_yf",
+        "full_exchange_name_yf","currency_yf","long_name_yf","quote_type_yf",
+        "annual_report_expense_ratio_yf","total_assets_yf","fund_family_yf","category_yf",
+        "legal_type_yf","beta3y_yf","yield_yf",
+    }
+    by_ticker: dict[str, dict[str, object]]={}
     for row in obs_raw:
-        isin=ticker_to_isin.get(row["ticker"])
-        if isin is None or row["field"] not in allowed: continue
-        result.append(_obs("ETF",isin,row["field"],row["value"],"yfinance","C"))
-        if row["field"]=="dividend_yield_pct": result.append(_obs("ETF",isin,"dividend_data_status","OK","yfinance","C"))
+        ticker=str(row.get("ticker") or "")
+        field=str(row.get("field") or "")
+        if ticker:
+            by_ticker.setdefault(ticker,{})[field]=row.get("value")
+        isin=ticker_to_isin.get(ticker)
+        if isin is None or field not in allowed: continue
+        result.append(_obs("ETF",isin,field,row["value"],"yfinance","C"))
+        if field=="dividend_yield_pct": result.append(_obs("ETF",isin,"dividend_data_status","OK","yfinance","C"))
+
+    for ticker,fields in by_ticker.items():
+        isin=ticker_to_isin.get(ticker)
+        if isin is None: continue
+        ter=_yahoo_expense_ratio_pct(fields.get("annual_report_expense_ratio_yf"))
+        if ter is not None:
+            result.append(_obs("ETF",isin,"ter_pct",ter,"yfinance:annualReportExpenseRatio","C"))
+        # Yahoo exposes quote currency separately from totalAssets and does not
+        # provide a dedicated total-assets currency through get_info(). Preserve
+        # total_assets_yf raw, but never infer EUR AUM from currency_yf.
+        assets=_yahoo_total_assets_eur_m(fields.get("total_assets_yf"),fields.get("total_assets_currency_yf"))
+        if assets is not None:
+            result.append(_obs("ETF",isin,"fund_total_assets_eur_m",assets,"yfinance:totalAssets+explicitAssetCurrency=EUR","C"))
+            result.append(_obs("ETF",isin,"aum_m",assets,"yfinance:totalAssets+explicitAssetCurrency=EUR","C"))
     return result,failures
 
 
