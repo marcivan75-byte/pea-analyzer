@@ -66,11 +66,27 @@ def _last_market_as_of(history: pd.DataFrame) -> tuple[str, bool]:
     fallback = datetime.now(timezone.utc).date().isoformat()
     if history.empty:
         return fallback, False
-    parsed = pd.to_datetime(history.index, errors="coerce", utc=True)
+    candidate = history
+    if "Close" in history.columns:
+        closes = pd.to_numeric(history["Close"], errors="coerce")
+        candidate = history.loc[closes.notna()]
+    if candidate.empty:
+        return fallback, False
+    parsed = pd.to_datetime(candidate.index, errors="coerce", utc=True)
     valid = parsed[pd.notna(parsed)]
     if len(valid) == 0:
         return fallback, False
     return valid.max().date().isoformat(), True
+
+
+def _distribution_for_market_date(history: pd.DataFrame, as_of: str) -> float:
+    if history.empty or "Dividends" not in history.columns:
+        return 0.0
+    parsed = pd.to_datetime(history.index, errors="coerce", utc=True)
+    target = pd.Timestamp(as_of, tz="UTC").date()
+    mask = pd.Series([pd.notna(value) and value.date() == target for value in parsed], index=history.index)
+    values = pd.to_numeric(history.loc[mask.to_numpy(), "Dividends"], errors="coerce").dropna()
+    return float(values.iloc[-1]) if not values.empty else 0.0
 
 
 def _canonical_economic_family(benchmark: str, category: str, geo: str, name: str) -> str:
@@ -201,6 +217,7 @@ def _yfinance_snapshot(row: pd.Series) -> tuple[dict | None, dict | None]:
         return None, {"instrument_id": row.get("instrument_id"), "stage": "YFINANCE", "reason": "MISSING_TICKER"}
     try:
         import yfinance as yf
+
         instrument = yf.Ticker(ticker)
         info = instrument.info or {}
         history = instrument.history(period="5d", auto_adjust=False)
@@ -209,13 +226,14 @@ def _yfinance_snapshot(row: pd.Series) -> tuple[dict | None, dict | None]:
         if not history.empty and "Close" in history.columns:
             closes = pd.to_numeric(history["Close"], errors="coerce").dropna()
             price = float(closes.iloc[-1]) if not closes.empty else None
+        distribution = _distribution_for_market_date(history, market_as_of) if market_date_explicit else 0.0
         aum, nav, shares = info.get("totalAssets"), info.get("navPrice"), info.get("sharesOutstanding")
         if aum is None and nav is None and shares is None and price is None:
             return None, {"instrument_id": row.get("instrument_id"), "stage": "YFINANCE", "reason": "NO_FLOW_SNAPSHOT_FIELDS"}
         observation = {key: row.get(key, "") for key in row.index}
         observation.update({
             "as_of": market_as_of, "aum": aum, "nav": nav,
-            "shares_outstanding": shares, "market_price": price, "distribution_per_share": 0.0,
+            "shares_outstanding": shares, "market_price": price, "distribution_per_share": distribution,
             "aum_as_of_explicit": False,
             "nav_as_of_explicit": False,
             "shares_as_of_explicit": False,
