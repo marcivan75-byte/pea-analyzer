@@ -9,6 +9,11 @@ from v182.audit.ohlcv_history_depth import (
     _instrument_row,
     load_cache_series,
 )
+from v182.sources.yfinance_bulk import (
+    CACHE_FORMAT_VERSION,
+    DEFAULT_BOOTSTRAP_START,
+    _cache_is_usable,
+)
 
 
 def _business_monthly_series(start: str, end: str) -> pd.Series:
@@ -80,11 +85,49 @@ def test_cache_reader_ignores_union_index_padding(tmp_path: Path):
     assert series["BBB.PA"].index.min() == pd.Timestamp("2026-08-19", tz="UTC")
 
 
-def test_master_config_forces_new_ten_year_cache_generation():
+def test_master_config_uses_exact_2020_start_not_ten_year_window():
     config = json.loads(Path("config/V18.2_MASTER_CONFIG.json").read_text(encoding="utf-8"))
     yf = config["yfinance"]
-    assert yf["history_period"] == "10y"
+    assert yf["history_start"] == "2020-01-01"
     assert yf["required_history_start"] == "2020-01-01"
-    assert yf["cache_generation"] == "V21.13_10Y_STRESS_READY"
-    assert yf["actions_batch_size"] == 96
-    assert yf["etf_batch_size"] == 48
+    assert yf["cache_generation"] == "V21.13_START_2020_STRESS_READY"
+    assert yf["history_period"] == "5y"  # fallback only when start=None
+    assert yf["actions_batch_size"] == 100
+    assert yf["etf_batch_size"] == 50
+    assert DEFAULT_BOOTSTRAP_START == yf["history_start"]
+
+
+def test_legacy_manifest_without_bootstrap_start_is_incompatible(tmp_path: Path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    manifest = {
+        "cache_format_version": CACHE_FORMAT_VERSION,
+        "requested_tickers": ["AAA.PA"],
+        "interval": "1d",
+        "batch_size": 100,
+        "auto_adjust": True,
+        "actions_requested": True,
+    }
+    (cache / "history_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert _cache_is_usable(
+        cache,
+        ["AAA.PA"],
+        "1d",
+        100,
+        True,
+        True,
+        DEFAULT_BOOTSTRAP_START,
+    ) is False
+
+    manifest["bootstrap_start"] = "2020-01-01"
+    (cache / "history_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    assert _cache_is_usable(
+        cache,
+        ["AAA.PA"],
+        "1d",
+        100,
+        True,
+        True,
+        DEFAULT_BOOTSTRAP_START,
+    ) is True
