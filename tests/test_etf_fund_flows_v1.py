@@ -153,7 +153,7 @@ def test_pea_universe_uses_isin_and_economic_benchmark_for_synthetic_etf():
     universe = build_pea_flow_universe(master)
     row = universe.iloc[0]
     assert row["instrument_id"] == "ISIN:FR0014000001"
-    assert row["economic_family"] == "MSCI World"
+    assert row["economic_family"] == "WORLD"
     assert row["region"] == "World"
     assert bool(row["is_synthetic"]) is True
 
