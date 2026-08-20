@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from v182.reporting.etf_structure_refresh import _governed_structural_observations
 from v182.sources.etf_structural_data import (
     FUND_ASSET_LABELS,
     SHARE_CLASS_ASSET_LABELS,
@@ -96,6 +97,31 @@ def test_justetf_exact_isin_profile_can_be_evidence_b_without_fx_guessing():
     values = {row["field"]: row["value"] for row in rows}
     assert values == {"ter_pct": 0.25, "fund_total_assets_eur_m": 1092.0}
     assert {row["evidence_level"] for row in rows} == {"B"}
+
+
+def test_exact_isin_collector_proof_maps_to_existing_governed_merge_status():
+    raw=[{
+        "universe":"ETF",
+        "isin":"FR0013380607",
+        "field":"ter_pct",
+        "value":0.25,
+        "source":"issuer",
+        "source_url":"https://issuer.example/factsheet.pdf",
+        "evidence_level":"A",
+        "as_of":"2026-06-30",
+        "validation_status":"EXACT_ISIN_SOURCE_MATCH",
+    }]
+    rows=_governed_structural_observations(raw)
+    assert rows[0]["validation_status"] == "ISIN_MATCHED"
+    assert rows[0]["identity_validation_detail"] == "EXACT_ISIN_SOURCE_MATCH"
+    assert raw[0]["validation_status"] == "EXACT_ISIN_SOURCE_MATCH"
+
+
+def test_unexpected_structural_validation_status_remains_fail_closed():
+    raw=[{"validation_status":"UNEXPECTED_STATUS","isin":"FR0013380607","field":"ter_pct","value":0.25}]
+    rows=_governed_structural_observations(raw)
+    assert rows[0]["validation_status"] == "UNEXPECTED_STATUS"
+    assert "identity_validation_detail" not in rows[0]
 
 
 def test_mismatched_isin_is_fail_closed():
