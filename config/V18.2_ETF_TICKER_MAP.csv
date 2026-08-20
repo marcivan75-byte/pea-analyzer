@@ -1,4 +1,4 @@
-﻿isin;yahoo_ticker;ticker_primary;mic;exchange;currency;validation_status;source_url;as_of
+isin;yahoo_ticker;ticker_primary;mic;exchange;currency;validation_status;source_url;as_of
 FR0013380607;CACC.PA;CACC;XPAR;Euronext Paris;EUR;FINAL_VALIDATED;https://www.boursorama.com/bourse/trackers/cours/1rTCACC/;2026-08-06
 FR0007052782;CAC.PA;CAC;XPAR;Euronext Paris;EUR;FINAL_VALIDATED;https://www.boursorama.com/bourse/trackers/cours/1rTCAC/;2026-08-06
 FR001400ZGQ9;CA40.PA;CA40;XPAR;Euronext Paris;EUR;FINAL_VALIDATED;https://www.boursorama.com/bourse/trackers/cours/1rTCA40/;2026-08-06
@@ -7,7 +7,7 @@ LU1681047236;C50.PA;C50;XPAR;Euronext Paris;EUR;FINAL_VALIDATED;https://www.bour
 LU1681047319;CD5.PA;CD5;XPAR;Euronext Paris;EUR;FINAL_VALIDATED;https://www.justetf.com/en-be/etf-profile.html?isin=LU1681047319;2026-08-06
 LU1646361276;MFEC.PA;MFEC;XPAR;Euronext Paris;EUR;FINAL_VALIDATED;https://www.boursorama.com/bourse/trackers/cours/1rTMFEC/;2026-08-06
 LU1646360971;MFE.PA;MFE;XPAR;Euronext Paris;EUR;FINAL_VALIDATED;https://www.boursorama.com/bourse/trackers/cours/1rTMFE/;2026-08-06
-LU0252633754;LYXDAX.PA;DAX;XPAR;Euronext Paris;EUR;FINAL_VALIDATED;https://www.justetf.com/en-be/etf-profile.html?isin=LU0252633754;2026-08-06
+LU0252633754;DAX.PA;DAX;XPAR;Euronext Paris;EUR;FINAL_VALIDATED;https://fr.finance.yahoo.com/quote/DAX.PA/;2026-08-20
 FR0010655712;CG1.PA;CG1;XPAR;Euronext Paris;EUR;FINAL_VALIDATED;https://www.boursorama.com/bourse/trackers/cours/1rTCG1/;2026-08-06
 FR0007054358;MSE.PA;MSE;XPAR;Euronext Paris;EUR;FINAL_VALIDATED;https://www.boursorama.com/bourse/trackers/cours/1rTMSE/;2026-08-06
 LU1829219390;BNKE.PA;BNKE;XPAR;Euronext Paris;EUR;FINAL_VALIDATED;https://www.boursorama.com/bourse/trackers/cours/1rTBNKE/;2026-08-06
