@@ -23,7 +23,8 @@ jobs:
       - name: Checkout branch
         uses: actions/checkout@v4
 
-      - name: Restore existing ETF fund flow PIT history read-only
+      - name: Restore existing production ETF fund flow PIT history read-only
+        id: restore-production-state
         uses: actions/cache/restore@v4
         with:
           path: state/etf_fund_flows/
@@ -48,26 +49,39 @@ jobs:
           pytest -q tests/test_etf_fund_flows_v1.py tests/test_etf_fund_flows_v21_16_window_readiness.py tests/test_etf_fund_flows_v21_16_temporal_integrity.py
 
       - name: Audit restored PIT history before run
+        env:
+          CACHE_HIT: ${{ steps.restore-production-state.outputs.cache-hit }}
         run: |
           python - <<'PY'
           from pathlib import Path
           import json
+          import os
           import pandas as pd
 
           path=Path('state/etf_fund_flows/ETF_FUND_FLOW_OBSERVATIONS.csv')
-          payload={'status':'NO_PRIOR_STATE','rows':0,'instruments':0}
+          payload={
+              'status':'NO_PRIOR_STATE',
+              'rows':0,
+              'instruments':0,
+              'exact_cache_hit':os.environ.get('CACHE_HIT','').lower()=='true',
+          }
           if path.exists() and path.stat().st_size:
-              df=pd.read_csv(path,sep=';',encoding='utf-8-sig',low_memory=False)
-              dates=pd.to_datetime(df.get('as_of'),errors='coerce',utc=True)
-              payload={
-                  'status':'SUCCESS',
-                  'rows':int(len(df)),
-                  'instruments':int(df['instrument_id'].astype(str).nunique()) if 'instrument_id' in df else 0,
-                  'min_as_of':None if dates.isna().all() else dates.min().date().isoformat(),
-                  'max_as_of':None if dates.isna().all() else dates.max().date().isoformat(),
-                  'columns':int(len(df.columns)),
-                  'has_temporal_flags':all(c in df.columns for c in ['aum_as_of_explicit','nav_as_of_explicit','shares_as_of_explicit','market_price_as_of_explicit']),
-              }
+              try:
+                  df=pd.read_csv(path,sep=';',encoding='utf-8-sig',low_memory=False)
+              except pd.errors.EmptyDataError:
+                  df=pd.DataFrame()
+              if not df.empty:
+                  dates=pd.to_datetime(df.get('as_of'),errors='coerce',utc=True)
+                  payload={
+                      'status':'SUCCESS',
+                      'rows':int(len(df)),
+                      'instruments':int(df['instrument_id'].astype(str).nunique()) if 'instrument_id' in df else 0,
+                      'min_as_of':None if dates.isna().all() else dates.min().date().isoformat(),
+                      'max_as_of':None if dates.isna().all() else dates.max().date().isoformat(),
+                      'columns':int(len(df.columns)),
+                      'has_temporal_flags':all(c in df.columns for c in ['aum_as_of_explicit','nav_as_of_explicit','shares_as_of_explicit','market_price_as_of_explicit']),
+                      'exact_cache_hit':os.environ.get('CACHE_HIT','').lower()=='true',
+                  }
           Path('/tmp/V21_16_PRE_STATE.json').write_text(json.dumps(payload,indent=2),encoding='utf-8')
           print(json.dumps(payload,indent=2))
           PY
@@ -82,6 +96,14 @@ jobs:
           import json
           import pandas as pd
 
+          def read_csv_safe(path: Path) -> pd.DataFrame:
+              if not path.exists() or path.stat().st_size == 0:
+                  return pd.DataFrame()
+              try:
+                  return pd.read_csv(path,sep=';',encoding='utf-8-sig',low_memory=False)
+              except pd.errors.EmptyDataError:
+                  return pd.DataFrame()
+
           audit_path=Path('outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json')
           assert audit_path.exists() and audit_path.stat().st_size>0
           audit=json.loads(audit_path.read_text(encoding='utf-8'))
@@ -94,12 +116,9 @@ jobs:
           assert audit['governance']['holdout_opened_v21_16'] is False
           assert audit['historical_backfill_from_current_snapshot'] is False
 
-          instruments_path=Path('outputs/etf_fund_flows/ETF_FLOW_INSTRUMENTS_SHADOW.csv')
-          rotations_path=Path('outputs/etf_fund_flows/SECTOR_ROTATION_FLOW_OVERLAY_V1.csv')
-          state_path=Path('state/etf_fund_flows/ETF_FUND_FLOW_OBSERVATIONS.csv')
-          instruments=pd.read_csv(instruments_path,sep=';',encoding='utf-8-sig',low_memory=False) if instruments_path.exists() and instruments_path.stat().st_size else pd.DataFrame()
-          rotations=pd.read_csv(rotations_path,sep=';',encoding='utf-8-sig',low_memory=False) if rotations_path.exists() and rotations_path.stat().st_size else pd.DataFrame()
-          state=pd.read_csv(state_path,sep=';',encoding='utf-8-sig',low_memory=False) if state_path.exists() and state_path.stat().st_size else pd.DataFrame()
+          instruments=read_csv_safe(Path('outputs/etf_fund_flows/ETF_FLOW_INSTRUMENTS_SHADOW.csv'))
+          rotations=read_csv_safe(Path('outputs/etf_fund_flows/SECTOR_ROTATION_FLOW_OVERLAY_V1.csv'))
+          state=read_csv_safe(Path('state/etf_fund_flows/ETF_FUND_FLOW_OBSERVATIONS.csv'))
 
           if not instruments.empty:
               efs=pd.to_numeric(instruments.get('efs_shadow'),errors='coerce')
@@ -140,12 +159,18 @@ jobs:
               'rotation_rows':int(len(rotations)),
               'decision_influence':0.0,
               'live_orders_enabled':False,
-              'cache_saved_by_proof':False,
+              'production_cache_mutated_by_proof':False,
           }
           out=Path('outputs/audit/V21_16_REAL_FUND_FLOW_SHADOW_PROOF.json')
           out.write_text(json.dumps(summary,ensure_ascii=False,indent=2,default=str),encoding='utf-8')
           print(json.dumps(summary,ensure_ascii=False,indent=2,default=str))
           PY
+
+      - name: Save isolated V21.16 proof state cache
+        uses: actions/cache/save@v4
+        with:
+          path: state/etf_fund_flows/
+          key: v21-16-proof-state-${{ github.run_id }}
 
       - name: Upload V21.16 real shadow proof
         if: always()
@@ -162,4 +187,53 @@ jobs:
             state/etf_fund_flows/ETF_FUND_FLOW_OBSERVATIONS.csv
             /tmp/V21_16_PRE_STATE.json
           if-no-files-found: warn
+          retention-days: 14
+
+  cache-roundtrip-proof:
+    needs: real-shadow-proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Restore isolated V21.16 proof state cache exactly
+        id: restore-proof-state
+        uses: actions/cache/restore@v4
+        with:
+          path: state/etf_fund_flows/
+          key: v21-16-proof-state-${{ github.run_id }}
+          fail-on-cache-miss: true
+
+      - name: Verify cache roundtrip
+        env:
+          CACHE_HIT: ${{ steps.restore-proof-state.outputs.cache-hit }}
+        run: |
+          test "$CACHE_HIT" = "true"
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import pandas as pd
+
+          path=Path('state/etf_fund_flows/ETF_FUND_FLOW_OBSERVATIONS.csv')
+          assert path.exists() and path.stat().st_size>0
+          df=pd.read_csv(path,sep=';',encoding='utf-8-sig',low_memory=False)
+          assert len(df)>0
+          assert df['instrument_id'].astype(str).nunique()>0
+          payload={
+              'version':'V21.16_CACHE_ROUNDTRIP_PROOF',
+              'status':'SUCCESS',
+              'exact_cache_hit':True,
+              'rows':int(len(df)),
+              'instruments':int(df['instrument_id'].astype(str).nunique()),
+              'production_cache_mutated':False,
+              'proof_cache_key':'v21-16-proof-state-${{ github.run_id }}',
+          }
+          Path('V21_16_CACHE_ROUNDTRIP_PROOF.json').write_text(json.dumps(payload,indent=2),encoding='utf-8')
+          print(json.dumps(payload,indent=2))
+          PY
+
+      - name: Upload cache roundtrip proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: V21_16_CACHE_ROUNDTRIP_${{ github.run_id }}
+          path: V21_16_CACHE_ROUNDTRIP_PROOF.json
+          if-no-files-found: error
           retention-days: 14
