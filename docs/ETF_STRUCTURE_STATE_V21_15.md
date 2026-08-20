@@ -16,11 +16,12 @@ La cause est d'orchestration et non de scoring :
 V21.15 sépare la **fréquence de collecte réseau** de la **fréquence d'utilisation du dernier fait gouverné**.
 
 1. Le run lourd hebdomadaire conserve la responsabilité des accès réseau émetteurs / justETF / yfinance funds.
-2. Après fusion gouvernée, `etf_structure_refresh` écrit `state/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv`.
-3. Une valeur n'entre dans ce snapshot que si son hash correspond exactement au dernier enregistrement de provenance effectivement retenu.
-4. Le workflow quotidien restaure le snapshot et le rejoue sur le master enrichi avant CT/LT.
-5. Le replay repasse par le moteur normal `apply_observations` : les règles de preuve A/B/C/D, de fraîcheur et de conflit restent donc inchangées.
-6. Aucun scrape structurel réseau n'est ajouté au workflow quotidien.
+2. Après fusion gouvernée, `etf_structure_refresh` écrit `state/provenance/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv`.
+3. Ce fichier réutilise le cache persistant `state/provenance/` déjà restauré/sauvegardé par les workflows weekly et daily : aucun nouveau cache ni cron n'est créé.
+4. Une valeur n'entre dans ce snapshot que si son hash correspond exactement au dernier enregistrement de provenance effectivement retenu.
+5. Le workflow quotidien rejoue le snapshot sur le master enrichi avant CT/LT.
+6. Le replay repasse par le moteur normal `apply_observations` : les règles de preuve A/B/C/D, de fraîcheur et de conflit restent donc inchangées.
+7. Aucun scrape structurel réseau n'est ajouté au workflow quotidien.
 
 ## TTL fail-closed
 
@@ -53,7 +54,7 @@ Les statuts acceptés par V21.15 doivent être **exactement** ceux du moteur de 
 - `src/v182/reporting/etf_structure_state_replay.py` ;
 - `outputs/audit/V21_15_ETF_STRUCTURE_STATE_WRITE.json` ;
 - `outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json` ;
-- `state/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv`.
+- `state/provenance/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv`.
 
 ## Validation avant promotion du correctif
 
