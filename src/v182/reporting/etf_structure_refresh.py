@@ -101,7 +101,10 @@ def run(root: Path=ROOT) -> dict:
     if "isin" not in df.columns or "yahoo_ticker" not in df.columns:
         raise RuntimeError("ETF_MASTER_MISSING_ISIN_OR_YAHOO_TICKER")
 
-    state_cfg=load_state_config(root/"config"/"ETF_STRUCTURE_STATE_V21_15.json")
+    state_cfg_path=root/"config"/"ETF_STRUCTURE_STATE_V21_15.json"
+    if not state_cfg_path.exists():
+        state_cfg_path=ROOT/"config"/"ETF_STRUCTURE_STATE_V21_15.json"
+    state_cfg=load_state_config(state_cfg_path)
     state_replay_obs,state_replay_diag=load_replay_observations(state_cfg,root=root)
     state_replay_quarantined=[]
     if state_replay_obs:
