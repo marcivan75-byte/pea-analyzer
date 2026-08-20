@@ -54,33 +54,81 @@ FIELD_GROUPS: dict[str, dict[str, tuple[str, ...]]] = {
     },
 }
 
+# Audit aliases are semantic-equivalence rules only. They improve the truthfulness
+# of the coverage report without copying values into legacy columns or changing
+# any score. The raw source columns remain preserved in the master/provenance.
+FIELD_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
+    "ACTION": {
+        "sector": ("sector_yf", "sector_v21", "sector_yahoo"),
+        "industry": ("industry_yf", "industry_yahoo"),
+        "country": ("country_yf",),
+        "exchange": ("exchange_yf", "full_exchange_name_yf", "euronext_mic"),
+        "currency": ("currency_yf",),
+        "source": ("fundamentals_source", "consensus_source", "ta_source"),
+        "target_price": ("target_mean_yf",),
+        "n_analysts": ("n_analysts_yf",),
+    },
+    "ETF": {
+        "category": ("category_yf",),
+        "official_exchange": ("exchange_yf", "primary_exchange"),
+        "max_drawdown_1y_pct": ("max_drawdown_1y",),
+    },
+}
 
-def _field_profile(frame: pd.DataFrame, requested_fields: tuple[str, ...]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+
+def _candidate_columns(frame: pd.DataFrame, universe: str, field: str) -> list[str]:
+    candidates=(field,)+FIELD_ALIASES.get(universe,{}).get(field,())
+    return [candidate for candidate in candidates if candidate in frame.columns]
+
+
+def _observed_mask(frame: pd.DataFrame, columns: list[str]) -> pd.Series:
+    if not columns:
+        return pd.Series(False,index=frame.index,dtype=bool)
+    observed=pd.Series(False,index=frame.index,dtype=bool)
+    for column in columns:
+        observed |= ~frame[column].map(is_missing)
+    return observed
+
+
+def _field_profile(frame: pd.DataFrame, universe: str, requested_fields: tuple[str, ...]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    present = [field for field in requested_fields if field in frame.columns]
-    missing_columns = [field for field in requested_fields if field not in frame.columns]
+    semantic_present=0
+    observed_cells=0
+    missing_columns=[]
+    present_denominator_fields=0
     for field in requested_fields:
-        if field not in frame.columns:
-            rows.append({"field": field, "column_present": False, "observed": 0, "missing": int(len(frame)), "coverage_pct": 0.0})
+        columns=_candidate_columns(frame,universe,field)
+        if not columns:
+            missing_columns.append(field)
+            rows.append({
+                "field":field,"column_present":False,"resolved_columns":"","observed":0,
+                "missing":int(len(frame)),"coverage_pct":0.0,
+            })
             continue
-        missing_mask = frame[field].map(is_missing)
-        observed = int((~missing_mask).sum())
+        semantic_present += 1
+        present_denominator_fields += 1
+        mask=_observed_mask(frame,columns)
+        observed=int(mask.sum())
+        observed_cells += observed
         rows.append({
-            "field": field,
-            "column_present": True,
-            "observed": observed,
-            "missing": int(missing_mask.sum()),
-            "coverage_pct": round(observed / len(frame) * 100.0, 2) if len(frame) else 0.0,
+            "field":field,
+            "column_present":True,
+            "resolved_columns":"|".join(columns),
+            "observed":observed,
+            "missing":int(len(frame)-observed),
+            "coverage_pct":round(observed/len(frame)*100.0,2) if len(frame) else 0.0,
         })
-    present_cells = len(frame) * len(present)
-    observed_cells = sum(row["observed"] for row in rows if row["column_present"])
-    summary = {
-        "requested_field_count": len(requested_fields),
-        "present_field_count": len(present),
-        "missing_columns": missing_columns,
-        "coverage_pct_present_columns": round(observed_cells / present_cells * 100.0, 2) if present_cells else 0.0,
+    present_cells=len(frame)*present_denominator_fields
+    requested_cells=len(frame)*len(requested_fields)
+    summary={
+        "requested_field_count":len(requested_fields),
+        "present_field_count":semantic_present,
+        "missing_columns":missing_columns,
+        "coverage_pct_present_columns":round(observed_cells/present_cells*100.0,2) if present_cells else 0.0,
+        "coverage_pct_requested_fields":round(observed_cells/requested_cells*100.0,2) if requested_cells else 0.0,
+        "semantic_aliases_enabled":True,
     }
-    return rows, summary
+    return rows,summary
 
 
 def profile_frame(frame: pd.DataFrame, universe: str) -> tuple[pd.DataFrame, dict[str, Any]]:
@@ -90,7 +138,7 @@ def profile_frame(frame: pd.DataFrame, universe: str) -> tuple[pd.DataFrame, dic
     details: list[dict[str, Any]] = []
     group_summary: dict[str, Any] = {}
     for group, fields in FIELD_GROUPS[universe].items():
-        rows, summary = _field_profile(frame, fields)
+        rows, summary = _field_profile(frame, universe, fields)
         group_summary[group] = summary
         for row in rows:
             details.append({"universe": universe, "group": group, **row})
@@ -117,7 +165,7 @@ def run(root: Path) -> dict[str, Any]:
         "action_identity_overlay": overlay_audit,
         "actions": action_summary,
         "etf": etf_summary,
-        "interpretation": "Coverage measures observation presence only. It never upgrades evidence quality and missing values remain missing.",
+        "interpretation": "Coverage measures semantic observation presence through governed equivalent aliases. It never copies values, upgrades evidence quality, changes scoring, or imputes missing data.",
     }
     outdir = root / "outputs" / "audit"
     outdir.mkdir(parents=True, exist_ok=True)
