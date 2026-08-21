@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - data/euronext-ipo-pagination-v22-1-2
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
