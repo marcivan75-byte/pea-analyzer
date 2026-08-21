@@ -56,6 +56,14 @@ jobs:
           restore-keys: |
             tct-context-
 
+      - name: Restore Action CT V22 shadow state
+        uses: actions/cache/restore@v4
+        with:
+          path: state/action_ct/
+          key: action-ct-v22-${{ github.run_id }}
+          restore-keys: |
+            action-ct-v22-
+
       - name: Restore provenance, V21.8 state and source caches
         uses: actions/cache/restore@v4
         with:
@@ -92,6 +100,10 @@ jobs:
       - name: Daily TCT CT scoring and V21.8
         run: python -m v182.reporting.daily_tct_ct_runner
 
+      - name: Action CT V22.0 daily weekly confluence SHADOW
+        continue-on-error: true
+        run: python -m v182.reporting.action_ct_shadow_run_v22_0
+
       - name: TCT V24.3.1 robust daily weekly trader-tools shadow
         continue-on-error: true
         run: python -m v182.reporting.tct_daily_trader_shadow_run_v24_3_1
@@ -106,6 +118,14 @@ jobs:
           if [ -f outputs/mobile/ANDROID_DAILY_TCT_CT.md ]; then
             cat outputs/mobile/ANDROID_DAILY_TCT_CT.md >> "$GITHUB_STEP_SUMMARY"
           fi
+          if [ -f outputs/mobile/ANDROID_ACTION_CT_V22_SHADOW.md ]; then
+            printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+            cat outputs/mobile/ANDROID_ACTION_CT_V22_SHADOW.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f outputs/mobile/ANDROID_ACTION_CT_V22_PIT_VALIDATION.md ]; then
+            printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+            cat outputs/mobile/ANDROID_ACTION_CT_V22_PIT_VALIDATION.md >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [ -f outputs/mobile/ETF_CT_LT_SHADOW.md ]; then
             printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
             cat outputs/mobile/ETF_CT_LT_SHADOW.md >> "$GITHUB_STEP_SUMMARY"
@@ -118,27 +138,15 @@ jobs:
       - name: Show daily audit
         if: always()
         run: |
-          if [ -f outputs/audit/DAILY_TCT_CT_AUDIT.json ]; then
-            cat outputs/audit/DAILY_TCT_CT_AUDIT.json
-          fi
-          if [ -f outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json ]; then
-            cat outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json
-          fi
-          if [ -f outputs/audit/ETF_CT_LT_V21_14_SHADOW.json ]; then
-            cat outputs/audit/ETF_CT_LT_V21_14_SHADOW.json
-          fi
-          if [ -f outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json ]; then
-            cat outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json
-          fi
-          if [ -f outputs/audit/TCT_V24_4_1_PIT_CLOSE_LEDGER_AUDIT.json ]; then
-            cat outputs/audit/TCT_V24_4_1_PIT_CLOSE_LEDGER_AUDIT.json
-          fi
-          if [ -f outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json ]; then
-            cat outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json
-          fi
-          if [ -f data/cache/actions/history_manifest.json ]; then
-            cat data/cache/actions/history_manifest.json
-          fi
+          if [ -f outputs/audit/DAILY_TCT_CT_AUDIT.json ]; then cat outputs/audit/DAILY_TCT_CT_AUDIT.json; fi
+          if [ -f outputs/audit/ACTION_CT_V22_0_0_AUDIT.json ]; then cat outputs/audit/ACTION_CT_V22_0_0_AUDIT.json; fi
+          if [ -f outputs/audit/ACTION_CT_V22_0_0_PIT_VALIDATION.json ]; then cat outputs/audit/ACTION_CT_V22_0_0_PIT_VALIDATION.json; fi
+          if [ -f outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json ]; then cat outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json; fi
+          if [ -f outputs/audit/ETF_CT_LT_V21_14_SHADOW.json ]; then cat outputs/audit/ETF_CT_LT_V21_14_SHADOW.json; fi
+          if [ -f outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json ]; then cat outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json; fi
+          if [ -f outputs/audit/TCT_V24_4_1_PIT_CLOSE_LEDGER_AUDIT.json ]; then cat outputs/audit/TCT_V24_4_1_PIT_CLOSE_LEDGER_AUDIT.json; fi
+          if [ -f outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json ]; then cat outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json; fi
+          if [ -f data/cache/actions/history_manifest.json ]; then cat data/cache/actions/history_manifest.json; fi
 
       - name: Save persistent OHLCV cache
         if: ${{ success() && hashFiles('data/cache/**') != '' }}
@@ -161,6 +169,13 @@ jobs:
           path: state/tct_context/
           key: tct-context-${{ github.run_id }}
 
+      - name: Save Action CT V22 shadow state
+        if: ${{ always() && hashFiles('state/action_ct/**') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: state/action_ct/
+          key: action-ct-v22-${{ github.run_id }}
+
       - name: Save provenance, V21.8 state and source caches
         if: ${{ always() && hashFiles('state/provenance/**') != '' }}
         uses: actions/cache/save@v4
@@ -177,15 +192,20 @@ jobs:
             outputs/daily_tct_ct/
             outputs/etf_ct_lt_shadow/
             outputs/mobile/ANDROID_DAILY_TCT_CT.md
+            outputs/mobile/ANDROID_ACTION_CT_V22_SHADOW.md
+            outputs/mobile/ANDROID_ACTION_CT_V22_PIT_VALIDATION.md
             outputs/mobile/ETF_CT_LT_SHADOW.md
             outputs/mobile/ANDROID_TCT_DAILY_TRADER_SHADOW.md
             outputs/audit/DAILY_TCT_CT_AUDIT.json
+            outputs/audit/ACTION_CT_V22_0_0_AUDIT.json
+            outputs/audit/ACTION_CT_V22_0_0_PIT_VALIDATION.json
             outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json
             outputs/audit/ETF_CT_LT_V21_14_SHADOW.json
             outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json
             outputs/audit/TCT_V24_4_1_PIT_CLOSE_LEDGER_AUDIT.json
             outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json
             outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx
+            state/action_ct/
             state/provenance/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv
             state/tct_context/TCT_DAILY_TRADER_LATEST.csv
             state/tct_context/TCT_DAILY_CLOSE_LEDGER.csv
