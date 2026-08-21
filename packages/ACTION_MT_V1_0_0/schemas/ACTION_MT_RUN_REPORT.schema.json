@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ACTION MT V1 run report",
+  "type": "object",
+  "required": ["version", "generated_at", "config_sha256", "status", "universe_rows", "selected_isins", "regime", "cache", "duration_seconds"],
+  "properties": {
+    "version": {"const": "ACTION_MT_V1.0.0_SHADOW"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "status": {"const": "SUCCESS_SHADOW"},
+    "universe_rows": {"type": "integer", "minimum": 0},
+    "successful_rows": {"type": "integer", "minimum": 0},
+    "selected_isins": {"type": "array", "maxItems": 3, "items": {"type": "string"}},
+    "abstention_reason": {"type": ["string", "null"]},
+    "regime": {"type": "object"},
+    "cache": {"type": "object"},
+    "duration_seconds": {"type": "number", "minimum": 0}
+  },
+  "additionalProperties": true
+}
+

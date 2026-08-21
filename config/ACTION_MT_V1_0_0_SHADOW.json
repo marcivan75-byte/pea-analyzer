@@ -1,0 +1,82 @@
+{
+  "version": "ACTION_MT_V1.0.0_SHADOW",
+  "scope": {
+    "asset_class": "PEA_ACTIONS",
+    "horizon": "3_TO_12_MONTHS",
+    "execution": "CLOSE_ONLY_RESEARCH",
+    "maximum_new_positions_per_run": 3
+  },
+  "data_policy": {
+    "minimum_history_sessions": 200,
+    "maximum_cache_staleness_days": 7,
+    "completed_daily_bars_only": true,
+    "local_close_timezone": "Europe/Paris",
+    "local_close_hour": 18,
+    "intraday_forbidden": true,
+    "t1_t2_forbidden": true,
+    "point_in_time_required_for_historical_validation": true,
+    "missing_values_are_never_neutral": true,
+    "current_snapshot_fields_cannot_reconstruct_history": true
+  },
+  "score_weights": {
+    "trend": 0.16,
+    "momentum": 0.12,
+    "quality": 0.14,
+    "growth": 0.09,
+    "valuation": 0.08,
+    "revisions": 0.07,
+    "sector_macro": 0.06,
+    "risk": 0.10,
+    "liquidity": 0.03,
+    "efficiency": 0.05,
+    "risk_adjusted": 0.06,
+    "volume_confirmation": 0.04
+  },
+  "gates": {
+    "minimum_score_coverage": 0.72,
+    "minimum_median_turnover_eur": 500000,
+    "preferred_median_turnover_eur": 3000000,
+    "maximum_drawdown_block_pct": -45.0,
+    "minimum_market_regime_score": 35.0,
+    "entry_ready_score": 62.0,
+    "entry_strong_score": 74.0,
+    "entry_ready_min_confirmations": 4,
+    "entry_strong_min_confirmations": 5,
+    "earnings_caution_days": 7
+  },
+  "portfolio_decision": {
+    "score_raw_weight": 0.55,
+    "cross_section_rank_weight": 0.45,
+    "selection_threshold": 72.0,
+    "maximum_new_positions": 3,
+    "maximum_active_sector_exposure": 2,
+    "minimum_breadth_200": 0.50,
+    "minimum_median_return_1m_pct": -1.0,
+    "minimum_median_return_6m_pct": 0.0,
+    "require_market_above_sma200": true
+  },
+  "exit_policy": {
+    "hard_stop_return": -0.18,
+    "trailing_stop_activation_sessions": 40,
+    "trailing_stop_return": -0.12,
+    "maximum_holding_sessions": 252,
+    "fixed_take_profit_enabled": false
+  },
+  "governance": {
+    "mode": "SHADOW_ONLY",
+    "real_orders_enabled": false,
+    "structural_snapshot_can_promote_signal": false,
+    "holdout_locked": true,
+    "certification_required_before_production": true,
+    "fixed_take_profit_enabled": false,
+    "decision_influence": 0.0,
+    "sizing_influence": 0.0
+  },
+  "runtime": {
+    "maximum_workers": 8,
+    "target_wall_clock_seconds_400_actions": 90,
+    "cache_download_fallback_enabled": false,
+    "pit_ledger_idempotent": true
+  }
+}
+
