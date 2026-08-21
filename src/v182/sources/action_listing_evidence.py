@@ -333,6 +333,7 @@ def collect_action_listing_evidence(
         end,
         timeout=timeout,
         target_isins=target_isins,
+        enrich_details=False,
     )
     accepted, quarantine, metrics = qualify_euronext_candidates(worklist, candidates, as_of=end)
     metrics["source_metrics"] = source_metrics
