@@ -4,8 +4,10 @@ on:
   pull_request:
     paths:
       - "src/v182/features/action_mt_v1.py"
+      - "src/v182/decision/action_mt_decision_v1.py"
       - "config/ACTION_MT_V1_0_0_SHADOW.json"
       - "tests/test_action_mt_v1.py"
+      - "scripts/validate_action_mt_ci.py"
       - ".github/workflows/action_mt_v1_tests.yml"
   workflow_dispatch:
 
