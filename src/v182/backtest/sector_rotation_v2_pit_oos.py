@@ -181,7 +181,7 @@ def _period_summary(snapshot_metrics: pd.DataFrame, protocol: dict[str, Any]) ->
     v2_mae = pd.to_numeric(snapshot_metrics["v2_mae_pct"], errors="coerce")
     v1_mae = pd.to_numeric(snapshot_metrics["v1_mae_pct"], errors="coerce")
 
-    metrics = {
+    metrics: dict[str, Any] = {
         "snapshot_count": int(len(snapshot_metrics)),
         "mean_sector_count": float(snapshot_metrics["sector_count"].mean()),
         "mean_v1_coverage": float(snapshot_metrics["v1_coverage"].mean()),

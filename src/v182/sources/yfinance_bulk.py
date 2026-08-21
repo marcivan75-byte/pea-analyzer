@@ -342,15 +342,16 @@ def download_history(
 
     if (
         usable
+        and prior_manifest is not None
         and _cache_files_complete(cache, clean, batch_size)
         and not force_refresh
         and _updated_today_utc(prior_manifest)
     ):
-        successful = sorted(set(prior_manifest.get("successful", [])))
-        failed = sorted(set(prior_manifest.get("failed", [])))
+        cached_successful = sorted(set(prior_manifest.get("successful", [])))
+        cached_failed = sorted(set(prior_manifest.get("failed", [])))
         logger.info("OHLCV cache hit: already refreshed today (%s tickers)", len(clean))
         return DownloadResult(
-            len(clean), successful, failed, str(cache / "history_manifest.json")
+            len(clean), cached_successful, cached_failed, str(cache / "history_manifest.json")
         )
 
     mode = "INCREMENTAL" if usable else "FULL_BOOTSTRAP"

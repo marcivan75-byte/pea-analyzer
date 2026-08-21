@@ -21,7 +21,7 @@ def _as_float(value: object) -> float | None:
     if value is None:
         return None
     try:
-        number = float(value)
+        number = float(str(value))
     except (TypeError, ValueError):
         return None
     return None if math.isnan(number) else number

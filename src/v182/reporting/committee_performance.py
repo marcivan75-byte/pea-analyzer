@@ -106,7 +106,7 @@ def run(root: Path) -> dict:
             proceeds=qty*p*(1.0-fee); cash+=proceeds; positions.at[idx,"status"]="CLOSED"; positions.at[idx,"close_date"]=today; positions.at[idx,"close_price"]=p; positions.at[idx,"exit_reason"]="STOP" if stop_hit else f"DECISION_{decision}"; tx=pd.concat([tx,pd.DataFrame([{"date":today,"type":"SELL","position_id":pos.get("position_id"),"isin":isin,"price":p,"quantity":qty,"gross_eur":qty*p,"cost_eur":qty*p*fee,"reason":positions.at[idx,"exit_reason"]}])],ignore_index=True)
 
     open_positions=positions[positions["status"].astype(str)=="OPEN"].copy(); exposure=sum((_num(r.get("quantity")) or 0)*(prices.get(str(r.get("isin","") or ""),{}).get("price") or (_num(r.get("entry_price")) or 0)) for _,r in open_positions.iterrows()); equity=max(0.0,cash+exposure)
-    sector_exposure={}
+    sector_exposure: dict[str, float] = {}
     for _,r in open_positions.iterrows():
         val=(_num(r.get("quantity")) or 0)*(prices.get(str(r.get("isin","") or ""),{}).get("price") or (_num(r.get("entry_price")) or 0)); sector_exposure[str(r.get("sector","NON CLASSE"))]=sector_exposure.get(str(r.get("sector","NON CLASSE")),0)+val
     open_keys=set(open_positions["asset_class"].astype(str)+"|"+open_positions["horizon"].astype(str)+"|"+open_positions["isin"].astype(str)) if not open_positions.empty else set()

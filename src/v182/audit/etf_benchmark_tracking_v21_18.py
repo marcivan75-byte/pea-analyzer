@@ -65,7 +65,7 @@ def load_price_map(path: str | Path, cfg: dict) -> tuple[dict[str, dict], dict]:
     accepted_status = set(map(str, cfg["accepted_price_mapping_statuses"]))
     accepted_evidence = set(map(str, cfg["accepted_price_mapping_evidence"]))
     verified: dict[str, dict] = {}
-    rejected = Counter()
+    rejected: Counter[str] = Counter()
     for _, row in frame.iterrows():
         name = _clean(row.get("official_benchmark"))
         symbol = _clean(row.get("benchmark_price_symbol"))

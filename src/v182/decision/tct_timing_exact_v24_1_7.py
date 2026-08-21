@@ -173,6 +173,7 @@ def detect_exact(tech:pd.DataFrame,state:Mapping[str,Any]|None,cfg:dict)->dict:
     c_bw=_finite(bandwidth.iloc[-1]); c_close=_finite(close.iloc[-1]); c_bb=_finite(bb.iloc[-1]); c_atr=_finite(atr.iloc[-1]); c_hist=_finite(hist.iloc[-1]); c_rs=_finite(_num(tech,"rs_10d").iloc[-1])
     if None in {c_bw,c_close,c_bb,c_hist}:
         return {"setup":None,"reason":"MISSING_LATEST_VALUES","t1_components":empty1,"t2_components":empty2,"t1_quality":0.0,"t1_coverage":0.0,"t1_count":0,"t2_quality":0.0,"t2_coverage":0.0,"t2_count":0}
+    assert c_bw is not None and c_close is not None and c_bb is not None and c_hist is not None
 
     comp_score,comp_fraction,squeeze_threshold=_compression_metrics(bandwidth,float(sq["percentile"]),int(sq["lookback_sessions"]),int(sq["window_sessions"]))
     pc=_finite(close.iloc[-2]); pbb=_finite(bb.iloc[-2])
@@ -334,7 +335,7 @@ def save_state(path:Path,state:dict[str,dict])->None:
 
 
 def _extract_histories(cache_dir:Path,wanted:set[str])->dict[str,pd.DataFrame]:
-    histories={}
+    histories: dict[str, pd.DataFrame] = {}
     if not cache_dir.exists():
         return histories
     for path in sorted(cache_dir.glob("history_*.parquet")):
