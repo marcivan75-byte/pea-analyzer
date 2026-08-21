@@ -64,7 +64,7 @@ def _technical_components(frame: pd.DataFrame, cfg: dict[str, Any]) -> tuple[dic
     sma50 = float(close.tail(50).mean()) if len(close) >= 50 else None
     sma100 = float(close.tail(100).mean()) if len(close) >= 100 else None
     sma200 = float(close.tail(200).mean()) if len(close) >= 200 else None
-    ret63, ret126, ret252 = (_return(close, horizon) for horizon in (63, 126, 252))
+    ret21, ret42, ret63, ret126, ret189, ret252 = (_return(close, horizon) for horizon in (21, 42, 63, 126, 189, 252))
 
     trend_checks = [
         None if sma50 is None else 100.0 if last >= sma50 else 0.0,
@@ -147,8 +147,11 @@ def _technical_components(frame: pd.DataFrame, cfg: dict[str, Any]) -> tuple[dic
         "volume_confirmation": volume_confirmation,
     }, {
         "reference_close": last,
+        "return_1m_pct": ret21,
+        "return_2m_pct": ret42,
         "return_3m_pct": ret63,
         "return_6m_pct": ret126,
+        "return_9m_pct": ret189,
         "return_12m_pct": ret252,
         "sma50": sma50,
         "sma100": sma100,
