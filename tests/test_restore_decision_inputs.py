@@ -6,21 +6,30 @@ import pytest
 
 import urllib.request
 
-from v182.ci.restore_decision_inputs import REQUIRED, _SafeRedirectHandler, _extract_required, _select_artifact, _select_run
+from v182.ci.restore_decision_inputs import OPTIONAL, REQUIRED, _SafeRedirectHandler, _extract_required, _select_artifact, _select_run
 
 
 def test_extract_required_only_restores_decision_inputs(tmp_path: Path):
     archive = tmp_path / "artifact.zip"
     with zipfile.ZipFile(archive, "w") as bundle:
-        for name in REQUIRED:
+        for name in REQUIRED | OPTIONAL:
             bundle.writestr(name, "{}" if name.endswith(".json") else "decision;score\nWATCH;50\n")
         bundle.writestr("state/provenance/VERY_LARGE.csv", "must not be extracted")
 
     root = tmp_path / "root"
     extracted = _extract_required(archive, root)
 
-    assert set(extracted) == REQUIRED
+    assert set(extracted) == REQUIRED | OPTIONAL
     assert not (root / "state/provenance/VERY_LARGE.csv").exists()
+
+
+def test_extract_required_accepts_artifact_before_optional_explainability(tmp_path: Path):
+    archive = tmp_path / "legacy.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for name in REQUIRED:
+            bundle.writestr(name, "{}" if name.endswith(".json") else "decision;score\nWATCH;50\n")
+
+    assert set(_extract_required(archive, tmp_path / "root")) == REQUIRED
 
 
 def test_select_run_fails_closed_when_latest_success_is_stale():
