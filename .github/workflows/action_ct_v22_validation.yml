@@ -4,11 +4,19 @@ on:
   pull_request:
     paths:
       - "config/ACTION_CT_V22_0_0_SHADOW.json"
+      - "config/ACTION_CT_V22_1_0_SHADOW.json"
       - "src/v182/features/action_ct_v22_0.py"
+      - "src/v182/features/action_ct_context_v22_1.py"
+      - "src/v182/features/action_ct_v22_1.py"
       - "src/v182/reporting/action_ct_shadow_run_v22_0.py"
+      - "src/v182/reporting/action_ct_shadow_run_v22_1.py"
       - "tests/test_action_ct_v22_0.py"
       - "tests/test_action_ct_v22_0_runner.py"
+      - "tests/test_action_ct_v22_1.py"
+      - "tests/test_action_ct_v22_1_runner.py"
       - "docs/ACTION_CT_*.md"
+      - "packages/ACTION_CT_V22_1_0/**"
+      - "scripts/build_action_ct_package_v22_1.py"
       - ".github/workflows/action_ct_v22_validation.yml"
       - ".github/workflows/committee_tct_ct_daily.yml"
   workflow_dispatch:
@@ -34,38 +42,82 @@ jobs:
       - name: Compile Action CT modules
         run: |
           python -m py_compile src/v182/features/action_ct_v22_0.py
+          python -m py_compile src/v182/features/action_ct_context_v22_1.py
+          python -m py_compile src/v182/features/action_ct_v22_1.py
           python -m py_compile src/v182/reporting/action_ct_shadow_run_v22_0.py
-      - name: Validate config and scope isolation
+          python -m py_compile src/v182/reporting/action_ct_shadow_run_v22_1.py
+          python -m py_compile scripts/build_action_ct_package_v22_1.py
+      - name: Validate configs and scope isolation
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          cfg=json.loads(Path('config/ACTION_CT_V22_0_0_SHADOW.json').read_text())
-          assert cfg['asset_class']=='ACTION'
-          assert cfg['horizon']=='CT'
-          assert cfg['status']=='SHADOW_RESEARCH_ONLY'
-          assert cfg['governance']['t1_t2_forbidden'] is True
-          assert cfg['governance']['tct_logic_transfer_forbidden'] is True
-          assert cfg['governance']['real_orders_enabled'] is False
-          assert cfg['governance']['fixed_take_profit_enabled'] is False
-          assert cfg['governance']['fixed_stop_loss_enabled'] is False
-          assert cfg['governance']['holdout_locked'] is True
-          assert abs(sum(cfg['entry_weights'].values())-1.0) < 1e-12
-          assert abs(sum(cfg['exit_risk_weights'].values())-1.0) < 1e-12
+          for filename in ('ACTION_CT_V22_0_0_SHADOW.json','ACTION_CT_V22_1_0_SHADOW.json'):
+              cfg=json.loads((Path('config')/filename).read_text())
+              assert cfg['asset_class']=='ACTION'
+              assert cfg['horizon']=='CT'
+              assert cfg['status']=='SHADOW_RESEARCH_ONLY'
+              assert cfg['governance']['t1_t2_forbidden'] is True
+              assert cfg['governance']['tct_logic_transfer_forbidden'] is True
+              assert cfg['governance']['real_orders_enabled'] is False
+              assert cfg['governance']['fixed_take_profit_enabled'] is False
+              assert cfg['governance']['fixed_stop_loss_enabled'] is False
+              assert cfg['governance']['holdout_locked'] is True
+              assert abs(sum(cfg['entry_weights'].values())-1.0) < 1e-12
+              assert abs(sum(cfg['exit_risk_weights'].values())-1.0) < 1e-12
+          v221=json.loads(Path('config/ACTION_CT_V22_1_0_SHADOW.json').read_text())
+          assert v221['parent']=='ACTION_CT_V22.0.0_DAILY_WEEKLY_CONFLUENCE_SHADOW'
+          assert 'quality_target' in v221['entry_weights']
+          assert 'theme_macro' in v221['entry_weights']
+          assert 'valuation_event_risk' in v221['exit_risk_weights']
           PY
-      - name: Unit tests
-        run: pytest -q tests/test_action_ct_v22_0.py tests/test_action_ct_v22_0_runner.py
+      - name: Unit and integration tests
+        run: pytest -q tests/test_action_ct_v22_0.py tests/test_action_ct_v22_0_runner.py tests/test_action_ct_v22_1.py tests/test_action_ct_v22_1_runner.py
       - name: Static workflow isolation guard
         run: |
           python - <<'PY'
           from pathlib import Path
-          runner=Path('src/v182/reporting/action_ct_shadow_run_v22_0.py').read_text().lower()
-          feature=Path('src/v182/features/action_ct_v22_0.py').read_text().lower()
-          assert 'from v182.features.tct' not in runner
-          assert 'from v182.decision.tct' not in runner
-          assert 'from v182.features.tct' not in feature
-          assert 'from v182.decision.tct' not in feature
+          for filename in (
+              'src/v182/reporting/action_ct_shadow_run_v22_0.py',
+              'src/v182/reporting/action_ct_shadow_run_v22_1.py',
+              'src/v182/features/action_ct_v22_0.py',
+              'src/v182/features/action_ct_v22_1.py',
+              'src/v182/features/action_ct_context_v22_1.py',
+          ):
+              text=Path(filename).read_text().lower()
+              assert 'from v182.features.tct' not in text
+              assert 'from v182.decision.tct' not in text
           workflow=Path('.github/workflows/committee_tct_ct_daily.yml').read_text()
           assert 'action_ct_shadow_run_v22_0' in workflow
+          assert 'action_ct_shadow_run_v22_1' in workflow
           assert 'state/action_ct/' in workflow
+          assert 'state/action_ct_v22_1/' in workflow
           PY
+      - name: Build complete CT package
+        run: python scripts/build_action_ct_package_v22_1.py --output dist/ACTION_CT_V22_1_0_COMPLETE.zip
+      - name: Validate package archive
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile
+          path=Path('dist/ACTION_CT_V22_1_0_COMPLETE.zip')
+          assert path.exists() and path.stat().st_size>0
+          with zipfile.ZipFile(path) as z:
+              names=set(z.namelist())
+              required={
+                  'config/ACTION_CT_V22_1_0_SHADOW.json',
+                  'src/v182/features/action_ct_v22_1.py',
+                  'src/v182/features/action_ct_context_v22_1.py',
+                  'src/v182/reporting/action_ct_shadow_run_v22_1.py',
+                  'docs/ACTION_CT_REFERENTIEL_V22_1_0_FINAL.md',
+                  'packages/ACTION_CT_V22_1_0/MANIFEST.json',
+              }
+              assert required <= names
+          PY
+      - name: Upload complete CT package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ACTION_CT_V22_1_0_COMPLETE
+          path: dist/ACTION_CT_V22_1_0_COMPLETE.zip
+          if-no-files-found: error
+          retention-days: 30
