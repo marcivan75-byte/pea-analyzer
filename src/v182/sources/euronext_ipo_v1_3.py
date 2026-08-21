@@ -152,6 +152,7 @@ def collect_euronext_v1_3(
     timeout: int = 20,
     *,
     max_pages: int = MAX_PAGINATION_PAGES,
+    enrich_details: bool = True,
 ) -> tuple[list[dict], dict]:
     """Collect the official Euronext IPO showcase across historical pages.
 
@@ -159,6 +160,11 @@ def collect_euronext_v1_3(
     IPO page, a repeated page signature, the first page wholly older than the
     requested start date, or the explicit safety cap. Candidate identity still
     comes from the official table ISIN; no name/ticker inference is promoted.
+
+    ``enrich_details=False`` keeps the collection on official paginated table
+    evidence only. It is intended for exact-ISIN listing-date qualification,
+    where visiting every detail page would add latency without changing the
+    identity or official table date. IPO Radar keeps detail enrichment enabled.
     """
     source = "EURONEXT"
     headers = legacy._http_headers()
@@ -191,6 +197,7 @@ def collect_euronext_v1_3(
                     "pages_fetched": 0,
                     "pagination_complete": False,
                     "stop_reason": "FIRST_PAGE_FETCH_FAILED",
+                    "detail_enrichment_enabled": enrich_details,
                     "detail": f"{type(exc).__name__}: {str(exc)[:180]}",
                 }
             stop_reason = "PAGE_FETCH_FAILED"
@@ -210,7 +217,7 @@ def collect_euronext_v1_3(
             break
         seen_page_signatures.add(signature)
 
-        detail_links = _showcase_links(html)
+        detail_links = _showcase_links(html) if enrich_details else {}
         page_dates: list[date] = []
         for table in tables:
             columns = {str(column).strip().lower(): column for column in table.columns}
@@ -289,6 +296,7 @@ def collect_euronext_v1_3(
         "rows_seen": rows_seen,
         "rows_in_requested_range": rows_in_requested_range,
         "duplicate_candidates_removed": duplicate_candidates,
+        "detail_enrichment_enabled": enrich_details,
         "detail_enriched_count": detail_success,
         "detail_failed_count": detail_failed,
         "pagination_complete": pagination_complete,
