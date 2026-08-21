@@ -122,5 +122,19 @@ def validate_decision_contract(cfg: dict) -> list[str]:
         issues.append("HOLDOUT_MUST_REMAIN_LOCKED")
     if governance.get("structural_snapshot_can_promote_signal") is not False:
         issues.append("SNAPSHOT_PROMOTION_MUST_REMAIN_DISABLED")
+    if governance.get("fixed_take_profit_enabled") is not False:
+        issues.append("FIXED_TAKE_PROFIT_MUST_REMAIN_DISABLED")
+    data_policy = cfg.get("data_policy", {})
+    if data_policy.get("intraday_forbidden") is not True:
+        issues.append("INTRADAY_MUST_REMAIN_FORBIDDEN")
+    if data_policy.get("t1_t2_forbidden") is not True:
+        issues.append("T1_T2_MUST_REMAIN_FORBIDDEN")
+    if data_policy.get("completed_daily_bars_only") is not True:
+        issues.append("COMPLETED_DAILY_BARS_REQUIRED")
+    runtime = cfg.get("runtime", {})
+    if runtime.get("cache_download_fallback_enabled") is not False:
+        issues.append("HIDDEN_CACHE_DOWNLOAD_FALLBACK_FORBIDDEN")
+    if runtime.get("pit_ledger_idempotent") is not True:
+        issues.append("PIT_LEDGER_MUST_BE_IDEMPOTENT")
     return issues
 
