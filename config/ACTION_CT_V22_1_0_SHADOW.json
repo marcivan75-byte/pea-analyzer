@@ -1,5 +1,6 @@
 {
   "version": "ACTION_CT_V22.1.0_CONTEXT_ENRICHED_SHADOW",
+  "runtime_patch_version": "ACTION_CT_V22.1.1_PERFORMANCE_OBSERVABILITY_PATCH",
   "asset_class": "ACTION",
   "horizon": "CT",
   "status": "SHADOW_RESEARCH_ONLY",
@@ -46,7 +47,9 @@
     "automatic_parameter_promotion": false,
     "promotion_authority": false,
     "missing_context_never_neutral_imputed": true,
-    "derived_context_must_be_observed_or_current_snapshot_cross_sectional": true
+    "derived_context_must_be_observed_or_current_snapshot_cross_sectional": true,
+    "runtime_patch_must_not_change_registered_entry_weights": true,
+    "runtime_patch_must_not_change_pit_epoch": true
   },
   "entry_weights": {
     "trend_structure": 0.20,
@@ -57,6 +60,13 @@
     "catalyst_consensus": 0.10,
     "quality_target": 0.06,
     "theme_macro": 0.06
+  },
+  "entry_weights_sensitivity": {
+    "enabled": false,
+    "purpose": "PRE_REGISTERED_ONLY_NO_PRODUCTION_OR_PIT_DECISION_INFLUENCE",
+    "candidate_quality_theme_weight_total": [0.12, 0.16, 0.20],
+    "activation_requires_new_pit_epoch": true,
+    "activation_requires_holdout_validation": true
   },
   "exit_risk_weights": {
     "trend_break": 0.26,
@@ -77,6 +87,15 @@
       "perf_3m_rank": 0.30,
       "perf_6m_rank": 0.20
     },
+    "sector_rotation": {
+      "min_sector_size": 3,
+      "catchup_distance_scale_pct": 25.0,
+      "recovery_gate_cap": 50.0,
+      "candidate_market_min": 65.0,
+      "candidate_sector_min": 65.0,
+      "candidate_action_min": 60.0,
+      "hhi_warning_threshold": 2500.0
+    },
     "theme_fields_optional": [
       "theme_rotation_exposure_score",
       "theme_risk_adjusted_score",
@@ -87,6 +106,31 @@
       "sector_macro_score",
       "macro_evidence_sufficient"
     ]
+  },
+  "data_quality_thresholds": {
+    "preferred_median_turnover_eur": 1000000.0,
+    "robust_median_turnover_eur": 3000000.0,
+    "minimum_context_field_coverage_pct_for_diagnostic_ok": 20.0,
+    "minimum_success_entry_coverage_median": 0.85
+  },
+  "research_risk_diagnostics": {
+    "decision_influence": 0.0,
+    "drawdown_window_sessions": 20,
+    "drawdown_risk_full_scale_pct": 12.0,
+    "gain_loss_ratio_neutral": 1.0,
+    "gain_loss_ratio_full_scale": 2.0,
+    "warning_min": 70.0,
+    "asymmetric_risk_is_diagnostic_only": true,
+    "valuation_event_split_is_diagnostic_only": true
+  },
+  "runtime_observability": {
+    "timers_enabled": true,
+    "schema_validation_enabled": true,
+    "error_traceback_frames": 3,
+    "divergence_summary_enabled": true,
+    "state_distribution_enabled": true,
+    "coverage_distribution_enabled": true,
+    "performance_budget_seconds_250_actions": 45.0
   },
   "shadow_thresholds": {
     "entry_ready": 70.0,
