@@ -1,0 +1,85 @@
+{
+  "release": "TCT_V24.4.1_AUDITED_SHADOW",
+  "date": "2026-08-21",
+  "production_baseline": "V21.8.1_UNCHANGED",
+  "asset_class": "ACTION",
+  "horizon": "TCT",
+  "status": "SHADOW_RESEARCH_ONLY",
+  "scope_notes": [
+    "T1/T2_ACTION_TCT_ONLY",
+    "NO_INTRADAY_1M_5M",
+    "NO_CONTINUOUS_POLLING",
+    "NO_REAL_ORDERS",
+    "HOLDOUT_LOCKED",
+    "V24.4.1_PIT_EPOCH_SEPARATE_FROM_V24.4.0"
+  ],
+  "python": {
+    "baseline_timing": [
+      "src/v182/decision/tct_v24_1_7.py",
+      "src/v182/decision/tct_baseline_v24_1_7.py",
+      "src/v182/decision/tct_baseline_v24_1_8.py",
+      "src/v182/decision/tct_timing_exact_v24_1_7.py",
+      "src/v182/features/tct_v24_1_7_exact.py"
+    ],
+    "daily_weekly": [
+      "src/v182/features/tct_daily_trader_v24_3.py",
+      "src/v182/features/tct_daily_trader_v24_3_1.py",
+      "src/v182/reporting/tct_daily_trader_shadow_run_v24_3_1.py"
+    ],
+    "news_market_sources": [
+      "src/v182/sources/gdelt_news.py",
+      "src/v182/sources/tct_catalyst_news.py",
+      "src/v182/sources/tct_catalyst_news_v24_4_1.py",
+      "src/v182/sources/global_market_snapshot.py"
+    ],
+    "catalyst": [
+      "src/v182/features/tct_catalyst_context_v24_4.py",
+      "src/v182/features/tct_catalyst_context_v24_4_1.py",
+      "src/v182/reporting/tct_next_session_catalyst_run.py",
+      "src/v182/reporting/tct_next_session_catalyst_run_v24_4_1.py"
+    ],
+    "pit_validation": [
+      "src/v182/reporting/tct_pit_close_ledger.py",
+      "src/v182/reporting/tct_pit_close_ledger_v24_4_1.py",
+      "src/v182/reporting/tct_v24_4_pit_lineage.py",
+      "src/v182/reporting/tct_v24_4_1_pit_lineage.py",
+      "src/v182/reporting/tct_v24_4_pit_validator.py",
+      "src/v182/reporting/tct_v24_4_pit_validator_runtime.py",
+      "src/v182/reporting/tct_v24_4_1_pit_validator_runtime.py"
+    ],
+    "orchestration": [
+      "src/v182/reporting/daily_tct_ct_runner.py"
+    ]
+  },
+  "config": [
+    "config/TCT_V24_1_7_SHADOW.json",
+    "config/TCT_V24_3_0_DAILY_TRADER_SHADOW.json",
+    "config/TCT_V24_3_1_DAILY_TRADER_SHADOW.json",
+    "config/TCT_V24_4_1_CATALYST_CONTEXT_SHADOW.json",
+    "config/TCT_V24_4_1_VALIDATION_GATES.json"
+  ],
+  "workflows": [
+    ".github/workflows/committee_tct_ct_daily.yml",
+    ".github/workflows/tct_next_session_context.yml"
+  ],
+  "documentation": [
+    "docs/TCT_AUDIT_V24_4_1_2026-08-21.md",
+    "docs/TCT_CDC_V24_4_1_FINAL.md",
+    "docs/TCT_REFERENTIEL_V24_4_1_FINAL.md",
+    "docs/PROCESS_REFERENCE_V21_8_1_TCT_V24_4_1_ADDENDUM.md",
+    "docs/TCT_RELEASE_MANIFEST_V24_4_1.json"
+  ],
+  "tests_required": [
+    "tests/test_tct_v24_4_1_audit_hardening.py"
+  ],
+  "package_policy": {
+    "include_all_manifest_python": true,
+    "include_configs": true,
+    "include_workflows": true,
+    "include_docs": true,
+    "include_tct_tests_discovered_at_release": true,
+    "exclude_secrets": true,
+    "exclude_runtime_state_with_market_observations": true,
+    "generate_sha256_manifest": true
+  }
+}
