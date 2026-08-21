@@ -13,15 +13,18 @@
     "current_snapshot_fields_cannot_reconstruct_history": true
   },
   "score_weights": {
-    "trend": 0.20,
-    "momentum": 0.14,
-    "quality": 0.15,
-    "growth": 0.10,
-    "valuation": 0.10,
-    "revisions": 0.08,
-    "sector_macro": 0.07,
-    "risk": 0.12,
-    "liquidity": 0.04
+    "trend": 0.16,
+    "momentum": 0.12,
+    "quality": 0.14,
+    "growth": 0.09,
+    "valuation": 0.08,
+    "revisions": 0.07,
+    "sector_macro": 0.06,
+    "risk": 0.10,
+    "liquidity": 0.03,
+    "efficiency": 0.05,
+    "risk_adjusted": 0.06,
+    "volume_confirmation": 0.04
   },
   "gates": {
     "minimum_score_coverage": 0.72,
@@ -31,7 +34,20 @@
     "minimum_market_regime_score": 35.0,
     "entry_ready_score": 62.0,
     "entry_strong_score": 74.0,
+    "entry_ready_min_confirmations": 4,
+    "entry_strong_min_confirmations": 5,
     "earnings_caution_days": 7
+  },
+  "portfolio_decision": {
+    "score_raw_weight": 0.55,
+    "cross_section_rank_weight": 0.45,
+    "selection_threshold": 72.0,
+    "maximum_new_positions": 3,
+    "maximum_active_sector_exposure": 2,
+    "minimum_breadth_200": 0.50,
+    "minimum_median_return_1m_pct": -1.0,
+    "minimum_median_return_6m_pct": 0.0,
+    "require_market_above_sma200": true
   },
   "exit_policy": {
     "hard_stop_return": -0.18,
