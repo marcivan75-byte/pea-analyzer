@@ -7,51 +7,67 @@ on:
 
 permissions:
   contents: read
-  actions: read
+  actions: write
 
 jobs:
   inspect:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
-      - name: Query recent TCT V24.4.2 runs on main
+      - name: Dispatch representative V24.4.2 POSTMARKET run on main if absent
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          mkdir -p diag
-          gh api \
-            -H 'Accept: application/vnd.github+json' \
-            "/repos/${GH_REPO}/actions/workflows/tct_next_session_context.yml/runs?branch=main&per_page=20" \
-            > diag/runs.json
-          python - <<'PY'
-          import json, pathlib
-          p=pathlib.Path('diag/runs.json')
-          data=json.loads(p.read_text())
-          runs=data.get('workflow_runs', [])
-          print('runs', len(runs))
-          for r in runs[:20]:
-              print(r['id'], r['event'], r['status'], r.get('conclusion'), r['created_at'], r['head_branch'], r['head_sha'])
-          pathlib.Path('diag/summary.txt').write_text('\n'.join(
-              f"{r['id']}|{r['event']}|{r['status']}|{r.get('conclusion')}|{r['created_at']}|{r['head_branch']}|{r['head_sha']}" for r in runs[:20]
-          ))
-          PY
-
-      - name: Download latest scheduled main run metadata and artifacts list
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
+          mkdir -p diag/target_artifact
+          gh api "/repos/${GH_REPO}/actions/workflows/tct_next_session_context.yml/runs?branch=main&per_page=30" > diag/runs_before.json
           RUN_ID=$(python - <<'PY'
           import json
-          data=json.load(open('diag/runs.json'))
-          candidates=[r for r in data.get('workflow_runs',[]) if r.get('event')=='schedule' and r.get('head_branch')=='main']
-          print(candidates[0]['id'] if candidates else '')
+          data=json.load(open('diag/runs_before.json'))
+          cutoff='2026-08-21T12:18:02Z'
+          c=[r for r in data.get('workflow_runs',[]) if r.get('head_branch')=='main' and r.get('created_at','')>cutoff]
+          print(c[0]['id'] if c else '')
           PY
           )
-          echo "RUN_ID=$RUN_ID" | tee diag/selected_run.txt
-          if [ -z "$RUN_ID" ]; then exit 0; fi
+          if [ -z "$RUN_ID" ]; then
+            START=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+            echo "$START" > diag/dispatch_start.txt
+            gh workflow run tct_next_session_context.yml --ref main -f phase=POSTMARKET
+            for i in $(seq 1 90); do
+              sleep 10
+              gh api "/repos/${GH_REPO}/actions/workflows/tct_next_session_context.yml/runs?branch=main&per_page=30" > diag/runs_poll.json
+              RUN_ID=$(python - <<'PY'
+          import json, pathlib
+          start=pathlib.Path('diag/dispatch_start.txt').read_text().strip()
+          data=json.load(open('diag/runs_poll.json'))
+          c=[r for r in data.get('workflow_runs',[]) if r.get('head_branch')=='main' and r.get('created_at','')>=start and r.get('event') in {'workflow_dispatch','schedule'}]
+          print(c[0]['id'] if c else '')
+          PY
+              )
+              if [ -n "$RUN_ID" ]; then break; fi
+            done
+          fi
+          if [ -z "$RUN_ID" ]; then
+            echo 'No post-merge V24.4.2 run found or created' >&2
+            exit 1
+          fi
+          echo "$RUN_ID" | tee diag/selected_run.txt
+
+      - name: Wait for selected run and collect metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          RUN_ID=$(cat diag/selected_run.txt)
+          for i in $(seq 1 120); do
+            gh api "/repos/${GH_REPO}/actions/runs/${RUN_ID}" > diag/run.json
+            STATUS=$(python -c "import json; print(json.load(open('diag/run.json'))['status'])")
+            echo "target run $RUN_ID status=$STATUS"
+            if [ "$STATUS" = completed ]; then break; fi
+            sleep 10
+          done
           gh api "/repos/${GH_REPO}/actions/runs/${RUN_ID}" > diag/run.json
           gh api "/repos/${GH_REPO}/actions/runs/${RUN_ID}/jobs?per_page=100" > diag/jobs.json
           gh api "/repos/${GH_REPO}/actions/runs/${RUN_ID}/artifacts?per_page=100" > diag/artifacts.json
@@ -60,7 +76,7 @@ jobs:
           run=json.load(open('diag/run.json'))
           jobs=json.load(open('diag/jobs.json')).get('jobs',[])
           arts=json.load(open('diag/artifacts.json')).get('artifacts',[])
-          lines=[f"run={run['id']} status={run['status']} conclusion={run.get('conclusion')} event={run['event']} created={run['created_at']} updated={run['updated_at']} head_sha={run['head_sha']}"]
+          lines=[f"run={run['id']} status={run['status']} conclusion={run.get('conclusion')} event={run['event']} created={run['created_at']} updated={run['updated_at']} head_branch={run['head_branch']} head_sha={run['head_sha']}"]
           for j in jobs:
               lines.append(f"job={j['id']} {j['name']} {j['status']} {j.get('conclusion')}")
               for s in j.get('steps',[]):
@@ -71,6 +87,25 @@ jobs:
           print(text)
           pathlib.Path('diag/details.txt').write_text(text)
           PY
+
+      - name: Download target run artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          RUN_ID=$(cat diag/selected_run.txt)
+          NAME=$(python - <<'PY'
+          import json
+          arts=json.load(open('diag/artifacts.json')).get('artifacts',[])
+          preferred=[a['name'] for a in arts if a['name'].startswith('tct-next-session-catalyst-v24-4-2-')]
+          print(preferred[0] if preferred else '')
+          PY
+          )
+          if [ -n "$NAME" ]; then
+            gh run download "$RUN_ID" --name "$NAME" --dir diag/target_artifact
+          fi
+          find diag/target_artifact -type f -maxdepth 5 -print | sort | tee diag/target_files.txt
 
       - name: Upload diagnostics
         uses: actions/upload-artifact@v4
