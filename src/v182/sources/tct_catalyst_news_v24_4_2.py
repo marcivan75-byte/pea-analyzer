@@ -56,6 +56,7 @@ def _catalog(cfg: dict) -> dict[str, tuple[str, ...]]:
 
 
 def classify_headline(headline: str, cfg: dict) -> tuple[str, float, float, float]:
+    """Classify with negation protection and specificity-first precedence."""
     text = _normalise(headline)
     negated = any(_normalise(p) in text for p in cfg.get("news", {}).get("negation_patterns", []))
     best = None
@@ -70,11 +71,12 @@ def classify_headline(headline: str, cfg: dict) -> tuple[str, float, float, floa
         direction = float(spec.get("direction", 0.0))
         first = min(text.find(p) for p in matches)
         confidence = min(1.0, 0.55 + 0.12 * (len(set(matches)) - 1) + (0.10 if first <= 80 else 0.0))
-        candidate = (magnitude * confidence, event_type, magnitude, direction, confidence)
-        if best is None or candidate[0] > best[0]:
+        specificity = max(len(p) for p in matches)
+        candidate = (specificity, magnitude * confidence, event_type, magnitude, direction, confidence)
+        if best is None or candidate[:2] > best[:2]:
             best = candidate
     if best is not None:
-        _, event_type, magnitude, direction, confidence = best
+        _, _, event_type, magnitude, direction, confidence = best
         return event_type, magnitude, direction, confidence
     spec = cfg["news"]["event_weights"].get("OTHER_NEWS", {})
     return "OTHER_NEWS", float(spec.get("magnitude", 35.0)), float(spec.get("direction", 0.0)), 0.35
@@ -160,7 +162,7 @@ def _save_cache(root: Path, cfg: dict, cache: dict) -> None:
 
 def _cached(cache: dict, key: str, ttl: float):
     item = cache.get(key)
-    if not isinstance(item, dict):
+    if not isinstance(item, dict) or item.get("error"):
         return None
     try:
         saved = datetime.fromisoformat(str(item["saved_at_utc"]).replace("Z", "+00:00"))
@@ -171,7 +173,7 @@ def _cached(cache: dict, key: str, ttl: float):
     age = (datetime.now(timezone.utc) - saved.astimezone(timezone.utc)).total_seconds()
     if age < 0 or age > ttl or not isinstance(item.get("articles"), list):
         return None
-    return item["articles"], item.get("error")
+    return item["articles"], None
 
 
 def _p95(values: list[float]) -> float | None:
@@ -234,7 +236,8 @@ def fetch_candidate_news(candidates: list[dict], *, start_utc: datetime, end_utc
                     articles, error = [], f"{type(exc).__name__}: {str(exc)[:160]}"
                 latencies.append(monotonic() - request_started)
                 articles = [dict(x) for x in articles if isinstance(x, dict)]
-                cache[key] = {"saved_at_utc": datetime.now(timezone.utc).isoformat(), "articles": articles, "error": error}
+                if error is None:
+                    cache[key] = {"saved_at_utc": datetime.now(timezone.utc).isoformat(), "articles": articles, "error": None}
                 results[isin] = (articles, error, False)
 
     if breaker:
