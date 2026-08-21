@@ -75,5 +75,5 @@ def calculate(frame: pd.DataFrame) -> dict:
     for window in (20,50,200):
         mm=result.get(f"mm{window}"); result[f"above_mm{window}"]=bool(mm is not None and close.iloc[-1]>mm) if mm is not None else None
     result.update(_catchup_52w(close,result.get("mm50"),result.get("perf_1m_pct")))
-    result.update(_dividend_features(frame)); result["positive_reversal_flag"]=bool(result.get("rsi14") is not None and 30<=result["rsi14"]<70 and result.get("macd_hist") is not None and result["macd_hist"]>0 and result.get("mm20") is not None and close.iloc[-1]>result["mm20"]); result["last_close"]=float(close.iloc[-1]); result["volume"]=float(volume.iloc[-1])
+    result.update(_dividend_features(frame)); rsi14=result.get("rsi14"); macd_hist=result.get("macd_hist"); mm20=result.get("mm20"); result["positive_reversal_flag"]=bool(isinstance(rsi14,(int,float)) and 30<=rsi14<70 and isinstance(macd_hist,(int,float)) and macd_hist>0 and isinstance(mm20,(int,float)) and close.iloc[-1]>mm20); result["last_close"]=float(close.iloc[-1]); result["volume"]=float(volume.iloc[-1])
     return result

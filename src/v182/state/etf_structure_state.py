@@ -107,7 +107,7 @@ def write_structural_state_snapshot(
         raise ValueError("ETF_STRUCTURE_STATE_INVALID_CAPTURE_TIME")
     metadata = load_latest(provenance_path)
     rows: list[dict[str, str]] = []
-    skipped = Counter()
+    skipped: Counter[str] = Counter()
     allowed_fields = tuple((config.get("fields") or {}).keys())
     accepted = set(map(str, config["accepted_validation_statuses"]))
 
@@ -236,8 +236,8 @@ def load_replay_observations(
     accepted = set(map(str, config["accepted_validation_statuses"]))
     field_specs: Mapping[str, Any] = config["fields"]
     observations: list[dict[str, Any]] = []
-    rejected = Counter()
-    eligible_by_field = Counter()
+    rejected: Counter[str] = Counter()
+    eligible_by_field: Counter[str] = Counter()
 
     for _, row in state.iterrows():
         isin = str(row.get("isin") or "").strip()

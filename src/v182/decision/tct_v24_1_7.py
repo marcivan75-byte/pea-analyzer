@@ -137,7 +137,9 @@ def evaluate_t1(row:pd.Series,cfg:dict)->dict:
     elif not (hist<0 and rising>=t1["macd_hist_acceleration_min"]): reasons.append("MACD_NEGATIVE_ACCELERATION_FAIL")
     k=_f(row,"stoch_k"); d=_f(row,"stoch_d"); rsi=_first_float(row,"rsi14","rsi"); sar=_f(row,"sar"); mm50=_f(row,"mm50")
     if any(x is None for x in (k,d,rsi,close,sar,mm50)): missing.append("TECHNICAL_GATE")
-    elif not (k>d and rsi<70 and k<70 and close>sar and close>mm50): reasons.append("TECHNICAL_GATE_FAIL")
+    else:
+        assert k is not None and d is not None and rsi is not None and close is not None and sar is not None and mm50 is not None
+        if not (k>d and rsi<70 and k<70 and close>sar and close>mm50): reasons.append("TECHNICAL_GATE_FAIL")
     quality=weighted_quality(row,t1["component_fields"],t1["components"],t1["quality_component_min_coverage"])
     if quality.score is None: missing.append("T1_QUALITY_COMPONENTS")
     if reasons: return {"status":"SHADOW_GATE_FAIL","decision":"NO_T1","reasons":reasons,"missing":missing,"quality_score":quality.score,"quality_coverage":quality.coverage}
@@ -151,6 +153,7 @@ def make_t1_state(row:pd.Series,evaluation:dict,signal_date:str)->T1State|None:
     if evaluation.get("status")!="SHADOW_T1_ELIGIBLE": return None
     bw=_first_float(row,"bb_bandwidth","bandwidth"); price=_first_float(row,"last_close","close"); atr=_first_float(row,"atr14","atr_14"); rank=_f(row,"tct_baseline_rank")
     if any(x is None for x in (bw,price,atr,rank)): return None
+    assert bw is not None and price is not None and atr is not None and rank is not None
     isin=str(row.get("isin","") or "")
     if not isin: return None
     rs=_first_float(row,"relative_strength_10d","rs_10d")

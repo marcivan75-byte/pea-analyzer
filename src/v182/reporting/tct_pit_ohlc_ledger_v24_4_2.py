@@ -24,6 +24,16 @@ def _column(history: pd.DataFrame, target: str) -> str | None:
     return None
 
 
+def _finite_float(value: object) -> float | None:
+    """Normalize a pandas scalar without leaking NaN into the PIT ledger."""
+    if value is None or pd.isna(value):
+        return None
+    try:
+        return float(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
 def build_ohlc_observations(mapping: pd.DataFrame, histories: dict[str, pd.DataFrame], cfg_v2431: dict, *, observed_at_utc: str, recent_bars: int = 10) -> pd.DataFrame:
     rows: list[dict] = []
     for _, item in mapping.iterrows():
@@ -46,8 +56,9 @@ def build_ohlc_observations(mapping: pd.DataFrame, histories: dict[str, pd.DataF
             values = {}
             for name, column in columns.items():
                 values[name] = None if column is None else pd.to_numeric(pd.Series([row.get(column)]), errors="coerce").iloc[0]
-            close = values["close"]
-            if pd.isna(close) or float(close) <= 0:
+            numeric_values = {name: _finite_float(value) for name, value in values.items()}
+            close = numeric_values["close"]
+            if close is None or close <= 0:
                 continue
             rows.append(
                 {
@@ -55,11 +66,11 @@ def build_ohlc_observations(mapping: pd.DataFrame, histories: dict[str, pd.DataF
                     "as_of_date": pd.Timestamp(date).date().isoformat(),
                     "isin": isin,
                     "yahoo_ticker": ticker,
-                    "session_open": None if pd.isna(values["open"]) else round(float(values["open"]), 8),
-                    "session_high": None if pd.isna(values["high"]) else round(float(values["high"]), 8),
-                    "session_low": None if pd.isna(values["low"]) else round(float(values["low"]), 8),
-                    "session_close": round(float(close), 8),
-                    "reference_close": round(float(close), 8),
+                    "session_open": None if numeric_values["open"] is None else round(numeric_values["open"], 8),
+                    "session_high": None if numeric_values["high"] is None else round(numeric_values["high"], 8),
+                    "session_low": None if numeric_values["low"] is None else round(numeric_values["low"], 8),
+                    "session_close": round(close, 8),
+                    "reference_close": round(close, 8),
                     "observed_at_utc": observed_at_utc,
                     "source": "LOCAL_DAILY_OHLCV_CACHE",
                     "network_download_required": False,

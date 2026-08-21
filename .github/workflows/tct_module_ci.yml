@@ -1,0 +1,49 @@
+name: TCT module validation
+
+on:
+  pull_request:
+    paths:
+      - "src/v182/**tct**"
+      - "src/v182/features/ohlcv_features.py"
+      - "src/v182/sources/yfinance_bulk.py"
+      - "config/TCT_*.json"
+      - "tests/test_tct*.py"
+      - "scripts/build_tct_package_v24_4_2.py"
+      - "docs/TCT_*.md"
+      - ".github/workflows/tct_module_ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project and audit tools
+        run: python -m pip install -e ".[test]"
+      - name: Functional lint
+        run: python -m ruff check src tests scripts
+      - name: TCT test suite
+        run: python -m pytest -q tests/test_tct*.py
+      - name: Published V24.4.2 type contract
+        run: |
+          python -m mypy --ignore-missing-imports \
+            src/v182/features/tct_catalyst_context_v24_4_2.py \
+            src/v182/reporting/tct_next_session_catalyst_run_v24_4_2.py \
+            src/v182/reporting/tct_pit_ohlc_ledger_v24_4_2.py \
+            src/v182/reporting/tct_v24_4_2_pit_lineage.py \
+            src/v182/reporting/tct_v24_4_2_pit_validator.py \
+            src/v182/sources/tct_catalyst_news_v24_4_2.py \
+            src/v182/decision/tct_timing_exact_v24_1_7.py \
+            src/v182/decision/tct_v24_1_7.py \
+            src/v182/backtest/sector_rotation_v2_pit_oos.py \
+            src/v182/features/ohlcv_features.py
+      - name: Deterministic release package
+        run: python -m pytest -q tests/test_tct_v24_4_2_release_package.py
