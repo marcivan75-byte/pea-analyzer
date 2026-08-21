@@ -6,6 +6,8 @@ Module : Actions PEA — Très Court Terme
 Production : V21.8.1 inchangée  
 Challenger : V24.4.2 SHADOW
 
+La production canonique V21.8.1 reste inchangée pendant toute la validation de V24.4.2.
+
 ## 1. Règle documentaire
 
 Le présent CDC définit **fonctions, interfaces, flux, exigences, modes dégradés, contrôles et critères d'acceptation**. Il ne constitue pas une seconde source de valeurs numériques. Toutes les pondérations, seuils, quotas, budgets, gates et définitions quantitatives sont normatifs dans `docs/TCT_REFERENTIEL_V24_4_2_FINAL.md` et dans les JSON V24.4.2 correspondants.
@@ -92,7 +94,7 @@ Le cache est strictement lié à la requête et à la fenêtre exacte ; il ne pe
 
 Le fetch fonctionne avec un parallélisme borné et des vagues. L'audit doit exposer : nombre demandé/terminé, erreurs, cache hits, workers, p50/p95, temps total, budget et état circuit-breaker.
 
-La seconde source news demeure un **contrat fail-soft non activé** tant qu'elle n'a pas passé une qualification spécifique : timestamps, pertinence, duplication, latence et provenance. L'échec GDELT ne doit jamais être masqué par une source non auditée.
+La seconde source news demeure soumise à une qualification spécifique : timestamps, pertinence, duplication, latence et provenance. Son activation doit rester fail-soft et ne doit jamais masquer un échec de la source primaire.
 
 ## 8. Budget d'exécution
 
@@ -181,9 +183,6 @@ Avant fusion :
 
 ## 17. Statut des points différés
 
-Deux recommandations ne sont pas activées sans preuve suffisante :
-
-- source news secondaire effective : contrat prêt, provider à qualifier ;
-- force relative sectorielle pondérée : à concevoir après disponibilité d'un univers sectoriel PIT stable et à valider dans une nouvelle epoch.
+Les recommandations non activées sans preuve suffisante restent explicitement documentées et nécessitent une nouvelle qualification avant toute promotion.
 
 Un classifieur NLP parallèle peut également être étudié ultérieurement mais ne remplace pas la lexicale V24.4.2 avant comparaison PIT.
