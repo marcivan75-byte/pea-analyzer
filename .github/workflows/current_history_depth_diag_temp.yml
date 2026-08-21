@@ -34,17 +34,14 @@ jobs:
           restore-keys: |
             ohlcv-v3-
 
-      - name: Restore governed structural/provenance state
+      - name: Restore weekly governed structural/provenance state
         id: provenance_cache
         uses: actions/cache/restore@v4
         with:
           path: state/provenance/
-          key: current-history-provenance-${{ github.run_id }}
+          key: current-history-weekly-provenance-${{ github.run_id }}
           restore-keys: |
-            daily-provenance-v2181-
             provenance-v2181-
-            provenance-v2161-
-            provenance-v216-
 
       - uses: actions/setup-python@v5
         with:
@@ -58,7 +55,7 @@ jobs:
       - name: Record restored cache evidence
         run: |
           mkdir -p outputs/audit/current_history_depth_diag
-          printf 'ohlcv_cache_hit=%s\nohlcv_key=%s\nprovenance_cache_hit=%s\nprovenance_key=%s\n' \
+          printf 'ohlcv_cache_hit=%s\nohlcv_key=%s\nweekly_provenance_cache_hit=%s\nweekly_provenance_key=%s\n' \
             '${{ steps.ohlcv_cache.outputs.cache-hit }}' \
             '${{ steps.ohlcv_cache.outputs.cache-matched-key }}' \
             '${{ steps.provenance_cache.outputs.cache-hit }}' \
