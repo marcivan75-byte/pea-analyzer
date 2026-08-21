@@ -96,9 +96,9 @@ jobs:
         continue-on-error: true
         run: python -m v182.reporting.tct_daily_trader_shadow_run_v24_3_1
 
-      - name: Persist compact daily closes for V24.4 PIT
+      - name: Persist compact daily closes for V24.4.1 PIT
         continue-on-error: true
-        run: python -m v182.reporting.tct_pit_close_ledger
+        run: python -m v182.reporting.tct_pit_close_ledger_v24_4_1
 
       - name: Publish Android tactical summaries
         if: always()
@@ -130,8 +130,8 @@ jobs:
           if [ -f outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json ]; then
             cat outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json
           fi
-          if [ -f outputs/audit/TCT_V24_4_0_PIT_CLOSE_LEDGER_AUDIT.json ]; then
-            cat outputs/audit/TCT_V24_4_0_PIT_CLOSE_LEDGER_AUDIT.json
+          if [ -f outputs/audit/TCT_V24_4_1_PIT_CLOSE_LEDGER_AUDIT.json ]; then
+            cat outputs/audit/TCT_V24_4_1_PIT_CLOSE_LEDGER_AUDIT.json
           fi
           if [ -f outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json ]; then
             cat outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json
@@ -183,7 +183,7 @@ jobs:
             outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json
             outputs/audit/ETF_CT_LT_V21_14_SHADOW.json
             outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json
-            outputs/audit/TCT_V24_4_0_PIT_CLOSE_LEDGER_AUDIT.json
+            outputs/audit/TCT_V24_4_1_PIT_CLOSE_LEDGER_AUDIT.json
             outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json
             outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx
             state/provenance/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv
