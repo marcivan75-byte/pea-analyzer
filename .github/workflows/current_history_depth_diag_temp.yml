@@ -1,0 +1,115 @@
+name: TEMP current governed history depth
+
+on:
+  push:
+    branches:
+      - audit/current-history-depth-v21-18
+
+permissions:
+  contents: read
+
+concurrency:
+  group: current-history-depth-diag-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  current-history-depth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore persistent OHLCV cache
+        id: ohlcv_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cache/
+          key: current-history-depth-${{ github.run_id }}
+          restore-keys: |
+            ohlcv-v3-
+
+      - name: Restore governed structural/provenance state
+        id: provenance_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: state/provenance/
+          key: current-history-provenance-${{ github.run_id }}
+          restore-keys: |
+            daily-provenance-v2181-
+            provenance-v2181-
+            provenance-v2161-
+            provenance-v216-
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Record restored cache evidence
+        run: |
+          mkdir -p outputs/audit/current_history_depth_diag
+          printf 'ohlcv_cache_hit=%s\nohlcv_key=%s\nprovenance_cache_hit=%s\nprovenance_key=%s\n' \
+            '${{ steps.ohlcv_cache.outputs.cache-hit }}' \
+            '${{ steps.ohlcv_cache.outputs.cache-matched-key }}' \
+            '${{ steps.provenance_cache.outputs.cache-hit }}' \
+            '${{ steps.provenance_cache.outputs.cache-matched-key }}' \
+            | tee outputs/audit/current_history_depth_diag/CACHE_RESTORE_STATUS.txt
+          if [ -f data/cache/actions/history_manifest.json ]; then cp data/cache/actions/history_manifest.json outputs/audit/current_history_depth_diag/ACTIONS_MANIFEST.json; fi
+          if [ -f data/cache/etf/history_manifest.json ]; then cp data/cache/etf/history_manifest.json outputs/audit/current_history_depth_diag/ETF_MANIFEST.json; fi
+          if [ -f state/provenance/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv ]; then cp state/provenance/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv outputs/audit/current_history_depth_diag/ETF_STRUCTURE_SNAPSHOT_BEFORE.csv; fi
+
+      - name: Replay and refresh governed ETF structure and inception evidence
+        run: python -m v182.reporting.etf_structure_refresh
+
+      - name: Audit actual current OHLCV history depth
+        run: python -m v182.audit.ohlcv_history_depth --as-of 2026-08-21
+
+      - name: Print current status counts
+        run: |
+          python - <<'PY'
+          import json
+          import pandas as pd
+          from pathlib import Path
+
+          summary = json.loads(Path('outputs/audit/OHLCV_PRIMARY_HISTORY_DEPTH_SUMMARY.json').read_text(encoding='utf-8'))
+          df = pd.read_csv('outputs/audit/OHLCV_PRIMARY_HISTORY_DEPTH.csv', sep=';', encoding='utf-8-sig', dtype=str)
+          print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+          print('PRIMARY_BY_ASSET')
+          print(pd.crosstab(df['asset_class'], df['primary_status']).to_string())
+          print('STRESS_BY_ASSET')
+          print(pd.crosstab(df['asset_class'], df['stress_status']).to_string())
+          print('ETF_NON_FULL')
+          cols = [c for c in [
+              'isin','ticker','primary_status','first_observed_date','last_observed_date',
+              'share_class_inception_date','listing_or_launch_date','launch_date_source',
+              'observed_primary_months','missing_primary_months','short_history_reason',
+              'primary_calibration_eligible'
+          ] if c in df.columns]
+          print(df[(df['asset_class']=='ETF') & (df['primary_status']!='PRIMARY_FULL_FROM_ANCHOR')][cols].to_csv(index=False, sep=';'))
+          PY
+
+      - name: Save refreshed structural snapshot evidence
+        if: always()
+        run: |
+          if [ -f state/provenance/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv ]; then cp state/provenance/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv outputs/audit/current_history_depth_diag/ETF_STRUCTURE_SNAPSHOT_AFTER.csv; fi
+          if [ -f outputs/audit/V21_16_ETF_INCEPTION_EVIDENCE.json ]; then cp outputs/audit/V21_16_ETF_INCEPTION_EVIDENCE.json outputs/audit/current_history_depth_diag/; fi
+
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: CURRENT_HISTORY_DEPTH_DIAG_${{ github.run_id }}
+          path: |
+            outputs/audit/OHLCV_PRIMARY_HISTORY_DEPTH.csv
+            outputs/audit/OHLCV_PRIMARY_HISTORY_DEPTH_SUMMARY.json
+            outputs/audit/current_history_depth_diag/
+            outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
+          if-no-files-found: error
+          retention-days: 7
