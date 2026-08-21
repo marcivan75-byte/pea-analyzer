@@ -1,0 +1,1 @@
+{"version":"V21.18.1R4","weights":{"freshness":0.225,"completeness":0.225,"pit_quality":0.18,"source_reliability":0.135,"sector_coverage":0.135,"latency_sla_compliance":0.10},"thresholds":{"quarantine_below":65.0,"signal_context_below":80.0},"decision_influence":0.0}

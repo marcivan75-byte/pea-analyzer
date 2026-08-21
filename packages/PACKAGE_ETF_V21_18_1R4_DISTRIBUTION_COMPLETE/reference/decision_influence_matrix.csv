@@ -1,0 +1,10 @@
+﻿layer,mode,max_positive_weight,status,rule,promotion_gate
+MT 38 PIT,SCORE_REFERENCE,1.0,ACTIVE_REFERENCE_NO_ORDERS,PIT core validé historiquement,Gel poids/seuils
+Structure,COMMITTEE_CONTEXT,0.0,CHALLENGER,Historique PIT manquant,OOS dédié requis
+Morningstar/SRI,GATE_CONTEXT,0.0,PARTIAL_DATA,"Règles explicites, absence neutralisée",Pas de score inventé
+CT/LT,SHADOW_CONTEXT,0.0,SHADOW_ONLY,Couverture >=70%; pas d'attribution,Promotion PIT/OOS
+Rotation,ANTI_CHASE_CONTEXT,0.0,SHADOW_ONLY,Contribution positive interdite,IR/turnover/DD OOS
+Fund flows,SHADOW_CONTEXT,0.0,SHADOW_ONLY,Fenêtres valides et PIT,OOS dédié
+Benchmark,CONTEXT,0.0,PARTIAL_52_OF_102,"Exact ISIN, preuve A/B",Prix indice vérifiés
+Tracking error,BLOCKED,0.0,OFF,Price map vide/non prouvé,252 rendements synchronisés + OOS
+Entry/Exit V21.8,GATE,0.0,DECISION_SUPPORT_ONLY,Sélection n'est pas entrée,Aucun ordre réel
