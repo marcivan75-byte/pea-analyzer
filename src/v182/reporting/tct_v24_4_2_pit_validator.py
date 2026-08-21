@@ -19,14 +19,32 @@ def _num(frame: pd.DataFrame, column: str) -> pd.Series:
     return pd.to_numeric(frame.get(column, pd.Series(np.nan, index=frame.index)), errors="coerce")
 
 
+def _primary_metrics(frame: pd.DataFrame) -> dict:
+    recall, hits, targets = base._top_k_recall(frame, "movement_potential_score", k=10)
+    tech_recall, _, _ = base._top_k_recall(frame, "technical_impulse_score", k=10)
+    decile, decile_rows = base._top_decile_lift(frame, "movement_potential_score")
+    tech_decile, _ = base._top_decile_lift(frame, "technical_impulse_score")
+    spearman = _spearman_without_scipy(_num(frame, "movement_potential_score"), _num(frame, "realized_abs_return_pct"))
+    tech_spearman = _spearman_without_scipy(_num(frame, "technical_impulse_score"), _num(frame, "realized_abs_return_pct"))
+    return {
+        "top10_absolute_mover_recall": recall,
+        "top10_absolute_mover_recall_hits": hits,
+        "top10_absolute_mover_recall_targets": targets,
+        "technical_only_top10_recall": tech_recall,
+        "top10_recall_improvement_pp_vs_technical": None if recall is None or tech_recall is None else (recall - tech_recall) * 100.0,
+        "top_decile_absolute_return_lift": decile,
+        "top_decile_rows": decile_rows,
+        "technical_only_top_decile_lift": tech_decile,
+        "top_decile_lift_improvement_vs_technical": None if decile is None or tech_decile is None else decile - tech_decile,
+        "spearman_movement_score_vs_abs_return": spearman,
+        "technical_only_spearman_vs_abs_return": tech_spearman,
+        "spearman_improvement_vs_technical": None if spearman is None or tech_spearman is None else spearman - tech_spearman,
+    }
+
+
 def _significant_metrics(frame: pd.DataFrame, high_threshold: float = 70.0) -> dict:
     if frame.empty:
-        return {
-            "significant_move_precision": None,
-            "significant_move_recall": None,
-            "technical_significant_move_precision": None,
-            "technical_significant_move_recall": None,
-        }
+        return {"significant_move_precision": None, "significant_move_recall": None}
     actual = _num(frame, "significant_session_move_flag") == 1.0
     score = _num(frame, "movement_potential_score")
     technical = _num(frame, "technical_impulse_score")
@@ -35,9 +53,7 @@ def _significant_metrics(frame: pd.DataFrame, high_threshold: float = 70.0) -> d
         tp = int((predicted & actual).sum())
         predicted_n = int(predicted.sum())
         actual_n = int(actual.sum())
-        precision = None if predicted_n == 0 else tp / predicted_n
-        recall = None if actual_n == 0 else tp / actual_n
-        return precision, recall, predicted_n, actual_n
+        return (None if predicted_n == 0 else tp / predicted_n, None if actual_n == 0 else tp / actual_n, predicted_n, actual_n)
 
     precision, recall, predicted_n, actual_n = metrics(score >= float(high_threshold))
     tech_precision, tech_recall, tech_n, _ = metrics(technical >= float(high_threshold))
@@ -80,6 +96,20 @@ def _regime(value) -> str:
     return "NEUTRAL"
 
 
+def _vix_quintiles(series: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(series, errors="coerce")
+    out = pd.Series("UNKNOWN", index=series.index, dtype=object)
+    clean = numeric.dropna()
+    if len(clean) < 10 or clean.nunique() < 5:
+        return out
+    try:
+        buckets = pd.qcut(clean.rank(method="first"), 5, labels=["Q1", "Q2", "Q3", "Q4", "Q5"])
+    except ValueError:
+        return out
+    out.loc[clean.index] = buckets.astype(str)
+    return out
+
+
 def _stability(frame: pd.DataFrame, gates: dict) -> tuple[dict, pd.DataFrame]:
     if frame.empty:
         return {"status": "NOT_EVALUABLE", "qualified_slices": 0}, pd.DataFrame()
@@ -89,8 +119,15 @@ def _stability(frame: pd.DataFrame, gates: dict) -> tuple[dict, pd.DataFrame]:
     work["_dir"] = _num(work, "direction_bias_score")
     work["_tech_dir"] = _num(work, "technical_direction_score")
     work["market_regime_v242"] = work.get("global_risk_on_score", pd.Series(index=work.index, dtype=float)).map(_regime)
+    if "global_vix_return_pct" in work.columns:
+        work["vix_change_quintile"] = _vix_quintiles(work["global_vix_return_pct"])
     rows: list[dict] = []
-    dimensions = [("sector_yf", "SECTOR"), ("market_regime_v242", "MARKET_REGIME"), ("candidate_rank_reason", "CANDIDATE_RANK_REASON")]
+    dimensions = [
+        ("sector_yf", "SECTOR"),
+        ("market_regime_v242", "MARKET_REGIME"),
+        ("vix_change_quintile", "VIX_CHANGE_QUINTILE"),
+        ("candidate_rank_reason", "CANDIDATE_RANK_REASON"),
+    ]
     for column, label in dimensions:
         if column not in work.columns:
             continue
@@ -104,7 +141,7 @@ def _stability(frame: pd.DataFrame, gates: dict) -> tuple[dict, pd.DataFrame]:
                 "slice_type": label,
                 "slice_value": str(value),
                 "rows": int(len(group)),
-                "qualified_for_stability_gate": bool(len(group) >= min_rows),
+                "qualified_for_stability_gate": bool(len(group) >= min_rows and str(value) != "UNKNOWN"),
                 "mean_session_abs_extreme_pct": base._mean(_num(group, "realized_session_abs_extreme_pct")),
                 "direction_hit_rate": hit,
                 "technical_direction_hit_rate": tech_hit,
@@ -114,42 +151,49 @@ def _stability(frame: pd.DataFrame, gates: dict) -> tuple[dict, pd.DataFrame]:
     qualified = table[table["qualified_for_stability_gate"]] if not table.empty else table
     max_degradation = float(gates.get("stability", {}).get("maximum_allowed_direction_hit_degradation_pp_in_qualified_slice", 10.0))
     degradations = qualified["direction_delta_pp"].dropna() if not qualified.empty else pd.Series(dtype=float)
-    passed = bool(degradations.empty or (degradations >= -max_degradation).all())
+    no_bad_degradation = bool(degradations.empty or (degradations >= -max_degradation).all())
     regimes = qualified[qualified["slice_type"] == "MARKET_REGIME"]["slice_value"].nunique() if not qualified.empty else 0
     sectors = qualified[qualified["slice_type"] == "SECTOR"]["slice_value"].nunique() if not qualified.empty else 0
-    required_regimes = int(gates.get("stability", {}).get("required_regimes_when_available", 2))
-    required_sectors = int(gates.get("stability", {}).get("minimum_qualified_sector_slices_for_review", 2))
-    enough_slices = bool(regimes >= required_regimes and sectors >= required_sectors)
-    status = "PASS_STABILITY_REVIEW" if passed and enough_slices else "INSUFFICIENT_OR_UNSTABLE"
+    vix_quintiles = qualified[qualified["slice_type"] == "VIX_CHANGE_QUINTILE"]["slice_value"].nunique() if not qualified.empty else 0
+    enough = bool(
+        regimes >= int(gates.get("stability", {}).get("required_regimes_when_available", 2))
+        and sectors >= int(gates.get("stability", {}).get("minimum_qualified_sector_slices_for_review", 2))
+    )
     return {
-        "status": status,
+        "status": "PASS_STABILITY_REVIEW" if no_bad_degradation and enough else "INSUFFICIENT_OR_UNSTABLE",
         "qualified_slices": int(len(qualified)),
         "qualified_regimes": int(regimes),
         "qualified_sectors": int(sectors),
-        "no_direction_degradation_beyond_limit": passed,
+        "qualified_vix_quintiles": int(vix_quintiles),
+        "no_direction_degradation_beyond_limit": no_bad_degradation,
         "manual_review_only": True,
     }, table
 
 
 def validate_ledger(ledger: pd.DataFrame, gates: dict) -> tuple[dict, pd.DataFrame, pd.DataFrame]:
     if ledger is None or ledger.empty:
-        payload, slices, changes = base.validate_ledger(pd.DataFrame(), gates)
-        payload["version"] = VERSION
-        payload["validation_epoch"] = gates.get("validation_epoch")
-        payload["amplitude_label"] = gates.get("primary_amplitude_label")
-        return payload, slices, changes
+        maturity = base._maturity(pd.DataFrame(), gates)
+        return {
+            "version": VERSION,
+            "validation_epoch": gates.get("validation_epoch"),
+            "amplitude_label": gates.get("primary_amplitude_label"),
+            "pit_mechanics": "DAILY_OHLC_MULTILABEL_CAUSAL_LINEAGE",
+            "maturity": maturity,
+            "primary_metrics": {},
+            "secondary_metrics": {},
+            "stability": {"status": "NOT_EVALUABLE", "qualified_slices": 0},
+            "research_verdict": {"status": "NOT_EVALUABLE_BEFORE_MATURITY", "movement_validation": "NOT_EVALUABLE", "direction_validation": "NOT_EVALUABLE", "promotion_authority": False},
+        }, pd.DataFrame(), pd.DataFrame()
+
     work = ledger.copy()
     target = str(gates.get("target_phase", "PREOPEN"))
-    phase_mask = work.get("phase", pd.Series(index=work.index, dtype=object)).astype(str).eq(target)
-    work = work[phase_mask].copy()
+    work = work[work.get("phase", pd.Series(index=work.index, dtype=object)).astype(str).eq(target)].copy()
     work["realized_session_abs_extreme_pct"] = _num(work, "realized_session_abs_extreme_pct")
     labeled = work.dropna(subset=["realized_session_abs_extreme_pct"]).copy()
-
     adapted = labeled.copy()
     adapted["realized_abs_return_pct"] = adapted["realized_session_abs_extreme_pct"]
-    base._spearman = _spearman_without_scipy
     maturity = base._maturity(adapted, gates)
-    primary = base._primary_metrics(adapted)
+    primary = _primary_metrics(adapted)
     primary.update(_significant_metrics(labeled, 70.0))
     secondary = base._secondary_metrics(adapted, 70.0, 25.0)
     secondary.update(_ohlc_metrics(labeled))
@@ -158,7 +202,7 @@ def validate_ledger(ledger: pd.DataFrame, gates: dict) -> tuple[dict, pd.DataFra
     stability, stability_table = _stability(labeled, gates)
     slices = pd.concat([base_slices, stability_table], ignore_index=True, sort=False) if not stability_table.empty else base_slices
     changes = base._preopen_postmarket_changes(ledger)
-    payload = {
+    return {
         "version": VERSION,
         "validation_epoch": gates.get("validation_epoch"),
         "pit_mechanics": "DAILY_OHLC_MULTILABEL_CAUSAL_LINEAGE",
@@ -174,8 +218,8 @@ def validate_ledger(ledger: pd.DataFrame, gates: dict) -> tuple[dict, pd.DataFra
         "holdout_opened": False,
         "promotion_authority": False,
         "retuning_allowed": False,
-    }
-    return payload, slices, changes
+        "module_global_mutation": False,
+    }, slices, changes
 
 
 def _android(payload: dict, generated_at: str) -> str:
