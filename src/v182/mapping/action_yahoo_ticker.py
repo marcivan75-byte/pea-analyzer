@@ -89,8 +89,26 @@ def apply_configured_action_identity_overlay(actions_df: pd.DataFrame, overlay_p
     return audit
 
 
+def apply_configured_action_listing_evidence(
+    actions_df: pd.DataFrame,
+    evidence_path: str | Path | None = None,
+) -> dict:
+    """Apply V21.17 frozen Euronext listing metadata by exact ISIN.
+
+    The overlay is metadata-only, never fabricates OHLCV and fails closed when a
+    pre-existing listing date disagrees with the official frozen evidence.
+    """
+    from v182.sources.action_listing_evidence import (
+        DEFAULT_FROZEN_EVIDENCE,
+        apply_frozen_listing_evidence,
+    )
+
+    path = DEFAULT_FROZEN_EVIDENCE if evidence_path is None else Path(evidence_path)
+    return apply_frozen_listing_evidence(actions_df, path)
+
+
 def qualify_action_yahoo_tickers(actions_df: pd.DataFrame) -> list[TickerQualification]:
-    """Hydrate sourced identities, then qualify ambiguous legacy Action symbols by MIC.
+    """Hydrate sourced Action metadata, then qualify ambiguous legacy Yahoo symbols.
 
     Raw symbols such as ``ABP`` or ``AASB`` are unsafe Yahoo identifiers: Yahoo
     can resolve an unqualified symbol to a security listed on another exchange,
@@ -98,12 +116,15 @@ def qualify_action_yahoo_tickers(actions_df: pd.DataFrame) -> list[TickerQualifi
     therefore used as the venue authority for supported legacy rows.
 
     Before legacy symbol qualification, the governed V21.9 identity overlay
-    hydrates canonical identity-only rows from attributed ISIN mappings. Existing
+    hydrates canonical identity-only rows from attributed ISIN mappings and the
+    V21.17 exact-ISIN Euronext overlay adds only official listing-date metadata.
+    The latter never creates price history or calibration eligibility. Existing
     qualified tickers and unsupported/secondary venues are left untouched. No
     issuer-country guessing, fuzzy-name-only promotion, canonical-MIC fallback,
     or fallback to an unqualified symbol is performed.
     """
     apply_configured_action_identity_overlay(actions_df)
+    apply_configured_action_listing_evidence(actions_df)
 
     required = {"yahoo_ticker", "euronext_mic"}
     if not required.issubset(actions_df.columns):
