@@ -111,14 +111,25 @@ def test_v22_1_runner_builds_context_shadow_and_immutable_pit(tmp_path: Path):
     assert payload["fixed_take_profit_enabled"] is False
     assert payload["fixed_stop_loss_enabled"] is False
     assert payload["real_orders_enabled"] is False
+    assert payload["runtime_patch_version"] == "ACTION_CT_V22.1.1_PERFORMANCE_OBSERVABILITY_PATCH"
+    assert payload["runtime"]["schema"]["valid"] is True
+    assert payload["runtime"]["timings_seconds"]["total_seconds"] > 0.0
+    assert "agreement_v21_vs_v22_1_pct" in payload["runtime"]["divergence"]
+    assert payload["context_coverage"]["field_coverage_pct"]["relative_strength"] > 0.0
 
     shadow_path = root / "outputs" / "daily_tct_ct" / "ACTION_CT_V22_1_0_SHADOW.csv"
     ledger_path = root / "state" / "action_ct_v22_1" / "ACTION_CT_V22_1_0_PIT_LEDGER.csv"
     context_path = root / "outputs" / "audit" / "ACTION_CT_V22_1_0_CONTEXT.json"
+    runtime_path = root / "outputs" / "audit" / "ACTION_CT_V22_1_0_RUNTIME.json"
+    errors_path = root / "outputs" / "audit" / "ACTION_CT_V22_1_0_ERRORS.json"
+    divergences_path = root / "outputs" / "audit" / "ACTION_CT_V22_1_0_DIVERGENCES.csv"
     mobile_path = root / "outputs" / "mobile" / "ANDROID_ACTION_CT_V22_1_SHADOW.md"
     assert shadow_path.exists()
     assert ledger_path.exists()
     assert context_path.exists()
+    assert runtime_path.exists()
+    assert errors_path.exists()
+    assert divergences_path.exists()
     assert mobile_path.exists()
 
     shadow = pd.read_csv(shadow_path, sep=";", encoding="utf-8-sig")
@@ -127,6 +138,10 @@ def test_v22_1_runner_builds_context_shadow_and_immutable_pit(tmp_path: Path):
     assert len(ledger) == 30
     assert shadow["entry_component_quality_target"].notna().any()
     assert shadow["entry_component_relative_strength_sector"].notna().any()
+    assert "valuation_risk_score" in shadow.columns
+    assert shadow["valuation_risk_score"].isna().all()
+    assert shadow["asymmetric_risk_score"].notna().any()
+    assert shadow["context_richness_score"].notna().any()
     assert ledger["snapshot_fingerprint"].astype(str).str.len().eq(64).all()
 
     second = run(root=root, now=datetime(2026, 8, 21, 17, 5, tzinfo=timezone.utc))

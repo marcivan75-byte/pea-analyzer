@@ -31,7 +31,8 @@ def build(output: Path) -> dict:
     digest = sha256(output.read_bytes()).hexdigest()
     summary = {
         "package": manifest["package"],
-        "version": manifest["version"],
+        "decision_version": manifest["decision_version"],
+        "runtime_patch_version": manifest["runtime_patch_version"],
         "status": manifest["status"],
         "file_count": len(files),
         "bytes": output.stat().st_size,
@@ -44,10 +45,10 @@ def build(output: Path) -> dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build complete Action CT V22.1 package")
+    parser = argparse.ArgumentParser(description="Build complete Action CT V22.1.1 runtime-patch package")
     parser.add_argument(
         "--output",
-        default="dist/ACTION_CT_V22_1_0_COMPLETE.zip",
+        default="dist/ACTION_CT_V22_1_1_COMPLETE.zip",
         help="ZIP output path relative to repository root unless absolute",
     )
     args = parser.parse_args()

@@ -8,12 +8,15 @@ on:
       - "src/v182/features/action_ct_v22_0.py"
       - "src/v182/features/action_ct_context_v22_1.py"
       - "src/v182/features/action_ct_v22_1.py"
+      - "src/v182/features/ct_math.py"
+      - "src/v182/features/sector_rotation.py"
       - "src/v182/reporting/action_ct_shadow_run_v22_0.py"
       - "src/v182/reporting/action_ct_shadow_run_v22_1.py"
       - "tests/test_action_ct_v22_0.py"
       - "tests/test_action_ct_v22_0_runner.py"
       - "tests/test_action_ct_v22_1.py"
       - "tests/test_action_ct_v22_1_runner.py"
+      - "tests/test_action_ct_v22_1_runtime_patch.py"
       - "docs/ACTION_CT_*.md"
       - "packages/ACTION_CT_V22_1_0/**"
       - "scripts/build_action_ct_package_v22_1.py"
@@ -44,6 +47,8 @@ jobs:
           python -m py_compile src/v182/features/action_ct_v22_0.py
           python -m py_compile src/v182/features/action_ct_context_v22_1.py
           python -m py_compile src/v182/features/action_ct_v22_1.py
+          python -m py_compile src/v182/features/ct_math.py
+          python -m py_compile src/v182/features/sector_rotation.py
           python -m py_compile src/v182/reporting/action_ct_shadow_run_v22_0.py
           python -m py_compile src/v182/reporting/action_ct_shadow_run_v22_1.py
           python -m py_compile scripts/build_action_ct_package_v22_1.py
@@ -67,12 +72,20 @@ jobs:
               assert abs(sum(cfg['exit_risk_weights'].values())-1.0) < 1e-12
           v221=json.loads(Path('config/ACTION_CT_V22_1_0_SHADOW.json').read_text())
           assert v221['parent']=='ACTION_CT_V22.0.0_DAILY_WEEKLY_CONFLUENCE_SHADOW'
+          assert v221['runtime_patch_version']=='ACTION_CT_V22.1.1_PERFORMANCE_OBSERVABILITY_PATCH'
+          assert v221['entry_weights_sensitivity']['enabled'] is False
+          assert v221['entry_weights_sensitivity']['activation_requires_holdout_validation'] is True
+          assert v221['governance']['runtime_patch_must_not_change_pit_epoch'] is True
+          assert v221['pit_validation']['epoch']=='ACTION_CT_V22.1.0_ONLY'
           assert 'quality_target' in v221['entry_weights']
           assert 'theme_macro' in v221['entry_weights']
           assert 'valuation_event_risk' in v221['exit_risk_weights']
+          assert v221['context_overlay']['sector_rotation']['min_sector_size'] >= 1
+          assert v221['runtime_observability']['schema_validation_enabled'] is True
+          assert v221['runtime_observability']['timers_enabled'] is True
           PY
-      - name: Unit and integration tests
-        run: pytest -q tests/test_action_ct_v22_0.py tests/test_action_ct_v22_0_runner.py tests/test_action_ct_v22_1.py tests/test_action_ct_v22_1_runner.py
+      - name: Unit integration performance and regression tests
+        run: pytest -q tests/test_action_ct_v22_0.py tests/test_action_ct_v22_0_runner.py tests/test_action_ct_v22_1.py tests/test_action_ct_v22_1_runner.py tests/test_action_ct_v22_1_runtime_patch.py
       - name: Static workflow isolation guard
         run: |
           python - <<'PY'
@@ -83,10 +96,14 @@ jobs:
               'src/v182/features/action_ct_v22_0.py',
               'src/v182/features/action_ct_v22_1.py',
               'src/v182/features/action_ct_context_v22_1.py',
+              'src/v182/features/ct_math.py',
           ):
               text=Path(filename).read_text().lower()
               assert 'from v182.features.tct' not in text
               assert 'from v182.decision.tct' not in text
+          runner=Path('src/v182/reporting/action_ct_shadow_run_v22_1.py').read_text()
+          assert 'decision_influence": 0.0' in runner
+          assert 'real_orders_enabled": False' in runner
           workflow=Path('.github/workflows/committee_tct_ct_daily.yml').read_text()
           assert 'action_ct_shadow_run_v22_0' in workflow
           assert 'action_ct_shadow_run_v22_1' in workflow
@@ -94,13 +111,14 @@ jobs:
           assert 'state/action_ct_v22_1/' in workflow
           PY
       - name: Build complete CT package
-        run: python scripts/build_action_ct_package_v22_1.py --output dist/ACTION_CT_V22_1_0_COMPLETE.zip
+        run: python scripts/build_action_ct_package_v22_1.py --output dist/ACTION_CT_V22_1_1_COMPLETE.zip
       - name: Validate package archive
         run: |
           python - <<'PY'
           from pathlib import Path
+          import json
           import zipfile
-          path=Path('dist/ACTION_CT_V22_1_0_COMPLETE.zip')
+          path=Path('dist/ACTION_CT_V22_1_1_COMPLETE.zip')
           assert path.exists() and path.stat().st_size>0
           with zipfile.ZipFile(path) as z:
               names=set(z.namelist())
@@ -108,16 +126,24 @@ jobs:
                   'config/ACTION_CT_V22_1_0_SHADOW.json',
                   'src/v182/features/action_ct_v22_1.py',
                   'src/v182/features/action_ct_context_v22_1.py',
+                  'src/v182/features/ct_math.py',
+                  'src/v182/features/sector_rotation.py',
                   'src/v182/reporting/action_ct_shadow_run_v22_1.py',
+                  'tests/test_action_ct_v22_1_runtime_patch.py',
                   'docs/ACTION_CT_REFERENTIEL_V22_1_0_FINAL.md',
+                  'docs/ACTION_CT_V22_1_1_RUNTIME_PATCH_2026-08-21.md',
                   'packages/ACTION_CT_V22_1_0/MANIFEST.json',
               }
               assert required <= names
+              manifest=json.loads(z.read('packages/ACTION_CT_V22_1_0/MANIFEST.json'))
+              assert manifest['package']=='ACTION_CT_V22_1_1_COMPLETE'
+              assert manifest['decision_version']=='22.1.0'
+              assert manifest['runtime_patch_version']=='22.1.1'
           PY
       - name: Upload complete CT package
         uses: actions/upload-artifact@v4
         with:
-          name: ACTION_CT_V22_1_0_COMPLETE
-          path: dist/ACTION_CT_V22_1_0_COMPLETE.zip
+          name: ACTION_CT_V22_1_1_COMPLETE
+          path: dist/ACTION_CT_V22_1_1_COMPLETE.zip
           if-no-files-found: error
           retention-days: 30

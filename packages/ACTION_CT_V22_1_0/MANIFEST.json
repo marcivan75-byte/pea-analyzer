@@ -1,9 +1,11 @@
 {
-  "package": "ACTION_CT_V22_1_0_COMPLETE",
-  "version": "22.1.0",
+  "package": "ACTION_CT_V22_1_1_COMPLETE",
+  "decision_version": "22.1.0",
+  "runtime_patch_version": "22.1.1",
   "status": "SHADOW_RESEARCH_ONLY",
   "generated_for": "PEA Analyzer Actions CT",
   "production_baseline_unchanged": true,
+  "pit_epoch_unchanged": "ACTION_CT_V22.1.0_ONLY",
   "baseline": "config/V21_ACTIONS_REFERENCE_V21_0.json",
   "files": [
     "config/ACTION_CT_V22_0_0_SHADOW.json",
@@ -14,6 +16,7 @@
     "src/v182/features/action_ct_v22_0.py",
     "src/v182/features/action_ct_context_v22_1.py",
     "src/v182/features/action_ct_v22_1.py",
+    "src/v182/features/ct_math.py",
     "src/v182/features/action_decision_enhancements.py",
     "src/v182/features/sector_rotation.py",
     "src/v182/features/instrument_theme_v2.py",
@@ -27,10 +30,12 @@
     "tests/test_action_ct_v22_0_runner.py",
     "tests/test_action_ct_v22_1.py",
     "tests/test_action_ct_v22_1_runner.py",
+    "tests/test_action_ct_v22_1_runtime_patch.py",
     "docs/ACTION_CT_REFERENTIEL_V22_0_0_SHADOW.md",
     "docs/ACTION_CT_AUDIT_V22_0_0_2026-08-21.md",
     "docs/ACTION_CT_REFERENTIEL_V22_1_0_FINAL.md",
     "docs/ACTION_CT_AUDIT_V22_1_0_FINAL_2026-08-21.md",
+    "docs/ACTION_CT_V22_1_1_RUNTIME_PATCH_2026-08-21.md",
     "packages/ACTION_CT_V22_1_0/README.md",
     "packages/ACTION_CT_V22_1_0/MANIFEST.json",
     ".github/workflows/action_ct_v22_validation.yml",
@@ -42,6 +47,9 @@
     "outputs/daily_tct_ct/ACTION_CT_V22_1_0_SHADOW.csv",
     "outputs/audit/ACTION_CT_V22_1_0_AUDIT.json",
     "outputs/audit/ACTION_CT_V22_1_0_CONTEXT.json",
+    "outputs/audit/ACTION_CT_V22_1_0_RUNTIME.json",
+    "outputs/audit/ACTION_CT_V22_1_0_ERRORS.json",
+    "outputs/audit/ACTION_CT_V22_1_0_DIVERGENCES.csv",
     "outputs/audit/ACTION_CT_V22_1_0_PIT_VALIDATION.json",
     "outputs/mobile/ANDROID_ACTION_CT_V22_1_SHADOW.md",
     "state/action_ct_v22_1/ACTION_CT_V22_1_0_LATEST.csv",
@@ -56,6 +64,8 @@
     "fixed_stop_loss_enabled": false,
     "real_orders_enabled": false,
     "holdout_locked": true,
-    "automatic_promotion": false
+    "automatic_promotion": false,
+    "entry_weights_unchanged": true,
+    "pit_epoch_unchanged": true
   }
 }

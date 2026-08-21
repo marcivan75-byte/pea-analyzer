@@ -1,65 +1,88 @@
 from __future__ import annotations
 
-import math
-from typing import Any
-
 import numpy as np
 import pandas as pd
 
 from v182.features.action_ct_v22_0 import compute_action_ct_snapshot as compute_v22_0
+from v182.features.ct_math import clip_score, finite, mean_available, truthy, weighted_score
 
 
-def _finite(value: Any) -> float | None:
-    try:
-        x = float(value)
-    except (TypeError, ValueError):
-        return None
-    return x if math.isfinite(x) else None
-
-
-def _clip(value: float) -> float:
-    return float(np.clip(value, 0.0, 100.0))
-
-
-def _mean(values: list[float | None]) -> float | None:
-    clean = [_finite(v) for v in values]
-    clean = [v for v in clean if v is not None]
-    return float(np.mean(clean)) if clean else None
-
-
-def _weighted(components: dict[str, float | None], weights: dict[str, float]) -> tuple[float | None, float]:
-    numerator = 0.0
-    observed = 0.0
-    total = float(sum(weights.values()))
-    for key, weight in weights.items():
-        value = _finite(components.get(key))
-        if value is None:
-            continue
-        numerator += _clip(value) * float(weight)
-        observed += float(weight)
-    if observed <= 0 or total <= 0:
-        return None, 0.0
-    return _clip(numerator / observed), float(np.clip(observed / total, 0.0, 1.0))
+ENGINE_VERSION = "ACTION_CT_V22.1.0_CONTEXT_ENRICHED_SHADOW"
 
 
 def _context_score(context: dict, key: str) -> float | None:
-    value = _finite(context.get(key))
+    value = finite(context.get(key))
     if value is None or not 0.0 <= value <= 100.0:
         return None
     return value
 
 
-def _truthy(value: Any) -> bool | None:
-    if isinstance(value, (bool, np.bool_)):
-        return bool(value)
-    if value is None:
-        return None
-    text = str(value).strip().lower()
-    if text in {"true", "1", "yes", "oui"}:
-        return True
-    if text in {"false", "0", "no", "non"}:
-        return False
-    return None
+def _asymmetric_risk(frame: pd.DataFrame, cfg: dict) -> dict[str, float | None]:
+    """Research-only downside asymmetry diagnostics over the latest 20 sessions."""
+    if frame.empty or "close" not in frame.columns:
+        return {
+            "drawdown_20d_pct": None,
+            "gain_loss_ratio_20d": None,
+            "downside_volatility_20d_pct": None,
+            "asymmetric_risk_score": None,
+        }
+    close = pd.to_numeric(frame["close"], errors="coerce").dropna().tail(21)
+    if len(close) < 10:
+        return {
+            "drawdown_20d_pct": None,
+            "gain_loss_ratio_20d": None,
+            "downside_volatility_20d_pct": None,
+            "asymmetric_risk_score": None,
+        }
+    returns = close.pct_change().dropna()
+    recent = close.tail(20)
+    peak = float(recent.max()) if not recent.empty else np.nan
+    last = float(recent.iloc[-1]) if not recent.empty else np.nan
+    drawdown = ((last / peak) - 1.0) * 100.0 if np.isfinite(peak) and peak > 0 and np.isfinite(last) else None
+
+    positive = returns[returns > 0]
+    negative = returns[returns < 0].abs()
+    mean_gain = float(positive.mean()) if not positive.empty else None
+    mean_loss = float(negative.mean()) if not negative.empty else None
+    gain_loss_ratio = mean_loss / mean_gain if mean_gain and mean_gain > 0 and mean_loss is not None else None
+    downside_vol = float(returns.where(returns < 0, 0.0).std(ddof=0) * 100.0) if not returns.empty else None
+
+    risk_cfg = cfg.get("research_risk_diagnostics", {})
+    drawdown_scale = max(float(risk_cfg.get("drawdown_risk_full_scale_pct", 12.0)), 1e-9)
+    ratio_neutral = float(risk_cfg.get("gain_loss_ratio_neutral", 1.0))
+    ratio_full = max(float(risk_cfg.get("gain_loss_ratio_full_scale", 2.0)), ratio_neutral + 1e-9)
+    drawdown_risk = None if drawdown is None else clip_score(abs(min(drawdown, 0.0)) / drawdown_scale * 100.0)
+    ratio_risk = None
+    if gain_loss_ratio is not None:
+        ratio_risk = clip_score((gain_loss_ratio - ratio_neutral) / (ratio_full - ratio_neutral) * 100.0)
+    asymmetry = mean_available([drawdown_risk, ratio_risk])
+    return {
+        "drawdown_20d_pct": drawdown,
+        "gain_loss_ratio_20d": gain_loss_ratio,
+        "downside_volatility_20d_pct": downside_vol,
+        "asymmetric_risk_score": asymmetry,
+    }
+
+
+def _liquidity_diagnostics(context: dict, cfg: dict) -> tuple[float | None, str | None]:
+    turnover = None
+    for field in ("median_turnover_20d_eur_ct", "median_turnover_eur", "turnover_20d_median_eur"):
+        turnover = finite(context.get(field))
+        if turnover is not None:
+            break
+    if turnover is None:
+        return None, None
+    thresholds = cfg.get("data_quality_thresholds", {})
+    floor = float(cfg["shadow_thresholds"].get("minimum_median_turnover_eur_research", 500000.0))
+    preferred = max(float(thresholds.get("preferred_median_turnover_eur", 1000000.0)), floor)
+    robust = max(float(thresholds.get("robust_median_turnover_eur", 3000000.0)), preferred)
+    if turnover < floor:
+        return 0.0, "LIQUIDITY_BELOW_FLOOR"
+    if turnover < preferred:
+        return 40.0, "LIQUIDITY_THIN"
+    if turnover < robust:
+        return 70.0, None
+    return 100.0, None
 
 
 def compute_action_ct_snapshot_v22_1(frame: pd.DataFrame, cfg: dict, context: dict | None = None) -> dict:
@@ -67,14 +90,14 @@ def compute_action_ct_snapshot_v22_1(frame: pd.DataFrame, cfg: dict, context: di
     context = context or {}
     base = compute_v22_0(frame, cfg, context)
     if base.get("status") != "SUCCESS_SHADOW":
-        base["version_engine"] = "ACTION_CT_V22.1.0_CONTEXT_ENRICHED_SHADOW"
+        base["version_engine"] = ENGINE_VERSION
         return base
 
     th = cfg["shadow_thresholds"]
     entry_components = dict(base.get("entry_components") or {})
     exit_components = dict(base.get("exit_components") or {})
 
-    quality_target = _mean(
+    quality_target = mean_available(
         [
             _context_score(context, "morningstar_action_score"),
             _context_score(context, "target_upside_growth_score"),
@@ -82,11 +105,11 @@ def compute_action_ct_snapshot_v22_1(frame: pd.DataFrame, cfg: dict, context: di
         ]
     )
 
-    macro_evidence = _truthy(context.get("macro_evidence_sufficient"))
+    macro_evidence = truthy(context.get("macro_evidence_sufficient"))
     macro_score = _context_score(context, "sector_macro_score")
     if macro_evidence is False:
         macro_score = None
-    theme_macro = _mean(
+    theme_macro = mean_available(
         [
             _context_score(context, "theme_rotation_exposure_score"),
             _context_score(context, "theme_risk_adjusted_score"),
@@ -97,32 +120,27 @@ def compute_action_ct_snapshot_v22_1(frame: pd.DataFrame, cfg: dict, context: di
 
     entry_components["quality_target"] = quality_target
     entry_components["theme_macro"] = theme_macro
-    entry_score, entry_coverage = _weighted(entry_components, cfg["entry_weights"])
+    entry_score, entry_coverage = weighted_score(entry_components, cfg["entry_weights"])
 
     valuation_discount = _context_score(context, "valuation_discount_score")
     theme_avcr = _context_score(context, "theme_weighted_AVCR")
-    days_to_earnings = _finite(context.get("days_to_earnings"))
+    days_to_earnings = finite(context.get("days_to_earnings"))
     event_risk = 100.0 if days_to_earnings is not None and 0 <= days_to_earnings <= float(th["earnings_event_risk_days"]) else None
-    valuation_event_risk = _mean(
-        [
-            None if valuation_discount is None else 100.0 - valuation_discount,
-            theme_avcr,
-            event_risk,
-        ]
-    )
+    valuation_risk = mean_available([None if valuation_discount is None else 100.0 - valuation_discount, theme_avcr])
+    valuation_event_risk = mean_available([valuation_risk, event_risk])
     exit_components["valuation_event_risk"] = valuation_event_risk
-    exit_score, exit_coverage = _weighted(exit_components, cfg["exit_risk_weights"])
+    exit_score, exit_coverage = weighted_score(exit_components, cfg["exit_risk_weights"])
 
-    trend_score = _finite(base.get("trend_score"))
-    momentum_score = _finite(base.get("momentum_score"))
-    weekly_score = _finite(base.get("weekly_score"))
-    sector_score = _finite(base.get("sector_context_score"))
-    catalyst_score = _finite(base.get("catalyst_score"))
-    ret20 = _finite(base.get("return_20d"))
-    sma50 = _finite(base.get("sma50_ct"))
-    price = _finite(base.get("reference_close"))
-    rvol = _finite(base.get("daily_rvol_ct"))
-    volume_accel = _finite(base.get("volume_acceleration_ct"))
+    trend_score = finite(base.get("trend_score"))
+    momentum_score = finite(base.get("momentum_score"))
+    weekly_score = finite(base.get("weekly_score"))
+    sector_score = finite(base.get("sector_context_score"))
+    catalyst_score = finite(base.get("catalyst_score"))
+    ret20 = finite(base.get("return_20d"))
+    sma50 = finite(base.get("sma50_ct"))
+    price = finite(base.get("reference_close"))
+    rvol = finite(base.get("daily_rvol_ct"))
+    volume_accel = finite(base.get("volume_acceleration_ct"))
 
     confirmations = {
         "TREND": bool(trend_score is not None and trend_score >= 65.0 and sma50 is not None and price is not None and price >= sma50),
@@ -174,29 +192,43 @@ def compute_action_ct_snapshot_v22_1(frame: pd.DataFrame, cfg: dict, context: di
     else:
         exit_state = "HOLD_SUPPORTIVE_SHADOW"
 
-    warnings = [w for w in str(base.get("warnings") or "").split("|") if w]
+    risk_diag = _asymmetric_risk(frame, cfg)
+    liquidity_quality, liquidity_warning = _liquidity_diagnostics(context, cfg)
+    context_richness = float(entry_coverage) * (1.0 if quality_target is not None or theme_macro is not None else 0.85)
+
+    warnings = [warning for warning in str(base.get("warnings") or "").split("|") if warning]
     if theme_overvaluation:
         warnings.append("THEME_OVERVALUATION_RISK")
     if macro_adverse:
         warnings.append("MACRO_CONTEXT_ADVERSE")
     if quality_weak:
         warnings.append("QUALITY_TARGET_WEAK")
+    if liquidity_warning:
+        warnings.append(liquidity_warning)
+    asymmetry_warning = float(cfg.get("research_risk_diagnostics", {}).get("warning_min", 70.0))
+    if risk_diag["asymmetric_risk_score"] is not None and float(risk_diag["asymmetric_risk_score"]) >= asymmetry_warning:
+        warnings.append("ASYMMETRIC_DOWNSIDE_RISK")
     warnings = list(dict.fromkeys(warnings))
 
     base.update(
         {
-            "version_engine": "ACTION_CT_V22.1.0_CONTEXT_ENRICHED_SHADOW",
+            "version_engine": ENGINE_VERSION,
             "entry_score": entry_score,
             "entry_coverage": entry_coverage,
             "entry_state": entry_state,
             "entry_confirmation_count": confirmation_count,
-            "entry_confirmations": "|".join(k for k, v in confirmations.items() if v),
+            "entry_confirmations": "|".join(key for key, value in confirmations.items() if value),
             "exit_risk_score": exit_score,
             "exit_coverage": exit_coverage,
             "exit_state_raw": exit_state,
             "quality_target_score": quality_target,
             "theme_macro_score": theme_macro,
             "valuation_event_risk_score": valuation_event_risk,
+            "valuation_risk_score": valuation_risk,
+            "event_risk_score": event_risk,
+            "context_richness_score": context_richness,
+            "liquidity_quality_score": liquidity_quality,
+            **risk_diag,
             "theme_overvaluation_risk_ct": theme_overvaluation,
             "macro_context_adverse_ct": macro_adverse,
             "quality_target_weak_ct": quality_weak,
