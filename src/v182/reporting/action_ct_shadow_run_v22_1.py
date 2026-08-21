@@ -42,12 +42,9 @@ def _canonical(value) -> str:
             return ""
     except (TypeError, ValueError):
         return str(value).strip()
-    try:
-        x = float(value)
-        if math.isfinite(x):
-            return format(x, ".12g")
-    except (TypeError, ValueError):
-        pass
+    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.notna(numeric) and math.isfinite(float(numeric)):
+        return format(float(numeric), ".12g")
     return str(value).strip()
 
 
