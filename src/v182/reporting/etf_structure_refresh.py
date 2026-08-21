@@ -103,12 +103,11 @@ def _coverage(frame:pd.DataFrame,field:str)->float:
 
 
 def run(root: Path=ROOT) -> dict:
-    """Enrich ETF structural data and inception evidence, then persist governed state.
+    """Enrich ETF structural data, benchmark metadata and inception evidence.
 
-    Dynamic structural fields and static exact-ISIN inception evidence share the
-    existing governed state/provenance channel. Inception evidence only explains
-    short OHLCV histories; it cannot synthesize missing returns or change model
-    eligibility, weights, thresholds, Entry/Exit, holdouts or T1/T2 scope.
+    Dynamic structural fields, explicit exact-ISIN benchmark names and static
+    inception evidence share the existing governed state/provenance channel.
+    V21.18 does not infer benchmark price symbols or activate tracking error.
     """
     outputs=root/"outputs"
     source=outputs/"V18.2_PEA_ETF_MASTER_ENRICHED.csv"
@@ -129,8 +128,8 @@ def run(root: Path=ROOT) -> dict:
     if state_replay_obs:
         df,state_replay_quarantined=apply_observations(df,state_replay_obs)
 
-    # V21.10 structural TER/AUM layer. Unit tests with reduced frames that do not
-    # contain a provider column deliberately skip network collection.
+    # V21.10 structural TER/AUM layer, extended in V21.18 with an explicitly
+    # labelled benchmark name from the same exact-ISIN source response.
     structural_observations=[]
     structural_failures=[]
     structural_metrics={"status":"SKIPPED_PROVIDER_COLUMN_MISSING","requested":0}
@@ -188,10 +187,11 @@ def run(root: Path=ROOT) -> dict:
         "ter_pct","fund_total_assets_eur_m","aum_m","diversification_direct_score",
         "direct_sector_hhi","direct_top_holdings_concentration_pct","direct_holdings_count",
         "share_class_inception_date","listing_or_launch_date","reported_first_nav_date",
+        "official_benchmark","tracking_error_1y_pct","tracking_error_3y_pct","tracking_error_5y_pct",
     )}
     payload={
         "status":"SUCCESS",
-        "version":"V21.16_ETF_STRUCTURAL_AND_INCEPTION_STATE",
+        "version":"V21.18_ETF_STRUCTURAL_BENCHMARK_STATE",
         "generated_at_utc":datetime.now(timezone.utc).isoformat(),
         "source":str(source.relative_to(root)),
         "tickers_requested":len(ticker_to_isin),
@@ -238,6 +238,10 @@ def run(root: Path=ROOT) -> dict:
             "top_holdings_concentration_kept_separate":True,
             "inception_evidence_changes_calibration_eligibility":False,
             "synthetic_pre_inception_history":False,
+            "official_benchmark_requires_explicit_label":True,
+            "benchmark_name_inference":False,
+            "benchmark_price_symbol_inference":False,
+            "tracking_error_activation":False,
             "stress_calibration_weight":0.0,
         },
     }
@@ -245,6 +249,7 @@ def run(root: Path=ROOT) -> dict:
     (audit_dir/"V21_10_ETF_STRUCTURAL_DATA.json").write_text(encoded,encoding="utf-8")
     (audit_dir/"V21_ETF_FUND_STRUCTURE.json").write_text(encoded,encoding="utf-8")
     (audit_dir/"V21_16_ETF_INCEPTION_EVIDENCE.json").write_text(encoded,encoding="utf-8")
+    (audit_dir/"V21_18_ETF_BENCHMARK_COVERAGE.json").write_text(encoded,encoding="utf-8")
     print(encoded)
     return payload
 
