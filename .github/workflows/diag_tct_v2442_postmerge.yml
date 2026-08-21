@@ -1,0 +1,81 @@
+name: Diagnostic TCT V24.4.2 post-merge
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/diag_tct_v2442_postmerge.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query recent TCT V24.4.2 runs on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p diag
+          gh api \
+            -H 'Accept: application/vnd.github+json' \
+            "/repos/${GH_REPO}/actions/workflows/tct_next_session_context.yml/runs?branch=main&per_page=20" \
+            > diag/runs.json
+          python - <<'PY'
+          import json, pathlib
+          p=pathlib.Path('diag/runs.json')
+          data=json.loads(p.read_text())
+          runs=data.get('workflow_runs', [])
+          print('runs', len(runs))
+          for r in runs[:20]:
+              print(r['id'], r['event'], r['status'], r.get('conclusion'), r['created_at'], r['head_branch'], r['head_sha'])
+          pathlib.Path('diag/summary.txt').write_text('\n'.join(
+              f"{r['id']}|{r['event']}|{r['status']}|{r.get('conclusion')}|{r['created_at']}|{r['head_branch']}|{r['head_sha']}" for r in runs[:20]
+          ))
+          PY
+
+      - name: Download latest scheduled main run metadata and artifacts list
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          RUN_ID=$(python - <<'PY'
+          import json
+          data=json.load(open('diag/runs.json'))
+          candidates=[r for r in data.get('workflow_runs',[]) if r.get('event')=='schedule' and r.get('head_branch')=='main']
+          print(candidates[0]['id'] if candidates else '')
+          PY
+          )
+          echo "RUN_ID=$RUN_ID" | tee diag/selected_run.txt
+          if [ -z "$RUN_ID" ]; then exit 0; fi
+          gh api "/repos/${GH_REPO}/actions/runs/${RUN_ID}" > diag/run.json
+          gh api "/repos/${GH_REPO}/actions/runs/${RUN_ID}/jobs?per_page=100" > diag/jobs.json
+          gh api "/repos/${GH_REPO}/actions/runs/${RUN_ID}/artifacts?per_page=100" > diag/artifacts.json
+          python - <<'PY'
+          import json, pathlib
+          run=json.load(open('diag/run.json'))
+          jobs=json.load(open('diag/jobs.json')).get('jobs',[])
+          arts=json.load(open('diag/artifacts.json')).get('artifacts',[])
+          lines=[f"run={run['id']} status={run['status']} conclusion={run.get('conclusion')} event={run['event']} created={run['created_at']} updated={run['updated_at']} head_sha={run['head_sha']}"]
+          for j in jobs:
+              lines.append(f"job={j['id']} {j['name']} {j['status']} {j.get('conclusion')}")
+              for s in j.get('steps',[]):
+                  lines.append(f"  step={s['number']} {s['name']} {s['status']} {s.get('conclusion')}")
+          for a in arts:
+              lines.append(f"artifact={a['id']} {a['name']} size={a['size_in_bytes']} expired={a['expired']} digest={a.get('digest')}")
+          text='\n'.join(lines)
+          print(text)
+          pathlib.Path('diag/details.txt').write_text(text)
+          PY
+
+      - name: Upload diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: tct-v2442-postmerge-diagnostic
+          path: diag/
+          if-no-files-found: error
+          retention-days: 2
