@@ -26,9 +26,10 @@ def test_catalyst_workflow_applies_v2442_lineage_before_validator():
 def test_active_lineage_config_forbids_synthetic_replay_and_requires_quality():
     cfg = json.loads((ROOT / "config" / "TCT_V24_4_2_CATALYST_CONTEXT_SHADOW.json").read_text(encoding="utf-8"))
     lineage = cfg["pit_lineage"]
-    assert lineage["first_subsequent_close_only"] is True
+    assert lineage["first_subsequent_session_only"] is True
     assert lineage["minimum_snapshot_outcome_coverage"] >= 0.80
     assert lineage["snapshot_fingerprint_required"] is True
+    assert lineage["fingerprint_algorithm"] == "TCT_PIT_SHA256_CANONICAL_V3"
     assert lineage["fail_closed_on_fingerprint_mismatch"] is True
     assert lineage["historical_replay_without_historical_tct_snapshots_forbidden"] is True
     governance = cfg["governance"]
