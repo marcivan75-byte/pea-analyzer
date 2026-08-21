@@ -55,7 +55,8 @@
   "news": {
     "primary_source": "GDELT",
     "secondary_source": "GOOGLE_NEWS_RSS_FAILSOFT",
-    "secondary_source_enabled": true,
+    "secondary_source_enabled": false,
+    "secondary_activation_requires_qualification": true,
     "secondary_trigger_batch_error_rate": 0.30,
     "secondary_rss_base_url": "https://news.google.com/rss/search",
     "secondary_rss_hl": "fr",
@@ -68,7 +69,7 @@
     "deduplicate_headlines": true,
     "max_headlines_persisted": 5,
     "candidate_query_suffix": "",
-    "query_policy": "EXACT_COMPANY_NAME_WINDOWED_MULTILINGUAL_WITH_NEGATION_AND_FAILSOFT_RSS",
+    "query_policy": "EXACT_COMPANY_NAME_WINDOWED_MULTILINGUAL_WITH_NEGATION_SECONDARY_CONTRACT_INACTIVE",
     "cache": {
       "enabled": true,
       "path": "state/tct_context/TCT_V24_4_2_NEWS_CACHE.json",
