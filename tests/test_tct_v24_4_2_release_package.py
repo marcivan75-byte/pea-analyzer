@@ -3,13 +3,14 @@ from __future__ import annotations
 from hashlib import sha256
 from pathlib import Path
 import json
+import runpy
 import zipfile
-
-from scripts.build_tct_package_v24_4_2 import build
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "docs" / "TCT_RELEASE_MANIFEST_V24_4_2.json"
+BUILD_MODULE = runpy.run_path(str(ROOT / "scripts" / "build_tct_package_v24_4_2.py"))
+build = BUILD_MODULE["build"]
 
 
 def test_release_manifest_is_complete_and_excludes_runtime_observations():
