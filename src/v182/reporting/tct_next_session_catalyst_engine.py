@@ -25,7 +25,31 @@ AndroidFn = Callable[[pd.DataFrame, str, str, dict, dict], str]
 
 
 def _default_android(frame: pd.DataFrame, phase: str, generated_at: str, market: dict, audit: dict) -> str:
+    del audit
     return legacy._android_summary(frame, phase, generated_at, market)
+
+
+def _append_without_seed_labels(frame: pd.DataFrame, path: Path) -> tuple[pd.DataFrame, int, int]:
+    """Append immutable PIT predictions without deriving outcomes from a live seed.
+
+    V24.4.2 outcomes are produced only by its dedicated first-subsequent-session
+    OHLC lineage. This prevents a transient close-only label from entering the
+    new evidence epoch before the causal OHLC ledger is applied.
+    """
+    existing = legacy._read_csv(path)
+    if frame.empty:
+        legacy._write_csv(existing, path)
+        return existing, 0, 0
+    before = len(existing)
+    combined = pd.concat([existing, frame], ignore_index=True, sort=False) if not existing.empty else frame.copy()
+    if "snapshot_key" in combined.columns:
+        combined = combined.drop_duplicates("snapshot_key", keep="first")
+    sort_cols = [c for c in ["snapshot_generated_at_utc", "movement_potential_score", "isin"] if c in combined.columns]
+    if sort_cols:
+        ascending = [True if c == "snapshot_generated_at_utc" else False if c == "movement_potential_score" else True for c in sort_cols]
+        combined = combined.sort_values(sort_cols, ascending=ascending)
+    legacy._write_csv(combined, path)
+    return combined, max(0, len(combined) - before), 0
 
 
 def run_engine(
@@ -45,13 +69,9 @@ def run_engine(
     audit_filename: str,
     android_filename: str = "ANDROID_TCT_NEXT_SESSION_CATALYST.md",
     android_summary_fn: AndroidFn = _default_android,
+    label_with_seed: bool = True,
 ) -> dict:
-    """Run one TCT catalyst snapshot with explicit dependencies.
-
-    No module globals are changed. Versioned runners supply their config,
-    feature functions and news source explicitly, eliminating cross-version
-    state pollution when several runners are imported in the same process.
-    """
+    """Run one TCT catalyst snapshot with explicit dependencies and no monkey patching."""
     cfg = json.loads((root / "config" / config_filename).read_text(encoding="utf-8"))
     started = monotonic()
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -150,7 +170,10 @@ def run_engine(
     output_path = outdir / output_filename
     legacy._write_csv(output, output_path)
     ledger_path = root / cfg["state"]["catalyst_ledger_path"]
-    ledger, new_ledger_rows, newly_labeled = legacy._append_ledger(output, ledger_path, seed=seed, generated_at=generated_at)
+    if label_with_seed:
+        ledger, new_ledger_rows, newly_labeled = legacy._append_ledger(output, ledger_path, seed=seed, generated_at=generated_at)
+    else:
+        ledger, new_ledger_rows, newly_labeled = _append_without_seed_labels(output, ledger_path)
 
     market_payload = asdict(market)
     high_potential = 0
@@ -185,6 +208,7 @@ def run_engine(
         "news_conflicts": conflicts,
         "ledger_rows": int(len(ledger)),
         "new_ledger_rows": int(new_ledger_rows),
+        "seed_based_outcome_labeling_enabled": bool(label_with_seed),
         "legacy_preopen_outcomes_labeled_post_close": int(newly_labeled),
         "global_market": market_payload,
         "news_batch_metrics": news_metrics,
