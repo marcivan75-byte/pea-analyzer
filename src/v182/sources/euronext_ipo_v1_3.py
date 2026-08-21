@@ -35,6 +35,28 @@ def _field_after_label(lines: list[str], label: str) -> str:
     return ""
 
 
+def _parse_euronext_table_date(value: object) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none", "nat"}:
+        return None
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        try:
+            return date.fromisoformat(text)
+        except ValueError:
+            return None
+    # Euronext displays European dates such as 04/05/2023. These are day-first
+    # by contract; relying on pandas' US-first default silently changes dates.
+    dayfirst = bool(re.search(r"\d{1,2}[/.]\d{1,2}[/.]\d{4}", text))
+    parsed = pd.to_datetime(text, errors="coerce", dayfirst=dayfirst)
+    if pd.isna(parsed):
+        return None
+    return parsed.date()
+
+
 def parse_ipo_price(value: object) -> tuple[float | None, str]:
     text = str(value or "").strip()
     if not text:
@@ -223,7 +245,7 @@ def collect_euronext_v1_3(
             columns = {str(column).strip().lower(): column for column in table.columns}
             for _, row in table.iterrows():
                 rows_seen += 1
-                parsed = legacy._parse_date(row.get(columns["date"]))
+                parsed = _parse_euronext_table_date(row.get(columns["date"]))
                 if not parsed:
                     continue
                 page_dates.append(parsed)
