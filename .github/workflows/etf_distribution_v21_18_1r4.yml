@@ -1,0 +1,60 @@
+name: ETF V21.18.1R4 distribution validation
+
+on:
+  pull_request:
+    paths:
+      - "packages/PACKAGE_ETF_V21_18_1R4_DISTRIBUTION_COMPLETE/**"
+      - ".github/workflows/etf_distribution_v21_18_1r4.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: packages/PACKAGE_ETF_V21_18_1R4_DISTRIBUTION_COMPLETE
+    env:
+      SOURCE_DATE_EPOCH: "1787270400"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: packages/PACKAGE_ETF_V21_18_1R4_DISTRIBUTION_COMPLETE/pyproject.toml
+      - name: Install package and audit tools
+        run: python -m pip install -e ".[test]"
+      - name: Validate package integrity governance and schemas
+        run: python tools/validate_package.py --json-report validation_report.json
+      - name: Confirm strict canonical-source gate remains closed
+        run: |
+          if python tools/validate_package.py --strict; then
+            echo "Strict validation unexpectedly passed"
+            exit 1
+          fi
+          echo "Expected fail-closed canonical source gate confirmed"
+      - name: Unit and security regression tests
+        run: python -m pytest -q
+      - name: Static quality and compilation checks
+        run: |
+          python -m ruff check src tests tools
+          python -m mypy src/etf_pack tools/validate_package.py
+          python -m compileall -q src tools
+      - name: Build deterministic distributions
+        run: |
+          python -m pip wheel . --no-deps -w dist-a
+          python -m pip wheel . --no-deps -w dist-b
+          test "$(sha256sum dist-a/*.whl | cut -d' ' -f1)" = "$(sha256sum dist-b/*.whl | cut -d' ' -f1)"
+      - name: Upload validated wheel and report
+        uses: actions/upload-artifact@v4
+        with:
+          name: etf-pack-v21-18-1r4
+          path: |
+            packages/PACKAGE_ETF_V21_18_1R4_DISTRIBUTION_COMPLETE/dist-a/*.whl
+            packages/PACKAGE_ETF_V21_18_1R4_DISTRIBUTION_COMPLETE/validation_report.json
+          if-no-files-found: error
+          retention-days: 30

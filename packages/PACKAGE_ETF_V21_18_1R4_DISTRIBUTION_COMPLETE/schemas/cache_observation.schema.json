@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ETF governed cache observation",
+  "type": "object",
+  "required": ["namespace", "instrument_id", "field", "value", "as_of", "collected_at", "source", "value_hash", "pit_status", "ttl_policy"],
+  "properties": {
+    "namespace": {"enum": ["structure", "ohlcv", "flows", "rotation", "benchmark"]},
+    "instrument_id": {"type": "string", "minLength": 1},
+    "field": {"type": "string", "minLength": 1},
+    "value": {},
+    "as_of": {"type": "string", "format": "date-time"},
+    "collected_at": {"type": "string", "format": "date-time"},
+    "source": {"type": "string", "minLength": 1},
+    "value_hash": {"type": "string", "pattern": "^[a-fA-F0-9]{64}$"},
+    "pit_status": {"enum": ["VERIFIED", "MISSING", "BLOCKED", "QUARANTINED"]},
+    "ttl_policy": {"type": "string", "minLength": 1},
+    "quarantine_reason": {"type": ["string", "null"]}
+  },
+  "additionalProperties": true
+}

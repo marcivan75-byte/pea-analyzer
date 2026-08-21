@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["pit_complete", "independent_holdout", "periods", "ci_passed", "independent_review", "reviewed_by", "reviewed_at"],
+  "properties": {
+    "pit_complete": {"type": "boolean"},
+    "independent_holdout": {"type": "boolean"},
+    "periods": {"type": "integer", "minimum": 0},
+    "information_ratio": {"type": ["number", "null"]},
+    "turnover": {"type": ["number", "null"]},
+    "max_drawdown_delta": {"type": ["number", "null"]},
+    "ci_passed": {"type": "boolean"},
+    "independent_review": {"type": "boolean"},
+    "reviewed_by": {"type": "string", "minLength": 1},
+    "reviewed_at": {"type": "string", "format": "date-time"}
+  }
+}

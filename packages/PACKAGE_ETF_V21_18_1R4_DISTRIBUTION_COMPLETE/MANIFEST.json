@@ -1,0 +1,290 @@
+{
+  "release": "V21.18.1R4",
+  "source_commit": "49c53d87855ce27e76213c65916cb5a579cdf590",
+  "file_count_excluding_manifests": 54,
+  "cache_data_included": false,
+  "cache_scaffold_included": true,
+  "unsafe_features": {
+    "tracking_error": false,
+    "adaptive_weights": false,
+    "real_orders": false,
+    "shadow_live": false
+  },
+  "files": [
+    {
+      "path": "CACHE_POLICY.md",
+      "size": 569,
+      "sha256": "CF4D19F1ED13C8DCF100407AA6C00034CC7B3BEF0A08489EAE283CEC9B2FC19B"
+    },
+    {
+      "path": "cache/benchmark/data/.gitkeep",
+      "size": 1,
+      "sha256": "01BA4719C80B6FE911B091A7C05124B64EEECE964E09C058EF8F9805DACA546B"
+    },
+    {
+      "path": "cache/flows/data/.gitkeep",
+      "size": 1,
+      "sha256": "01BA4719C80B6FE911B091A7C05124B64EEECE964E09C058EF8F9805DACA546B"
+    },
+    {
+      "path": "cache/ohlcv/data/.gitkeep",
+      "size": 1,
+      "sha256": "01BA4719C80B6FE911B091A7C05124B64EEECE964E09C058EF8F9805DACA546B"
+    },
+    {
+      "path": "cache/README.md",
+      "size": 463,
+      "sha256": "C7B78304DE75CF53220CDDA0E0CD0D486083DF252F92BAB42FC6C1E3E84D0BEB"
+    },
+    {
+      "path": "cache/rotation/data/.gitkeep",
+      "size": 1,
+      "sha256": "01BA4719C80B6FE911B091A7C05124B64EEECE964E09C058EF8F9805DACA546B"
+    },
+    {
+      "path": "cache/structure/data/.gitkeep",
+      "size": 1,
+      "sha256": "01BA4719C80B6FE911B091A7C05124B64EEECE964E09C058EF8F9805DACA546B"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "size": 595,
+      "sha256": "BBB4D44ED64EA394038C7416AA171BDC69D6C9542F6F67BC35289E574AF68C19"
+    },
+    {
+      "path": "config/ETF_BENCHMARK_PRICE_MAP_V21_18.csv",
+      "size": 108,
+      "sha256": "CA88AA4311D4488C94B6E670410AD6CCA8ABDDDCE9E921389E75BC625A8AA9B0"
+    },
+    {
+      "path": "config/ETF_BENCHMARK_TRACKING_V21_18.json",
+      "size": 888,
+      "sha256": "C4DF540B2B452551685045E3434A40A890FD01ECF019E46CBE6B79E3011C95CD"
+    },
+    {
+      "path": "config/ETF_CT_LT_SHADOW_V21_14.json",
+      "size": 2097,
+      "sha256": "B9E5ACD24EFE69CEE5370FD8DAFCC00C0CD387FF1A4734B545480983E6EB355C"
+    },
+    {
+      "path": "config/ETF_DQS_V21_18_1R4.json",
+      "size": 268,
+      "sha256": "32C749B26909BA2EB66E11AFCCDE5690512F57E0E33116F50CAC6BE52AE71E35"
+    },
+    {
+      "path": "config/ETF_PROMOTION_THRESHOLDS_V21_18_1R4.json",
+      "size": 193,
+      "sha256": "52BD57DEAFCE3E392D974BF524F891470F2596543DBAD211F9A2001FD5B0DFE9"
+    },
+    {
+      "path": "config/SECTOR_ROTATION_V2_AUTO_THEME_RULES.csv",
+      "size": 3695,
+      "sha256": "07FCBE2F68AFCCF7BAC4AE27CB1DD0939741512C85B4DEA0592EC93A9D4DD91F"
+    },
+    {
+      "path": "config/SECTOR_ROTATION_V2_SHADOW.json",
+      "size": 6373,
+      "sha256": "37EE2CF29456D87CF5B78D9CDC47476F930F6B0BDBC09D723453600DC1761A6B"
+    },
+    {
+      "path": "config/SECTOR_ROTATION_V2_THEME_TAXONOMY.csv",
+      "size": 5473,
+      "sha256": "BE5B83E8179E9DCEFB845FDEC6A12FA2E677C23CC14833E329DC9A1A91548095"
+    },
+    {
+      "path": "config/V20_7_1_ETF_CRITERIA_REGISTRY.json",
+      "size": 7042,
+      "sha256": "0845A84D3031263CF2E785AE04B168A12D7A79BF9AC7AE193319B4BDFD986A76"
+    },
+    {
+      "path": "config/V20.8_ETF_MT_HIGH_PRECISION.json",
+      "size": 10015,
+      "sha256": "3028438055D6666C7B1DE88A91B2DB12A71CD97AB3F387F47ED445D46EB6969D"
+    },
+    {
+      "path": "config/V21_8_ENTRY_EXIT_GOVERNANCE.json",
+      "size": 2708,
+      "sha256": "3DE8FD985ABA2EA4D21A608FBFA2965203D7302687F3162263367F1614950D3F"
+    },
+    {
+      "path": "documents/AUDIT_AMELIORATIONS_ETF_V21_18_1R3.docx",
+      "size": 20371,
+      "sha256": "395A3BC4CB8B0A7D9B528EC814AABE3B6E9B4542B6A595553901B3600B42849E"
+    },
+    {
+      "path": "documents/AUDIT_SOURCE_COMMUNIQUE_V21_18_1.docx",
+      "size": 18549,
+      "sha256": "2EAAFFB4ECEAD45060A964D203F569FB792F01C38D911DC3FF34560F64ABE96F"
+    },
+    {
+      "path": "documents/CAHIER_DES_CHARGES_ETF_V21_18_1R2.docx",
+      "size": 41774,
+      "sha256": "C50626A2CC2C6035F088F5F7411B9DDF5B1BE3846BF6F1B1E0153D15B5376AED"
+    },
+    {
+      "path": "documents/RAPPORT_AUDIT_ETF_V21_18_1R2.docx",
+      "size": 39718,
+      "sha256": "51B029E76C3A895E5D15C268D31B62035B63AB59A1982B751490BC1F3036F182"
+    },
+    {
+      "path": "evidence/PACKAGE_VALIDATION_R3.txt",
+      "size": 78,
+      "sha256": "689CF05F8E313E8DFA3746D7A9F26268902DABAA0AECDF033F88FDDEBC036893"
+    },
+    {
+      "path": "evidence/PREUVES_TESTS_ETF_V21_18_1R2.txt",
+      "size": 435,
+      "sha256": "CB2407A3D7EEA98514BC1C40D1007C47B60D19BC36FD5A7B069594EED202C0E4"
+    },
+    {
+      "path": "examples/cache_observation.json",
+      "size": 320,
+      "sha256": "723A4905FE296EBE7BDA80AA08D8A9FC14EF7A6D7D49569F70F4653F26D984BC"
+    },
+    {
+      "path": "examples/metric_event.json",
+      "size": 93,
+      "sha256": "9F1D0DC40B4504600D8874717B2AED9C362C239BF1C69B7CEF27D19CDB3254A1"
+    },
+    {
+      "path": "examples/promotion_evidence.json",
+      "size": 243,
+      "sha256": "8C9318167501A260AFBB68769911DF13C62B699101B5AF496BBA7B2CED3E701B"
+    },
+    {
+      "path": "KNOWN_DEBT.md",
+      "size": 516,
+      "sha256": "3B7B27AC5226545C37DBA0CEF92EA82BD1685CEAAE6B1EB615CACEC12FD4227C"
+    },
+    {
+      "path": "OPERATIONS.md",
+      "size": 892,
+      "sha256": "BB6364AF340D157A13A1A254E6339E5AABC504D569068339556D7B03AB72F6BB"
+    },
+    {
+      "path": "pyproject.toml",
+      "size": 543,
+      "sha256": "D951A65B9AD4976D5C3E142EE85A06973D367FD9FC531DD4C77059E66CAD96CE"
+    },
+    {
+      "path": "README.md",
+      "size": 1714,
+      "sha256": "A7ECA1209DA7935E7688719BF075AF7FCEE8579755E6749FB7B46E14431D4CCE"
+    },
+    {
+      "path": "reference/criterion_registry.csv",
+      "size": 59728,
+      "sha256": "6DAB2CEEE7A449A41881E5300A1E2CC304605F3279FFE6E52F77F99D4E21E849"
+    },
+    {
+      "path": "reference/criterion_registry.json",
+      "size": 158251,
+      "sha256": "9BE5B5DBDB6679F60CEC4AC9F07D65646C88E6B95D691274DA08958F090C6642"
+    },
+    {
+      "path": "reference/decision_influence_matrix.csv",
+      "size": 915,
+      "sha256": "18DA616006EDD10578558422FEDF2486CC1812C854E2B6D9D7E99DD0A4419BF3"
+    },
+    {
+      "path": "reference/REFERENTIEL_ETF_V21_18_1R2.xlsx",
+      "size": 50437,
+      "sha256": "ACF0B86B1EB972DFC20B0645985A880BAFEE578EB3FCAEA97BA00AFDE04A22F4"
+    },
+    {
+      "path": "RELEASE_NOTES.md",
+      "size": 988,
+      "sha256": "5A2D4ED061BAEED7F9785419FAAFAE2F4EE4F7B740E17148650A10D0613B56B8"
+    },
+    {
+      "path": "schemas/cache_observation.schema.json",
+      "size": 959,
+      "sha256": "57A84F2A353F771270961552F41C8986989D63D23BEB9D259ABC0F73EA8CB73D"
+    },
+    {
+      "path": "schemas/metric_event.schema.json",
+      "size": 418,
+      "sha256": "C6B9EC0CAAB388B28667BC6FF570C482624AC527D98C9368E337B03AFB12FBFD"
+    },
+    {
+      "path": "schemas/promotion_evidence.schema.json",
+      "size": 735,
+      "sha256": "61AD3D13D139D362B2DA5DE5149A9D89FD6FEC436558ABB05722F29643B6E47E"
+    },
+    {
+      "path": "SECURITY.md",
+      "size": 418,
+      "sha256": "876CC7F05BF801C938D856BC0868328EFF243129E8DD714B254D2A8D4B793CF1"
+    },
+    {
+      "path": "SOURCE_METADATA.json",
+      "size": 322,
+      "sha256": "FBD0F4A7B69138BC73A8ABBF60AB7F8CBDFB25088CE1710EE70685CC574C1B31"
+    },
+    {
+      "path": "src/etf_pack/__init__.py",
+      "size": 455,
+      "sha256": "16ADC319E3D8C19BB02638513DF38882C3D71F200EEA431FD65657A15C6805CC"
+    },
+    {
+      "path": "src/etf_pack/cache.py",
+      "size": 3289,
+      "sha256": "24226FEC48EF532F8B47C4C609C10807B0679CEDD11A43827AB044CA96997355"
+    },
+    {
+      "path": "src/etf_pack/criterion_registry.py",
+      "size": 3772,
+      "sha256": "577DF6415DEC4DB9DFAD7ED54967EB443EF5EC7025BFFE851EA9814C392A4EDF"
+    },
+    {
+      "path": "src/etf_pack/feature_provider.py",
+      "size": 1293,
+      "sha256": "42BA65B1E5427235631B90A2CDFB7F5A5065E2D60BED27E2B074A750B23388EE"
+    },
+    {
+      "path": "src/etf_pack/observability.py",
+      "size": 2035,
+      "sha256": "CB2FEBAAA3D85945EEECE03CA342C394D5181DE048D00ECFEA724D35ABE158B3"
+    },
+    {
+      "path": "src/etf_pack/promotion.py",
+      "size": 1842,
+      "sha256": "3D74F7E8FAC7E6C756B0EF0C459D5A57FBDCCBBDF59637AF9386CBCDD27362C5"
+    },
+    {
+      "path": "src/etf_pack/quality.py",
+      "size": 1525,
+      "sha256": "1E3B3A9666AB52FB1214ABF8CA9ED18B111E888AD5680A94A2DA04216015CB85"
+    },
+    {
+      "path": "tests/test_package_validation.py",
+      "size": 649,
+      "sha256": "9FDD09292330942A5D15DDE93A44F25DD850AD1CC6215238A90685542645B632"
+    },
+    {
+      "path": "tests/test_registry.py",
+      "size": 1861,
+      "sha256": "0F1F897AEC5F310982D790DE0A23E2025AEFEB7473AD83D573FFD73A043AFDDF"
+    },
+    {
+      "path": "tests/test_safe_improvements.py",
+      "size": 4540,
+      "sha256": "6AD652CDD9CA48AEE5A668CD0E7FD36686FF68A5C6A7B5AE9E835EE1093885E6"
+    },
+    {
+      "path": "tools/validate_package.py",
+      "size": 4827,
+      "sha256": "3AF7F8936BCD5DB35840221C8C7F119A5CA0CE14E3F5878C8A95F228AAE790CE"
+    },
+    {
+      "path": "VERSION",
+      "size": 12,
+      "sha256": "A445D6371E3F543892186D8DC8E8D6A1A47871FDD175D6CFEEFD93411D43465A"
+    }
+  ],
+  "known_debt": {
+    "canonical_source": "03_ETF_268",
+    "status": "OPEN_FAIL_CLOSED",
+    "plan": "KNOWN_DEBT.md"
+  }
+}
