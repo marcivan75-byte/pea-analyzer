@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from v182.features.action_mt_v1 import PositionState, compute_action_mt_snapshot, exit_decision
+from v182.decision.action_mt_decision_v1 import ActionCandidate, MarketRegime, select_action_mt_candidates, validate_decision_contract
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -80,4 +81,44 @@ def test_exit_policy_uses_stop_time_and_trailing_close_only():
     assert exit_decision(PositionState(100, 110, 252, 120), cfg) == "TIME_REVIEW_CLOSE_SHADOW"
     assert exit_decision(PositionState(100, 112, 60, 130), cfg) == "TRAILING_STOP_CLOSE_SHADOW"
     assert exit_decision(PositionState(100, 108, 20, 110), cfg) == "HOLD_SHADOW"
+
+
+def test_enriched_etf_mt_style_criteria_are_present():
+    snap = compute_action_mt_snapshot(_history(), _cfg(), _context())
+    for field in ("efficiency", "risk_adjusted", "volume_confirmation"):
+        assert snap["components"][field] is not None
+    assert snap["sharpe_126d"] is not None
+    assert "gain_to_pain_126d" in snap
+    assert snap["confirmation_count"] >= 4
+
+
+def test_portfolio_committee_blends_rank_and_raw_score_with_sector_cap():
+    regime = MarketRegime(0.65, 1.0, 8.0, True)
+    candidates = [
+        ActionCandidate("FR-A", 82.0, 98.0, "TECH", "ENTRY_STRONG_SHADOW", 1.0),
+        ActionCandidate("FR-B", 80.0, 95.0, "TECH", "ENTRY_READY_SHADOW", 1.0),
+        ActionCandidate("FR-C", 79.0, 94.0, "INDUSTRIALS", "ENTRY_READY_SHADOW", 1.0),
+        ActionCandidate("FR-D", 90.0, 99.0, "HEALTH", "RISK_BLOCKED_SHADOW", 1.0),
+    ]
+    result = select_action_mt_candidates(candidates, regime, _cfg(), active_sectors=["TECH"])
+    assert [item.isin for item in result.selected] == ["FR-A", "FR-C"]
+    assert result.rejected_counts["sector_cap"] == 1
+    assert result.rejected_counts["state"] == 1
+
+
+def test_portfolio_committee_abstains_in_adverse_market_regime():
+    candidate = ActionCandidate("FR-A", 90.0, 100.0, "TECH", "ENTRY_STRONG_SHADOW", 1.0)
+    result = select_action_mt_candidates([candidate], MarketRegime(0.40, -2.0, -4.0, False), _cfg())
+    assert result.selected == ()
+    assert result.abstention_reason == "MARKET_REGIME_BLOCK"
+
+
+def test_ci_decision_contract_is_safe_and_detects_drift():
+    cfg = _cfg()
+    assert validate_decision_contract(cfg) == []
+    cfg["governance"]["real_orders_enabled"] = True
+    cfg["score_weights"]["trend"] += 0.1
+    issues = validate_decision_contract(cfg)
+    assert "REAL_ORDERS_MUST_REMAIN_DISABLED" in issues
+    assert "SCORE_WEIGHTS_MUST_SUM_TO_ONE" in issues
 
