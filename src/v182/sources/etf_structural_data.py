@@ -10,7 +10,7 @@ from typing import Any
 import pandas as pd
 
 
-USER_AGENT = "PEA-Analyzer/21.10 (+governed ETF structural data audit)"
+USER_AGENT = "PEA-Analyzer/21.18 (+governed ETF benchmark data audit)"
 JUSTETF_URL = "https://www.justetf.com/en-be/etf-profile.html?isin={isin}"
 AMUNDI_FACTSHEET_URL = (
     "https://www.amundietf.fr/pdfDocuments/monthly-factsheet/"
@@ -46,6 +46,23 @@ FUND_ASSET_LABELS = (
     r"Total Assets",
 )
 SHARE_CLASS_ASSET_LABELS = (r"Share Class Assets'?",)
+BENCHMARK_LABELS = (
+    r"Indice de référence",
+    r"Indice de reference",
+    r"Benchmark Index",
+    r"Benchmark",
+    r"Reference Index",
+    r"Reference index",
+    r"Underlying Index",
+    r"Index tracked",
+    r"Tracked index",
+)
+BENCHMARK_STOP_LABELS = (
+    "ISIN", "TER", "Fund size", "Total Assets", "Assets Under Management",
+    "Ongoing charge", "Replication", "Distribution", "Fund currency", "Currency",
+    "Inception", "Launch date", "Ticker", "Risk", "Volatility", "Holdings",
+    "Investment focus", "Index provider", "Asset class", "Domicile", "NAV",
+)
 
 
 def _clean_text(value: str) -> str:
@@ -75,7 +92,6 @@ def _localized_number(token: str, *, percent: bool = False) -> float | None:
             text = text.replace(",", "")
         else:
             left, right = text.split(",", 1)
-            # English fund sizes commonly use one thousands separator: 1,092 m.
             text = left + right if len(right) == 3 and len(left.lstrip("-")) <= 3 else left + "." + right
     try:
         number = float(text)
@@ -102,8 +118,6 @@ def _eur_m_after_label(text: str, labels: tuple[str, ...]) -> float | None:
         if not start:
             continue
         snippet = clean[start.end(): start.end() + 180]
-
-        # Currency before value, optional explicit scale: EUR 1,092 m / €4.76 B.
         before = re.search(
             r"(?:EUR|€)\s*([0-9][0-9 .,'\u00a0\u202f]*)\s*(bn|billion|milliards?|b|mn|millions?|m)?\b",
             snippet,
@@ -117,11 +131,8 @@ def _eur_m_after_label(text: str, labels: tuple[str, ...]) -> float | None:
                     return round(number * 1000.0, 6)
                 if scale in {"mn", "million", "millions", "m"}:
                     return round(number, 6)
-                # No scale means an absolute EUR amount, never a unitless guess.
                 if number >= 1_000_000:
                     return round(number / 1_000_000.0, 6)
-
-        # Value before unit/currency: 4 466,14 ( millions EUR ).
         after = re.search(
             r"([0-9][0-9 .,'\u00a0\u202f]*)\s*\(?\s*(bn|billion|milliards?|b|mn|millions?|m)\s+EUR\s*\)?",
             snippet,
@@ -135,15 +146,37 @@ def _eur_m_after_label(text: str, labels: tuple[str, ...]) -> float | None:
     return None
 
 
-def _source_date(text: str, fallback: str) -> str:
-    """Extract a source observation date without accepting unrelated future dates.
+def _benchmark_after_label(text: str) -> str | None:
+    """Extract only an explicitly labelled benchmark/reference index string.
 
-    Product pages can contain future distribution/rebalance dates that are not the
-    observation date of the structural facts. The caller-provided fallback is the
-    latest date the source can legitimately represent for this collection pass.
-    Parsed dates more than one day after it are ignored rather than promoted into
-    provenance. If no eligible labelled/generic date remains, the fallback is kept.
+    The parser never derives a benchmark from the ETF name, category or geography.
+    It also rejects generic values such as merely ``Index``/``Benchmark`` and
+    truncates at common next-field labels on flattened HTML pages.
     """
+    clean = re.sub(r"\s+", " ", _clean_text(text)).strip()
+    stop = "|".join(re.escape(label) for label in BENCHMARK_STOP_LABELS)
+    for label in BENCHMARK_LABELS:
+        match = re.search(
+            rf"(?:{label})\s*[:\-]?\s*(.+?)(?=\s+(?:{stop})\b|$)",
+            clean,
+            flags=re.I,
+        )
+        if not match:
+            continue
+        candidate = re.sub(r"\s+", " ", match.group(1)).strip(" :;,-")
+        if not candidate or len(candidate) < 4 or len(candidate) > 160:
+            continue
+        if candidate.casefold() in {"index", "benchmark", "reference index", "indice", "indice de référence"}:
+            continue
+        if candidate.lower().startswith(("http://", "https://", "www.")):
+            continue
+        if len(candidate.split()) > 24:
+            continue
+        return candidate
+    return None
+
+
+def _source_date(text: str, fallback: str) -> str:
     clean = _clean_text(text)
     fallback_ts = pd.to_datetime(fallback, errors="coerce", dayfirst=True)
     latest_allowed = None if pd.isna(fallback_ts) else fallback_ts + pd.Timedelta(days=1)
@@ -203,6 +236,9 @@ def _observations_from_text(
         share_assets = _eur_m_after_label(clean, SHARE_CLASS_ASSET_LABELS)
         if share_assets is not None:
             out.append(_observation(isin, "aum_m", share_assets, source=source, source_url=source_url, evidence=evidence, as_of=as_of))
+    benchmark = _benchmark_after_label(clean)
+    if benchmark is not None:
+        out.append(_observation(isin, "official_benchmark", benchmark, source=source, source_url=source_url, evidence=evidence, as_of=as_of))
     return out
 
 
@@ -319,11 +355,13 @@ def collect_etf_structural_data(
     today: date | None = None,
     delay_seconds: float = 0.05,
 ) -> tuple[list[dict], list[dict], dict[str, Any]]:
-    """Collect TER and explicit-EUR fund size with an exact-ISIN fail-closed policy.
+    """Collect TER, fund size and explicit benchmark with exact-ISIN fail-closed policy.
 
     Evidence A issuer pages/factsheets are attempted first where an adapter exists.
     justETF is evidence B and fills only fields not observed from the issuer adapter.
-    No FX conversion is performed. Missing values remain missing.
+    Benchmark names are accepted only from explicit benchmark/reference-index labels;
+    no benchmark is inferred from ETF name, category, geography or holdings. No FX
+    conversion is performed. Missing values remain missing.
     """
     import requests
 
@@ -358,7 +396,7 @@ def collect_etf_structural_data(
         failures.extend(issuer_failures)
         metrics["issuer_observations"] += len(issuer_obs)
         observed_fields = {item["field"] for item in issuer_obs}
-        wanted = {"ter_pct", "fund_total_assets_eur_m"} - observed_fields
+        wanted = {"ter_pct", "fund_total_assets_eur_m", "official_benchmark"} - observed_fields
         if wanted:
             fallback_obs, fallback_failures = _collect_justetf(session, isin, current, wanted)
             observations.extend(fallback_obs)
@@ -375,6 +413,7 @@ def collect_etf_structural_data(
         "ter_observations": sum(item["field"] == "ter_pct" for item in observations),
         "fund_assets_eur_observations": sum(item["field"] == "fund_total_assets_eur_m" for item in observations),
         "share_class_aum_observations": sum(item["field"] == "aum_m" for item in observations),
+        "official_benchmark_observations": sum(item["field"] == "official_benchmark" for item in observations),
         "evidence_a_observations": sum(item["evidence_level"] == "A" for item in observations),
         "evidence_b_observations": sum(item["evidence_level"] == "B" for item in observations),
         "failures": len(failures),
@@ -386,6 +425,9 @@ def collect_etf_structural_data(
             "justetf_evidence": "B",
             "fx_conversion": False,
             "quote_currency_used_as_asset_currency": False,
+            "benchmark_name_inference": False,
+            "benchmark_price_symbol_inference": False,
+            "tracking_error_computed_here": False,
             "missing_imputation": False,
         },
     }
