@@ -29,8 +29,6 @@ def _parse_date(value: Any) -> date | None:
             return date.fromisoformat(text)
         except ValueError:
             return None
-    # Euronext detail pages use European day-first representations such as
-    # "Thu 09/07/2026". Treat slash/dot dates as day-first deterministically.
     dayfirst = bool(re.search(r"\d{1,2}[/.]\d{1,2}[/.]\d{4}", text))
     parsed = pd.to_datetime(text, errors="coerce", dayfirst=dayfirst)
     if pd.isna(parsed):
@@ -108,11 +106,7 @@ def apply_frozen_listing_evidence(
     actions_df: pd.DataFrame,
     path: str | Path = DEFAULT_FROZEN_EVIDENCE,
 ) -> dict[str, Any]:
-    """Apply frozen Euronext listing dates by exact ISIN, fail-closed on conflicts.
-
-    This is metadata-only. It never creates historical prices and never changes
-    calibration eligibility by itself; the OHLCV audit remains authoritative.
-    """
+    """Apply frozen Euronext listing dates by exact ISIN, fail-closed on conflicts."""
     if "isin" not in actions_df.columns:
         raise ValueError("ACTION_LISTING_EVIDENCE_TARGET_MISSING_ISIN")
     evidence = load_frozen_listing_evidence(path)
@@ -329,7 +323,18 @@ def collect_action_listing_evidence(
     timeout: int = 20,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     worklist = load_worklist(worklist_path)
-    candidates, source_metrics = collect_euronext_v1_3(start, end, timeout=timeout)
+    target_isins = {
+        str(value).strip().upper()
+        for value in worklist["isin"].fillna("").astype(str)
+        if str(value).strip()
+    }
+    candidates, source_metrics = collect_euronext_v1_3(
+        start,
+        end,
+        timeout=timeout,
+        target_isins=target_isins,
+        enrich_details=False,
+    )
     accepted, quarantine, metrics = qualify_euronext_candidates(worklist, candidates, as_of=end)
     metrics["source_metrics"] = source_metrics
     return accepted, quarantine, metrics
