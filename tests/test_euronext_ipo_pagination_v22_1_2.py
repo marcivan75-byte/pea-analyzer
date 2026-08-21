@@ -33,6 +33,12 @@ def _page(rows: list[tuple[str, str, str, str, str, str]]) -> str:
     )
 
 
+def test_catalogue_dates_are_explicitly_day_first():
+    assert source._parse_catalogue_date("10/02/2023") == date(2023, 2, 10)
+    assert source._parse_catalogue_date("02/10/2023") == date(2023, 10, 2)
+    assert source._parse_catalogue_date("2023-02-10") == date(2023, 2, 10)
+
+
 def test_collect_paginates_until_page_is_before_start(monkeypatch):
     pages = {
         source.EURONEXT_IPO_ALL: _page([
@@ -106,6 +112,36 @@ def test_target_filter_skips_non_target_detail_fetches(monkeypatch):
     assert metrics["target_filter_active"] is True
     assert metrics["target_isins_requested"] == 1
     assert metrics["non_target_rows_skipped"] == 1
+
+
+def test_listing_only_mode_uses_catalogue_page_without_detail_fetch(monkeypatch):
+    pages = {
+        source.EURONEXT_IPO_ALL: _page([
+            ("10/02/2023", "EUROGROUP LAMINATIONS", "EGLA", "IT0005527616", "Milan", "Euronext Growth"),
+        ]),
+        f"{source.EURONEXT_IPO_ALL}?page=1": _page([
+            ("29/12/2022", "OLD COMPANY", "OLD", "FR0000000002", "Paris", "Euronext"),
+        ]),
+    }
+    detail_calls: list[str] = []
+    monkeypatch.setattr(source.requests, "get", lambda url, **_kwargs: _Response(pages[url]))
+    monkeypatch.setattr(source, "_fetch_detail", lambda url, *_args: detail_calls.append(url) or {})
+
+    candidates, metrics = source.collect_euronext_v1_3(
+        date(2023, 1, 1),
+        date(2026, 8, 21),
+        max_pages=10,
+        target_isins={"IT0005527616"},
+        enrich_details=False,
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["isin"] == "IT0005527616"
+    assert candidates[0]["expected_date"] == "2023-02-10"
+    assert candidates[0]["euronext_showcase_url"] == source.EURONEXT_IPO_ALL
+    assert detail_calls == []
+    assert metrics["detail_enrichment_enabled"] is False
+    assert metrics["date_parse_policy"] == "EURONEXT_DD_MM_YYYY_DAY_FIRST"
 
 
 def test_collect_stops_on_repeated_page(monkeypatch):
