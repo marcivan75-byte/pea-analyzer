@@ -118,13 +118,12 @@ def _baseline_ct(actions: pd.DataFrame, root: Path) -> pd.DataFrame:
 def _canonical_value(value) -> str:
     if value is None:
         return ""
-    try:
-        if bool(pd.isna(value)):
-            return ""
-    except (TypeError, ValueError):
-        pass
     if isinstance(value, (bool, np.bool_)):
         return "1" if bool(value) else "0"
+    if np.isscalar(value):
+        missing = pd.isna(value)
+        if isinstance(missing, (bool, np.bool_)) and bool(missing):
+            return ""
     numeric = _finite(value)
     return format(numeric, ".12g") if numeric is not None else str(value).strip()
 
