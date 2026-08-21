@@ -26,4 +26,13 @@ jobs:
         run: python -m pip install -e ".[test]"
       - name: Validate ACTION MT V1
         run: python -m pytest -q tests/test_action_mt_v1.py
+      - name: Validate the decision contract and abstention probes
+        run: python scripts/validate_action_mt_ci.py
+      - name: Publish the decision audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: action-mt-ci-decision-audit
+          path: outputs/audit/ACTION_MT_CI_DECISION.json
+          if-no-files-found: error
 
