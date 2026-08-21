@@ -59,7 +59,8 @@ def _mobile_summary(frame: pd.DataFrame, phase: str, generated_at: str, market: 
         for _, row in up.iterrows():
             lines.append(f"- {row.get('name') or row.get('isin')} — biais {_fmt(row.get('_dir'), signed=True)} — move {_fmt(row.get('_move'))}")
 
-    conflict = work[work.get("news_technical_conflict", False).astype(bool) if "news_technical_conflict" in work.columns else pd.Series(False, index=work.index)]
+    conflict_mask = work["news_technical_conflict"].astype(bool) if "news_technical_conflict" in work.columns else pd.Series(False, index=work.index)
+    conflict = work[conflict_mask]
     lines.extend(["", "## Conflits / vigilance", ""])
     if conflict.empty:
         lines.append("- Aucun conflit news/tech qualifié.")
@@ -107,6 +108,7 @@ def run(root: Path = ROOT, *, phase: str | None = None, now=None) -> dict:
         audit_filename="TCT_NEXT_SESSION_CATALYST_V24_4_2_AUDIT.json",
         android_filename="ANDROID_TCT_NEXT_SESSION_CATALYST_V24_4_2.md",
         android_summary_fn=_mobile_summary,
+        label_with_seed=False,
     )
 
 
