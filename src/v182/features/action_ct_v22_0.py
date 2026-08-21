@@ -326,7 +326,6 @@ def compute_action_ct_snapshot(frame: pd.DataFrame, cfg: dict, context: dict | N
     news_score = _bounded_context_score(_context_num(context, "news_catalyst_score"))
     earnings_score = _bounded_context_score(_context_num(context, "earnings_catalyst_score"))
     catalyst_score = _mean([consensus_score, target_score, revision_score, news_score, earnings_score])
-
     entry_components = {
         "trend_structure": trend_score,
         "momentum_quality": momentum_score,
@@ -521,6 +520,7 @@ def compute_action_ct_snapshot(frame: pd.DataFrame, cfg: dict, context: dict | N
         "daily_rvol_ct": rvol,
         "volume_acceleration_ct": volume_accel,
         "median_turnover_20d_eur_ct": median_turnover,
+        "close_location_ct": close_location,
         "breakout_55d_ct": breakout["breakout_55d"],
         "breakout_120d_ct": breakout["breakout_120d"],
         "breakout_retest_ct": breakout["retest"],
