@@ -68,6 +68,46 @@ def test_collect_paginates_until_page_is_before_start(monkeypatch):
     ]
 
 
+def test_target_filter_skips_non_target_detail_fetches(monkeypatch):
+    pages = {
+        source.EURONEXT_IPO_ALL: _page([
+            ("25/01/2023", "DEODATO.GALLERY", "ART", "IT0005528937", "Milan", "Euronext Growth"),
+            ("24/01/2023", "NOT TARGET", "NOPE", "FR0000000001", "Paris", "Euronext"),
+        ]),
+        f"{source.EURONEXT_IPO_ALL}?page=1": _page([
+            ("29/12/2022", "OLD COMPANY", "OLD", "FR0000000002", "Paris", "Euronext"),
+        ]),
+    }
+    detail_calls: list[str] = []
+
+    def fake_get(url, **_kwargs):
+        return _Response(pages[url])
+
+    def fake_detail(url, _headers, _timeout):
+        detail_calls.append(url)
+        return {"euronext_showcase_url": url, "euronext_detail_status": "SUCCESS"}
+
+    monkeypatch.setattr(source.requests, "get", fake_get)
+    monkeypatch.setattr(source, "_showcase_links", lambda _html: {
+        source._norm("DEODATO.GALLERY"): "https://live.euronext.com/en/ipo-showcase/deodato",
+        source._norm("NOT TARGET"): "https://live.euronext.com/en/ipo-showcase/not-target",
+    })
+    monkeypatch.setattr(source, "_fetch_detail", fake_detail)
+
+    candidates, metrics = source.collect_euronext_v1_3(
+        date(2023, 1, 1),
+        date(2026, 8, 21),
+        max_pages=10,
+        target_isins={"it0005528937"},
+    )
+
+    assert [row["isin"] for row in candidates] == ["IT0005528937"]
+    assert detail_calls == ["https://live.euronext.com/en/ipo-showcase/deodato"]
+    assert metrics["target_filter_active"] is True
+    assert metrics["target_isins_requested"] == 1
+    assert metrics["non_target_rows_skipped"] == 1
+
+
 def test_collect_stops_on_repeated_page(monkeypatch):
     html = _page([
         ("25/01/2023", "DEODATO.GALLERY", "ART", "IT0005528937", "Milan", "Euronext Growth"),
