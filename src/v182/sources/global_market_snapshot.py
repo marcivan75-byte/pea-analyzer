@@ -70,11 +70,31 @@ def _risk_component(return_pct: float | None, *, inverse: bool = False) -> float
     return _clip(50.0 + value / 2.0 * 50.0)
 
 
-def fetch_global_market_snapshot(cfg: dict, *, phase: str | None = None) -> GlobalMarketSnapshot:
-    """Fetch one compact 1d snapshot; PREOPEN may include one-shot US futures.
+def _risk_on_from_completed(completed_returns: dict[str, float | None], weights: dict) -> float | None:
+    components: list[tuple[float, float]] = []
+    for key, raw_weight in weights.items():
+        weight = float(raw_weight)
+        if weight <= 0:
+            continue
+        if key == "VIX_INVERSE":
+            value = completed_returns.get("VIX")
+            score = _risk_component(value, inverse=True)
+        else:
+            score = _risk_component(completed_returns.get(key))
+        if score is not None:
+            components.append((score, weight))
+    if not components:
+        return None
+    observed_weight = sum(weight for _, weight in components)
+    return sum(score * weight for score, weight in components) / observed_weight
 
-    No 1m/5m bars are requested. Futures/FX/commodities are sampled once and
-    explicitly stored as one-shot context rather than completed cash sessions.
+
+def fetch_global_market_snapshot(cfg: dict, *, phase: str | None = None) -> GlobalMarketSnapshot:
+    """Fetch one compact daily snapshot without intraday polling.
+
+    The risk-on mapping is config-driven. V24.4.2 can therefore give explicit
+    weight to EUROSTOXX50/CAC40/DAX while older configs retain their historical
+    US/Nikkei/VIX weights unchanged.
     """
     import yfinance as yf
 
@@ -120,24 +140,7 @@ def fetch_global_market_snapshot(cfg: dict, *, phase: str | None = None) -> Glob
         if value is None:
             errors.append(f"MISSING_ONESHOT:{label}:{symbol}")
 
-    risk_weights = spec.get("risk_on_weights", {})
-    components: list[tuple[float, float]] = []
-    mapping = {
-        "SP500": completed_returns.get("SP500"),
-        "NASDAQ": completed_returns.get("NASDAQ"),
-        "RUSSELL2000": completed_returns.get("RUSSELL2000"),
-        "NIKKEI": completed_returns.get("NIKKEI"),
-        "VIX_INVERSE": completed_returns.get("VIX"),
-    }
-    for key, weight in risk_weights.items():
-        score = _risk_component(mapping.get(key), inverse=(key == "VIX_INVERSE"))
-        if score is not None and float(weight) > 0:
-            components.append((score, float(weight)))
-    risk_on = None
-    if components:
-        observed_weight = sum(weight for _, weight in components)
-        risk_on = sum(score * weight for score, weight in components) / observed_weight
-
+    risk_on = _risk_on_from_completed(completed_returns, spec.get("risk_on_weights", {}))
     if str(phase or "").upper() == "PREOPEN":
         futures_scores = [
             _risk_component(one_shot_returns.get("SP500_FUTURE")),
@@ -146,8 +149,7 @@ def fetch_global_market_snapshot(cfg: dict, *, phase: str | None = None) -> Glob
         futures_scores = [x for x in futures_scores if x is not None]
         if futures_scores:
             future_score = float(np.mean(futures_scores))
-            overlay = float(spec.get("preopen_futures_overlay_weight", 0.20))
-            overlay = float(np.clip(overlay, 0.0, 0.40))
+            overlay = float(np.clip(float(spec.get("preopen_futures_overlay_weight", 0.20)), 0.0, 0.40))
             risk_on = future_score if risk_on is None else (1.0 - overlay) * risk_on + overlay * future_score
 
     magnitudes: list[float] = []

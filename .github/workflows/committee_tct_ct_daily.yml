@@ -120,9 +120,9 @@ jobs:
         continue-on-error: true
         run: python -m v182.reporting.tct_daily_trader_shadow_run_v24_3_1
 
-      - name: Persist compact daily closes for V24.4.1 PIT
+      - name: Persist compact daily OHLC for V24.4.2 PIT
         continue-on-error: true
-        run: python -m v182.reporting.tct_pit_close_ledger_v24_4_1
+        run: python -m v182.reporting.tct_pit_ohlc_ledger_v24_4_2
 
       - name: Publish Android tactical summaries
         if: always()
@@ -161,7 +161,7 @@ jobs:
           if [ -f outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json ]; then cat outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json; fi
           if [ -f outputs/audit/ETF_CT_LT_V21_14_SHADOW.json ]; then cat outputs/audit/ETF_CT_LT_V21_14_SHADOW.json; fi
           if [ -f outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json ]; then cat outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json; fi
-          if [ -f outputs/audit/TCT_V24_4_1_PIT_CLOSE_LEDGER_AUDIT.json ]; then cat outputs/audit/TCT_V24_4_1_PIT_CLOSE_LEDGER_AUDIT.json; fi
+          if [ -f outputs/audit/TCT_V24_4_2_PIT_OHLC_LEDGER_AUDIT.json ]; then cat outputs/audit/TCT_V24_4_2_PIT_OHLC_LEDGER_AUDIT.json; fi
           if [ -f outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json ]; then cat outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json; fi
           if [ -f data/cache/actions/history_manifest.json ]; then cat data/cache/actions/history_manifest.json; fi
 
@@ -230,14 +230,14 @@ jobs:
             outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json
             outputs/audit/ETF_CT_LT_V21_14_SHADOW.json
             outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json
-            outputs/audit/TCT_V24_4_1_PIT_CLOSE_LEDGER_AUDIT.json
+            outputs/audit/TCT_V24_4_2_PIT_OHLC_LEDGER_AUDIT.json
             outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json
             outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx
             state/action_ct/
             state/action_ct_v22_1/
             state/provenance/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv
             state/tct_context/TCT_DAILY_TRADER_LATEST.csv
-            state/tct_context/TCT_DAILY_CLOSE_LEDGER.csv
+            state/tct_context/TCT_DAILY_OHLC_LEDGER.csv
             data/cache/actions/history_manifest.json
             data/cache/etf/history_manifest.json
           if-no-files-found: warn

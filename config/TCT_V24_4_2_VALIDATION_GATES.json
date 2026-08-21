@@ -1,0 +1,70 @@
+{
+  "version": "TCT_V24.4.2_VALIDATION_GATES",
+  "status": "PRE_REGISTERED_SHADOW_VALIDATION",
+  "target_phase": "PREOPEN",
+  "primary_objective": "RANK_NEXT_SESSION_LARGEST_DAILY_OHLC_EXTREMES",
+  "secondary_objective": "DIRECTION_CLOSE_TO_CLOSE_WHEN_BIAS_IS_CONFIDENT",
+  "validation_epoch": "V24.4.2_ONLY_NO_MIX_WITH_PRIOR_EPOCHS",
+  "maturity": {
+    "minimum_labeled_preopen_rows": 60,
+    "minimum_distinct_isins": 20,
+    "minimum_high_potential_predictions": 15,
+    "minimum_direction_calls": 20,
+    "minimum_observed_sessions": 15
+  },
+  "primary_amplitude_label": "realized_session_abs_extreme_pct",
+  "secondary_close_label": "realized_abs_return_pct",
+  "primary_metrics": [
+    "TOP10_SESSION_EXTREME_RECALL",
+    "TOP_DECILE_SESSION_EXTREME_LIFT",
+    "SPEARMAN_MOVEMENT_SCORE_VS_SESSION_EXTREME",
+    "SIGNIFICANT_MOVE_PRECISION",
+    "SIGNIFICANT_MOVE_RECALL",
+    "MEAN_SESSION_EXTREME_BY_MOVEMENT_SCORE_BUCKET"
+  ],
+  "secondary_metrics": [
+    "DIRECTION_HIT_RATE_CONFIDENT_BIASES",
+    "OPEN_GAP_BY_SCORE",
+    "SESSION_RANGE_BY_SCORE",
+    "MAX_ADVERSE_EXCURSION_BY_DIRECTION",
+    "FALSE_HIGH_POTENTIAL_RATE"
+  ],
+  "baseline_comparator": {
+    "movement": "technical_impulse_score from V24.3.1 daily/weekly seed",
+    "direction": "technical_direction_score from V24.3.1 daily/weekly seed"
+  },
+  "acceptance": {
+    "minimum_top10_recall_improvement_pp_vs_technical": 10.0,
+    "minimum_top_decile_lift_improvement_vs_technical": 0.15,
+    "minimum_spearman_improvement_vs_technical": 0.10,
+    "minimum_primary_improvement_checks_passed": 2,
+    "maximum_false_high_potential_rate": 0.60,
+    "minimum_direction_hit_rate": 0.55,
+    "minimum_direction_hit_improvement_pp_vs_technical": 0.0,
+    "movement_pass_does_not_automatically_promote": true,
+    "direction_is_secondary_and_separately_validated": true
+  },
+  "stability": {
+    "minimum_rows_per_slice_for_gate": 8,
+    "required_regimes_when_available": 2,
+    "maximum_allowed_direction_hit_degradation_pp_in_qualified_slice": 10.0,
+    "minimum_qualified_sector_slices_for_review": 2,
+    "stability_gate_is_manual_review_not_auto_promotion": true
+  },
+  "required_slices": [
+    "NEWS_EVENT_TYPE",
+    "SECTOR",
+    "ENTRY_STATE",
+    "MARKET_REGIME",
+    "EARNINGS_PROXIMITY",
+    "CANDIDATE_RANK_REASON",
+    "PREOPEN_VS_POSTMARKET_SIGNAL_CHANGE"
+  ],
+  "governance": {
+    "retuning_before_maturity_forbidden": true,
+    "holdout_locked": true,
+    "promotion_authority": false,
+    "production_influence": 0.0,
+    "ct_transfer_forbidden_before_separate_validation": true
+  }
+}

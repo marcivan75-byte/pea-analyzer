@@ -1,0 +1,242 @@
+{
+  "version": "TCT_V24.4.2_NEXT_SESSION_CATALYST_CYCLE_SHADOW",
+  "asset_class": "ACTION",
+  "horizon": "TCT",
+  "status": "SHADOW_RESEARCH_ONLY",
+  "mode": "SHADOW_ONLY",
+  "intent": "AUDIT_HARDENED_NEXT_SESSION_AMPLITUDE_AND_DIRECTION_WITH_MULTILABEL_PIT",
+  "data_policy": {
+    "tct_daily_seed_only": true,
+    "individual_pea_extended_hours_quotes_used": false,
+    "continuous_monitoring_forbidden": true,
+    "intraday_bars_forbidden": true,
+    "five_minute_forbidden": true,
+    "quasi_realtime_forbidden": true,
+    "snapshot_phases": ["POSTMARKET", "PREOPEN"],
+    "timezone": "Europe/Paris",
+    "europe_close_hour": 17,
+    "europe_close_minute": 30,
+    "preopen_target_hour": 8,
+    "preopen_target_minute": 40,
+    "postmarket_target_hour": 23,
+    "postmarket_target_minute": 15,
+    "candidate_limit": 60,
+    "news_query_limit": 60,
+    "news_max_records_per_candidate": 25,
+    "max_preopen_seed_staleness_calendar_days": 7,
+    "global_snapshot_interval": "1d",
+    "global_snapshot_period": "5d"
+  },
+  "runtime_budget": {
+    "preopen_seconds": 480,
+    "postmarket_seconds": 600,
+    "news_budget_fraction": 0.80,
+    "fail_closed_on_budget_exhaustion": true
+  },
+  "candidate_selection": {
+    "priority_weights": {
+      "entry": 0.25,
+      "exit_risk": 0.20,
+      "existing_news": 0.20,
+      "earnings_proximity": 0.15,
+      "volatility": 0.10,
+      "t1_t2_quality": 0.10
+    },
+    "quotas": {
+      "ENTRY_READY_OR_STRONG": 15,
+      "EARNINGS_WITHIN_7D": 10,
+      "EXISTING_NEWS_HIGH": 10,
+      "HIGH_ATR": 10,
+      "HIGH_EXIT_RISK": 5
+    },
+    "fill_remaining_by_composite_priority": true,
+    "publish_rank_reason": true
+  },
+  "news": {
+    "primary_source": "GDELT",
+    "secondary_source": "GOOGLE_NEWS_RSS_FAILSOFT",
+    "secondary_source_enabled": false,
+    "secondary_activation_requires_qualification": true,
+    "secondary_trigger_batch_error_rate": 0.30,
+    "secondary_rss_base_url": "https://news.google.com/rss/search",
+    "secondary_rss_hl": "fr",
+    "secondary_rss_gl": "FR",
+    "secondary_rss_ceid": "FR:fr",
+    "request_timeout_seconds": 12,
+    "preopen_fetch_timespan": "7d",
+    "postmarket_fetch_timespan": "1d",
+    "require_parseable_article_timestamp": true,
+    "deduplicate_headlines": true,
+    "max_headlines_persisted": 5,
+    "candidate_query_suffix": "",
+    "query_policy": "EXACT_COMPANY_NAME_WINDOWED_MULTILINGUAL_WITH_NEGATION_SECONDARY_CONTRACT_INACTIVE",
+    "cache": {
+      "enabled": true,
+      "path": "state/tct_context/TCT_V24_4_2_NEWS_CACHE.json",
+      "ttl_seconds": 7200,
+      "exact_window_only": true
+    },
+    "parallelism": {
+      "workers": 6,
+      "workers_min": 4,
+      "workers_max": 8,
+      "start_delay_seconds": 0.12,
+      "wave_size": 15,
+      "profile_latency": true
+    },
+    "negation_patterns": [
+      "denies fraud", "denies investigation", "not under investigation", "no fraud investigation",
+      "sans enquête", "sans enquete", "pas d'enquête", "pas d enquete", "dément une enquête", "dement une enquete",
+      "keine ermittlungen", "weist betrugsvorwürfe zurück", "weist betrugsvorwurfe zuruck"
+    ],
+    "event_patterns": {
+      "PROFIT_WARNING": ["profit warning", "profits warning", "warns on profit", "avertissement sur résultats", "avertissement sur resultats", "alerte sur résultats", "gewinnwarnung"],
+      "PARTIAL_PROFIT_WARNING": ["partial profit warning", "warning on one division", "avertissement partiel", "alerte partielle sur résultats", "alerte partielle sur resultats"],
+      "GUIDANCE_CUT": ["cuts guidance", "lowers guidance", "guidance cut", "reduces outlook", "abaisse ses prévisions", "abaisse ses previsions", "revoit à la baisse", "revoit a la baisse", "senkt prognose"],
+      "GUIDANCE_RAISED": ["raises guidance", "lifts guidance", "guidance raised", "raises outlook", "relève ses prévisions", "releve ses previsions", "revoit à la hausse", "revoit a la hausse", "hebt prognose an"],
+      "EARNINGS_BEAT": ["beats estimates", "beats expectations", "earnings beat", "profit beats", "revenue beats", "dépasse les attentes", "depasse les attentes", "supérieur aux attentes", "superieur aux attentes"],
+      "EARNINGS_MISS": ["misses estimates", "misses expectations", "earnings miss", "profit misses", "revenue misses", "sous les attentes", "inférieur aux attentes", "inferieur aux attentes"],
+      "BANKRUPTCY_DEFAULT": ["bankruptcy", "insolvency", "insolvent", "debt default", "faillite", "défaut de paiement", "defaut de paiement", "insolvenz"],
+      "FRAUD_INVESTIGATION": ["fraud investigation", "investigation into fraud", "accounting investigation", "criminal investigation", "regulatory investigation", "regulatory probe", "enquête pour fraude", "enquete pour fraude", "enquête réglementaire", "enquete reglementaire", "enquête pénale", "enquete penale", "ermittlungen wegen betrugs"],
+      "REGULATORY_REJECTION": ["approval rejected", "regulator rejects", "regulatory rejection", "approval denied", "autorisation refusée", "autorisation refusee", "rejet réglementaire", "rejet reglementaire"],
+      "REGULATORY_APPROVAL": ["regulatory approval", "regulator approves", "wins approval", "receives approval", "autorisation réglementaire", "autorisation reglementaire", "approbation réglementaire", "approbation reglementaire"],
+      "TENDER_OFFER": ["tender offer", "public tender offer", "takeover offer", "offre publique d'achat", "offre publique d achat", "opa amicale", "opa hostile", "übernahmeangebot", "uebernahmeangebot"],
+      "MA_ACQUISITION": ["acquisition", "acquire", "acquires", "takeover", "merger", "buyout", "rachat", "fusion", "übernahme", "uebernahme"],
+      "TRADING_SUSPENSION": ["trading suspended", "suspension of trading", "shares suspended", "cotation suspendue", "suspension de cotation", "handel ausgesetzt"],
+      "MAJOR_CONTRACT": ["major contract", "wins contract", "awarded contract", "new order", "order worth", "framework agreement", "contrat majeur", "remporte un contrat", "commande majeure", "accord-cadre", "großauftrag", "grossauftrag"],
+      "PRIVATE_PLACEMENT": ["private placement", "accelerated bookbuild", "placement privé", "placement prive", "placement accéléré", "placement accelere", "privatplatzierung"],
+      "CAPITAL_RAISE_DILUTION": ["capital raise", "capital increase", "rights issue", "share offering", "equity offering", "dilution", "new shares", "augmentation de capital", "émission d'actions", "emission d'actions", "kapitalerhöhung", "kapitalerhoehung"],
+      "INDEX_INCLUSION": ["index inclusion", "added to index", "joins the index", "entre dans l'indice", "entre dans l indice", "intègre l'indice", "integre l indice", "indexaufnahme"],
+      "INDEX_EXCLUSION": ["index exclusion", "removed from index", "leaves the index", "sort de l'indice", "sort de l indice", "exclu de l'indice", "exclu de l indice", "indexausschluss"],
+      "CONSENSUS_REVISION_UP": ["consensus raised", "consensus upgraded", "analysts raise estimates", "relèvement du consensus", "relevement du consensus", "consensus relevé", "consensus releve"],
+      "CONSENSUS_REVISION_DOWN": ["consensus cut", "consensus lowered", "analysts cut estimates", "abaissement du consensus", "consensus abaissé", "consensus abaisse"],
+      "DIVIDEND_CUT": ["dividend cut", "cuts dividend", "suspends dividend", "dividend suspended", "baisse du dividende", "réduit le dividende", "reduit le dividende", "suspend le dividende", "dividendenkürzung"],
+      "BUYBACK_DIVIDEND_RAISE": ["share buyback", "stock buyback", "buyback program", "raises dividend", "dividend increase", "special dividend", "rachat d'actions", "relève le dividende", "releve le dividende", "hausse du dividende", "aktienrückkauf"],
+      "ANALYST_DOWNGRADE": ["analyst downgrade", "downgraded to", "broker downgrade", "rating cut", "dégradation", "degradation", "abaisse sa recommandation", "abaisse son objectif", "herabstufung"],
+      "ANALYST_UPGRADE": ["analyst upgrade", "upgraded to", "broker upgrade", "rating raised", "relève sa recommandation", "releve sa recommandation", "relève son objectif", "releve son objectif", "hochgestuft"],
+      "CEO_DEPARTURE": ["ceo resigns", "ceo resignation", "chief executive resigns", "ceo steps down", "démission du directeur général", "demission du directeur general", "démission du pdg", "demission du pdg", "ceo tritt zurück", "ceo tritt zurueck"]
+    },
+    "event_weights": {
+      "PROFIT_WARNING": {"magnitude": 100, "direction": -100},
+      "PARTIAL_PROFIT_WARNING": {"magnitude": 85, "direction": -80},
+      "GUIDANCE_CUT": {"magnitude": 95, "direction": -95},
+      "GUIDANCE_RAISED": {"magnitude": 95, "direction": 95},
+      "EARNINGS_BEAT": {"magnitude": 90, "direction": 85},
+      "EARNINGS_MISS": {"magnitude": 90, "direction": -85},
+      "BANKRUPTCY_DEFAULT": {"magnitude": 100, "direction": -100},
+      "FRAUD_INVESTIGATION": {"magnitude": 95, "direction": -90},
+      "REGULATORY_REJECTION": {"magnitude": 95, "direction": -90},
+      "REGULATORY_APPROVAL": {"magnitude": 85, "direction": 80},
+      "TENDER_OFFER": {"magnitude": 100, "direction": 85},
+      "MA_ACQUISITION": {"magnitude": 90, "direction": 0},
+      "TRADING_SUSPENSION": {"magnitude": 95, "direction": 0},
+      "MAJOR_CONTRACT": {"magnitude": 78, "direction": 75},
+      "PRIVATE_PLACEMENT": {"magnitude": 75, "direction": -60},
+      "CAPITAL_RAISE_DILUTION": {"magnitude": 78, "direction": -70},
+      "INDEX_INCLUSION": {"magnitude": 70, "direction": 55},
+      "INDEX_EXCLUSION": {"magnitude": 70, "direction": -55},
+      "CONSENSUS_REVISION_UP": {"magnitude": 70, "direction": 60},
+      "CONSENSUS_REVISION_DOWN": {"magnitude": 75, "direction": -65},
+      "DIVIDEND_CUT": {"magnitude": 82, "direction": -80},
+      "BUYBACK_DIVIDEND_RAISE": {"magnitude": 65, "direction": 60},
+      "ANALYST_DOWNGRADE": {"magnitude": 62, "direction": -60},
+      "ANALYST_UPGRADE": {"magnitude": 58, "direction": 55},
+      "CEO_DEPARTURE": {"magnitude": 58, "direction": -35},
+      "OTHER_NEWS": {"magnitude": 35, "direction": 0}
+    },
+    "freshness_hours_full": 4,
+    "freshness_hours_medium": 12,
+    "corroboration_full_articles": 3,
+    "minimum_match_confidence_for_direction": 0.55
+  },
+  "global_market": {
+    "completed_session_symbols": {
+      "SP500": "^GSPC",
+      "NASDAQ": "^IXIC",
+      "RUSSELL2000": "^RUT",
+      "VIX": "^VIX",
+      "NIKKEI": "^N225",
+      "EUROSTOXX50": "^STOXX50E",
+      "CAC40": "^FCHI",
+      "DAX": "^GDAXI"
+    },
+    "one_shot_context_symbols": {
+      "SP500_FUTURE": "ES=F",
+      "NASDAQ_FUTURE": "NQ=F",
+      "OIL": "CL=F",
+      "GOLD": "GC=F",
+      "EURUSD": "EURUSD=X"
+    },
+    "exclude_partial_asia_from_core_score": true,
+    "preopen_futures_overlay_weight": 0.15,
+    "risk_on_weights": {
+      "SP500": 0.15,
+      "NASDAQ": 0.15,
+      "RUSSELL2000": 0.10,
+      "NIKKEI": 0.10,
+      "EUROSTOXX50": 0.20,
+      "CAC40": 0.05,
+      "DAX": 0.05,
+      "VIX_INVERSE": 0.20
+    }
+  },
+  "movement_potential_weights": {
+    "news_magnitude": 0.45,
+    "technical_impulse": 0.25,
+    "global_market_shock": 0.15,
+    "known_event_proximity": 0.15
+  },
+  "direction_weights": {
+    "news_direction": 0.55,
+    "technical_direction": 0.25,
+    "exit_risk_inverse": 0.10,
+    "global_risk_on": 0.10
+  },
+  "thresholds": {
+    "high_movement_potential": 70,
+    "medium_movement_potential": 50,
+    "technical_only_actionable": 70,
+    "bullish_direction": 25,
+    "bearish_direction": -25,
+    "high_existing_news_catalyst": 65,
+    "high_exit_risk": 50,
+    "high_atr_pct": 0.04,
+    "earnings_proximity_days": 7,
+    "minimum_movement_coverage_for_scored_alert": 0.70,
+    "minimum_direction_coverage_for_directional_alert": 0.70
+  },
+  "significant_move": {
+    "absolute_floor_pct": 2.0,
+    "atr_multiple": 1.25,
+    "primary_amplitude_label": "realized_session_abs_extreme_pct",
+    "secondary_close_label": "realized_abs_return_pct",
+    "definition": "ABS_SESSION_EXTREME_GE_MAX_2PCT_1P25_X_ATR14"
+  },
+  "state": {
+    "context_seed_path": "state/tct_context/TCT_DAILY_TRADER_LATEST.csv",
+    "catalyst_ledger_path": "state/tct_context/TCT_V24_4_2_CATALYST_LEDGER.csv",
+    "daily_close_ledger_path": "state/tct_context/TCT_DAILY_OHLC_LEDGER.csv"
+  },
+  "pit_lineage": {
+    "first_subsequent_session_only": true,
+    "ohlc_ledger_recent_bars": 10,
+    "minimum_snapshot_outcome_coverage": 0.80,
+    "snapshot_fingerprint_required": true,
+    "fingerprint_algorithm": "TCT_PIT_SHA256_CANONICAL_V3",
+    "fail_closed_on_fingerprint_mismatch": true,
+    "historical_replay_without_historical_tct_snapshots_forbidden": true
+  },
+  "governance": {
+    "decision_influence": 0.0,
+    "score_influence": 0.0,
+    "sizing_influence": 0.0,
+    "stop_loss_influence": 0.0,
+    "ct_influence": 0.0,
+    "real_orders_enabled": false,
+    "fixed_take_profit_enabled": false,
+    "fixed_stop_loss_enabled": false,
+    "holdout_locked": true,
+    "retuning_allowed": false,
+    "promotion_authority": false
+  }
+}

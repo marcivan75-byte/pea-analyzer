@@ -44,12 +44,13 @@ def test_v2441_configs_match_documented_coverage_and_epoch():
     assert gates["governance"]["production_influence"] == 0.0
 
 
-def test_active_catalyst_workflow_has_only_v2441_execution_steps():
+def test_active_catalyst_workflow_has_only_v2442_execution_steps_and_v2441_remains_historical():
     workflow = (ROOT / ".github" / "workflows" / "tct_next_session_context.yml").read_text(encoding="utf-8")
     run_lines = [line.strip() for line in workflow.splitlines() if line.strip().startswith("run: python -m v182.reporting.tct_")]
-    assert "run: python -m v182.reporting.tct_next_session_catalyst_run_v24_4_1" in run_lines
-    assert "run: python -m v182.reporting.tct_v24_4_1_pit_lineage" in run_lines
-    assert "run: python -m v182.reporting.tct_v24_4_1_pit_validator_runtime" in run_lines
-    assert "run: python -m v182.reporting.tct_next_session_catalyst_run" not in run_lines
-    assert "run: python -m v182.reporting.tct_v24_4_pit_lineage" not in run_lines
-    assert "run: python -m v182.reporting.tct_v24_4_pit_validator_runtime" not in run_lines
+    assert "run: python -m v182.reporting.tct_next_session_catalyst_run_v24_4_2" in run_lines
+    assert "run: python -m v182.reporting.tct_v24_4_2_pit_lineage" in run_lines
+    assert "run: python -m v182.reporting.tct_v24_4_2_pit_validator" in run_lines
+    assert "run: python -m v182.reporting.tct_next_session_catalyst_run_v24_4_1" not in run_lines
+    assert "run: python -m v182.reporting.tct_v24_4_1_pit_lineage" not in run_lines
+    assert "run: python -m v182.reporting.tct_v24_4_1_pit_validator_runtime" not in run_lines
+    assert (ROOT / "src" / "v182" / "reporting" / "tct_next_session_catalyst_run_v24_4_1.py").exists()
