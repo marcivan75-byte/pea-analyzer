@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from io import StringIO
 import re
 from urllib.parse import urljoin
@@ -17,6 +17,36 @@ DEFAULT_MAX_PAGES = 100
 
 def _norm(value: object) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+
+def _parse_catalogue_date(value: object) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value or "").strip()
+    if not text or text.lower() in {"nan", "nat", "none"}:
+        return None
+    iso_match = re.search(r"\b(\d{4})-(\d{2})-(\d{2})\b", text)
+    if iso_match:
+        try:
+            return date.fromisoformat(iso_match.group(0))
+        except ValueError:
+            return None
+    european_match = re.search(r"\b(\d{1,2})[/.](\d{1,2})[/.](\d{4})\b", text)
+    if european_match:
+        try:
+            return date(
+                int(european_match.group(3)),
+                int(european_match.group(2)),
+                int(european_match.group(1)),
+            )
+        except ValueError:
+            return None
+    parsed = pd.to_datetime(text, errors="coerce", dayfirst=True)
+    if pd.isna(parsed):
+        return None
+    return parsed.date()
 
 
 def _lines(html: str) -> list[str]:
@@ -123,7 +153,7 @@ def _table_rows(html: str) -> tuple[list[tuple[dict[str, object], dict[str, obje
         if "company name" not in columns or "date" not in columns:
             continue
         for _, row in table.iterrows():
-            parsed = legacy._parse_date(row.get(columns["date"]))
+            parsed = _parse_catalogue_date(row.get(columns["date"]))
             if parsed:
                 page_dates.append(parsed)
             rows.append((row.to_dict(), columns))
@@ -138,12 +168,7 @@ def collect_euronext_v1_3(
     target_isins: set[str] | None = None,
     enrich_details: bool = True,
 ) -> tuple[list[dict], dict]:
-    """Collect the paginated official Euronext IPO catalogue fail-closed.
-
-    ``target_isins`` limits returned rows by exact ISIN. ``enrich_details`` is
-    left enabled for IPO Radar; listing-date qualification can disable it
-    because the official catalogue row itself carries exact ISIN and date.
-    """
+    """Collect the paginated official Euronext IPO catalogue fail-closed."""
     if start > end:
         raise ValueError("EURONEXT_IPO_INVALID_DATE_RANGE")
     if max_pages < 1:
@@ -183,7 +208,7 @@ def collect_euronext_v1_3(
 
             fingerprint_items: list[tuple[str, str, str]] = []
             for row, columns in rows:
-                parsed = legacy._parse_date(row.get(columns["date"]))
+                parsed = _parse_catalogue_date(row.get(columns["date"]))
                 name = str(row.get(columns["company name"], "") or "").strip()
                 isin = str(row.get(columns.get("isin code", ""), "") or "").strip().upper()
                 fingerprint_items.append((parsed.isoformat() if parsed else "", isin, _norm(name)))
@@ -195,7 +220,7 @@ def collect_euronext_v1_3(
 
             detail_links = _showcase_links(html) if enrich_details else {}
             for row, columns in rows:
-                parsed = legacy._parse_date(row.get(columns["date"]))
+                parsed = _parse_catalogue_date(row.get(columns["date"]))
                 if not parsed or not (start <= parsed <= end):
                     continue
                 name = row.get(columns["company name"])
@@ -262,6 +287,7 @@ def collect_euronext_v1_3(
             "detail_enrichment_enabled": enrich_details,
             "detail_enriched_count": detail_success,
             "detail_failed_count": detail_failed,
+            "date_parse_policy": "EURONEXT_DD_MM_YYYY_DAY_FIRST",
             "dedupe_policy": "EXACT_ISIN_DATE_SYMBOL_MARKET_LOCATION",
             "detail_policy": (
                 "OFFICIAL_SHOWCASE_DETAIL_ENRICHED"
@@ -281,6 +307,7 @@ def collect_euronext_v1_3(
             "target_isins_requested": len(normalized_targets or set()),
             "non_target_rows_skipped": non_target_rows_skipped,
             "detail_enrichment_enabled": enrich_details,
+            "date_parse_policy": "EURONEXT_DD_MM_YYYY_DAY_FIRST",
             "detail": f"{type(exc).__name__}: {str(exc)[:180]}",
             "partial_candidates_discarded": len(candidates),
             "partial_results_published": False,
