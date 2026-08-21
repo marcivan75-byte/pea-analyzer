@@ -93,17 +93,15 @@ def apply_configured_action_listing_evidence(
     actions_df: pd.DataFrame,
     evidence_path: str | Path | None = None,
 ) -> dict:
-    """Apply V21.17 frozen Euronext listing metadata by exact ISIN.
+    """Apply governed V21.17 + V21.19 Euronext listing metadata by exact ISIN.
 
-    The overlay is metadata-only, never fabricates OHLCV and fails closed when a
-    pre-existing listing date disagrees with the official frozen evidence.
+    The default applies the two non-overlapping frozen evidence generations. An
+    explicit path remains available for isolated historical tests. The overlay is
+    metadata-only, never fabricates OHLCV and fails closed on any date conflict.
     """
-    from v182.sources.action_listing_evidence import (
-        DEFAULT_FROZEN_EVIDENCE,
-        apply_frozen_listing_evidence,
-    )
+    from v182.sources.action_listing_evidence import apply_frozen_listing_evidence
 
-    path = DEFAULT_FROZEN_EVIDENCE if evidence_path is None else Path(evidence_path)
+    path = None if evidence_path is None else Path(evidence_path)
     return apply_frozen_listing_evidence(actions_df, path)
 
 
@@ -117,11 +115,11 @@ def qualify_action_yahoo_tickers(actions_df: pd.DataFrame) -> list[TickerQualifi
 
     Before legacy symbol qualification, the governed V21.9 identity overlay
     hydrates canonical identity-only rows from attributed ISIN mappings and the
-    V21.17 exact-ISIN Euronext overlay adds only official listing-date metadata.
-    The latter never creates price history or calibration eligibility. Existing
-    qualified tickers and unsupported/secondary venues are left untouched. No
-    issuer-country guessing, fuzzy-name-only promotion, canonical-MIC fallback,
-    or fallback to an unqualified symbol is performed.
+    V21.17 + V21.19 exact-ISIN Euronext overlays add only official listing-date
+    metadata. These overlays never create price history or calibration
+    eligibility. Existing qualified tickers and unsupported/secondary venues are
+    left untouched. No issuer-country guessing, fuzzy-name-only promotion,
+    canonical-MIC fallback, or fallback to an unqualified symbol is performed.
     """
     apply_configured_action_identity_overlay(actions_df)
     apply_configured_action_listing_evidence(actions_df)
