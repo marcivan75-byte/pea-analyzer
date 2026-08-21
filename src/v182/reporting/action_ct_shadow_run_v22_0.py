@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from typing import Any
 import json
 import math
 
@@ -442,8 +443,10 @@ def run(root: Path = ROOT, now: datetime | None = None) -> dict:
                 except Exception as exc:
                     errors.append(f"{ticker}:{type(exc).__name__}:{str(exc)[:160]}")
                     snap = {"status": "ERROR_SHADOW", "bars": int(len(completed)), "t1_t2_used": False, "intraday_data_used": False}
-            entry_components = snap.pop("entry_components", {}) or {}
-            exit_components = snap.pop("exit_components", {}) or {}
+            raw_entry_components = snap.pop("entry_components", {})
+            raw_exit_components = snap.pop("exit_components", {})
+            entry_components: dict[str, Any] = raw_entry_components if isinstance(raw_entry_components, dict) else {}
+            exit_components: dict[str, Any] = raw_exit_components if isinstance(raw_exit_components, dict) else {}
             b = baseline.loc[isin] if isin in baseline.index else pd.Series(dtype=object)
             if isinstance(b, pd.DataFrame):
                 b = b.iloc[0]
@@ -524,3 +527,4 @@ def run(root: Path = ROOT, now: datetime | None = None) -> dict:
 
 if __name__ == "__main__":
     print(json.dumps(run(), ensure_ascii=False, indent=2, default=str))
+
