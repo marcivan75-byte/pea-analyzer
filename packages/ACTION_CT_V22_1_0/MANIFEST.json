@@ -30,6 +30,7 @@
     "docs/ACTION_CT_REFERENTIEL_V22_0_0_SHADOW.md",
     "docs/ACTION_CT_AUDIT_V22_0_0_2026-08-21.md",
     "docs/ACTION_CT_REFERENTIEL_V22_1_0_FINAL.md",
+    "docs/ACTION_CT_AUDIT_V22_1_0_FINAL_2026-08-21.md",
     "packages/ACTION_CT_V22_1_0/README.md",
     "packages/ACTION_CT_V22_1_0/MANIFEST.json",
     ".github/workflows/action_ct_v22_validation.yml",
