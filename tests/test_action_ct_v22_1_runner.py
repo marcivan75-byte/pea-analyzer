@@ -138,7 +138,9 @@ def test_v22_1_runner_builds_context_shadow_and_immutable_pit(tmp_path: Path):
     assert len(ledger) == 30
     assert shadow["entry_component_quality_target"].notna().any()
     assert shadow["entry_component_relative_strength_sector"].notna().any()
-    assert shadow["valuation_risk_score"].notna().any()
+    assert "valuation_risk_score" in shadow.columns
+    assert shadow["valuation_risk_score"].isna().all()
+    assert shadow["asymmetric_risk_score"].notna().any()
     assert shadow["context_richness_score"].notna().any()
     assert ledger["snapshot_fingerprint"].astype(str).str.len().eq(64).all()
 
