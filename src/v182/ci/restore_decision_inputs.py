@@ -21,6 +21,14 @@ REQUIRED = {
 ARTIFACT_PREFIXES = ("committee-weekly-v21-8-1-", "committee-master-v21-8-1-")
 
 
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected and urllib.parse.urlsplit(req.full_url).netloc != urllib.parse.urlsplit(newurl).netloc:
+            redirected.remove_header("Authorization")
+        return redirected
+
+
 def _request(url: str, token: str, accept: str = "application/vnd.github+json"):
     request = urllib.request.Request(
         url,
@@ -31,7 +39,7 @@ def _request(url: str, token: str, accept: str = "application/vnd.github+json"):
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    return urllib.request.urlopen(request, timeout=60)
+    return urllib.request.build_opener(_SafeRedirectHandler()).open(request, timeout=60)
 
 
 def _json(url: str, token: str) -> dict:
