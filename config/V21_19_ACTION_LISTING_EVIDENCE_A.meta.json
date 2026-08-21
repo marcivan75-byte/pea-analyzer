@@ -1,0 +1,23 @@
+{
+  "version": "V21.19_ACTION_LISTING_EVIDENCE_A",
+  "evidence_file": "config/V21_19_ACTION_LISTING_EVIDENCE_A.csv.gz",
+  "evidence_rows": 126,
+  "evidence_level": "A",
+  "validation_status": "EXACT_ISIN_OFFICIAL_LISTING_DATE",
+  "source_run": "32485729404",
+  "source_artifact": "V21_19_REAL_EURONEXT_PAGINATION_PROOF_32485729404",
+  "source_artifact_sha256": "86a3185b10877388f3d03fb0b169271d6124db8e725d743deb56b63e1a98a2de",
+  "evidence_csv_sha256": "ea1f7f39c3bc94952f8e8ee6d9af907d3e2711847d96e33cd6508c4bf5b370da",
+  "compressed_file_sha256": "69b20e4b154351e88f7ef533707c900cc79c677e772370dc3e06fd87973e63bb",
+  "requested_targets": 157,
+  "accepted_exact_isin_total_in_proof": 132,
+  "new_exact_isin_vs_v21_17": 126,
+  "quarantine_rows": 10,
+  "unresolved_targets": 15,
+  "pages_fetched": 16,
+  "pagination_complete": true,
+  "stop_reason": "PAGE_WHOLELY_BEFORE_REQUESTED_START",
+  "synthetic_history_created": false,
+  "calibration_eligibility_changed": false,
+  "stress_calibration_weight": 0.0
+}
