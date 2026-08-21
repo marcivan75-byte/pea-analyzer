@@ -92,6 +92,27 @@ def _technical_components(frame: pd.DataFrame, cfg: dict[str, Any]) -> tuple[dic
         None if max_drawdown is None else _clip(100.0 + max_drawdown * 2.5),
     ])
 
+    path63 = close.tail(64).diff().abs().sum() if len(close) >= 64 else np.nan
+    efficiency63 = (
+        abs(float(close.iloc[-1] - close.iloc[-64])) / float(path63)
+        if len(close) >= 64 and np.isfinite(path63) and path63 > 0
+        else None
+    )
+    efficiency = None if efficiency63 is None else _clip(efficiency63 * 160.0)
+    r126 = returns.tail(126)
+    std126 = float(r126.std(ddof=1)) if len(r126) >= 40 else None
+    sharpe126 = float(r126.mean() / std126 * np.sqrt(252.0)) if std126 and std126 > 0 else None
+    downside_rms = float(np.sqrt((r126[r126 < 0].pow(2)).mean()) * np.sqrt(252.0)) if (r126 < 0).any() else None
+    sortino126 = float(r126.mean() * 252.0 / downside_rms) if downside_rms and downside_rms > 0 else None
+    gains = float(r126[r126 > 0].sum())
+    losses = abs(float(r126[r126 < 0].sum()))
+    gain_to_pain = gains / losses if losses > 0 else None
+    risk_adjusted = _mean([
+        None if sharpe126 is None else _clip(50.0 + 25.0 * sharpe126),
+        None if sortino126 is None else _clip(50.0 + 15.0 * sortino126),
+        None if gain_to_pain is None else _clip(gain_to_pain * 50.0),
+    ])
+
     median_turnover = None
     if not volume.empty and len(volume.dropna()) >= 20:
         aligned_close = pd.to_numeric(frame["close"], errors="coerce")
@@ -99,6 +120,18 @@ def _technical_components(frame: pd.DataFrame, cfg: dict[str, Any]) -> tuple[dic
     floor = float(cfg["gates"]["minimum_median_turnover_eur"])
     preferred = float(cfg["gates"]["preferred_median_turnover_eur"])
     liquidity = None if median_turnover is None else _clip((median_turnover - floor) / max(preferred - floor, 1.0) * 100.0)
+
+    rvol20 = None
+    volume_trend = None
+    if not volume.empty and len(volume.dropna()) >= 126:
+        avg20 = float(volume.tail(20).mean())
+        avg126 = float(volume.tail(126).mean())
+        rvol20 = float(volume.iloc[-1] / avg20) if avg20 > 0 else None
+        volume_trend = float(avg20 / avg126 - 1.0) if avg126 > 0 else None
+    volume_confirmation = _mean([
+        None if rvol20 is None else _clip(50.0 + (rvol20 - 1.0) * 80.0),
+        None if volume_trend is None else _clip(50.0 + volume_trend * 250.0),
+    ])
 
     rsi = _rsi(close)
     rsi_quality = None if rsi is None else _clip(100.0 - abs(rsi - 58.0) * 3.0)
@@ -109,6 +142,9 @@ def _technical_components(frame: pd.DataFrame, cfg: dict[str, Any]) -> tuple[dic
         "technical": technical,
         "risk": risk,
         "liquidity": liquidity,
+        "efficiency": efficiency,
+        "risk_adjusted": risk_adjusted,
+        "volume_confirmation": volume_confirmation,
     }, {
         "reference_close": last,
         "return_3m_pct": ret63,
@@ -122,6 +158,12 @@ def _technical_components(frame: pd.DataFrame, cfg: dict[str, Any]) -> tuple[dic
         "downside_volatility_126d_pct": downside_vol,
         "max_drawdown_252d_pct": max_drawdown,
         "median_turnover_20d_eur": median_turnover,
+        "efficiency_63d": efficiency63,
+        "sharpe_126d": sharpe126,
+        "sortino_126d": sortino126,
+        "gain_to_pain_126d": gain_to_pain,
+        "relative_volume_20d": rvol20,
+        "volume_trend_20_vs_126": volume_trend,
     }
 
 
@@ -172,6 +214,9 @@ def compute_action_mt_snapshot(
         ]),
         "risk": technical.get("risk"),
         "liquidity": technical.get("liquidity"),
+        "efficiency": technical.get("efficiency"),
+        "risk_adjusted": technical.get("risk_adjusted"),
+        "volume_confirmation": technical.get("volume_confirmation"),
     }
     score, coverage = _weighted_score(components, cfg["score_weights"])
     gates = cfg["gates"]
@@ -192,14 +237,31 @@ def compute_action_mt_snapshot(
 
     market_regime = _context_score(context, "market_regime_score")
     sector = components.get("sector_macro")
+    confirmations = {
+        "TREND": bool(components["trend"] is not None and components["trend"] >= 75.0),
+        "MOMENTUM": bool(components["momentum"] is not None and components["momentum"] >= 60.0),
+        "QUALITY": bool(components["quality"] is not None and components["quality"] >= 60.0),
+        "RISK_ADJUSTED": bool(components["risk_adjusted"] is not None and components["risk_adjusted"] >= 55.0),
+        "SECTOR": bool(sector is not None and sector >= 55.0),
+        "VOLUME": bool(components["volume_confirmation"] is not None and components["volume_confirmation"] >= 50.0),
+    }
+    confirmation_count = int(sum(confirmations.values()))
+    valuation_context_conflict = bool(
+        sector is not None and sector >= 70.0
+        and components["valuation"] is not None and components["valuation"] <= 30.0
+    )
+    if valuation_context_conflict:
+        warnings.append("HOT_SECTOR_OVERVALUATION")
     hard_block = bool("LIQUIDITY_BLOCK" in warnings or "DRAWDOWN_BLOCK" in warnings)
     if score is None or coverage < float(gates["minimum_score_coverage"]) or missing_mandatory:
         decision = "DATA_INSUFFICIENT"
     elif hard_block or (market_regime is not None and market_regime < float(gates["minimum_market_regime_score"])):
         decision = "RISK_BLOCKED_SHADOW"
-    elif score >= float(gates["entry_strong_score"]) and components["trend"] >= 75.0 and (sector is None or sector >= 50.0):
+    elif valuation_context_conflict:
+        decision = "CONTEXT_CONFLICT_SHADOW"
+    elif score >= float(gates["entry_strong_score"]) and confirmation_count >= int(gates["entry_strong_min_confirmations"]):
         decision = "ENTRY_STRONG_SHADOW"
-    elif score >= float(gates["entry_ready_score"]) and components["trend"] >= 50.0:
+    elif score >= float(gates["entry_ready_score"]) and confirmation_count >= int(gates["entry_ready_min_confirmations"]):
         decision = "ENTRY_READY_SHADOW"
     else:
         decision = "WATCH_SHADOW"
@@ -212,6 +274,8 @@ def compute_action_mt_snapshot(
         "score_coverage": coverage,
         "components": components,
         "warnings": "|".join(warnings),
+        "confirmation_count": confirmation_count,
+        "confirmations": "|".join(name for name, passed in confirmations.items() if passed),
         **diagnostics,
         "real_orders_enabled": False,
         "structural_snapshot_can_promote_signal": False,
