@@ -1,5 +1,6 @@
 [
   {"headline":"Company issues profit warning after weaker demand","event":"PROFIT_WARNING"},
+  {"headline":"Company issues partial profit warning for one division","event":"PARTIAL_PROFIT_WARNING"},
   {"headline":"La société abaisse ses prévisions annuelles","event":"GUIDANCE_CUT"},
   {"headline":"Le groupe relève ses prévisions après un trimestre solide","event":"GUIDANCE_RAISED"},
   {"headline":"Company beats expectations on revenue and profit","event":"EARNINGS_BEAT"},
