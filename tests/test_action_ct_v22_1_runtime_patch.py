@@ -9,6 +9,7 @@ import pandas as pd
 
 from v182.features.action_ct_context_v22_1 import build_action_ct_context_overlay
 from v182.features.action_ct_v22_1 import compute_action_ct_snapshot_v22_1
+from v182.features.action_decision_enhancements import build_action_enhancement_observations
 from v182.features.ct_math import mean_available, weighted_score
 from v182.features.sector_rotation import build_rotation_observations
 from v182.reporting.action_ct_shadow_run_v22_1 import _validate_master_schema
@@ -128,3 +129,22 @@ def test_master_schema_validation_is_fail_closed_for_missing_isin():
     assert invalid["missing_required_columns"] == ["isin"]
     assert valid["valid"] is True
     assert valid["ticker_columns_present"] == ["yahoo_ticker"]
+
+
+def test_textual_morningstar_and_target_revision_are_diagnostics_not_numeric_rating_replacements():
+    frame = pd.DataFrame(
+        [
+            {
+                "isin": "FR0000000001",
+                "morningstar_rating_text": "Above Average",
+                "target_upside_pct_v21": 12.0,
+                "consensus_delta_4w": 1.5,
+                "net_upgrades_30d_v21": 1,
+            }
+        ]
+    )
+    observations = build_action_enhancement_observations(frame)
+    values = {row["field"]: row["value"] for row in observations}
+    assert "morningstar_action_score" not in values
+    assert values["morningstar_text_rating_score"] == 80.0
+    assert values["target_revision_confirmed"] is True
