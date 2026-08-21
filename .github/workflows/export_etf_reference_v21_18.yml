@@ -1,0 +1,140 @@
+name: Export ETF V21.18 audited delivery
+
+on:
+  push:
+    branches:
+      - export/etf-reference-v21-18
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: pip install -e '.[test]'
+      - name: Audit Python
+        run: |
+          python -m compileall -q src/v182
+          ruff check \
+            src/v182/features/etf_ct_lt_shadow_v21_14.py \
+            src/v182/features/etf_fund_flows_v1.py \
+            src/v182/features/etf_mt_history_integrity.py \
+            src/v182/features/etf_mt_v2081.py \
+            src/v182/features/etf_mt_v2082_dynamic.py \
+            src/v182/features/etp_satellite_v1.py \
+            src/v182/features/sector_rotation_v2.py \
+            src/v182/features/sector_rotation_v2_final.py \
+            src/v182/features/sector_rotation_v2_membership.py \
+            src/v182/features/instrument_theme_v2.py \
+            src/v182/features/macro_sector_v2.py \
+            src/v182/features/theme_propagation_v2.py \
+            src/v182/features/theme_rotation_auto_v2.py \
+            src/v182/sources/etf_fund_flows.py \
+            src/v182/sources/etf_inception_data.py \
+            src/v182/sources/etf_structural_data.py \
+            src/v182/state/etf_structure_state.py \
+            src/v182/audit/etf_benchmark_tracking_v21_18.py
+      - name: Targeted ETF and rotation tests
+        run: |
+          pytest -q \
+            tests/test_etf_mt_high_precision.py \
+            tests/test_etf_mt_history_integrity_v21_10.py \
+            tests/test_etf_mt_v2081_workflow.py \
+            tests/test_etf_mt_v2082_dynamic.py \
+            tests/test_etf_ct_lt_shadow_v21_14.py \
+            tests/test_etf_structural_data_v21_10.py \
+            tests/test_etf_structure_state_v21_15.py \
+            tests/test_etf_fund_flows_v1.py \
+            tests/test_etf_fund_flows_v21_16_temporal_integrity.py \
+            tests/test_etf_fund_flows_v21_16_window_readiness.py \
+            tests/test_etf_benchmark_parser_v21_18.py \
+            tests/test_etf_benchmark_tracking_v21_18.py \
+            tests/test_etp_satellite_v1.py \
+            tests/test_sector_rotation_v2.py \
+            tests/test_sector_rotation_v2_config_and_mapping.py \
+            tests/test_sector_rotation_v2_final_guardrails.py \
+            tests/test_sector_rotation_v2_pit_oos.py \
+            tests/test_sector_rotation_v2_process_integration.py \
+            tests/test_sector_rotation_v2_theme_macro.py \
+            tests/test_sector_rotation_v2_validation.py
+      - name: Build delivery package
+        run: |
+          set -euo pipefail
+          ROOT=ETF_CODE_V21_18_AUDITED
+          mkdir -p "$ROOT/src/v182" "$ROOT/config" "$ROOT/docs" "$ROOT/tests" "$ROOT/inputs"
+          cp -r src/v182/features "$ROOT/src/v182/"
+          cp -r src/v182/decision "$ROOT/src/v182/"
+          cp -r src/v182/reporting "$ROOT/src/v182/"
+          cp -r src/v182/sources "$ROOT/src/v182/"
+          cp -r src/v182/state "$ROOT/src/v182/"
+          cp -r src/v182/audit "$ROOT/src/v182/"
+          cp -r src/v182/backtest "$ROOT/src/v182/"
+          cp -r src/v182/io "$ROOT/src/v182/"
+          cp -r src/v182/risk "$ROOT/src/v182/"
+          cp src/v182/__init__.py "$ROOT/src/v182/"
+          cp config/V20_7_1_ETF_CRITERIA_REGISTRY.json "$ROOT/config/"
+          cp config/V20.8_ETF_MT_HIGH_PRECISION.json "$ROOT/config/"
+          cp config/V20.8.2_ETF_MT_DYNAMIC.json "$ROOT/config/"
+          cp config/ETF_CT_LT_SHADOW_V21_14.json "$ROOT/config/"
+          cp config/ETF_STRUCTURE_STATE_V21_15.json "$ROOT/config/"
+          cp config/ETF_FUND_FLOW_V1_SHADOW.json "$ROOT/config/"
+          cp config/ETF_FUND_FLOW_EXTERNAL_UNIVERSE_V1.csv "$ROOT/config/"
+          cp config/ETF_BENCHMARK_TRACKING_V21_18.json "$ROOT/config/"
+          cp config/ETF_BENCHMARK_PRICE_MAP_V21_18.csv "$ROOT/config/"
+          cp config/ETP_SATELLITE_V1_SHADOW.json "$ROOT/config/"
+          cp config/V18.2_ETF_TICKER_MAP.csv "$ROOT/config/"
+          cp config/SECTOR_ROTATION_V2_*.csv "$ROOT/config/" || true
+          cp config/SECTOR_ROTATION_V2_*.json "$ROOT/config/" || true
+          cp config/V21_8_ENTRY_EXIT_GOVERNANCE.json "$ROOT/config/"
+          cp config/CALIBRATION_WINDOWS_V21_12.json "$ROOT/config/"
+          cp docs/V20.8.1_ETF_MT_REFERENTIEL_PROCESS.md "$ROOT/docs/"
+          cp docs/V20.8_ETF_MT_HIGH_PRECISION.md "$ROOT/docs/"
+          cp docs/ETF_MT_V21_10_INTEGRITY_HARDENING.md "$ROOT/docs/"
+          cp docs/ETF_CT_LT_V21_14_SHADOW.md "$ROOT/docs/"
+          cp docs/ETF_STRUCTURE_STATE_V21_15.md "$ROOT/docs/"
+          cp docs/ETF_INCEPTION_EVIDENCE_V21_16.md "$ROOT/docs/"
+          cp docs/ETF_FUND_FLOWS_V1_SHADOW.md "$ROOT/docs/"
+          cp docs/ETF_FUND_FLOWS_V1_1_V21_16_INTEGRITY.md "$ROOT/docs/"
+          cp docs/ETF_BENCHMARK_TRACKING_V21_18.md "$ROOT/docs/"
+          cp docs/ETP_SATELLITE_V1.md "$ROOT/docs/"
+          cp docs/SECTOR_ROTATION_V2_0_SHADOW.md "$ROOT/docs/"
+          cp docs/SECTOR_ROTATION_V2_FINAL_GUARDRAILS.md "$ROOT/docs/"
+          cp docs/SECTOR_ROTATION_V2_PIT_OOS_PROTOCOL.md "$ROOT/docs/"
+          cp docs/V21_8_ENTRY_EXIT_FINAL_GUARDRAILS.md "$ROOT/docs/"
+          cp docs/OHLCV_HISTORY_DEPTH_V21_13.md "$ROOT/docs/"
+          cp docs/CALIBRATION_WINDOWS_V21_12.md "$ROOT/docs/"
+          cp tests/test_etf*.py "$ROOT/tests/" || true
+          cp tests/test_sector_rotation*.py "$ROOT/tests/" || true
+          cp inputs/V18.2_PEA_ETF_MASTER.csv "$ROOT/inputs/"
+          cp pyproject.toml "$ROOT/"
+          printf '%s\n' '49c53d87855ce27e76213c65916cb5a579cdf590' > "$ROOT/SOURCE_COMMIT.txt"
+          cat > "$ROOT/AUDIT_REPORT.md" <<'EOF'
+          # ETF V21.18 - audit de livraison
+          - Source: main commit 49c53d87855ce27e76213c65916cb5a579cdf590
+          - Universe ETF PEA: 102 instruments.
+          - Python compileall: PASS.
+          - Ruff sur noyau ETF/rotation: PASS.
+          - Tests cibles ETF/rotation: PASS (voir log GitHub Actions du run d'export).
+          - T1/T2: interdits aux ETF.
+          - Ordres reels: desactives dans les modules ETF shadow/reference.
+          - Tracking error: bloque tant que le mapping de prix du benchmark n'est pas verifie.
+          - Fund flows / CT / LT / rotation sectorielle: shadow/fail-closed selon leur gouvernance.
+          - Holdout final: non ouvert.
+          EOF
+          find "$ROOT" -type f -print0 | sort -z | xargs -0 sha256sum > "$ROOT/SHA256SUMS.txt"
+          zip -qr ETF_CODE_V21_18_AUDITED.zip "$ROOT"
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ETF_CODE_V21_18_AUDITED
+          path: ETF_CODE_V21_18_AUDITED.zip
+          retention-days: 30
