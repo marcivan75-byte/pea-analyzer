@@ -92,6 +92,9 @@ def test_duplicate_candidate_across_pages_is_deduplicated(monkeypatch: pytest.Mo
             duplicate,
             ("Older SA", "30/12/2022", "FR0000000003", "Paris", "Euronext", "OLDER"),
         ),
+        f"{source.EURONEXT_IPO_ALL}?page=2": _page(
+            ("Older Two SA", "15/12/2022", "FR0000000004", "Paris", "Euronext", "OLD2")
+        ),
     }
 
     monkeypatch.setattr(source.requests, "get", lambda url, **_: _Response(pages[url]))
@@ -104,6 +107,7 @@ def test_duplicate_candidate_across_pages_is_deduplicated(monkeypatch: pytest.Mo
     assert [row["isin"] for row in candidates] == ["FR001400F2Z1"]
     assert metrics["duplicate_candidates_removed"] == 1
     assert metrics["pagination_complete"] is True
+    assert metrics["stop_reason"] == "PAGE_WHOLELY_BEFORE_REQUESTED_START"
 
 
 def test_repeated_page_signature_stops_without_loop(monkeypatch: pytest.MonkeyPatch) -> None:
