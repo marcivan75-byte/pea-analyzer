@@ -1,0 +1,127 @@
+name: Export TCT V24.4.1 audited delivery
+
+on:
+  push:
+    branches:
+      - export/tct-v24-4-1-final
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install test toolchain
+        run: pip install -e '.[test]'
+
+      - name: Audit TCT release source
+        run: |
+          set -euo pipefail
+          python -m compileall -q src tests
+          ruff check src tests
+          pytest -q tests/test_tct_v24_4_1_audit_hardening.py tests/test_tct_v24_4_1_reference_sync.py tests/test_tct_v24_4_pit_lineage_workflows.py tests/test_tct_v24_4_pit_workflow.py tests/test_tct_next_session_workflow_v24_4.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('.')
+          manifest = json.loads((root / 'docs/TCT_RELEASE_MANIFEST_V24_4_1.json').read_text(encoding='utf-8'))
+          missing = []
+          for section in manifest['python'].values():
+              for path in section:
+                  if not (root / path).is_file(): missing.append(path)
+          for section in ('config', 'workflows', 'documentation', 'tests_required'):
+              for path in manifest[section]:
+                  if not (root / path).is_file(): missing.append(path)
+          if missing:
+              raise SystemExit('Missing manifest files: ' + ', '.join(missing))
+          cfg31 = json.loads((root / 'config/TCT_V24_3_1_DAILY_TRADER_SHADOW.json').read_text(encoding='utf-8'))
+          cfg41 = json.loads((root / 'config/TCT_V24_4_1_CATALYST_CONTEXT_SHADOW.json').read_text(encoding='utf-8'))
+          gates = json.loads((root / 'config/TCT_V24_4_1_VALIDATION_GATES.json').read_text(encoding='utf-8'))
+          for label, weights in [('entry', cfg31['entry_weights']), ('exit', cfg31['exit_risk_weights']), ('movement', cfg41['movement_potential_weights']), ('direction', cfg41['direction_weights'])]:
+              total = sum(float(v) for v in weights.values())
+              if abs(total - 1.0) > 1e-9:
+                  raise SystemExit(f'{label} weights sum to {total}')
+          gov = cfg41['governance']
+          assert gov['real_orders_enabled'] is False
+          assert gov['holdout_locked'] is True
+          assert all(float(gov[k]) == 0.0 for k in ('decision_influence','score_influence','sizing_influence','stop_loss_influence'))
+          assert gates['validation_epoch'] == 'V24.4.1_ONLY_NO_MIX_WITH_V24.4.0'
+          assert gates['governance']['promotion_authority'] is False
+          print('Release governance: SUCCESS')
+          PY
+
+      - name: Build final audited package
+        run: |
+          set -euo pipefail
+          ROOT=TCT_V24_4_1_FINAL_AUDITED
+          rm -rf "$ROOT" TCT_V24_4_1_FINAL_AUDITED.zip TCT_V24_4_1_FINAL_AUDITED.zip.sha256
+          mkdir -p "$ROOT/CDC" "$ROOT/REFERENTIEL" "$ROOT/AUDIT" "$ROOT/CODE/src" "$ROOT/CONFIG" "$ROOT/WORKFLOWS" "$ROOT/TESTS" "$ROOT/MANIFEST"
+          cp -r src/v182 "$ROOT/CODE/src/"
+          cp pyproject.toml "$ROOT/CODE/"
+          cp docs/TCT_CDC_V24_4_1_FINAL.md "$ROOT/CDC/"
+          cp docs/TCT_REFERENTIEL_V24_4_1_FINAL.md "$ROOT/REFERENTIEL/"
+          cp docs/TCT_AUDIT_V24_4_1_2026-08-21.md "$ROOT/AUDIT/"
+          cp docs/PROCESS_REFERENCE_V21_8_1_TCT_V24_4_1_ADDENDUM.md "$ROOT/REFERENTIEL/"
+          cp docs/PROCESS_REFERENCE_V21_8_1_FINAL.md "$ROOT/REFERENTIEL/"
+          if [ -f docs/PROCESS_GOVERNANCE_STATUS_2026_08_20.md ]; then cp docs/PROCESS_GOVERNANCE_STATUS_2026_08_20.md "$ROOT/REFERENTIEL/"; fi
+          cp docs/TCT_RELEASE_MANIFEST_V24_4_1.json "$ROOT/MANIFEST/"
+          for f in config/TCT_V24_1_7_SHADOW.json config/TCT_V24_3_0_DAILY_TRADER_SHADOW.json config/TCT_V24_3_1_DAILY_TRADER_SHADOW.json config/TCT_V24_4_1_CATALYST_CONTEXT_SHADOW.json config/TCT_V24_4_1_VALIDATION_GATES.json; do cp "$f" "$ROOT/CONFIG/"; done
+          cp .github/workflows/committee_tct_ct_daily.yml "$ROOT/WORKFLOWS/"
+          cp .github/workflows/tct_next_session_context.yml "$ROOT/WORKFLOWS/"
+          find tests -maxdepth 1 -type f \( -name 'test_tct*.py' -o -name 'test_daily_tct_ct*.py' \) -print0 | sort -z | xargs -0 -I{} cp '{}' "$ROOT/TESTS/"
+
+          cat > "$ROOT/README_DOWNLOAD.md" <<'EOF'
+          # TCT V24.4.1 — paquet final audité
+          Source fonctionnelle : main commit 63f64aa90a9a6aa29f60084ebfd0f6447c506d81.
+          CDC : CDC/TCT_CDC_V24_4_1_FINAL.md
+          Référentiel : REFERENTIEL/TCT_REFERENTIEL_V24_4_1_FINAL.md
+          Code : CODE/src/v182 (snapshot complet pour conserver les dépendances), avec index exact TCT dans MANIFEST/TCT_RELEASE_MANIFEST_V24_4_1.json.
+          Gouvernance : SHADOW_RESEARCH_ONLY, production V21.8.1 inchangée, T1/T2 Actions TCT uniquement, aucun ordre réel, aucun 1m/5m, holdout fermé.
+          Exclus : secrets, .env, caches, outputs de marché, state/ledgers PIT de marché.
+          EOF
+          cat > "$ROOT/CI_VALIDATION.txt" <<'EOF'
+          PR fonctionnelle #117 : merged sur main.
+          Committee Master 32456059692 : SUCCESS (compile, Ruff, audit statique, intégrité, full pytest).
+          Action Identity 32456059659 : SUCCESS (static/unit, overlay, full suite).
+          Ce run d'export revalide compileall, Ruff et les tests TCT ciblés avant création du ZIP.
+          EOF
+          printf '%s\n' '63f64aa90a9a6aa29f60084ebfd0f6447c506d81' > "$ROOT/SOURCE_COMMIT.txt"
+          python -m compileall -q "$ROOT/CODE/src" "$ROOT/TESTS"
+          find "$ROOT" -type f -print0 | sort -z | xargs -0 sha256sum > "$ROOT/SHA256SUMS.txt"
+          zip -qr TCT_V24_4_1_FINAL_AUDITED.zip "$ROOT"
+          sha256sum TCT_V24_4_1_FINAL_AUDITED.zip > TCT_V24_4_1_FINAL_AUDITED.zip.sha256
+
+      - name: Upload final package
+        uses: actions/upload-artifact@v4
+        with:
+          name: TCT_V24_4_1_FINAL_AUDITED
+          path: |
+            TCT_V24_4_1_FINAL_AUDITED.zip
+            TCT_V24_4_1_FINAL_AUDITED.zip.sha256
+          retention-days: 30
+
+      - name: Publish export run id to PR 118
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          run_id = os.environ['GITHUB_RUN_ID']
+          conclusion = os.environ.get('JOB_STATUS', 'completed')
+          body = json.dumps({'body': f'EXPORT_RUN_ID={run_id} | artifact=TCT_V24_4_1_FINAL_AUDITED | workflow_status={conclusion}'}).encode()
+          req = urllib.request.Request('https://api.github.com/repos/marcivan75-byte/pea-analyzer/issues/118/comments', data=body, method='POST', headers={'Authorization': f"Bearer {os.environ['GH_TOKEN']}", 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json'})
+          with urllib.request.urlopen(req) as resp:
+              print(resp.status)
+          PY
