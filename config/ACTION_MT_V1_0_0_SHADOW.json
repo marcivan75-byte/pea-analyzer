@@ -8,6 +8,12 @@
   },
   "data_policy": {
     "minimum_history_sessions": 200,
+    "maximum_cache_staleness_days": 7,
+    "completed_daily_bars_only": true,
+    "local_close_timezone": "Europe/Paris",
+    "local_close_hour": 18,
+    "intraday_forbidden": true,
+    "t1_t2_forbidden": true,
     "point_in_time_required_for_historical_validation": true,
     "missing_values_are_never_neutral": true,
     "current_snapshot_fields_cannot_reconstruct_history": true
@@ -61,7 +67,16 @@
     "real_orders_enabled": false,
     "structural_snapshot_can_promote_signal": false,
     "holdout_locked": true,
-    "certification_required_before_production": true
+    "certification_required_before_production": true,
+    "fixed_take_profit_enabled": false,
+    "decision_influence": 0.0,
+    "sizing_influence": 0.0
+  },
+  "runtime": {
+    "maximum_workers": 8,
+    "target_wall_clock_seconds_400_actions": 90,
+    "cache_download_fallback_enabled": false,
+    "pit_ledger_idempotent": true
   }
 }
 
