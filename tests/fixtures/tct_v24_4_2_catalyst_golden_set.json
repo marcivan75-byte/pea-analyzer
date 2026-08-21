@@ -1,0 +1,20 @@
+[
+  {"headline":"Company issues profit warning after weaker demand","event":"PROFIT_WARNING"},
+  {"headline":"La société abaisse ses prévisions annuelles","event":"GUIDANCE_CUT"},
+  {"headline":"Le groupe relève ses prévisions après un trimestre solide","event":"GUIDANCE_RAISED"},
+  {"headline":"Company beats expectations on revenue and profit","event":"EARNINGS_BEAT"},
+  {"headline":"Résultats sous les attentes au premier semestre","event":"EARNINGS_MISS"},
+  {"headline":"Company faces accounting investigation over reported revenue","event":"FRAUD_INVESTIGATION"},
+  {"headline":"Company denies fraud investigation rumors","event":"OTHER_NEWS"},
+  {"headline":"Le groupe dément une enquête pour fraude évoquée par des rumeurs","event":"OTHER_NEWS"},
+  {"headline":"Public tender offer launched for the remaining shares","event":"TENDER_OFFER"},
+  {"headline":"OPA amicale sur la société à 42 euros par action","event":"TENDER_OFFER"},
+  {"headline":"Trading suspended pending company announcement","event":"TRADING_SUSPENSION"},
+  {"headline":"Placement privé accéléré auprès d'investisseurs institutionnels","event":"PRIVATE_PLACEMENT"},
+  {"headline":"Company added to index at next quarterly review","event":"INDEX_INCLUSION"},
+  {"headline":"La valeur sort de l'indice après la revue trimestrielle","event":"INDEX_EXCLUSION"},
+  {"headline":"Analysts raise estimates as consensus is revised higher","event":"CONSENSUS_REVISION_UP"},
+  {"headline":"Consensus abaissé après plusieurs révisions d'analystes","event":"CONSENSUS_REVISION_DOWN"},
+  {"headline":"Regulator rejects approval application","event":"REGULATORY_REJECTION"},
+  {"headline":"Company wins major contract worth 300 million euros","event":"MAJOR_CONTRACT"}
+]
