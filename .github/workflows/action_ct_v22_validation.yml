@@ -40,8 +40,11 @@ jobs:
           cache-dependency-path: pyproject.toml
       - name: Install project
         run: |
-          python -m pip install -e .
-          python -m pip install pytest
+          python -m pip install -e ".[test]"
+      - name: Static quality checks
+        run: |
+          python -m ruff check src tests scripts
+          python -m mypy --follow-imports=skip src/v182/features/action_ct_v22_0.py src/v182/reporting/action_ct_shadow_run_v22_0.py src/v182/reporting/action_ct_shadow_run_v22_1.py
       - name: Compile Action CT modules
         run: |
           python -m py_compile src/v182/features/action_ct_v22_0.py
@@ -147,3 +150,4 @@ jobs:
           path: dist/ACTION_CT_V22_1_1_COMPLETE.zip
           if-no-files-found: error
           retention-days: 30
+

@@ -59,8 +59,7 @@ def _weighted(components: dict[str, float | None], weights: dict[str, float]) ->
 
 
 def _mean(values: list[float | None]) -> float | None:
-    clean = [_finite(v) for v in values]
-    clean = [v for v in clean if v is not None]
+    clean = [value for item in values if (value := _finite(item)) is not None]
     return float(np.mean(clean)) if clean else None
 
 
@@ -541,3 +540,4 @@ def compute_action_ct_snapshot(frame: pd.DataFrame, cfg: dict, context: dict | N
         "fixed_stop_loss_enabled": False,
         "real_orders_enabled": False,
     }
+

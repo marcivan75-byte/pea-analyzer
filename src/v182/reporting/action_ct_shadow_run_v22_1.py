@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 from zoneinfo import ZoneInfo
 import json
 import math
@@ -298,8 +299,8 @@ def run(root: Path = ROOT, now: datetime | None = None) -> dict:
             completed, was_deferred = legacy._completed_daily_history(history, cfg, now)
             deferred += int(was_deferred)
             histories[isin] = completed
-            context = merge_action_ct_context(base, context_overlay.get(isin, {}), cfg)
-            prepared.append((base, isin, ticker, completed, context))
+            merged_context = merge_action_ct_context(base, context_overlay.get(isin, {}), cfg)
+            prepared.append((base, isin, ticker, completed, merged_context))
 
         compute_inputs = [(completed, cfg, context, ticker) for _, _, ticker, completed, context in prepared if completed is not None and context is not None]
         runtime_cfg = cfg.get("runtime_observability", {})
@@ -315,8 +316,9 @@ def run(root: Path = ROOT, now: datetime | None = None) -> dict:
         computed_iter = iter(computed)
 
         rows: list[dict] = []
-        for base, isin, ticker, completed, context in prepared:
-            if completed is None or context is None:
+        for base, isin, ticker, completed, prepared_context in prepared:
+            snap: dict[str, Any]
+            if completed is None or prepared_context is None:
                 snap = {"status": "DATA_INSUFFICIENT", "bars": 0, "t1_t2_used": False, "intraday_data_used": False}
             else:
                 snap, error_record = next(computed_iter)
@@ -324,8 +326,10 @@ def run(root: Path = ROOT, now: datetime | None = None) -> dict:
                     error_record["isin"] = isin
                     error_records.append(error_record)
                     errors.append(f"{ticker}:{error_record['type']}:{error_record['message'][:160]}")
-            entry_components = snap.pop("entry_components", {}) or {}
-            exit_components = snap.pop("exit_components", {}) or {}
+            raw_entry_components = snap.pop("entry_components", {})
+            raw_exit_components = snap.pop("exit_components", {})
+            entry_components: dict[str, Any] = raw_entry_components if isinstance(raw_entry_components, dict) else {}
+            exit_components: dict[str, Any] = raw_exit_components if isinstance(raw_exit_components, dict) else {}
             baseline_row = baseline.loc[isin] if isin in baseline.index else pd.Series(dtype=object)
             if isinstance(baseline_row, pd.DataFrame):
                 baseline_row = baseline_row.iloc[0]
@@ -457,3 +461,4 @@ def run(root: Path = ROOT, now: datetime | None = None) -> dict:
 
 if __name__ == "__main__":
     print(json.dumps(run(), ensure_ascii=False, indent=2, default=str))
+
