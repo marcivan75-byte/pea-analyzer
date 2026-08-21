@@ -3,6 +3,9 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
+import gzip
+import hashlib
+import json
 import re
 from typing import Any
 
@@ -13,8 +16,11 @@ from v182.sources.euronext_ipo_v1_3 import EURONEXT_IPO_ALL, collect_euronext_v1
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_WORKLIST = ROOT / "config" / "V21_17_ACTION_SHORT_HISTORY_WORKLIST.csv"
 DEFAULT_FROZEN_EVIDENCE = ROOT / "config" / "V21_17_ACTION_LISTING_EVIDENCE_A.csv"
+DEFAULT_FROZEN_EVIDENCE_V21_19 = ROOT / "config" / "V21_19_ACTION_LISTING_EVIDENCE_A.csv.gz"
+DEFAULT_FROZEN_EVIDENCE_V21_19_META = ROOT / "config" / "V21_19_ACTION_LISTING_EVIDENCE_A.meta.json"
 LISTING_CONFLICT_TOLERANCE_DAYS = 7
 FROZEN_SOURCE_LABEL = "EURONEXT_OFFICIAL_IPO_SHOWCASE_V21_17"
+FROZEN_SOURCE_LABEL_V21_19 = "EURONEXT_OFFICIAL_IPO_SHOWCASE_V21_19"
 FROZEN_VALIDATION_STATUS = "EXACT_ISIN_OFFICIAL_LISTING_DATE"
 
 
@@ -61,8 +67,7 @@ def load_worklist(path: str | Path = DEFAULT_WORKLIST) -> pd.DataFrame:
     return frame.copy()
 
 
-def load_frozen_listing_evidence(path: str | Path = DEFAULT_FROZEN_EVIDENCE) -> pd.DataFrame:
-    frame = pd.read_csv(path, sep=";", encoding="utf-8-sig", dtype=str)
+def _validate_listing_evidence_frame(frame: pd.DataFrame) -> pd.DataFrame:
     required = {
         "isin",
         "ticker",
@@ -104,18 +109,82 @@ def load_frozen_listing_evidence(path: str | Path = DEFAULT_FROZEN_EVIDENCE) -> 
     return frame
 
 
+def load_frozen_listing_evidence(path: str | Path = DEFAULT_FROZEN_EVIDENCE) -> pd.DataFrame:
+    frame = pd.read_csv(path, sep=";", encoding="utf-8-sig", dtype=str)
+    return _validate_listing_evidence_frame(frame)
+
+
+def load_v21_19_listing_evidence(
+    path: str | Path = DEFAULT_FROZEN_EVIDENCE_V21_19,
+    meta_path: str | Path = DEFAULT_FROZEN_EVIDENCE_V21_19_META,
+) -> pd.DataFrame:
+    """Load the compressed V21.19 evidence and verify its frozen proof manifest."""
+    evidence_path = Path(path)
+    manifest_path = Path(meta_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    compressed = evidence_path.read_bytes()
+    compressed_digest = hashlib.sha256(compressed).hexdigest()
+    if compressed_digest != str(manifest.get("compressed_file_sha256") or "").strip().lower():
+        raise ValueError("ACTION_LISTING_V21_19_COMPRESSED_SHA256_MISMATCH")
+    try:
+        raw = gzip.decompress(compressed)
+    except OSError as exc:
+        raise ValueError("ACTION_LISTING_V21_19_GZIP_INVALID") from exc
+    raw_digest = hashlib.sha256(raw).hexdigest()
+    if raw_digest != str(manifest.get("evidence_csv_sha256") or "").strip().lower():
+        raise ValueError("ACTION_LISTING_V21_19_CSV_SHA256_MISMATCH")
+
+    frame = pd.read_csv(evidence_path, sep=";", encoding="utf-8-sig", dtype=str, compression="gzip")
+    if len(frame) != int(manifest.get("evidence_rows", -1)):
+        raise ValueError("ACTION_LISTING_V21_19_ROW_COUNT_MISMATCH")
+    frame = frame.copy()
+    frame["source_run"] = str(manifest.get("source_run") or "").strip()
+    frame["source_artifact_sha256"] = str(manifest.get("source_artifact_sha256") or "").strip().lower()
+    validated = _validate_listing_evidence_frame(frame)
+    if set(validated["source_run"]) != {"32485729404"}:
+        raise ValueError("ACTION_LISTING_V21_19_SOURCE_RUN_MISMATCH")
+    if set(validated["source_artifact_sha256"]) != {
+        "86a3185b10877388f3d03fb0b169271d6124db8e725d743deb56b63e1a98a2de"
+    }:
+        raise ValueError("ACTION_LISTING_V21_19_ARTIFACT_SHA256_MISMATCH")
+    return validated
+
+
+def load_all_frozen_listing_evidence() -> pd.DataFrame:
+    """Combine V21.17 and V21.19 frozen evidence, rejecting any overlap."""
+    legacy = load_frozen_listing_evidence(DEFAULT_FROZEN_EVIDENCE)
+    v21_19 = load_v21_19_listing_evidence()
+    overlap = sorted(set(legacy["isin"]).intersection(set(v21_19["isin"])))
+    if overlap:
+        raise ValueError(f"ACTION_LISTING_EVIDENCE_CROSS_VERSION_DUPLICATE:{','.join(overlap)}")
+    combined = pd.concat([legacy, v21_19], ignore_index=True, sort=False)
+    if combined["isin"].duplicated().any():
+        raise ValueError("ACTION_LISTING_EVIDENCE_COMBINED_ISIN_NOT_UNIQUE")
+    return combined
+
+
+def _frozen_source_label(evidence_row: pd.Series) -> str:
+    source_run = str(evidence_row.get("source_run") or "").strip()
+    if source_run == "32414686922":
+        return FROZEN_SOURCE_LABEL
+    if source_run == "32485729404":
+        return FROZEN_SOURCE_LABEL_V21_19
+    return "EURONEXT_OFFICIAL_IPO_SHOWCASE_FROZEN"
+
+
 def apply_frozen_listing_evidence(
     actions_df: pd.DataFrame,
-    path: str | Path = DEFAULT_FROZEN_EVIDENCE,
+    path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Apply frozen Euronext listing dates by exact ISIN, fail-closed on conflicts.
 
-    This is metadata-only. It never creates historical prices and never changes
-    calibration eligibility by itself; the OHLCV audit remains authoritative.
+    ``path=None`` applies the governed V21.17 + V21.19 evidence union. Passing an
+    explicit path preserves isolated historical tests/replays. This is metadata
+    only: it never creates OHLCV and never changes calibration eligibility.
     """
     if "isin" not in actions_df.columns:
         raise ValueError("ACTION_LISTING_EVIDENCE_TARGET_MISSING_ISIN")
-    evidence = load_frozen_listing_evidence(path)
+    evidence = load_all_frozen_listing_evidence() if path is None else load_frozen_listing_evidence(path)
     for column in (
         "listing_or_launch_date",
         "listing_or_launch_date_source",
@@ -130,6 +199,7 @@ def apply_frozen_listing_evidence(
     applied = 0
     already_matching = 0
     unmatched_evidence = 0
+    applied_by_source: dict[str, int] = defaultdict(int)
     for _, evidence_row in evidence.iterrows():
         isin = str(evidence_row["isin"]).strip().upper()
         matches = actions_df.index[target_isins.eq(isin)].tolist()
@@ -139,6 +209,7 @@ def apply_frozen_listing_evidence(
         official = _parse_date(evidence_row.get("official_listing_date"))
         if official is None:
             raise ValueError(f"ACTION_LISTING_EVIDENCE_INVALID_DATE:{isin}")
+        source_label = _frozen_source_label(evidence_row)
         for idx in matches:
             current_raw = actions_df.at[idx, "listing_or_launch_date"]
             current = _parse_date(current_raw)
@@ -153,18 +224,20 @@ def apply_frozen_listing_evidence(
             else:
                 actions_df.at[idx, "listing_or_launch_date"] = official.isoformat()
                 applied += 1
-            actions_df.at[idx, "listing_or_launch_date_source"] = FROZEN_SOURCE_LABEL
+            actions_df.at[idx, "listing_or_launch_date_source"] = source_label
             actions_df.at[idx, "listing_or_launch_date_source_url"] = str(evidence_row["source_url"]).strip()
             actions_df.at[idx, "listing_or_launch_date_evidence_level"] = "A"
             actions_df.at[idx, "listing_or_launch_date_validation_status"] = FROZEN_VALIDATION_STATUS
+            applied_by_source[source_label] += 1
 
     return {
         "status": "SUCCESS",
-        "source": FROZEN_SOURCE_LABEL,
+        "source": "EURONEXT_OFFICIAL_IPO_SHOWCASE_V21_17_PLUS_V21_19" if path is None else FROZEN_SOURCE_LABEL,
         "evidence_rows": int(len(evidence)),
         "applied": applied,
         "already_matching": already_matching,
         "unmatched_evidence": unmatched_evidence,
+        "applied_by_source": dict(applied_by_source),
         "synthetic_history_created": False,
         "calibration_eligibility_changed": False,
     }
