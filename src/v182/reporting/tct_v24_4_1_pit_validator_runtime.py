@@ -4,8 +4,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 import json
 
-import pandas as pd
-
 from v182.reporting import tct_v24_4_pit_validator as base
 from v182.reporting.tct_v24_4_pit_validator_runtime import _spearman_without_scipy
 
