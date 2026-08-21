@@ -4,7 +4,9 @@ import zipfile
 
 import pytest
 
-from v182.ci.restore_decision_inputs import REQUIRED, _extract_required, _select_artifact, _select_run
+import urllib.request
+
+from v182.ci.restore_decision_inputs import REQUIRED, _SafeRedirectHandler, _extract_required, _select_artifact, _select_run
 
 
 def test_extract_required_only_restores_decision_inputs(tmp_path: Path):
@@ -38,4 +40,14 @@ def test_select_artifact_accepts_legacy_and_current_global_names():
     }
 
     assert _select_artifact(payload)["id"] == 2
+
+
+def test_cross_host_redirect_does_not_leak_github_authorization():
+    request = urllib.request.Request("https://api.github.com/repos/o/r/actions/artifacts/1/zip", headers={"Authorization": "Bearer secret"})
+
+    redirected = _SafeRedirectHandler().redirect_request(
+        request, None, 302, "Found", {}, "https://signed-storage.example/artifact.zip"
+    )
+
+    assert redirected.get_header("Authorization") is None
 
