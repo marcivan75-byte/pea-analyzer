@@ -18,7 +18,7 @@ concurrency:
 jobs:
   current-history-depth:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 60
     env:
       PYTHONUNBUFFERED: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
@@ -66,10 +66,44 @@ jobs:
             | tee outputs/audit/current_history_depth_diag/CACHE_RESTORE_STATUS.txt
           if [ -f data/cache/actions/history_manifest.json ]; then cp data/cache/actions/history_manifest.json outputs/audit/current_history_depth_diag/ACTIONS_MANIFEST.json; fi
           if [ -f data/cache/etf/history_manifest.json ]; then cp data/cache/etf/history_manifest.json outputs/audit/current_history_depth_diag/ETF_MANIFEST.json; fi
-          if [ -f state/provenance/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv ]; then cp state/provenance/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv outputs/audit/current_history_depth_diag/ETF_STRUCTURE_SNAPSHOT_BEFORE.csv; fi
+          if [ -f state/provenance/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv ]; then cp state/provenance/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv outputs/audit/current_history_depth_diag/ETF_STRUCTURE_SNAPSHOT.csv; fi
 
-      - name: Replay and refresh governed ETF structure and inception evidence
-        run: python -m v182.reporting.etf_structure_refresh
+      - name: Replay current governed ETF inception state without network
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+          from v182.io.frames import apply_observations
+          from v182.state.etf_structure_state import load_state_config, load_replay_observations
+
+          root = Path('.')
+          source = root/'inputs/V18.2_PEA_ETF_MASTER.csv'
+          df = pd.read_csv(source, sep=';', encoding='utf-8-sig', low_memory=False)
+          cfg = load_state_config(root/'config/ETF_STRUCTURE_STATE_V21_15.json')
+          observations, diag = load_replay_observations(cfg, root=root, as_of='2026-08-21')
+          assert diag['status'] == 'SUCCESS', diag
+          enriched, quarantined = apply_observations(df, observations)
+          out = root/'outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv'
+          out.parent.mkdir(parents=True, exist_ok=True)
+          enriched.to_csv(out, sep=';', index=False, encoding='utf-8-sig')
+          payload = {
+              'status': 'SUCCESS',
+              'state_replay': diag,
+              'observations': len(observations),
+              'quarantined': len(quarantined),
+              'inception_fields': {
+                  field: sum(str(o.get('field')) == field for o in observations)
+                  for field in ('share_class_inception_date','listing_or_launch_date','reported_first_nav_date')
+              },
+              'network_used': False,
+              'weights_or_thresholds_changed': False,
+          }
+          Path('outputs/audit/current_history_depth_diag/STATE_REPLAY.json').write_text(
+              json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8'
+          )
+          print(json.dumps(payload, ensure_ascii=False, indent=2))
+          PY
 
       - name: Audit actual current OHLCV history depth
         run: python -m v182.audit.ohlcv_history_depth --as-of 2026-08-21
@@ -97,12 +131,6 @@ jobs:
           ] if c in df.columns]
           print(df[(df['asset_class']=='ETF') & (df['primary_status']!='PRIMARY_FULL_FROM_ANCHOR')][cols].to_csv(index=False, sep=';'))
           PY
-
-      - name: Save refreshed structural snapshot evidence
-        if: always()
-        run: |
-          if [ -f state/provenance/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv ]; then cp state/provenance/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv outputs/audit/current_history_depth_diag/ETF_STRUCTURE_SNAPSHOT_AFTER.csv; fi
-          if [ -f outputs/audit/V21_16_ETF_INCEPTION_EVIDENCE.json ]; then cp outputs/audit/V21_16_ETF_INCEPTION_EVIDENCE.json outputs/audit/current_history_depth_diag/; fi
 
       - name: Upload diagnostic evidence
         if: always()
