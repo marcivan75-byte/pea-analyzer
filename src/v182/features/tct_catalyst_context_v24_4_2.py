@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from v182.features import tct_catalyst_context_v24_4 as base
@@ -10,6 +11,12 @@ from v182.sources.tct_catalyst_news_v24_4_2 import CatalystNews
 VERSION = "TCT_V24.4.2_NEXT_SESSION_CATALYST_CYCLE_SHADOW"
 catalyst_window = base.catalyst_window
 infer_phase = base.infer_phase
+
+
+def _series(frame: pd.DataFrame, column: str) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series(np.nan, index=frame.index, dtype=float)
+    return pd.to_numeric(frame[column], errors="coerce")
 
 
 def _scheduled_event_proximity(row: pd.Series, cfg: dict) -> float | None:
@@ -23,10 +30,7 @@ def _scheduled_event_proximity(row: pd.Series, cfg: dict) -> float | None:
 
 
 def _known_news(row: pd.Series) -> float:
-    values = [
-        base._finite(row.get("news_catalyst_score")),
-        base._finite(row.get("funnel_instrument_news_score")),
-    ]
+    values = [base._finite(row.get("news_catalyst_score")), base._finite(row.get("funnel_instrument_news_score"))]
     finite = [x for x in values if x is not None]
     return max(finite) if finite else 0.0
 
@@ -41,12 +45,12 @@ def _priority_axes(work: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     out = work.copy()
     horizon = max(float(cfg["thresholds"].get("earnings_proximity_days", 7)), 1.0)
     high_atr = max(float(cfg["thresholds"].get("high_atr_pct", 0.04)), 1e-6)
-    out["_entry_axis"] = pd.to_numeric(out.get("entry_score"), errors="coerce").fillna(0.0).clip(0, 100)
-    out["_exit_axis"] = pd.to_numeric(out.get("exit_risk_score"), errors="coerce").fillna(0.0).clip(0, 100)
+    out["_entry_axis"] = _series(out, "entry_score").fillna(0.0).clip(0, 100)
+    out["_exit_axis"] = _series(out, "exit_risk_score").fillna(0.0).clip(0, 100)
     out["_news_axis"] = out.apply(_known_news, axis=1)
-    earnings = pd.to_numeric(out.get("days_to_earnings"), errors="coerce")
+    earnings = _series(out, "days_to_earnings")
     out["_earnings_axis"] = ((1.0 - earnings.clip(lower=0, upper=horizon) / horizon) * 100.0).where(earnings.between(0, horizon), 0.0)
-    atr = pd.to_numeric(out.get("atr14_pct"), errors="coerce").fillna(0.0)
+    atr = _series(out, "atr14_pct").fillna(0.0)
     out["_volatility_axis"] = (atr / high_atr * 70.0).clip(0, 100)
     out["_t1t2_axis"] = out.apply(_t1_t2_quality, axis=1)
     weights = cfg.get("candidate_selection", {}).get("priority_weights", {})
@@ -63,8 +67,7 @@ def _priority_axes(work: pd.DataFrame, cfg: dict) -> pd.DataFrame:
 
 def _reason(row: pd.Series, cfg: dict) -> str:
     reasons: list[str] = []
-    state = str(row.get("entry_state") or "")
-    if state in {"ENTRY_READY_SHADOW", "ENTRY_STRONG_SHADOW"}:
+    if str(row.get("entry_state") or "") in {"ENTRY_READY_SHADOW", "ENTRY_STRONG_SHADOW"}:
         reasons.append("ENTRY_READY_OR_STRONG")
     days = base._finite(row.get("days_to_earnings"))
     if days is not None and 0 <= days <= float(cfg["thresholds"].get("earnings_proximity_days", 7)):
@@ -81,7 +84,6 @@ def _reason(row: pd.Series, cfg: dict) -> str:
 
 
 def select_catalyst_candidates(seed: pd.DataFrame, cfg: dict) -> pd.DataFrame:
-    """Quota-based diversified selection before bounded news retrieval."""
     if seed is None or seed.empty:
         return pd.DataFrame()
     work = _priority_axes(seed, cfg)
@@ -90,25 +92,24 @@ def select_catalyst_candidates(seed: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     quotas = cfg.get("candidate_selection", {}).get("quotas", {})
     selected: list[int] = []
 
-    def take(mask: pd.Series, n: int, sort_column: str, ascending: bool = False) -> None:
+    def take(mask: pd.Series, n: int, sort_column: str) -> None:
         if n <= 0:
             return
-        pool = work.loc[mask & ~work.index.isin(selected)].sort_values(sort_column, ascending=ascending)
+        clean_mask = mask.reindex(work.index, fill_value=False).fillna(False).astype(bool)
+        pool = work.loc[clean_mask & ~work.index.isin(selected)].sort_values(sort_column, ascending=False)
         selected.extend(pool.head(int(n)).index.tolist())
 
-    state = work.get("entry_state", pd.Series(index=work.index, dtype=object)).astype(str)
+    state = work.get("entry_state", pd.Series("", index=work.index, dtype=object)).astype(str)
     take(state.isin({"ENTRY_READY_SHADOW", "ENTRY_STRONG_SHADOW"}), int(quotas.get("ENTRY_READY_OR_STRONG", 0)), "_entry_axis")
-    earnings = pd.to_numeric(work.get("days_to_earnings"), errors="coerce")
+    earnings = _series(work, "days_to_earnings")
     take(earnings.between(0, float(cfg["thresholds"].get("earnings_proximity_days", 7))), int(quotas.get("EARNINGS_WITHIN_7D", 0)), "_earnings_axis")
     take(work["_news_axis"] >= float(cfg["thresholds"].get("high_existing_news_catalyst", 65)), int(quotas.get("EXISTING_NEWS_HIGH", 0)), "_news_axis")
     take(work["_volatility_axis"] >= 70.0, int(quotas.get("HIGH_ATR", 0)), "_volatility_axis")
     take(work["_exit_axis"] >= float(cfg["thresholds"].get("high_exit_risk", 50)), int(quotas.get("HIGH_EXIT_RISK", 0)), "_exit_axis")
-
     if len(selected) < limit:
         remaining = work.loc[~work.index.isin(selected)].sort_values("candidate_priority_score", ascending=False)
         selected.extend(remaining.head(limit - len(selected)).index.tolist())
-    result = work.loc[selected[:limit]].copy()
-    result = result.sort_values("candidate_priority_score", ascending=False).reset_index(drop=True)
+    result = work.loc[selected[:limit]].copy().sort_values("candidate_priority_score", ascending=False).reset_index(drop=True)
     result["candidate_rank"] = range(1, len(result) + 1)
     return result.drop(columns=[c for c in result.columns if c.startswith("_")], errors="ignore")
 
@@ -127,14 +128,15 @@ def score_candidate(row: pd.Series, news: CatalystNews | None, market: GlobalMar
     event_proximity = _scheduled_event_proximity(row, cfg)
     global_shock = base._finite(market.shock_magnitude_score)
     risk_on = base._finite(market.risk_on_score)
-    movement_components = {
-        "news_magnitude": news_magnitude,
-        "technical_impulse": tech_magnitude,
-        "global_market_shock": global_shock,
-        "known_event_proximity": event_proximity,
-    }
-    movement_raw, movement_coverage = base._weighted(movement_components, cfg["movement_potential_weights"])
-
+    movement_raw, movement_coverage = base._weighted(
+        {
+            "news_magnitude": news_magnitude,
+            "technical_impulse": tech_magnitude,
+            "global_market_shock": global_shock,
+            "known_event_proximity": event_proximity,
+        },
+        cfg["movement_potential_weights"],
+    )
     exit_risk = base._finite(row.get("exit_risk_score"))
     exit_inverse = None if exit_risk is None else base._clip(50.0 - exit_risk, -50.0, 50.0) * 2.0
     global_direction = None if risk_on is None else base._clip((risk_on - 50.0) * 2.0, -100.0, 100.0)
@@ -160,8 +162,7 @@ def score_candidate(row: pd.Series, news: CatalystNews | None, market: GlobalMar
     direction = direction_raw if direction_coverage >= float(th.get("minimum_direction_coverage_for_directional_alert", 0.70)) else None
     news_conflict = bool(
         news_direction is not None and tech_direction is not None
-        and abs(news_direction) >= 35 and abs(tech_direction) >= 35
-        and news_direction * tech_direction < 0
+        and abs(news_direction) >= 35 and abs(tech_direction) >= 35 and news_direction * tech_direction < 0
     )
     movement_value = 0.0 if movement is None else float(movement)
     direction_value = 0.0 if direction is None else float(direction)
@@ -189,6 +190,7 @@ def score_candidate(row: pd.Series, news: CatalystNews | None, market: GlobalMar
         and (tech_magnitude or 0.0) >= float(th.get("technical_only_actionable", 70))
         and atr is not None and atr >= float(th.get("high_atr_pct", 0.04))
     )
+    completed = market.completed_returns_pct or {}
     return {
         "version": VERSION,
         "phase": str(phase).upper(),
@@ -219,6 +221,10 @@ def score_candidate(row: pd.Series, news: CatalystNews | None, market: GlobalMar
         "known_event_proximity_score": event_proximity,
         "global_market_shock_score": global_shock,
         "global_risk_on_score": risk_on,
+        "global_vix_return_pct": completed.get("VIX"),
+        "global_eurostoxx50_return_pct": completed.get("EUROSTOXX50"),
+        "global_cac40_return_pct": completed.get("CAC40"),
+        "global_dax_return_pct": completed.get("DAX"),
         "news_technical_conflict": news_conflict,
         "individual_extended_hours_quotes_used": False,
         "intraday_bars_used": False,
