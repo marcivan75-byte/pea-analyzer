@@ -1,0 +1,47 @@
+name: Export ETF V21.18 package on PR
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package exact V21.18 ETF sources
+        run: |
+          set -euo pipefail
+          ROOT=ETF_CODE_V21_18_AUDITED
+          mkdir -p "$ROOT/src/v182" "$ROOT/config" "$ROOT/docs" "$ROOT/tests" "$ROOT/inputs"
+          for d in features decision reporting sources state audit backtest io risk; do cp -r "src/v182/$d" "$ROOT/src/v182/"; done
+          cp src/v182/__init__.py "$ROOT/src/v182/"
+          cp config/V20_7_1_ETF_CRITERIA_REGISTRY.json config/V20.8_ETF_MT_HIGH_PRECISION.json config/V20.8.2_ETF_MT_DYNAMIC.json "$ROOT/config/"
+          cp config/ETF_CT_LT_SHADOW_V21_14.json config/ETF_STRUCTURE_STATE_V21_15.json config/ETF_FUND_FLOW_V1_SHADOW.json config/ETF_FUND_FLOW_EXTERNAL_UNIVERSE_V1.csv "$ROOT/config/"
+          cp config/ETF_BENCHMARK_TRACKING_V21_18.json config/ETF_BENCHMARK_PRICE_MAP_V21_18.csv config/ETP_SATELLITE_V1_SHADOW.json config/V18.2_ETF_TICKER_MAP.csv "$ROOT/config/"
+          cp config/SECTOR_ROTATION_V2_* "$ROOT/config/" || true
+          cp config/V21_8_ENTRY_EXIT_GOVERNANCE.json config/CALIBRATION_WINDOWS_V21_12.json "$ROOT/config/"
+          cp docs/*ETF* "$ROOT/docs/" || true
+          cp docs/SECTOR_ROTATION_V2* "$ROOT/docs/" || true
+          cp docs/V21_8_ENTRY_EXIT_FINAL_GUARDRAILS.md docs/OHLCV_HISTORY_DEPTH_V21_13.md docs/CALIBRATION_WINDOWS_V21_12.md "$ROOT/docs/"
+          cp tests/test_etf*.py tests/test_sector_rotation*.py "$ROOT/tests/" || true
+          cp inputs/V18.2_PEA_ETF_MASTER.csv "$ROOT/inputs/"
+          cp pyproject.toml "$ROOT/"
+          printf '%s\n' '49c53d87855ce27e76213c65916cb5a579cdf590' > "$ROOT/SOURCE_COMMIT.txt"
+          cat > "$ROOT/AUDIT_REPORT.md" <<'EOF'
+          # ETF V21.18 - livraison auditee
+          Source fonctionnelle: commit main 49c53d87855ce27e76213c65916cb5a579cdf590.
+          Les fichiers de workflow export/* ne font pas partie du package.
+          Gouvernance: T1/T2 interdits ETF; ordres reels desactives; holdout non ouvert; tracking error fail-closed; CT/LT/flows/rotation overlays shadow selon leurs configs.
+          EOF
+          find "$ROOT" -type f -print0 | sort -z | xargs -0 sha256sum > "$ROOT/SHA256SUMS.txt"
+          zip -qr ETF_CODE_V21_18_AUDITED.zip "$ROOT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ETF_CODE_V21_18_AUDITED
+          path: ETF_CODE_V21_18_AUDITED.zip
+          retention-days: 30
