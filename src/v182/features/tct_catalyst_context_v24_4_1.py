@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 from v182.features import tct_catalyst_context_v24_4 as base
