@@ -16,8 +16,8 @@ API = "https://api.github.com"
 REQUIRED = {
     "outputs/unified/UNIFIED_SUMMARY_LATEST.json",
     "outputs/committee_master/COMMITTEE_DECISIONS.csv",
-    "outputs/audit/CI_EXPLAINABILITY_AUDIT.json",
 }
+OPTIONAL = {"outputs/audit/CI_EXPLAINABILITY_AUDIT.json"}
 ARTIFACT_PREFIXES = ("committee-weekly-v21-8-1-", "committee-master-v21-8-1-")
 
 
@@ -87,7 +87,7 @@ def _extract_required(archive: Path, root: Path) -> list[str]:
         missing = sorted(REQUIRED - names)
         if missing:
             raise RuntimeError("Source artifact is incomplete: " + ", ".join(missing))
-        for required in sorted(REQUIRED):
+        for required in sorted(REQUIRED | (OPTIONAL & names)):
             target = (root / required).resolve()
             if root not in target.parents:
                 raise RuntimeError(f"Unsafe artifact path: {required}")
