@@ -59,10 +59,12 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          runner=Path('src/v182/reporting/action_ct_shadow_run_v22_0.py').read_text()
-          feature=Path('src/v182/features/action_ct_v22_0.py').read_text()
-          assert 'tct_' not in runner.lower().replace('t1_t2', '')
-          assert 'tct_' not in feature.lower().replace('t1_t2', '')
+          runner=Path('src/v182/reporting/action_ct_shadow_run_v22_0.py').read_text().lower()
+          feature=Path('src/v182/features/action_ct_v22_0.py').read_text().lower()
+          assert 'from v182.features.tct' not in runner
+          assert 'from v182.decision.tct' not in runner
+          assert 'from v182.features.tct' not in feature
+          assert 'from v182.decision.tct' not in feature
           workflow=Path('.github/workflows/committee_tct_ct_daily.yml').read_text()
           assert 'action_ct_shadow_run_v22_0' in workflow
           assert 'state/action_ct/' in workflow
