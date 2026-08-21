@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - audit/current-history-depth-v21-18
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
