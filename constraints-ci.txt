@@ -1,0 +1,20 @@
+# Direct dependency constraints validated for the PEA Analyzer CI baseline.
+# Transitive dependencies remain resolver-managed; update this file through a tested PR.
+pydantic==2.8.2
+yfinance==0.2.40
+pandas==2.2.2
+numpy==2.0.1
+pyarrow==17.0.0
+requests==2.32.3
+beautifulsoup4==4.12.3
+lxml==5.2.2
+pypdf==5.0.0
+playwright==1.46.0
+openpyxl==3.1.5
+ta==0.11.0
+pytest==8.3.2
+pytest-cov==5.0.0
+ruff==0.6.1
+mypy==1.11.1
+jsonschema==4.23.0
+setuptools==72.1.0

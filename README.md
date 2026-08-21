@@ -2,6 +2,19 @@
 
 Le moteur conserve les collecteurs V18.2 comme socle technique, mais l'univers de référence et la gouvernance des données sont désormais ceux de la chaîne V21.x. La V21.9.1 a durci l'identité, la provenance, les contrôles de domaine, la sécurité des sources et la mesure de couverture. La V21.10 ajoute une couche gouvernée de collecte TER / actifs fonds ETF sans modifier les pondérations, seuils ou moteurs de décision.
 
+## Versions opérationnelles et ordre du run
+
+La baseline de décision reste **V21.8.1**. Les modules récents ci-dessous sont des couches gouvernées SHADOW sans autorité de promotion ni ordre réel :
+
+| Domaine | Version courante | Workflow principal | Statut |
+|---|---|---|---|
+| TCT next-session catalyst | V24.4.2 | tct_next_session_context.yml | SHADOW |
+| ACTION CT | V22.1.1 runtime sur V22.1.0 | committee_tct_ct_daily.yml | SHADOW |
+| ACTION MT | V1.0.0 | action_mt_v1_tests.yml / Comité | SHADOW |
+| ETF distribution | V21.18.1R4 | etf_distribution_v21_18_1r4.yml | package validé, dette canonique fail-closed |
+
+Ordre recommandé pour un run contrôlé : validation CI complète → collecte quotidienne → TCT/CT quotidien → snapshots catalyst PREOPEN/POSTMARKET → workflow lourd hebdomadaire. Les rapports SHADOW restent séparés des décisions canoniques.
+
 ## Univers canoniques
 
 - **Actions PEA : 1 829 ISIN exacts**, protégés par la whitelist `config/V21_3_ACTION_UNIVERSE_1829_ISINS.parts` et son SHA-256.
