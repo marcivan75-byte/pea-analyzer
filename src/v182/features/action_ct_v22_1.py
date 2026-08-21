@@ -117,7 +117,6 @@ def compute_action_ct_snapshot_v22_1(frame: pd.DataFrame, cfg: dict, context: di
     momentum_score = _finite(base.get("momentum_score"))
     weekly_score = _finite(base.get("weekly_score"))
     sector_score = _finite(base.get("sector_context_score"))
-    volume_score = _finite(base.get("volume_score"))
     catalyst_score = _finite(base.get("catalyst_score"))
     ret20 = _finite(base.get("return_20d"))
     sma50 = _finite(base.get("sma50_ct"))
@@ -144,7 +143,6 @@ def compute_action_ct_snapshot_v22_1(frame: pd.DataFrame, cfg: dict, context: di
 
     inherited_state = str(base.get("entry_state") or "")
     hard_wait_states = {
-        "DATA_INSUFFICIENT",
         "LIQUIDITY_WARNING_SHADOW",
         "WEEKLY_CONFLICT_SHADOW",
         "WAIT_RISK_SHADOW",
