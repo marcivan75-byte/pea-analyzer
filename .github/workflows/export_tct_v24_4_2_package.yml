@@ -1,0 +1,84 @@
+name: Export TCT V24.4.2 package
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/export_tct_v24_4_2_package.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build audited TCT package
+        shell: bash
+        run: |
+          set -euo pipefail
+          PKG="release/TCT_V24_4_2_FINAL_AUDITED"
+          mkdir -p "$PKG/docs" "$PKG/config" "$PKG/workflows" "$PKG/tests/fixtures" "$PKG/src"
+
+          cp docs/TCT_CDC_V24_4_2_FINAL.md "$PKG/docs/"
+          cp docs/TCT_REFERENTIEL_V24_4_2_FINAL.md "$PKG/docs/"
+          cp docs/TCT_AUDIT_IMPLEMENTATION_V24_4_2_2026-08-21.md "$PKG/docs/"
+          cp docs/PROCESS_REFERENCE_V21_8_1_TCT_V24_4_2_ADDENDUM.md "$PKG/docs/"
+
+          cp config/TCT_V24_4_2_CATALYST_CONTEXT_SHADOW.json "$PKG/config/"
+          cp config/TCT_V24_4_2_VALIDATION_GATES.json "$PKG/config/"
+          cp config/TCT_V24_3_1_DAILY_TRADER_SHADOW.json "$PKG/config/"
+          cp config/TCT_V24_1_7_SHADOW.json "$PKG/config/"
+
+          cp .github/workflows/committee_tct_ct_daily.yml "$PKG/workflows/"
+          cp .github/workflows/tct_next_session_context.yml "$PKG/workflows/"
+
+          cp -a src/v182 "$PKG/src/"
+          cp pyproject.toml "$PKG/"
+
+          find tests -maxdepth 1 -type f -name 'test_tct*.py' -print0 | xargs -0 -I{} cp {} "$PKG/tests/"
+          cp tests/fixtures/tct_v24_4_2_catalyst_golden_set.json "$PKG/tests/fixtures/"
+
+          cat > "$PKG/README_TCT_V24_4_2.md" <<'EOF'
+          # Package TCT V24.4.2 FINAL AUDITED
+
+          Source: `marcivan75-byte/pea-analyzer`
+          Release basis: merge PR #119, commit `2c8efbc5f2f9810191fdc9dfc58f1ecc178c167f`.
+
+          Contenu:
+          - CDC complet V24.4.2;
+          - référentiel V24.4.2;
+          - audit d'implémentation et addendum process;
+          - configurations V24.4.2 + baseline V24.3.1 / T1-T2 V24.1.7;
+          - code Python `src/v182` complet pour préserver les dépendances;
+          - workflows TCT quotidiens et PREOPEN/POSTMARKET;
+          - tests TCT et golden-set catalysts;
+          - manifeste SHA-256.
+
+          Gouvernance: V24.4.2 SHADOW_RESEARCH_ONLY; influence production 0; production canonique V21.8.1 inchangée; T1/T2 ACTION TCT uniquement; aucun 1m/5m; aucun ordre réel; holdout fermé.
+          EOF
+
+          (cd "$PKG" && find . -type f ! -name 'MANIFEST_SHA256.txt' -print0 | sort -z | xargs -0 sha256sum > MANIFEST_SHA256.txt)
+          find "$PKG" -type f | sort > release/TCT_V24_4_2_FILELIST.txt
+          (cd release && zip -qr TCT_V24_4_2_FINAL_AUDITED.zip TCT_V24_4_2_FINAL_AUDITED)
+          sha256sum release/TCT_V24_4_2_FINAL_AUDITED.zip > release/TCT_V24_4_2_FINAL_AUDITED.zip.sha256
+
+          test -s release/TCT_V24_4_2_FINAL_AUDITED.zip
+          test -s release/TCT_V24_4_2_FINAL_AUDITED.zip.sha256
+          grep -q 'TCT_CDC_V24_4_2_FINAL.md' release/TCT_V24_4_2_FILELIST.txt
+          grep -q 'TCT_REFERENTIEL_V24_4_2_FINAL.md' release/TCT_V24_4_2_FILELIST.txt
+          grep -q 'tct_next_session_catalyst_run_v24_4_2.py' release/TCT_V24_4_2_FILELIST.txt
+
+      - name: Upload TCT package
+        uses: actions/upload-artifact@v4
+        with:
+          name: TCT_V24_4_2_FINAL_AUDITED
+          path: |
+            release/TCT_V24_4_2_FINAL_AUDITED.zip
+            release/TCT_V24_4_2_FINAL_AUDITED.zip.sha256
+            release/TCT_V24_4_2_FILELIST.txt
+          if-no-files-found: error
+          retention-days: 14
