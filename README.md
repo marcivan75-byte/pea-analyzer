@@ -15,6 +15,10 @@ La baseline de décision reste **V21.8.1**. Les modules récents ci-dessous sont
 
 Ordre recommandé pour un run contrôlé : validation CI complète → collecte quotidienne → TCT/CT quotidien → snapshots catalyst PREOPEN/POSTMARKET → workflow lourd hebdomadaire. Les rapports SHADOW restent séparés des décisions canoniques.
 
+## Synthèse décisionnelle CI
+
+Le run global publie désormais une synthèse unique sous `outputs/decision_brief/DECISION_BRIEF.md` et `DECISION_BRIEF.json`. Elle affiche en tête du résumé GitHub le statut exploitable (`READY_FOR_REVIEW`, `REVIEW_WITH_WARNINGS` ou `BLOCKED`), la santé des étapes, les sélections prioritaires, les blocages et les artefacts de preuve. Cette couche est strictement en lecture seule : elle ne modifie aucun score, poids, seuil, décision ni état d’ordre, et maintient les ordres réels désactivés.
+
 ## Univers canoniques
 
 - **Actions PEA : 1 829 ISIN exacts**, protégés par la whitelist `config/V21_3_ACTION_UNIVERSE_1829_ISINS.parts` et son SHA-256.
