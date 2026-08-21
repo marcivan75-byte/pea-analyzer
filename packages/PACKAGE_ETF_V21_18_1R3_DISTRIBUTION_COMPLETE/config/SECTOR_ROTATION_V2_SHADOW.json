@@ -1,0 +1,154 @@
+{
+  "version": "SECTOR_ROTATION_V2.0_SHADOW",
+  "mode": "SHADOW_ONLY",
+  "governance": {
+    "changes_action_scores": false,
+    "changes_etf_scores": false,
+    "can_trigger_orders": false,
+    "can_trigger_sales": false,
+    "pit_required": true,
+    "oos_validation_required_before_activation": true,
+    "minimum_dqs_for_signal": 65.0,
+    "minimum_dqs_for_decision": 80.0
+  },
+  "score_weights": {
+    "RLS": {
+      "earnings_revisions": 0.18,
+      "breadth": 0.15,
+      "relative_strength": 0.15,
+      "flows": 0.12,
+      "fundamental_acceleration": 0.12,
+      "macro_compatibility": 0.10,
+      "catalysts": 0.08,
+      "early_price_volume": 0.05,
+      "internal_diffusion": 0.05
+    },
+    "RARS_OPPORTUNITY": {
+      "RLS": 0.32,
+      "SQS": 0.18,
+      "CTS": 0.14,
+      "STS": 0.08,
+      "MCS": 0.12,
+      "margin_of_safety": 0.08,
+      "theme_confluence": 0.08
+    },
+    "AVCR": {
+      "valuation_vs_history": 0.18,
+      "valuation_vs_market": 0.10,
+      "price_fundamental_gap": 0.15,
+      "technical_overextension": 0.12,
+      "crowding": 0.12,
+      "breadth_divergence": 0.10,
+      "multiple_expansion_dependency": 0.10,
+      "expectation_fragility": 0.08,
+      "volatility_regime": 0.05
+    },
+    "DQS": {
+      "freshness": 0.25,
+      "completeness": 0.25,
+      "pit_quality": 0.20,
+      "source_reliability": 0.15,
+      "sector_coverage": 0.15
+    }
+  },
+  "state_thresholds": {
+    "early_rotation_enter": 70.0,
+    "early_rotation_exit": 62.0,
+    "confirmed_rotation_rls": 70.0,
+    "confirmed_rotation_mcs": 65.0,
+    "leadership_rls": 75.0,
+    "leadership_sqs": 70.0,
+    "leadership_mcs": 70.0,
+    "distribution_rls": 55.0,
+    "rotation_out_rls": 45.0
+  },
+  "valuation_thresholds": {
+    "normal_max": 39.0,
+    "watch_max": 54.0,
+    "caution_max": 64.0,
+    "warning_max": 74.0,
+    "high_risk_max": 84.0,
+    "extreme_min": 85.0,
+    "promising_but_overvalued_rls_min": 70.0,
+    "promising_but_overvalued_avcr_min": 65.0,
+    "no_chase_avcr_min": 75.0
+  },
+  "decision_thresholds": {
+    "priority_buy_rls_min": 78.0,
+    "priority_buy_sqs_min": 70.0,
+    "priority_buy_mcs_min": 60.0,
+    "priority_buy_avcr_max": 45.0,
+    "buy_rls_min": 70.0,
+    "buy_avcr_max": 55.0,
+    "accumulate_avcr_max": 65.0,
+    "wait_pullback_avcr_max": 74.0,
+    "no_chase_avcr_min": 75.0
+  },
+  "warning_rules": {
+    "correction_alert_min_independent_families": 3,
+    "leadership_narrowing_breadth_drop_pp": 15.0,
+    "technical_overextension_rank_min": 85.0,
+    "crowding_rank_min": 85.0,
+    "perfection_priced_in_avcr_min": 80.0,
+    "value_trap_rls_max": 45.0,
+    "value_trap_valuation_risk_max": 35.0
+  },
+  "reentry": {
+    "watch_min": 50.0,
+    "forming_min": 65.0,
+    "ready_min": 75.0,
+    "weights": {
+      "valuation_normalization": 0.20,
+      "technical_normalization": 0.15,
+      "fundamentals_intact": 0.20,
+      "breadth_recovery": 0.15,
+      "flow_stabilization": 0.10,
+      "price_structure": 0.10,
+      "volatility_normalization": 0.10
+    }
+  },
+  "field_aliases": {
+    "perf_1m": ["perf_1m_pct", "return_1m_pct"],
+    "perf_3m": ["perf_3m_pct", "return_3m_pct"],
+    "perf_6m": ["perf_6m_pct", "return_6m_pct"],
+    "distance_high_52w": ["distance_high_52w_pct"],
+    "volatility": ["volatility_20d", "volatility_60d", "volatility_1y_pct", "volatility_20d_pct", "volatility_30d_pct", "volatility_pct"],
+    "pe": ["per_forward_yf", "per_ttm_yf", "forward_pe", "trailing_pe", "pe_ratio"],
+    "pb": ["pb", "price_to_book", "pb_ratio"],
+    "ps": ["price_to_sales", "ps_ratio"],
+    "revenue_growth": ["revenue_growth_yf", "revenue_growth_pct", "revenue_growth"],
+    "earnings_growth": ["earnings_growth_yf", "earnings_growth_pct", "earnings_growth"],
+    "eps_revision": ["broker_weighted_revision_30d", "consensus_delta_4w", "net_upgrades_30d", "eps_revision_pct", "eps_revisions_pct", "recommendation_change_pct"],
+    "above_mm50": ["above_mm50"],
+    "above_mm200": ["above_mm200"],
+    "volume_ratio": ["rvol20", "rvol20_3d_avg", "volume_ratio_20d", "volume_vs_20d"],
+    "beta": ["beta", "beta_3y"],
+    "sector_catalyst_score": ["funnel_sector_news_score", "sector_catalyst_score"],
+    "sector_macro_score": ["sector_macro_score"],
+    "sector_flow_score": ["sector_flow_score"],
+    "sector_structural_score": ["sector_structural_score"],
+    "sector_valuation_history_percentile": ["sector_valuation_history_percentile"],
+    "theme_confluence_score": ["theme_confluence_score"]
+  },
+  "sector_specific_drivers": {
+    "SEMICONDUCTORS": ["orders", "inventories", "capacity_utilization", "memory_pricing", "hyperscaler_capex", "server_demand", "export_restrictions"],
+    "SOFTWARE": ["arr_growth", "bookings_growth", "net_revenue_retention", "free_cash_flow_growth", "gross_margin", "rule_of_40"],
+    "DATA_CENTERS": ["hyperscaler_capex", "capacity_pipeline", "occupancy", "power_connection_queue", "power_cost", "construction_lead_time"],
+    "ELECTRICAL_GRID": ["utility_capex", "grid_investment", "transformer_lead_time", "backlog", "copper_cost", "data_center_connections"],
+    "DEFENSE": ["defense_budgets", "orders", "backlog", "book_to_bill", "production_capacity", "backlog_conversion"],
+    "ENERGY": ["oil_inventories", "gas_inventories", "opec_discipline", "futures_curve", "rig_count", "crack_spreads", "lng_capacity"],
+    "NUCLEAR": ["uranium_spot", "uranium_long_term", "reactor_restarts", "new_builds", "enrichment_capacity", "mine_supply"],
+    "BANKS": ["yield_curve", "net_interest_margin", "credit_growth", "cost_of_risk", "deposits", "cet1", "credit_spreads"],
+    "PHARMA_BIOTECH": ["pipeline_quality", "trial_catalysts", "patent_cliffs", "cash_runway", "regulatory_events", "binary_event_risk"],
+    "AUTOMOTIVE": ["registrations", "orders", "dealer_inventory", "incentives", "battery_cost", "ev_mix", "price_war"],
+    "LUXURY": ["china_demand", "tourism", "volume_growth", "pricing", "inventory", "fx"],
+    "METALS_MINING": ["physical_demand", "inventories", "new_supply", "marginal_cost", "capex", "futures_curve"]
+  },
+  "macro_regimes": ["GOLDILOCKS", "REFLATION", "SLOWDOWN", "STAGFLATION", "STRESS_RISK_OFF"],
+  "output": {
+    "sector_csv": "outputs/sector_rotation/V2_SECTOR_ROTATION_SHADOW.csv",
+    "diagnostic_json": "outputs/audit/V2_SECTOR_ROTATION_SHADOW.json",
+    "history_csv": "state/sector_rotation_v2/SECTOR_ROTATION_V2_HISTORY.csv"
+  }
+}
+

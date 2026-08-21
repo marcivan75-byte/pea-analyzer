@@ -1,0 +1,45 @@
+name: ETF V21.18.1R3 distribution validation
+
+on:
+  pull_request:
+    paths:
+      - "packages/PACKAGE_ETF_V21_18_1R3_DISTRIBUTION_COMPLETE/**"
+      - ".github/workflows/etf_distribution_v21_18_1r3.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: packages/PACKAGE_ETF_V21_18_1R3_DISTRIBUTION_COMPLETE
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: packages/PACKAGE_ETF_V21_18_1R3_DISTRIBUTION_COMPLETE/pyproject.toml
+      - name: Install package and audit tools
+        run: python -m pip install -e ".[test]"
+      - name: Validate package integrity and governance
+        run: python tools/validate_package.py
+      - name: Unit and security regression tests
+        run: python -m pytest -q
+      - name: Static quality checks
+        run: |
+          python -m ruff check src tests tools
+          python -m mypy src/etf_pack tools/validate_package.py
+      - name: Build installable distribution
+        run: python -m pip wheel . --no-deps -w dist
+      - name: Upload validated wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: etf-pack-v21-18-1r3
+          path: packages/PACKAGE_ETF_V21_18_1R3_DISTRIBUTION_COMPLETE/dist/*.whl
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["run_id", "feature", "latency_ms", "budget_ms", "status"],
+  "properties": {
+    "run_id": {"type": "string"},
+    "feature": {"type": "string"},
+    "latency_ms": {"type": "number", "minimum": 0},
+    "budget_ms": {"type": "number", "exclusiveMinimum": 0},
+    "status": {"enum": ["PASS", "SLA_BREACH", "ERROR"]}
+  }
+}
