@@ -21,8 +21,6 @@ HSBC_FACTSHEET_URL = (
     "{isin_lower}/fi/en/factsheet"
 )
 
-# Small providers whose official page does not expose a stable ISIN-only route.
-# Every response is still validated against the exact ISIN before extraction.
 OFFICIAL_HTML_URLS: dict[str, str] = {
     "IE00B910VR50": "https://www.ssga.com/fr/fr/intermediary/etfs/state-street-spdr-msci-emu-ucits-etf-zpre-gy",
     "IE00B5M1WJ87": "https://www.ssga.com/fr/fr/intermediary/etfs/state-street-spdr-sp-euro-dividend-aristocrats-ucits-etf-dist-spyw-gy",
@@ -58,8 +56,9 @@ BENCHMARK_LABELS = (
     r"Tracked index",
 )
 BENCHMARK_STOP_LABELS = (
-    "ISIN", "TER", "Fund size", "Total Assets", "Assets Under Management",
-    "Ongoing charge", "Replication", "Distribution", "Fund currency", "Currency",
+    "ISIN", "Code ISIN", "TER", "Fund size", "Total Assets", "Assets Under Management",
+    "Actif géré", "Actif du compartiment", "Frais courants", "Frais de gestion",
+    "Date de VL", "Ongoing charge", "Replication", "Distribution", "Fund currency", "Currency",
     "Inception", "Launch date", "Ticker", "Risk", "Volatility", "Holdings",
     "Investment focus", "Index provider", "Asset class", "Domicile", "NAV",
 )
@@ -147,12 +146,7 @@ def _eur_m_after_label(text: str, labels: tuple[str, ...]) -> float | None:
 
 
 def _benchmark_after_label(text: str) -> str | None:
-    """Extract only an explicitly labelled benchmark/reference index string.
-
-    The parser never derives a benchmark from the ETF name, category or geography.
-    It also rejects generic values such as merely ``Index``/``Benchmark`` and
-    truncates at common next-field labels on flattened HTML pages.
-    """
+    """Extract only an explicitly labelled benchmark/reference index string."""
     clean = re.sub(r"\s+", " ", _clean_text(text)).strip()
     stop = "|".join(re.escape(label) for label in BENCHMARK_STOP_LABELS)
     for label in BENCHMARK_LABELS:
@@ -355,14 +349,7 @@ def collect_etf_structural_data(
     today: date | None = None,
     delay_seconds: float = 0.05,
 ) -> tuple[list[dict], list[dict], dict[str, Any]]:
-    """Collect TER, fund size and explicit benchmark with exact-ISIN fail-closed policy.
-
-    Evidence A issuer pages/factsheets are attempted first where an adapter exists.
-    justETF is evidence B and fills only fields not observed from the issuer adapter.
-    Benchmark names are accepted only from explicit benchmark/reference-index labels;
-    no benchmark is inferred from ETF name, category, geography or holdings. No FX
-    conversion is performed. Missing values remain missing.
-    """
+    """Collect TER, fund size and explicit benchmark with exact-ISIN fail-closed policy."""
     import requests
 
     current = today or datetime.now(timezone.utc).date()
