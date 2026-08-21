@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 import json
 
@@ -96,14 +95,7 @@ def test_global_risk_on_supports_european_components():
 
 def test_scored_candidate_persists_europe_and_vix_context():
     cfg = _cfg()
-    market = GlobalMarketSnapshot(
-        65.0,
-        40.0,
-        {"VIX": -1.2, "EUROSTOXX50": 1.1, "CAC40": 0.9, "DAX": 1.0},
-        {},
-        "TEST",
-        (),
-    )
+    market = GlobalMarketSnapshot(65.0, 40.0, {"VIX": -1.2, "EUROSTOXX50": 1.1, "CAC40": 0.9, "DAX": 1.0}, {}, "TEST", ())
     row = pd.Series({"entry_score": 80, "exit_risk_score": 20, "atr14_pct": 0.03, "range_expansion": 1.2, "entry_confirmation_count": 3, "days_to_earnings": 3})
     scored = feature.score_candidate(row, None, market, phase="PREOPEN", cfg=cfg)
     assert scored["global_vix_return_pct"] == -1.2
@@ -112,7 +104,7 @@ def test_scored_candidate_persists_europe_and_vix_context():
 
 def test_ohlc_ledger_and_lineage_use_first_next_session_and_multilabels():
     cfg = _cfg()
-    dates = pd.to_datetime(["2026-08-19", "2026-08-20", "2026-08-21"])
+    dates = pd.to_datetime(["2026-08-18", "2026-08-19", "2026-08-20"])
     history = pd.DataFrame(
         {
             "Open": [98.0, 100.0, 102.0],
@@ -125,7 +117,7 @@ def test_ohlc_ledger_and_lineage_use_first_next_session_and_multilabels():
     )
     cfg31 = json.loads((ROOT / "config" / "TCT_V24_3_1_DAILY_TRADER_SHADOW.json").read_text(encoding="utf-8"))
     mapping = pd.DataFrame([{"isin": "FRTEST", "yahoo_ticker": "TEST.PA"}])
-    ohlc = build_ohlc_observations(mapping, {"TEST.PA": history}, cfg31, observed_at_utc="2026-08-21T20:00:00+00:00", recent_bars=10)
+    ohlc = build_ohlc_observations(mapping, {"TEST.PA": history}, cfg31, observed_at_utc="2026-08-20T20:00:00+00:00", recent_bars=10)
     assert {"session_open", "session_high", "session_low", "session_close"}.issubset(ohlc.columns)
 
     prediction = pd.DataFrame(
@@ -135,21 +127,21 @@ def test_ohlc_ledger_and_lineage_use_first_next_session_and_multilabels():
                 "phase": "PREOPEN",
                 "isin": "FRTEST",
                 "yahoo_ticker": "TEST.PA",
-                "as_of_date": "2026-08-20",
+                "as_of_date": "2026-08-19",
                 "reference_close": 100.0,
                 "atr14_pct": 0.02,
                 "movement_potential_score": 80.0,
                 "technical_impulse_score": 60.0,
                 "direction_bias_score": 40.0,
                 "technical_direction_score": 30.0,
-                "snapshot_generated_at_utc": "2026-08-21T06:40:00+00:00",
-                "snapshot_key": "2026-08-21|PREOPEN|FRTEST",
+                "snapshot_generated_at_utc": "2026-08-20T06:40:00+00:00",
+                "snapshot_key": "2026-08-20|PREOPEN|FRTEST",
             }
         ]
     )
-    enriched, stats = apply_lineage(prediction, ohlc, minimum_snapshot_coverage=0.8, labeled_at_utc="2026-08-21T20:00:00+00:00", cfg=cfg)
+    enriched, stats = apply_lineage(prediction, ohlc, minimum_snapshot_coverage=0.8, labeled_at_utc="2026-08-20T20:00:00+00:00", cfg=cfg)
     row = enriched.iloc[0]
-    assert row["outcome_as_of_date"] == "2026-08-21"
+    assert row["outcome_as_of_date"] == "2026-08-20"
     assert round(float(row["realized_open_gap_pct"]), 6) == 2.0
     assert round(float(row["realized_session_range_pct"]), 6) == 6.0
     assert round(float(row["realized_session_abs_extreme_pct"]), 6) == 5.0
