@@ -178,6 +178,14 @@ def _candidate_listing_date(candidate: dict[str, Any]) -> date | None:
     return detail_date or table_date
 
 
+def _candidate_source_url(candidate: dict[str, Any]) -> str:
+    return str(
+        candidate.get("euronext_showcase_url")
+        or candidate.get("euronext_source_page")
+        or EURONEXT_IPO_ALL
+    ).strip()
+
+
 def qualify_euronext_candidates(
     worklist: pd.DataFrame,
     candidates: list[dict[str, Any]],
@@ -230,7 +238,7 @@ def qualify_euronext_candidates(
                 "status": "QUARANTINE",
                 "reason": "OFFICIAL_LISTING_DATE_MISSING_OR_CONFLICTING",
                 "source_name": "EURONEXT_OFFICIAL_IPO_SHOWCASE",
-                "source_url": str(malformed_rows[0].get("euronext_showcase_url") or EURONEXT_IPO_ALL),
+                "source_url": _candidate_source_url(malformed_rows[0]),
             })
             continue
 
@@ -243,11 +251,13 @@ def qualify_euronext_candidates(
                 "reason": "MULTIPLE_OFFICIAL_LISTING_DATES",
                 "listing_dates": ",".join(value.isoformat() for value in unique_dates),
                 "source_name": "EURONEXT_OFFICIAL_IPO_SHOWCASE",
-                "source_url": EURONEXT_IPO_ALL,
+                "source_url": _candidate_source_url(parsed_rows[0][1]) if parsed_rows else EURONEXT_IPO_ALL,
             })
             continue
 
         listing_date = unique_dates[0]
+        candidate = parsed_rows[0][1]
+        source_url = _candidate_source_url(candidate)
         if listing_date > as_of:
             quarantine.append({
                 "isin": isin,
@@ -256,7 +266,7 @@ def qualify_euronext_candidates(
                 "reason": "OFFICIAL_LISTING_DATE_IN_FUTURE",
                 "official_listing_date": listing_date.isoformat(),
                 "source_name": "EURONEXT_OFFICIAL_IPO_SHOWCASE",
-                "source_url": EURONEXT_IPO_ALL,
+                "source_url": source_url,
             })
             continue
 
@@ -269,7 +279,7 @@ def qualify_euronext_candidates(
                 "reason": "TARGET_FIRST_OBSERVED_DATE_MISSING",
                 "official_listing_date": listing_date.isoformat(),
                 "source_name": "EURONEXT_OFFICIAL_IPO_SHOWCASE",
-                "source_url": EURONEXT_IPO_ALL,
+                "source_url": source_url,
             })
             continue
         if listing_date > first_observed + timedelta(days=LISTING_CONFLICT_TOLERANCE_DAYS):
@@ -281,11 +291,10 @@ def qualify_euronext_candidates(
                 "official_listing_date": listing_date.isoformat(),
                 "first_observed_date": first_observed.isoformat(),
                 "source_name": "EURONEXT_OFFICIAL_IPO_SHOWCASE",
-                "source_url": EURONEXT_IPO_ALL,
+                "source_url": source_url,
             })
             continue
 
-        candidate = parsed_rows[0][1]
         accepted.append({
             "isin": isin,
             "ticker": target["ticker"],
@@ -296,7 +305,7 @@ def qualify_euronext_candidates(
             "official_symbol": str(candidate.get("symbol") or "").strip(),
             "official_name": str(candidate.get("name") or "").strip(),
             "source_name": "EURONEXT_OFFICIAL_IPO_SHOWCASE",
-            "source_url": str(candidate.get("euronext_showcase_url") or EURONEXT_IPO_ALL),
+            "source_url": source_url,
             "evidence_level": "A",
             "validation_status": FROZEN_VALIDATION_STATUS,
         })
@@ -329,7 +338,12 @@ def collect_action_listing_evidence(
     timeout: int = 20,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     worklist = load_worklist(worklist_path)
-    candidates, source_metrics = collect_euronext_v1_3(start, end, timeout=timeout)
+    candidates, source_metrics = collect_euronext_v1_3(
+        start,
+        end,
+        timeout=timeout,
+        enrich_details=False,
+    )
     accepted, quarantine, metrics = qualify_euronext_candidates(worklist, candidates, as_of=end)
     metrics["source_metrics"] = source_metrics
     return accepted, quarantine, metrics
