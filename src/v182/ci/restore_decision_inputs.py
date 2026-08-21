@@ -101,7 +101,7 @@ def run(repo: str, token: str, current_run_id: int, root: Path, max_age_hours: f
     artifact = _select_artifact(artifacts)
     with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as handle:
         archive = Path(handle.name)
-        with _request(str(artifact["archive_download_url"]), token, "application/octet-stream") as response:
+        with _request(str(artifact["archive_download_url"]), token) as response:
             shutil.copyfileobj(response, handle)
     try:
         extracted = _extract_required(archive, root)
