@@ -112,7 +112,7 @@ jobs:
         continue-on-error: true
         run: python -m v182.reporting.action_ct_shadow_run_v22_0
 
-      - name: Action CT V22.1 context enriched SHADOW
+      - name: Action CT V22.1.1 enriched performance observability SHADOW
         continue-on-error: true
         run: python -m v182.reporting.action_ct_shadow_run_v22_1
 
@@ -157,6 +157,8 @@ jobs:
           if [ -f outputs/audit/ACTION_CT_V22_0_0_AUDIT.json ]; then cat outputs/audit/ACTION_CT_V22_0_0_AUDIT.json; fi
           if [ -f outputs/audit/ACTION_CT_V22_1_0_AUDIT.json ]; then cat outputs/audit/ACTION_CT_V22_1_0_AUDIT.json; fi
           if [ -f outputs/audit/ACTION_CT_V22_1_0_CONTEXT.json ]; then cat outputs/audit/ACTION_CT_V22_1_0_CONTEXT.json; fi
+          if [ -f outputs/audit/ACTION_CT_V22_1_0_RUNTIME.json ]; then cat outputs/audit/ACTION_CT_V22_1_0_RUNTIME.json; fi
+          if [ -f outputs/audit/ACTION_CT_V22_1_0_ERRORS.json ]; then cat outputs/audit/ACTION_CT_V22_1_0_ERRORS.json; fi
           if [ -f outputs/audit/ACTION_CT_V22_1_0_PIT_VALIDATION.json ]; then cat outputs/audit/ACTION_CT_V22_1_0_PIT_VALIDATION.json; fi
           if [ -f outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json ]; then cat outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json; fi
           if [ -f outputs/audit/ETF_CT_LT_V21_14_SHADOW.json ]; then cat outputs/audit/ETF_CT_LT_V21_14_SHADOW.json; fi
@@ -226,6 +228,9 @@ jobs:
             outputs/audit/ACTION_CT_V22_0_0_PIT_VALIDATION.json
             outputs/audit/ACTION_CT_V22_1_0_AUDIT.json
             outputs/audit/ACTION_CT_V22_1_0_CONTEXT.json
+            outputs/audit/ACTION_CT_V22_1_0_RUNTIME.json
+            outputs/audit/ACTION_CT_V22_1_0_ERRORS.json
+            outputs/audit/ACTION_CT_V22_1_0_DIVERGENCES.csv
             outputs/audit/ACTION_CT_V22_1_0_PIT_VALIDATION.json
             outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json
             outputs/audit/ETF_CT_LT_V21_14_SHADOW.json
