@@ -178,7 +178,9 @@ def compute_daily_weekly_trader_snapshot(frame: pd.DataFrame, cfg: dict) -> dict
 
     entry_components = dict(snap.get("entry_components") or {})
     exit_components = dict(snap.get("exit_components") or {})
-    structure_score = _finite(entry_components.get("structure_breakout_retest")) or 40.0
+    structure_score = _finite(entry_components.get("structure_breakout_retest"))
+    if structure_score is None:
+        structure_score = 40.0
     if breakout["breakout_55d"]:
         structure_score = max(structure_score, 100.0)
     elif breakout["breakout_20d"]:
