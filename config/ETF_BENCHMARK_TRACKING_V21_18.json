@@ -1,0 +1,24 @@
+{
+  "version": "V21.18_ETF_BENCHMARK_TRACKING_SHADOW",
+  "mode": "SHADOW_ONLY",
+  "benchmark_price_map_path": "config/ETF_BENCHMARK_PRICE_MAP_V21_18.csv",
+  "minimum_synchronised_return_observations": 252,
+  "annualisation_factor": 252,
+  "accepted_price_mapping_statuses": ["VERIFIED"],
+  "accepted_price_mapping_evidence": ["A", "B"],
+  "governance": {
+    "exact_benchmark_name_match_required": true,
+    "benchmark_name_inference": false,
+    "benchmark_price_symbol_inference": false,
+    "category_proxy_for_benchmark_forbidden": true,
+    "geography_proxy_for_benchmark_forbidden": true,
+    "tracking_error_computation_enabled": false,
+    "vendor_tracking_error_context_only": true,
+    "decision_influence": 0.0,
+    "live_orders_enabled": false,
+    "weights_changed": false,
+    "thresholds_changed": false,
+    "t1_t2_scope_changed": false,
+    "holdout_opened": false
+  }
+}
