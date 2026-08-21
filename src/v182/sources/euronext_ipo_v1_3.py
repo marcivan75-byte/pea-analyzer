@@ -116,7 +116,6 @@ def _page_url(page: int) -> str:
 
 
 def _table_rows(html: str) -> tuple[list[tuple[dict[str, object], dict[str, object]]], list[date]]:
-    """Return normalized IPO table rows plus every parseable date on the page."""
     rows: list[tuple[dict[str, object], dict[str, object]]] = []
     page_dates: list[date] = []
     for table in pd.read_html(StringIO(html)):
@@ -137,15 +136,13 @@ def collect_euronext_v1_3(
     timeout: int = 20,
     max_pages: int = DEFAULT_MAX_PAGES,
     target_isins: set[str] | None = None,
+    enrich_details: bool = True,
 ) -> tuple[list[dict], dict]:
     """Collect the paginated official Euronext IPO catalogue fail-closed.
 
-    Euronext orders the showcase newest first. Pagination continues until a
-    page is entirely older than ``start`` or until no IPO table rows remain.
-    When ``target_isins`` is supplied, only exact target ISIN rows are enriched
-    and returned; generic IPO Radar callers keep the complete catalogue by
-    leaving the filter unset. Any HTTP/parsing failure aborts the collection
-    rather than publishing a silently partial historical result.
+    ``target_isins`` limits returned rows by exact ISIN. ``enrich_details`` is
+    left enabled for IPO Radar; listing-date qualification can disable it
+    because the official catalogue row itself carries exact ISIN and date.
     """
     if start > end:
         raise ValueError("EURONEXT_IPO_INVALID_DATE_RANGE")
@@ -173,7 +170,8 @@ def collect_euronext_v1_3(
 
     try:
         for page in range(max_pages):
-            response = requests.get(_page_url(page), headers=headers, timeout=timeout)
+            page_url = _page_url(page)
+            response = requests.get(page_url, headers=headers, timeout=timeout)
             response.raise_for_status()
             html = response.text
             rows, page_dates = _table_rows(html)
@@ -195,7 +193,7 @@ def collect_euronext_v1_3(
                 break
             seen_page_fingerprints.add(fingerprint)
 
-            detail_links = _showcase_links(html)
+            detail_links = _showcase_links(html) if enrich_details else {}
             for row, columns in rows:
                 parsed = legacy._parse_date(row.get(columns["date"]))
                 if not parsed or not (start <= parsed <= end):
@@ -214,8 +212,8 @@ def collect_euronext_v1_3(
                 seen_candidates.add(dedupe_key)
 
                 detail_url = detail_links.get(_norm(name), "")
-                detail: dict = {}
-                if detail_url:
+                detail: dict = {"euronext_showcase_url": page_url}
+                if enrich_details and detail_url:
                     detail = _fetch_detail(detail_url, headers, timeout)
                     if detail.get("euronext_detail_status") == "SUCCESS":
                         detail_success += 1
@@ -261,10 +259,15 @@ def collect_euronext_v1_3(
             "target_filter_active": normalized_targets is not None,
             "target_isins_requested": len(normalized_targets or set()),
             "non_target_rows_skipped": non_target_rows_skipped,
+            "detail_enrichment_enabled": enrich_details,
             "detail_enriched_count": detail_success,
             "detail_failed_count": detail_failed,
             "dedupe_policy": "EXACT_ISIN_DATE_SYMBOL_MARKET_LOCATION",
-            "detail_policy": "OFFICIAL_SHOWCASE_ONLY_NO_INFERENCE",
+            "detail_policy": (
+                "OFFICIAL_SHOWCASE_DETAIL_ENRICHED"
+                if enrich_details
+                else "OFFICIAL_PAGINATED_CATALOGUE_EXACT_ISIN_DATE_ONLY"
+            ),
             "pagination_policy": "NEWEST_TO_OLDEST_STOP_AFTER_PAGE_BEFORE_START",
         }
     except Exception as exc:
@@ -277,6 +280,7 @@ def collect_euronext_v1_3(
             "target_filter_active": normalized_targets is not None,
             "target_isins_requested": len(normalized_targets or set()),
             "non_target_rows_skipped": non_target_rows_skipped,
+            "detail_enrichment_enabled": enrich_details,
             "detail": f"{type(exc).__name__}: {str(exc)[:180]}",
             "partial_candidates_discarded": len(candidates),
             "partial_results_published": False,
