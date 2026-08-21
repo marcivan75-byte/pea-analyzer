@@ -149,6 +149,7 @@ def _benchmark_after_label(text: str) -> str | None:
     """Extract only an explicitly labelled benchmark/reference index string."""
     clean = re.sub(r"\s+", " ", _clean_text(text)).strip()
     stop = "|".join(re.escape(label) for label in BENCHMARK_STOP_LABELS)
+    stop_values = tuple(label.casefold() for label in BENCHMARK_STOP_LABELS)
     for label in BENCHMARK_LABELS:
         match = re.search(
             rf"(?:{label})\s*[:\-]?\s*(.+?)(?=\s+(?:{stop})\b|$)",
@@ -158,9 +159,12 @@ def _benchmark_after_label(text: str) -> str | None:
         if not match:
             continue
         candidate = re.sub(r"\s+", " ", match.group(1)).strip(" :;,-")
+        folded = candidate.casefold()
         if not candidate or len(candidate) < 4 or len(candidate) > 160:
             continue
-        if candidate.casefold() in {"index", "benchmark", "reference index", "indice", "indice de référence"}:
+        if folded in {"index", "benchmark", "reference index", "indice", "indice de référence"}:
+            continue
+        if any(folded == value or folded.startswith(value + " ") for value in stop_values):
             continue
         if candidate.lower().startswith(("http://", "https://", "www.")):
             continue
@@ -192,29 +196,14 @@ def _source_date(text: str, fallback: str) -> str:
 
 def _observation(isin: str, field: str, value: Any, *, source: str, source_url: str, evidence: str, as_of: str) -> dict:
     return {
-        "universe": "ETF",
-        "isin": isin,
-        "field": field,
-        "value": value,
-        "source": source,
-        "source_url": source_url,
-        "evidence_level": evidence,
-        "collected_at": datetime.now(timezone.utc).isoformat(),
-        "as_of": as_of,
+        "universe": "ETF", "isin": isin, "field": field, "value": value,
+        "source": source, "source_url": source_url, "evidence_level": evidence,
+        "collected_at": datetime.now(timezone.utc).isoformat(), "as_of": as_of,
         "validation_status": "EXACT_ISIN_SOURCE_MATCH",
     }
 
 
-def _observations_from_text(
-    isin: str,
-    text: str,
-    *,
-    source: str,
-    source_url: str,
-    evidence: str,
-    fallback_as_of: str,
-    include_share_class_assets: bool = False,
-) -> list[dict]:
+def _observations_from_text(isin: str, text: str, *, source: str, source_url: str, evidence: str, fallback_as_of: str, include_share_class_assets: bool = False) -> list[dict]:
     clean = _clean_text(text)
     if isin.upper() not in clean.upper():
         return []
@@ -238,7 +227,6 @@ def _observations_from_text(
 
 def _pdf_text(content: bytes) -> str:
     from pypdf import PdfReader
-
     reader = PdfReader(BytesIO(content))
     return "\n".join(page.extract_text() or "" for page in reader.pages)
 
@@ -262,14 +250,7 @@ def _collect_amundi(session, isin: str, today: date) -> tuple[list[dict], list[d
                 continue
             response.raise_for_status()
             text = _pdf_text(response.content)
-            observations = _observations_from_text(
-                isin,
-                text,
-                source="Amundi official monthly factsheet",
-                source_url=url,
-                evidence="A",
-                fallback_as_of=datetime.strptime(yyyymmdd, "%Y%m%d").date().isoformat(),
-            )
+            observations = _observations_from_text(isin, text, source="Amundi official monthly factsheet", source_url=url, evidence="A", fallback_as_of=datetime.strptime(yyyymmdd, "%Y%m%d").date().isoformat())
             if observations:
                 return observations, failures
             failures.append({"isin": isin, "provider": "Amundi", "reason": "OFFICIAL_FACTSHEET_NO_EXACT_STRUCTURAL_FIELDS", "source_url": url})
@@ -281,19 +262,9 @@ def _collect_amundi(session, isin: str, today: date) -> tuple[list[dict], list[d
 def _collect_hsbc(session, isin: str, today: date) -> tuple[list[dict], list[dict]]:
     url = HSBC_FACTSHEET_URL.format(isin_lower=isin.lower())
     try:
-        response = _get(session, url)
-        response.raise_for_status()
-        text = _pdf_text(response.content)
-        observations = _observations_from_text(
-            isin,
-            text,
-            source="HSBC Asset Management official factsheet",
-            source_url=url,
-            evidence="A",
-            fallback_as_of=today.isoformat(),
-        )
-        if observations:
-            return observations, []
+        response = _get(session, url); response.raise_for_status(); text = _pdf_text(response.content)
+        observations = _observations_from_text(isin, text, source="HSBC Asset Management official factsheet", source_url=url, evidence="A", fallback_as_of=today.isoformat())
+        if observations: return observations, []
         return [], [{"isin": isin, "provider": "HSBC", "reason": "OFFICIAL_FACTSHEET_NO_EXACT_STRUCTURAL_FIELDS", "source_url": url}]
     except Exception as exc:
         return [], [{"isin": isin, "provider": "HSBC", "reason": type(exc).__name__, "detail": str(exc)[:180], "source_url": url}]
@@ -301,22 +272,11 @@ def _collect_hsbc(session, isin: str, today: date) -> tuple[list[dict], list[dic
 
 def _collect_official_html(session, isin: str, today: date) -> tuple[list[dict], list[dict]]:
     url = OFFICIAL_HTML_URLS.get(isin)
-    if not url:
-        return [], []
+    if not url: return [], []
     try:
-        response = _get(session, url)
-        response.raise_for_status()
-        observations = _observations_from_text(
-            isin,
-            _html_text(response.text),
-            source="Issuer official product page",
-            source_url=url,
-            evidence="A",
-            fallback_as_of=today.isoformat(),
-            include_share_class_assets="vanguard.co.uk" in url,
-        )
-        if observations:
-            return observations, []
+        response = _get(session, url); response.raise_for_status()
+        observations = _observations_from_text(isin, _html_text(response.text), source="Issuer official product page", source_url=url, evidence="A", fallback_as_of=today.isoformat(), include_share_class_assets="vanguard.co.uk" in url)
+        if observations: return observations, []
         return [], [{"isin": isin, "reason": "OFFICIAL_HTML_NO_EXACT_STRUCTURAL_FIELDS", "source_url": url}]
     except Exception as exc:
         return [], [{"isin": isin, "reason": type(exc).__name__, "detail": str(exc)[:180], "source_url": url}]
@@ -325,97 +285,46 @@ def _collect_official_html(session, isin: str, today: date) -> tuple[list[dict],
 def _collect_justetf(session, isin: str, today: date, wanted_fields: set[str]) -> tuple[list[dict], list[dict]]:
     url = JUSTETF_URL.format(isin=isin)
     try:
-        response = _get(session, url)
-        response.raise_for_status()
-        parsed = _observations_from_text(
-            isin,
-            _html_text(response.text),
-            source="justETF exact-ISIN profile",
-            source_url=url,
-            evidence="B",
-            fallback_as_of=today.isoformat(),
-        )
+        response = _get(session, url); response.raise_for_status()
+        parsed = _observations_from_text(isin, _html_text(response.text), source="justETF exact-ISIN profile", source_url=url, evidence="B", fallback_as_of=today.isoformat())
         observations = [row for row in parsed if row["field"] in wanted_fields]
-        if observations:
-            return observations, []
+        if observations: return observations, []
         return [], [{"isin": isin, "reason": "JUSTETF_NO_EXACT_STRUCTURAL_FIELDS", "source_url": url}]
     except Exception as exc:
         return [], [{"isin": isin, "reason": type(exc).__name__, "detail": str(exc)[:180], "source_url": url}]
 
 
-def collect_etf_structural_data(
-    frame: pd.DataFrame,
-    *,
-    today: date | None = None,
-    delay_seconds: float = 0.05,
-) -> tuple[list[dict], list[dict], dict[str, Any]]:
+def collect_etf_structural_data(frame: pd.DataFrame, *, today: date | None = None, delay_seconds: float = 0.05) -> tuple[list[dict], list[dict], dict[str, Any]]:
     """Collect TER, fund size and explicit benchmark with exact-ISIN fail-closed policy."""
     import requests
-
-    current = today or datetime.now(timezone.utc).date()
-    session = requests.Session()
-    observations: list[dict] = []
-    failures: list[dict] = []
-    provider_metrics: dict[str, dict[str, int]] = {}
-
-    if "isin" not in frame.columns:
-        return [], [{"reason": "ETF_MASTER_MISSING_ISIN"}], {"requested": 0}
-
+    current = today or datetime.now(timezone.utc).date(); session = requests.Session()
+    observations: list[dict] = []; failures: list[dict] = []; provider_metrics: dict[str, dict[str, int]] = {}
+    if "isin" not in frame.columns: return [], [{"reason": "ETF_MASTER_MISSING_ISIN"}], {"requested": 0}
     for _, row in frame.iterrows():
-        isin = str(row.get("isin") or "").strip().upper()
-        provider = str(row.get("provider") or "UNKNOWN").strip()
+        isin = str(row.get("isin") or "").strip().upper(); provider = str(row.get("provider") or "UNKNOWN").strip()
         if not isin:
-            failures.append({"provider": provider, "reason": "MISSING_ISIN"})
-            continue
-        metrics = provider_metrics.setdefault(provider, {"requested": 0, "issuer_observations": 0, "fallback_observations": 0})
-        metrics["requested"] += 1
-
-        issuer_obs: list[dict] = []
-        issuer_failures: list[dict] = []
-        if provider.casefold() == "amundi":
-            issuer_obs, issuer_failures = _collect_amundi(session, isin, current)
-        elif provider.casefold() == "hsbc":
-            issuer_obs, issuer_failures = _collect_hsbc(session, isin, current)
-        elif isin in OFFICIAL_HTML_URLS:
-            issuer_obs, issuer_failures = _collect_official_html(session, isin, current)
-
-        observations.extend(issuer_obs)
-        failures.extend(issuer_failures)
-        metrics["issuer_observations"] += len(issuer_obs)
-        observed_fields = {item["field"] for item in issuer_obs}
-        wanted = {"ter_pct", "fund_total_assets_eur_m", "official_benchmark"} - observed_fields
+            failures.append({"provider": provider, "reason": "MISSING_ISIN"}); continue
+        metrics = provider_metrics.setdefault(provider, {"requested": 0, "issuer_observations": 0, "fallback_observations": 0}); metrics["requested"] += 1
+        issuer_obs: list[dict] = []; issuer_failures: list[dict] = []
+        if provider.casefold() == "amundi": issuer_obs, issuer_failures = _collect_amundi(session, isin, current)
+        elif provider.casefold() == "hsbc": issuer_obs, issuer_failures = _collect_hsbc(session, isin, current)
+        elif isin in OFFICIAL_HTML_URLS: issuer_obs, issuer_failures = _collect_official_html(session, isin, current)
+        observations.extend(issuer_obs); failures.extend(issuer_failures); metrics["issuer_observations"] += len(issuer_obs)
+        wanted = {"ter_pct", "fund_total_assets_eur_m", "official_benchmark"} - {item["field"] for item in issuer_obs}
         if wanted:
             fallback_obs, fallback_failures = _collect_justetf(session, isin, current, wanted)
-            observations.extend(fallback_obs)
-            failures.extend(fallback_failures)
-            metrics["fallback_observations"] += len(fallback_obs)
-        if delay_seconds > 0:
-            time.sleep(delay_seconds)
-
+            observations.extend(fallback_obs); failures.extend(fallback_failures); metrics["fallback_observations"] += len(fallback_obs)
+        if delay_seconds > 0: time.sleep(delay_seconds)
     unique_fields = {(item["isin"], item["field"]) for item in observations}
     summary = {
-        "requested": int(len(frame)),
-        "observations": len(observations),
-        "unique_isin_fields": len(unique_fields),
+        "requested": int(len(frame)), "observations": len(observations), "unique_isin_fields": len(unique_fields),
         "ter_observations": sum(item["field"] == "ter_pct" for item in observations),
         "fund_assets_eur_observations": sum(item["field"] == "fund_total_assets_eur_m" for item in observations),
         "share_class_aum_observations": sum(item["field"] == "aum_m" for item in observations),
         "official_benchmark_observations": sum(item["field"] == "official_benchmark" for item in observations),
         "evidence_a_observations": sum(item["evidence_level"] == "A" for item in observations),
         "evidence_b_observations": sum(item["evidence_level"] == "B" for item in observations),
-        "failures": len(failures),
-        "provider_metrics": provider_metrics,
-        "governance": {
-            "exact_isin_required": True,
-            "issuer_before_secondary": True,
-            "issuer_evidence": "A",
-            "justetf_evidence": "B",
-            "fx_conversion": False,
-            "quote_currency_used_as_asset_currency": False,
-            "benchmark_name_inference": False,
-            "benchmark_price_symbol_inference": False,
-            "tracking_error_computed_here": False,
-            "missing_imputation": False,
-        },
+        "failures": len(failures), "provider_metrics": provider_metrics,
+        "governance": {"exact_isin_required": True, "issuer_before_secondary": True, "issuer_evidence": "A", "justetf_evidence": "B", "fx_conversion": False, "quote_currency_used_as_asset_currency": False, "benchmark_name_inference": False, "benchmark_price_symbol_inference": False, "tracking_error_computed_here": False, "missing_imputation": False},
     }
     return observations, failures, summary
