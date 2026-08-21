@@ -18,8 +18,7 @@ def test_explicit_benchmark_label_is_collected_with_exact_isin_provenance():
     Amundi Index MSCI World SRI PAB UCITS ETF
     ISIN FR0011869353
     Indice de référence MSCI World SRI Filtered PAB Index
-    Actif géré 500,00 millions EUR
-    Frais courants 0,18%
+    TER 0,18%
     """
     rows = _observations_from_text(
         "FR0011869353",
@@ -92,7 +91,7 @@ def test_tracking_readiness_blocks_unverified_benchmark_price_mapping():
     ])
     rows, summary = classify_master(master, {}, cfg)
     assert rows.loc[0, "tracking_readiness"] == "BENCHMARK_PRICE_MAPPING_BLOCKED"
-    assert rows.loc[0, "tracking_error_computation_enabled"] is False
+    assert bool(rows.loc[0, "tracking_error_computation_enabled"]) is False
     assert summary["verified_benchmark_price_mapping_rows"] == 0
     assert summary["decision_influence"] == 0.0
 
