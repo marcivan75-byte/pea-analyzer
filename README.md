@@ -17,7 +17,7 @@ Ordre recommandé pour un run contrôlé : validation CI complète → collecte 
 
 ## Synthèse décisionnelle CI
 
-Le run global publie désormais une synthèse unique sous `outputs/decision_brief/DECISION_BRIEF.md` et `DECISION_BRIEF.json`. Elle affiche en tête du résumé GitHub le statut exploitable (`READY_FOR_REVIEW`, `REVIEW_WITH_WARNINGS` ou `BLOCKED`), la santé des étapes, les sélections prioritaires, les blocages et les artefacts de preuve. Cette couche est strictement en lecture seule : elle ne modifie aucun score, poids, seuil, décision ni état d’ordre, et maintient les ordres réels désactivés.
+Le run global publie désormais une synthèse unique sous `outputs/decision_brief/DECISION_BRIEF.md` et `DECISION_BRIEF.json`. Pour les consultations courantes, le workflow manuel `committee_decision_fast.yml` restaure uniquement les trois entrées nécessaires depuis le dernier run global réussi et frais (8 jours maximum par défaut), sans collecte ni recalcul lourd ; son budget d’exécution est plafonné à 15 minutes. Elle affiche en tête du résumé GitHub le statut exploitable (`READY_FOR_REVIEW`, `REVIEW_WITH_WARNINGS` ou `BLOCKED`), la santé des étapes, les sélections prioritaires, les blocages et les artefacts de preuve. Cette couche est strictement en lecture seule : elle ne modifie aucun score, poids, seuil, décision ni état d’ordre, et maintient les ordres réels désactivés.
 
 ## Univers canoniques
 
