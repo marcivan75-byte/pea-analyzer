@@ -1,0 +1,8 @@
+tests.test_registry.test_registry_integrity: PASS
+tests.test_registry.test_unsafe_features_remain_off: PASS
+tests.test_safe_improvements.test_cache_hash_and_ttl_fail_closed: PASS
+tests.test_safe_improvements.test_observability_emits_structured_event: PASS
+tests.test_safe_improvements.test_promotion_denied_without_oos_proof: PASS
+tests.test_safe_improvements.test_quality_score_and_states: PASS
+TOTAL: 6 PASS
+compileall: PASS
