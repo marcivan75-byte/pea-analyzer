@@ -4,7 +4,7 @@ import zipfile
 
 import pytest
 
-from v182.ci.restore_decision_inputs import REQUIRED, _extract_required, _select_run
+from v182.ci.restore_decision_inputs import REQUIRED, _extract_required, _select_artifact, _select_run
 
 
 def test_extract_required_only_restores_decision_inputs(tmp_path: Path):
@@ -27,4 +27,15 @@ def test_select_run_fails_closed_when_latest_success_is_stale():
 
     with pytest.raises(RuntimeError, match="stale"):
         _select_run(payload, current_run_id=11, max_age_hours=192)
+
+
+def test_select_artifact_accepts_legacy_and_current_global_names():
+    payload = {
+        "artifacts": [
+            {"id": 1, "name": "committee-master-v21-8-1-100", "expired": False},
+            {"id": 2, "name": "committee-weekly-v21-8-1-101", "expired": False},
+        ]
+    }
+
+    assert _select_artifact(payload)["id"] == 2
 
