@@ -1,0 +1,111 @@
+name: V21.19 TEMP Action listing pagination proof
+
+on:
+  push:
+    branches:
+      - data/euronext-ipo-pagination-v21-19
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v21-19-action-listing-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove-real-euronext-history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: pyproject.toml
+
+      - name: Install project
+        run: python -m pip install -e .
+
+      - name: Collect and qualify real V21.17 Action listing worklist
+        run: |
+          python - <<'PY'
+          from datetime import date, datetime, timezone
+          from pathlib import Path
+          import json
+
+          import pandas as pd
+
+          from v182.sources.action_listing_evidence import collect_action_listing_evidence
+
+          accepted, quarantine, metrics = collect_action_listing_evidence(
+              end=date(2026, 8, 21),
+              timeout=30,
+          )
+          source = metrics['source_metrics']
+          assert source['status'] == 'SUCCESS', source
+          assert source['pagination_complete'] is True, source
+          assert source['detail_enrichment_enabled'] is False, source
+
+          accepted_df = pd.DataFrame(accepted)
+          quarantine_df = pd.DataFrame(quarantine)
+          existing = pd.read_csv(
+              'config/V21_17_ACTION_LISTING_EVIDENCE_A.csv',
+              sep=';', encoding='utf-8-sig', dtype=str,
+          )
+          existing_isins = set(existing['isin'].astype(str).str.strip().str.upper())
+          accepted_isins = set(accepted_df.get('isin', pd.Series(dtype=str)).astype(str).str.upper())
+          known = {'NO0012851874', 'FR001400F2Z1'}
+          assert known.issubset(accepted_isins), sorted(known - accepted_isins)
+
+          new_accepted = accepted_df[
+              ~accepted_df['isin'].astype(str).str.upper().isin(existing_isins)
+          ].copy() if not accepted_df.empty else accepted_df.copy()
+
+          unresolved = pd.DataFrame({
+              'isin': metrics['unresolved_isins'],
+              'status': 'START_AFTER_ANCHOR_UNRESOLVED',
+          })
+
+          out = Path('outputs/audit/v21_19_action_listing')
+          out.mkdir(parents=True, exist_ok=True)
+          accepted_df.to_csv(out / 'ACCEPTED_EURONEXT_LISTING_EVIDENCE.csv', sep=';', index=False)
+          new_accepted.to_csv(out / 'NEW_EURONEXT_LISTING_EVIDENCE.csv', sep=';', index=False)
+          quarantine_df.to_csv(out / 'QUARANTINE.csv', sep=';', index=False)
+          unresolved.to_csv(out / 'UNRESOLVED.csv', sep=';', index=False)
+
+          summary = {
+              'status': 'SUCCESS',
+              'version': 'V21.19_REAL_EURONEXT_PAGINATION_PROOF',
+              'generated_at_utc': datetime.now(timezone.utc).isoformat(),
+              'requested_targets': metrics['requested_targets'],
+              'accepted_exact_isin_total': metrics['accepted_exact_isin'],
+              'accepted_exact_isin_new_vs_v21_17': int(len(new_accepted)),
+              'quarantine_rows': metrics['quarantine_rows'],
+              'unresolved_targets': metrics['unresolved_targets'],
+              'pages_fetched': source['pages_fetched'],
+              'rows_seen': source['rows_seen'],
+              'official_candidates_received': metrics['official_candidates_received'],
+              'duplicate_candidates_removed': source['duplicate_candidates_removed'],
+              'pagination_complete': source['pagination_complete'],
+              'stop_reason': source['stop_reason'],
+              'detail_enrichment_enabled': source['detail_enrichment_enabled'],
+              'known_exact_isins_confirmed': sorted(known),
+              'synthetic_history_created': metrics['synthetic_history_created'],
+              'calibration_eligibility_changed': metrics['calibration_eligibility_changed'],
+              'weight_or_threshold_changes': False,
+              'real_orders_enabled': False,
+          }
+          (out / 'SUMMARY.json').write_text(json.dumps(summary, indent=2), encoding='utf-8')
+          print(json.dumps(summary, indent=2))
+          PY
+
+      - name: Upload proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: V21_19_REAL_EURONEXT_PAGINATION_PROOF_${{ github.run_id }}
+          path: outputs/audit/v21_19_action_listing/
+          if-no-files-found: error
+          retention-days: 14
