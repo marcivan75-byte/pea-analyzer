@@ -18,6 +18,7 @@ REQUIRED = {
     "outputs/committee_master/COMMITTEE_DECISIONS.csv",
     "outputs/audit/CI_EXPLAINABILITY_AUDIT.json",
 }
+ARTIFACT_PREFIXES = ("committee-weekly-v21-8-1-", "committee-master-v21-8-1-")
 
 
 def _request(url: str, token: str, accept: str = "application/vnd.github+json"):
@@ -62,7 +63,7 @@ def _select_artifact(payload: dict) -> dict:
     candidates = [
         artifact
         for artifact in payload.get("artifacts", [])
-        if str(artifact.get("name", "")).startswith("committee-weekly-v21-8-1-")
+        if str(artifact.get("name", "")).startswith(ARTIFACT_PREFIXES)
         and not artifact.get("expired", False)
     ]
     if not candidates:
