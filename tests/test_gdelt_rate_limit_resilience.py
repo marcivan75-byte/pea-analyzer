@@ -62,7 +62,7 @@ def test_gdelt_fetch_does_not_retry_non_transient_error(monkeypatch):
 
     def fake_get(*args, **kwargs):
         calls.append((args, kwargs))
-        raise requests.InvalidURL("invalid query url")
+        raise requests.exceptions.InvalidURL("invalid query url")
 
     monkeypatch.setattr("requests.get", fake_get)
     monkeypatch.setattr(gdelt_news.time, "sleep", lambda seconds: sleeps.append(seconds))
