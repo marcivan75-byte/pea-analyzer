@@ -16,19 +16,24 @@ CONFIG = "TCT_V24_4_2_CATALYST_CONTEXT_SHADOW.json"
 VERSION = "TCT_V24.4.2_PIT_LINEAGE_V3"
 FINGERPRINT_ALGORITHM = "TCT_PIT_SHA256_CANONICAL_V3"
 
+# Prediction and validation-context fields are immutable within the V24.4.2
+# epoch. Outcome columns are deliberately excluded because they are appended
+# only after the first subsequent observed daily OHLC session.
 PREDICTION_FIELDS = (
     "version", "phase", "isin", "yahoo_ticker", "as_of_date", "reference_close",
     "source_tct_decision", "source_tct_setup", "source_t1_quality", "source_t2_quality",
     "entry_state", "entry_score", "entry_confirmation_count", "exit_state", "exit_risk_score",
-    "atr14_pct", "range_expansion", "days_to_earnings", "candidate_rank", "candidate_rank_reason",
-    "candidate_priority_score", "movement_potential_score", "movement_potential_raw_score",
-    "movement_potential_coverage", "direction_bias_score", "direction_bias_raw_score", "direction_coverage",
-    "data_quality_state", "catalyst_state", "technical_only_actionable_flag", "news_magnitude_score",
-    "news_direction_score", "news_confidence", "news_match_confidence", "news_article_count",
-    "news_independent_sources", "news_event_types", "news_top_headlines", "news_source", "news_cache_hit",
-    "news_window_start_utc", "news_window_end_utc", "news_error", "technical_impulse_score",
-    "technical_direction_score", "known_event_proximity_score", "global_market_shock_score",
-    "global_risk_on_score", "news_technical_conflict", "snapshot_generated_at_utc",
+    "atr14_pct", "range_expansion", "sector_yf", "industry_yf", "country_yf", "market_cap",
+    "days_to_earnings", "candidate_rank", "candidate_rank_reason", "candidate_priority_score",
+    "movement_potential_score", "movement_potential_raw_score", "movement_potential_coverage",
+    "direction_bias_score", "direction_bias_raw_score", "direction_coverage", "data_quality_state",
+    "catalyst_state", "technical_only_actionable_flag", "news_magnitude_score", "news_direction_score",
+    "news_confidence", "news_match_confidence", "news_article_count", "news_independent_sources",
+    "news_event_types", "news_top_headlines", "news_source", "news_cache_hit", "news_window_start_utc",
+    "news_window_end_utc", "news_error", "technical_impulse_score", "technical_direction_score",
+    "known_event_proximity_score", "global_market_shock_score", "global_risk_on_score",
+    "global_vix_return_pct", "global_eurostoxx50_return_pct", "global_cac40_return_pct",
+    "global_dax_return_pct", "news_technical_conflict", "snapshot_generated_at_utc",
     "snapshot_window_start_utc", "snapshot_window_end_utc", "snapshot_key",
 )
 
