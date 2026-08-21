@@ -190,6 +190,9 @@ jobs:
         run: python -m v182.audit.identity_hydration
       - name: Run weekly unified Committee pipeline
         run: python -m v182.reporting.unified_runner
+      - name: Build synthetic decision brief
+        if: always()
+        run: python -m v182.reporting.decision_brief
       - name: Run ETF Fund Flows V1 SHADOW context
         continue-on-error: true
         run: python -m v182.reporting.etf_fund_flows_shadow_run
@@ -231,6 +234,12 @@ jobs:
         if: always()
         run: |
           if [ -f outputs/audit/BETA_CORRELATION_RISK_ENGINE.json ]; then cat outputs/audit/BETA_CORRELATION_RISK_ENGINE.json; fi
+      - name: Publish synthetic decision brief
+        if: always()
+        run: |
+          if [ -f outputs/decision_brief/DECISION_BRIEF.md ]; then
+            cat outputs/decision_brief/DECISION_BRIEF.md >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Publish full Committee Android summary
         if: always()
         run: |
@@ -292,6 +301,7 @@ jobs:
           name: committee-weekly-v21-8-1-${{ github.run_id }}
           path: |
             outputs/unified/
+            outputs/decision_brief/
             outputs/committee_master/
             outputs/etf_mt_v2081/
             outputs/etf_fund_flows/
