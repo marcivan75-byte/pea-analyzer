@@ -136,18 +136,29 @@ def collect_euronext_v1_3(
     end: date,
     timeout: int = 20,
     max_pages: int = DEFAULT_MAX_PAGES,
+    target_isins: set[str] | None = None,
 ) -> tuple[list[dict], dict]:
     """Collect the paginated official Euronext IPO catalogue fail-closed.
 
     Euronext orders the showcase newest first. Pagination continues until a
     page is entirely older than ``start`` or until no IPO table rows remain.
-    Any HTTP/parsing failure aborts the collection rather than publishing a
-    silently partial historical result.
+    When ``target_isins`` is supplied, only exact target ISIN rows are enriched
+    and returned; generic IPO Radar callers keep the complete catalogue by
+    leaving the filter unset. Any HTTP/parsing failure aborts the collection
+    rather than publishing a silently partial historical result.
     """
     if start > end:
         raise ValueError("EURONEXT_IPO_INVALID_DATE_RANGE")
     if max_pages < 1:
         raise ValueError("EURONEXT_IPO_INVALID_MAX_PAGES")
+
+    normalized_targets = None
+    if target_isins is not None:
+        normalized_targets = {
+            str(value).strip().upper()
+            for value in target_isins
+            if str(value).strip()
+        }
 
     source = "EURONEXT"
     headers = legacy._http_headers()
@@ -156,6 +167,7 @@ def collect_euronext_v1_3(
     detail_failed = 0
     pages_fetched = 0
     stop_reason = "MAX_PAGES_REACHED"
+    non_target_rows_skipped = 0
     seen_page_fingerprints: set[tuple[tuple[str, str, str], ...]] = set()
     seen_candidates: set[tuple[str, str, str, str, str]] = set()
 
@@ -190,6 +202,9 @@ def collect_euronext_v1_3(
                     continue
                 name = row.get(columns["company name"])
                 isin = str(row.get(columns.get("isin code", ""), "") or "").strip().upper()
+                if normalized_targets is not None and isin not in normalized_targets:
+                    non_target_rows_skipped += 1
+                    continue
                 location = str(row.get(columns.get("location", ""), "") or "").strip()
                 market = str(row.get(columns.get("market", ""), "") or "").strip()
                 symbol = str(row.get(columns.get("ticker", ""), "") or "").strip()
@@ -243,6 +258,9 @@ def collect_euronext_v1_3(
             "pages_fetched": pages_fetched,
             "stop_reason": stop_reason,
             "max_pages": max_pages,
+            "target_filter_active": normalized_targets is not None,
+            "target_isins_requested": len(normalized_targets or set()),
+            "non_target_rows_skipped": non_target_rows_skipped,
             "detail_enriched_count": detail_success,
             "detail_failed_count": detail_failed,
             "dedupe_policy": "EXACT_ISIN_DATE_SYMBOL_MARKET_LOCATION",
@@ -256,6 +274,9 @@ def collect_euronext_v1_3(
             "count": 0,
             "pages_fetched": pages_fetched,
             "max_pages": max_pages,
+            "target_filter_active": normalized_targets is not None,
+            "target_isins_requested": len(normalized_targets or set()),
+            "non_target_rows_skipped": non_target_rows_skipped,
             "detail": f"{type(exc).__name__}: {str(exc)[:180]}",
             "partial_candidates_discarded": len(candidates),
             "partial_results_published": False,
