@@ -8,6 +8,11 @@ on:
       - "config/ACTION_MT_V1_0_0_SHADOW.json"
       - "tests/test_action_mt_v1.py"
       - "scripts/validate_action_mt_ci.py"
+      - "scripts/build_action_mt_package_v1.py"
+      - "src/v182/reporting/action_mt_shadow_run_v1.py"
+      - "src/v182/sources/action_mt_cache_v1.py"
+      - "tests/test_action_mt_runtime_v1.py"
+      - "packages/ACTION_MT_V1_0_0/**"
       - ".github/workflows/action_mt_v1_tests.yml"
   workflow_dispatch:
 
@@ -27,7 +32,7 @@ jobs:
       - name: Install project and test dependencies
         run: python -m pip install -e ".[test]"
       - name: Validate ACTION MT V1
-        run: python -m pytest -q tests/test_action_mt_v1.py
+        run: python -m pytest -q tests/test_action_mt_v1.py tests/test_action_mt_runtime_v1.py
       - name: Validate the decision contract and abstention probes
         run: python scripts/validate_action_mt_ci.py
       - name: Publish the decision audit
@@ -36,5 +41,13 @@ jobs:
         with:
           name: action-mt-ci-decision-audit
           path: outputs/audit/ACTION_MT_CI_DECISION.json
+          if-no-files-found: error
+      - name: Build the complete ACTION MT package
+        run: python scripts/build_action_mt_package_v1.py --output outputs/ACTION_MT_V1_0_0_SHADOW_COMPLETE.zip
+      - name: Publish the complete package
+        uses: actions/upload-artifact@v4
+        with:
+          name: action-mt-v1-complete-package
+          path: outputs/ACTION_MT_V1_0_0_SHADOW_COMPLETE.zip
           if-no-files-found: error
 
