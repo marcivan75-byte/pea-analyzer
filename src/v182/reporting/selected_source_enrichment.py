@@ -4,10 +4,12 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+import time
 
 import pandas as pd
 
 from v182.sources.boursorama_selected import collect_selected_action_context_cached
+from v182.sources.boursorama_selected_etf import collect_selected_etf_context_cached
 from v182.sources.investing_technical import collect_technical_context_cached
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -68,7 +70,19 @@ def attach_master_identity(selected: pd.DataFrame, actions: pd.DataFrame | None,
     for master, asset in ((actions, "ACTION"), (etfs, "ETF")):
         if master is None or master.empty or "isin" not in master:
             continue
-        keep = [c for c in ("isin", "name", "yahoo_ticker", "long_name_yf", "investing_url", "investing_technical_url") if c in master]
+        keep = [
+            c
+            for c in (
+                "isin",
+                "name",
+                "yahoo_ticker",
+                "long_name_yf",
+                "investing_url",
+                "investing_technical_url",
+                "boursorama_code",
+            )
+            if c in master
+        ]
         part = master[keep].copy()
         part["asset_class"] = asset
         frames.append(part)
@@ -79,7 +93,14 @@ def attach_master_identity(selected: pd.DataFrame, actions: pd.DataFrame | None,
     if "asset_class" not in result:
         result["asset_class"] = "ACTION"
     result = result.merge(identity, on=["isin", "asset_class"], how="left", suffixes=("", "_master"))
-    for field in ("name", "yahoo_ticker", "long_name_yf", "investing_url", "investing_technical_url"):
+    for field in (
+        "name",
+        "yahoo_ticker",
+        "long_name_yf",
+        "investing_url",
+        "investing_technical_url",
+        "boursorama_code",
+    ):
         master_field = f"{field}_master"
         if master_field in result:
             if field not in result:
@@ -126,20 +147,37 @@ def enrich_selected_rows(
 
     bcfg = contract["boursorama"]
     icfg = contract["investing"]
-    action_selected = selected[selected["asset_class"].astype(str).str.upper().eq("ACTION")].copy()
+    asset_upper = selected["asset_class"].astype(str).str.upper()
+    action_selected = selected[asset_upper.eq("ACTION")].copy()
+    etf_selected = selected[asset_upper.eq("ETF")].copy()
 
-    def run_boursorama():
-        if action_selected.empty:
-            return None
-        return collect_selected_action_context_cached(
-            action_selected,
-            root / "state" / "provenance" / "source_cache" / "BOURSORAMA_SELECTED_V1.json",
-            dynamic_ttl_hours=float(bcfg["dynamic_ttl_hours"]),
-            deep_ttl_hours=float(bcfg["deep_ttl_hours"]),
-            refresh_budget=int(bcfg["refresh_budget"]),
-            request_start_interval_seconds=float(bcfg["request_start_interval_seconds"]),
-            max_workers=int(bcfg["max_workers"]),
-        )
+    def run_boursorama() -> tuple[object | None, object | None]:
+        """Serialize Action/ETF Boursorama branches to preserve one provider cadence."""
+        action_result = None
+        etf_result = None
+        if not action_selected.empty and bool(bcfg.get("priority_for_selected_actions", True)):
+            action_result = collect_selected_action_context_cached(
+                action_selected,
+                root / "state" / "provenance" / "source_cache" / "BOURSORAMA_SELECTED_V1.json",
+                dynamic_ttl_hours=float(bcfg["dynamic_ttl_hours"]),
+                deep_ttl_hours=float(bcfg["deep_ttl_hours"]),
+                refresh_budget=int(bcfg["refresh_budget"]),
+                request_start_interval_seconds=float(bcfg["request_start_interval_seconds"]),
+                max_workers=int(bcfg["max_workers"]),
+            )
+        if not etf_selected.empty and bool(bcfg.get("priority_for_selected_etfs", False)):
+            if action_result is not None:
+                time.sleep(float(bcfg["request_start_interval_seconds"]))
+            etf_result = collect_selected_etf_context_cached(
+                etf_selected,
+                root / "state" / "provenance" / "source_cache" / "BOURSORAMA_SELECTED_ETF_V1.json",
+                dynamic_ttl_hours=float(bcfg["dynamic_ttl_hours"]),
+                deep_ttl_hours=float(bcfg["deep_ttl_hours"]),
+                refresh_budget=int(bcfg["refresh_budget"]),
+                request_start_interval_seconds=float(bcfg["request_start_interval_seconds"]),
+                max_workers=int(bcfg["max_workers"]),
+            )
+        return action_result, etf_result
 
     def run_investing():
         return collect_technical_context_cached(
@@ -152,7 +190,8 @@ def enrich_selected_rows(
             max_workers=int(icfg["max_workers"]),
         )
 
-    b_result = None
+    b_action_result = None
+    b_etf_result = None
     i_result = None
     branch_errors: list[dict] = []
     with ThreadPoolExecutor(max_workers=2, thread_name_prefix="selected-source") as pool:
@@ -161,7 +200,7 @@ def enrich_selected_rows(
             try:
                 result = future.result()
                 if name == "boursorama":
-                    b_result = result
+                    b_action_result, b_etf_result = result
                 else:
                     i_result = result
             except Exception as exc:
@@ -169,12 +208,11 @@ def enrich_selected_rows(
 
     observations: list[dict] = []
     failures: list[dict] = list(branch_errors)
-    if b_result is not None:
-        observations.extend(b_result.observations)
-        failures.extend(b_result.failures)
-    if i_result is not None:
-        observations.extend(i_result.observations)
-        failures.extend(i_result.failures)
+    for result in (b_action_result, b_etf_result, i_result):
+        if result is None:
+            continue
+        observations.extend(result.observations)
+        failures.extend(result.failures)
 
     context = _pivot(observations)
     enriched = rows.copy()
@@ -198,7 +236,12 @@ def enrich_selected_rows(
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "selected_rows": int(len(selected)),
         "selected_unique_isins": int(selected["isin"].nunique()),
-        "boursorama": b_result.metrics if b_result is not None else {"status": "NO_ACTION_SELECTED_OR_BRANCH_FAILED"},
+        "boursorama_actions": (
+            b_action_result.metrics if b_action_result is not None else {"status": "NO_ACTION_SELECTED_OR_BRANCH_FAILED"}
+        ),
+        "boursorama_etfs": (
+            b_etf_result.metrics if b_etf_result is not None else {"status": "NO_ETF_SELECTED_OR_BRANCH_FAILED"}
+        ),
         "investing": i_result.metrics if i_result is not None else {"status": "BRANCH_FAILED"},
         "failures": int(len(failures)),
         "weights_unchanged": True,
