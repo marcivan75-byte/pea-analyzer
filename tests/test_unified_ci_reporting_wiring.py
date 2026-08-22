@@ -9,8 +9,13 @@ def test_unified_runner_wires_canonical_ci_explainability():
     assert 'steps["ci_explainability"]' in source
     assert 'committee_ci_explainability.run(root)' in source
     assert '"ci_android": "outputs/mobile/ANDROID_CI_CONTROL_CENTER.md"' in source
-    assert '"ci_pc": "outputs/committee_master/CI_PC_EXPLAINABILITY.xlsx"' in source
+    assert '"ci_word": "outputs/committee_master/CI_COMITE_INVESTISSEMENT.docx"' in source
+    assert '"ci_weighted_reference": "outputs/committee_master/CI_REFERENTIEL_PONDERE.xlsx"' in source
+    assert '"ci_decision_brief_v3": "outputs/decision_brief/CI_DECISION_BRIEF_V3.docx"' in source
+    assert '"ci_decision_matrix_v3": "outputs/decision_brief/CI_DECISION_MATRIX_V3.csv"' in source
+    assert '"ci_recommendation_basket_risk": "outputs/committee_master/CI_RISQUE_PANIER_RECOMMANDATIONS.docx"' in source
     assert '"ci_explainability_audit": "outputs/audit/CI_EXPLAINABILITY_AUDIT.json"' in source
+    assert "CI_PC_EXPLAINABILITY.xlsx" not in source
 
 
 def test_ci_reporting_remains_read_only_governance():
