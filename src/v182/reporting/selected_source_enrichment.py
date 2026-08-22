@@ -15,12 +15,25 @@ from v182.sources.rate_limit import StartRateLimiter
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACT_PATH = Path("config/SOURCE_FUNCTIONAL_CONTRACT_V21_16.json")
 NETWORK_POLICIES = {"LIVE_IF_DUE", "CACHE_ONLY"}
+DEFAULT_PRESELECTED_STATUSES = (
+    "BUY_CANDIDATE",
+    "T2_CONFIRM_75_SHADOW",
+    "T1_STARTER_25_SHADOW",
+    "SHADOW_CANDIDATE",
+    "WATCH",
+    "T1_WATCH_SHADOW",
+    "WATCH_NOT_TOP2",
+    "REVIEW",
+)
 SOURCE_DECISION_PRIORITY = {
     "BUY_CANDIDATE": 0,
-    "SHADOW_CANDIDATE": 1,
-    "WATCH": 2,
-    "WATCH_NOT_TOP2": 3,
-    "REVIEW": 4,
+    "T2_CONFIRM_75_SHADOW": 1,
+    "T1_STARTER_25_SHADOW": 2,
+    "SHADOW_CANDIDATE": 3,
+    "WATCH": 4,
+    "T1_WATCH_SHADOW": 5,
+    "WATCH_NOT_TOP2": 6,
+    "REVIEW": 7,
 }
 
 
@@ -64,7 +77,7 @@ def _score_sort(frame: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def select_preselected_rows(rows: pd.DataFrame, *, max_unique_instruments: int = 40, accepted_statuses: tuple[str, ...] = ("BUY_CANDIDATE", "WATCH", "REVIEW", "WATCH_NOT_TOP2", "SHADOW_CANDIDATE")) -> pd.DataFrame:
+def select_preselected_rows(rows: pd.DataFrame, *, max_unique_instruments: int = 40, accepted_statuses: tuple[str, ...] = DEFAULT_PRESELECTED_STATUSES) -> pd.DataFrame:
     if rows.empty or "isin" not in rows:
         return pd.DataFrame(columns=rows.columns)
     frame = rows.copy()
