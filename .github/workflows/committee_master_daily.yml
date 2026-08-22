@@ -252,13 +252,9 @@ jobs:
       - name: Friday TCT CT scoring and V21.8
         run: python -m v182.reporting.daily_tct_ct_runner
 
-      - name: Action CT V22.0 + V22.1 Friday shared-history SHADOW
+      - name: Action CT V22.0 V22.1 + TCT V24.3.1 Friday shared-parquet SHADOW
         continue-on-error: true
-        run: python -m v182.reporting.action_ct_shadow_bundle_run
-
-      - name: TCT V24.3.1 Friday trader-tools shadow
-        continue-on-error: true
-        run: python -m v182.reporting.tct_daily_trader_shadow_run_v24_3_1
+        run: python -m v182.reporting.tactical_shadow_bundle_run
 
       - name: Persist Friday compact OHLC for V24.4.2 PIT
         continue-on-error: true
@@ -295,6 +291,7 @@ jobs:
           if [ -f outputs/unified/UNIFIED_SUMMARY_LATEST.json ]; then cat outputs/unified/UNIFIED_SUMMARY_LATEST.json; fi
           if [ -f outputs/audit/UNIFIED_RUNTIME_V21_13_7.json ]; then cat outputs/audit/UNIFIED_RUNTIME_V21_13_7.json; fi
           if [ -f outputs/audit/ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json ]; then cat outputs/audit/ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json; fi
+          if [ -f outputs/audit/TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json ]; then cat outputs/audit/TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json; fi
 
       - name: Show committee summary
         if: always()
