@@ -12,10 +12,11 @@ from v182.decision.tct_timing_exact_v24_1_7 import T1_WEIGHTS, T2_WEIGHTS
 from v182.reporting import committee_ci_explainability as legacy
 
 ROOT = Path(__file__).resolve().parents[3]
-CI_VERSION = "CI_RESTITUTION_V21_16_2"
+CI_VERSION = "CI_RESTITUTION_V21_16_3"
 TCT_CI_CODES = {"T1_STARTER_25_SHADOW", "T1_WATCH_SHADOW", "T2_CONFIRM_75_SHADOW"}
 CI_SELECTED_CODES = set(legacy.SELECTED_CODES) | TCT_CI_CODES
 INTERNAL_PROVENANCE_SOURCES = {"TCT_V24_1_7_EXACT_COMPONENTS", "TCT_BASELINE_V24_1_8"}
+TCT_MIN_EXACT_COMPONENT_WEIGHT = 0.80
 
 
 def _bool(value) -> bool:
@@ -152,6 +153,50 @@ def _attach_provenance_preserving_internal(root: Path, detail: pd.DataFrame) -> 
         external = legacy._attach_provenance(root, external)
     merged = pd.concat([external, internal], ignore_index=True, sort=False)
     return merged.sort_values("_ci_row_order", kind="stable").drop(columns=["_ci_row_order"]).reset_index(drop=True)
+
+
+def _tct_reference_integrity(selected: pd.DataFrame, detail: pd.DataFrame) -> dict:
+    tct_selected = selected[
+        selected["asset_class"].astype(str).eq("ACTION")
+        & selected["horizon"].astype(str).eq("TCT")
+        & selected["decision"].astype(str).isin(TCT_CI_CODES)
+    ]
+    tct_keys = legacy._selection_keys(tct_selected)
+    if not tct_keys:
+        return {
+            "selected_tct_keys": 0,
+            "missing_exact_keys": [],
+            "missing_baseline_keys": [],
+            "undercovered_exact_keys": [],
+            "complete": True,
+        }
+    source = detail.get("source", pd.Series("", index=detail.index)).astype(str) if not detail.empty else pd.Series(dtype=str)
+    exact = detail[source.eq("TCT_V24_1_7_EXACT_COMPONENTS")].copy() if not detail.empty else pd.DataFrame()
+    baseline = detail[source.eq("TCT_BASELINE_V24_1_8")].copy() if not detail.empty else pd.DataFrame()
+    exact_keys = legacy._selection_keys(exact)
+    baseline_keys = legacy._selection_keys(baseline)
+    missing_exact = sorted(tct_keys - exact_keys)
+    missing_baseline = sorted(tct_keys - baseline_keys)
+    undercovered: list[tuple] = []
+    for key in sorted(tct_keys & exact_keys):
+        asset, horizon, isin = key
+        subset = exact[
+            exact["asset_class"].astype(str).eq(asset)
+            & exact["horizon"].astype(str).eq(horizon)
+            & exact["isin"].astype(str).eq(isin)
+        ]
+        active = subset[subset["criterion_status"].astype(str).eq("ACTIVE")]
+        theoretical = pd.to_numeric(active.get("theoretical_weight_pct"), errors="coerce").fillna(0.0).sum() / 100.0
+        if theoretical + 1e-12 < TCT_MIN_EXACT_COMPONENT_WEIGHT:
+            undercovered.append(key)
+    return {
+        "selected_tct_keys": int(len(tct_keys)),
+        "missing_exact_keys": [list(key) for key in missing_exact],
+        "missing_baseline_keys": [list(key) for key in missing_baseline],
+        "undercovered_exact_keys": [list(key) for key in undercovered],
+        "minimum_exact_component_weight": TCT_MIN_EXACT_COMPONENT_WEIGHT,
+        "complete": not missing_exact and not missing_baseline and not undercovered,
+    }
 
 
 def _source_validation(root: Path, selected: pd.DataFrame) -> pd.DataFrame:
@@ -377,19 +422,25 @@ def run(root: Path = ROOT) -> dict:
     selected_keys = legacy._selection_keys(selected)
     detail_keys = legacy._selection_keys(detail)
     missing_reference = sorted(selected_keys - detail_keys)
-    if missing_reference:
+    tct_integrity = _tct_reference_integrity(selected, detail)
+    if missing_reference or not tct_integrity["complete"]:
         blocked = {
-            "status": "BLOCKED_CI_REFERENCE_INCOMPLETE",
+            "status": "BLOCKED_CI_TCT_REFERENCE_INCOMPLETE" if not tct_integrity["complete"] else "BLOCKED_CI_REFERENCE_INCOMPLETE",
             "version": CI_VERSION,
             "selected_rows": int(len(selected)),
             "missing_reference_keys": [list(key) for key in missing_reference],
+            "tct_reference_integrity": tct_integrity,
             "score_or_decision_mutation": False,
             "weight_or_threshold_changes": False,
             "external_collection_calls": 0,
             "real_orders_enabled": False,
         }
         (audit_dir / "CI_EXPLAINABILITY_AUDIT.json").write_text(json.dumps(blocked, ensure_ascii=False, indent=2), encoding="utf-8")
-        raise RuntimeError(f"CI_REFERENCE_INCOMPLETE:{missing_reference[:10]}")
+        raise RuntimeError(
+            "CI_TCT_REFERENCE_INCOMPLETE:"
+            f"generic={missing_reference[:10]} exact={tct_integrity['missing_exact_keys'][:10]} "
+            f"baseline={tct_integrity['missing_baseline_keys'][:10]} undercovered={tct_integrity['undercovered_exact_keys'][:10]}"
+        )
 
     source = _source_validation(root, selected)
     report_context = _report_context(context, source)
@@ -420,6 +471,7 @@ def run(root: Path = ROOT) -> dict:
         "selected_rows": int(len(selected)),
         **metrics,
         "criteria_detail_rows": int(len(detail)),
+        "tct_reference_integrity": tct_integrity,
         "tct_exact_reference_included": bool((detail.get("source", pd.Series(dtype=str)).astype(str) == "TCT_V24_1_7_EXACT_COMPONENTS").any()),
         "tct_baseline_context_included": bool((detail.get("source", pd.Series(dtype=str)).astype(str) == "TCT_BASELINE_V24_1_8").any()),
         "tct_baseline_contributes_to_timing_score": False,
@@ -430,7 +482,7 @@ def run(root: Path = ROOT) -> dict:
         "source_validation_output": "outputs/committee_master/CI_VALIDATION_SOURCES.csv",
         "same_canonical_run_android_word_excel": True,
         "same_selected_set_word_excel": selected_keys == detail_keys,
-        "reference_complete_for_selected": selected_keys <= detail_keys,
+        "reference_complete_for_selected": selected_keys <= detail_keys and tct_integrity["complete"],
         "excel_visible_sheets": sheets,
         "score_or_decision_mutation": False,
         "weight_or_threshold_changes": False,
