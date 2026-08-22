@@ -87,8 +87,8 @@ def test_tactical_bundle_preserves_model_order_and_original_extractors():
     assert "action_ct_bundle.run(root=root)" in source
     assert "tct_trader.run(root=root)" in source
     assert source.index("action_ct_bundle.run(root=root)") < source.index("tct_trader.run(root=root)")
-    assert "pd.read_parquet = parquet_cache" in source
-    assert "pd.read_parquet = original_read_parquet" in source
+    assert 'setattr(pd, "read_parquet", parquet_cache)' in source
+    assert 'setattr(pd, "read_parquet", original_read_parquet)' in source
     assert '"governed_extractors_changed": False' in source
     assert '"t1_t2_scope_changed": False' in source
     assert '"criteria_changed": False' in source
