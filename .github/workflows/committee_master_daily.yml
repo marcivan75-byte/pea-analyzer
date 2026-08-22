@@ -2,6 +2,12 @@ name: PEA Weekly Heavy Committee V21.8.1
 
 on:
   workflow_dispatch:
+    inputs:
+      run_validation:
+        description: "Run compile, static and referential validation already covered by CI"
+        required: false
+        type: boolean
+        default: false
   schedule:
     - cron: "45 18 * * 5"
 
@@ -22,6 +28,7 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PEA_SLOW_SOURCE_MODE: LIVE
       PEA_PROVENANCE_PATH: state/provenance/OBSERVATION_PROVENANCE.csv
       FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
       FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -45,6 +52,27 @@ jobs:
           restore-keys: |
             daily-tct-state-
             tct-v2417-state-
+      - name: Restore next-session catalyst state
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: state/tct_context/
+          key: tct-context-${{ github.run_id }}
+          restore-keys: |
+            tct-context-
+      - name: Restore Action CT V22.0 parent state
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: state/action_ct/
+          key: action-ct-v22-${{ github.run_id }}
+          restore-keys: |
+            action-ct-v22-
+      - name: Restore Action CT V22.1 enriched state
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: state/action_ct_v22_1/
+          key: action-ct-v221-${{ github.run_id }}
+          restore-keys: |
+            action-ct-v221-
       - name: Restore GOLD shadow history
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
@@ -92,10 +120,12 @@ jobs:
       - name: Install project
         run: pip install -e .
       - name: Full Python compile and static safety gate
+        if: ${{ inputs.run_validation }}
         run: |
           python -m compileall -q src
           python -m v182.audit.static_code_audit --root . --output outputs/audit/PYTHON_STATIC_AUDIT.json --fail-high
       - name: Validate exhaustive referentials and real Action input
+        if: ${{ inputs.run_validation }}
         run: |
           python - <<'PY'
           import json
@@ -190,6 +220,26 @@ jobs:
         run: python -m v182.audit.identity_hydration
       - name: Run weekly unified Committee pipeline
         run: python -m v182.reporting.unified_runner
+      - name: Replay governed ETF structural state V21.15 for Friday tactical outputs
+        continue-on-error: true
+        run: python -m v182.reporting.etf_structure_state_replay
+      - name: ETF CT LT V21.14 Friday shadow context
+        continue-on-error: true
+        run: python -m v182.reporting.etf_ct_lt_shadow_run_v21_14
+      - name: Friday TCT CT scoring and V21.8
+        run: python -m v182.reporting.daily_tct_ct_runner
+      - name: Action CT V22.0 Friday parent SHADOW
+        continue-on-error: true
+        run: python -m v182.reporting.action_ct_shadow_run_v22_0
+      - name: Action CT V22.1.1 Friday enriched SHADOW
+        continue-on-error: true
+        run: python -m v182.reporting.action_ct_shadow_run_v22_1
+      - name: TCT V24.3.1 Friday trader-tools shadow
+        continue-on-error: true
+        run: python -m v182.reporting.tct_daily_trader_shadow_run_v24_3_1
+      - name: Persist Friday compact OHLC for V24.4.2 PIT
+        continue-on-error: true
+        run: python -m v182.reporting.tct_pit_ohlc_ledger_v24_4_2
       - name: Build synthetic decision brief
         if: always()
         run: python -m v182.reporting.decision_brief
@@ -202,7 +252,7 @@ jobs:
         if: always()
         run: |
           if [ -f outputs/unified/UNIFIED_SUMMARY_LATEST.json ]; then cat outputs/unified/UNIFIED_SUMMARY_LATEST.json; fi
-          if [ -f outputs/audit/UNIFIED_RUNTIME_V21_13_4.json ]; then cat outputs/audit/UNIFIED_RUNTIME_V21_13_4.json; fi
+          if [ -f outputs/audit/UNIFIED_RUNTIME_V21_13_5.json ]; then cat outputs/audit/UNIFIED_RUNTIME_V21_13_5.json; fi
       - name: Show committee summary
         if: always()
         run: |
@@ -265,6 +315,24 @@ jobs:
         with:
           path: state/TCT_V24_1_7_T1_STATE.json
           key: tct-v2417-state-${{ github.run_id }}
+      - name: Save next-session catalyst state
+        if: ${{ always() && hashFiles('state/tct_context/**') != '' }}
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: state/tct_context/
+          key: tct-context-${{ github.run_id }}
+      - name: Save Action CT V22.0 parent state
+        if: ${{ always() && hashFiles('state/action_ct/**') != '' }}
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: state/action_ct/
+          key: action-ct-v22-${{ github.run_id }}
+      - name: Save Action CT V22.1 enriched state
+        if: ${{ always() && hashFiles('state/action_ct_v22_1/**') != '' }}
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: state/action_ct_v22_1/
+          key: action-ct-v221-${{ github.run_id }}
       - name: Save GOLD history
         if: ${{ always() && hashFiles('state/GOLD_V1_1_SHADOW_HISTORY.csv') != '' }}
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
@@ -320,6 +388,9 @@ jobs:
             data/cache/actions/history_manifest.json
             data/cache/etf/history_manifest.json
             state/TCT_V24_1_7_T1_STATE.json
+            state/tct_context/
+            state/action_ct/
+            state/action_ct_v22_1/
             state/GOLD_V1_1_SHADOW_HISTORY.csv
             state/ipo_radar/
             state/sector_rotation_v2/

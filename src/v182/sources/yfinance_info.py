@@ -207,14 +207,17 @@ def collect_info_cached(
     negative_cache_days: float = 7.0,
     delay_seconds: float = 0.4,
     max_workers: int = 4,
+    refresh_due: bool = True,
     now: datetime | None = None,
 ) -> tuple[list[dict],list[dict],dict]:
     """Return full-universe Yahoo info from a persistent HOT/WARM/COLD cache.
 
     Missing instruments are bootstrapped exhaustively once. Afterwards only due
     entries are refreshed, with HOT before WARM before COLD and a bounded normal
-    refresh budget. Cached source timestamps are preserved. A transient source
-    failure may reuse a still-valid cache entry but never fabricates a new value.
+    refresh budget. ``refresh_due=False`` keeps mandatory bootstrap/hard-stale
+    recovery but defers ordinary TTL refreshes to a later full run. Cached source
+    timestamps are preserved. A transient source failure may reuse a still-valid
+    cache entry but never fabricates a new value.
     """
     unique=sorted({str(t).strip() for t in tickers if str(t).strip()})
     current=(now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -247,7 +250,8 @@ def collect_info_cached(
     due.sort()
     budget=max(0,int(refresh_budget))
     capacity=max(0,budget-len(mandatory))
-    selected=list(dict.fromkeys(mandatory+[ticker for _,_,ticker in due[:capacity]]))
+    due_selected=[ticker for _,_,ticker in due[:capacity]] if refresh_due else []
+    selected=list(dict.fromkeys(mandatory+due_selected))
 
     live_obs,live_failures=([],[])
     if selected:
@@ -297,6 +301,7 @@ def collect_info_cached(
         "hard_max_age_days":float(hard_max_age_days),
         "negative_cache_days":float(negative_cache_days),
         "bootstrap_uncached_all":True,
+        "refresh_due_enabled":bool(refresh_due),
         "priority_order":["HOT","WARM","COLD"],
     }
     _save_cache(path,payload)
@@ -332,6 +337,8 @@ def collect_info_cached(
         "tier_counts":tier_counts,
         "mandatory_refresh_count":len(mandatory),
         "due_refresh_count":len(due),
+        "due_refresh_suppressed":max(0,min(len(due),capacity)-len(due_selected)),
+        "refresh_due_enabled":bool(refresh_due),
         "live_refresh_requested":len(selected),
         "live_refresh_success":live_success,
         "live_no_data":live_no_data,

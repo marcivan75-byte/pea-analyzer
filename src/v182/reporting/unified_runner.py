@@ -213,8 +213,8 @@ def run(root: Path = ROOT) -> dict:
         "ipo_validation": "outputs/ipo_radar/IPO_VALIDATION_STATUS.json",
         "ipo_calibration": "outputs/ipo_radar/IPO_CALIBRATION_STATUS.json",
         "ipo_outcomes": "state/ipo_radar/IPO_OUTCOMES.csv",
-        "unified_runtime_json": "outputs/audit/UNIFIED_RUNTIME_V21_13_4.json",
-        "unified_runtime_csv": "outputs/audit/UNIFIED_RUNTIME_V21_13_4.csv",
+        "unified_runtime_json": "outputs/audit/UNIFIED_RUNTIME_V21_13_5.json",
+        "unified_runtime_csv": "outputs/audit/UNIFIED_RUNTIME_V21_13_5.csv",
     }
     existing = {key: value for key, value in outputs.items() if (root / value).exists()}
     failed = [key for key, value in steps.items() if value["status"] == "FAILED"]
@@ -251,7 +251,7 @@ def run(root: Path = ROOT) -> dict:
         "decision_tracks": decision_tracks,
         "sector_rotation_v2_validation": sector_validation,
         "runtime": {
-            "version": "UNIFIED_RUNTIME_V21_13_4",
+            "version": "UNIFIED_RUNTIME_V21_13_5",
             "wall_seconds": round(runtime_wall,6),
             "cpu_seconds": round(runtime_cpu,6),
             "paths": runtime_paths,

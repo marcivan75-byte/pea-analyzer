@@ -68,6 +68,40 @@ def test_yahoo_info_cache_bootstraps_once_then_refreshes_hot_first(tmp_path, mon
     assert metrics["live_refresh_requested"]==1
 
 
+def test_yahoo_cache_preferred_defers_due_refresh_but_keeps_mandatory_recovery(tmp_path, monkeypatch) -> None:
+    calls=[]
+
+    def fake_collect(tickers, delay_seconds=0.4, max_workers=4):
+        calls.append(list(tickers))
+        return _yahoo_rows(list(tickers)),[]
+
+    monkeypatch.setattr(yahoo_info,"collect_info",fake_collect)
+    cache=tmp_path/"yahoo.json"
+    day0=datetime(2026,8,1,12,0,tzinfo=timezone.utc)
+    yahoo_info.collect_info_cached(
+        ["HOT.PA"],cache,priority_tiers={"HOT.PA":"HOT"},ttl_days={"HOT":3},now=day0,
+    )
+    calls.clear()
+
+    observations,failures,metrics=yahoo_info.collect_info_cached(
+        ["HOT.PA"],cache,priority_tiers={"HOT.PA":"HOT"},ttl_days={"HOT":3},
+        refresh_due=False,hard_max_age_days=35,now=day0+timedelta(days=4),
+    )
+    assert failures==[]
+    assert calls==[]
+    assert metrics["refresh_due_enabled"] is False
+    assert metrics["due_refresh_suppressed"]==1
+    assert metrics["live_refresh_requested"]==0
+    assert {row["cache_state"] for row in observations}=={"CACHE_HIT"}
+    assert {row["fetched_at_utc"] for row in observations}=={day0.isoformat()}
+
+    yahoo_info.collect_info_cached(
+        ["HOT.PA"],cache,priority_tiers={"HOT.PA":"HOT"},ttl_days={"HOT":3},
+        refresh_due=False,hard_max_age_days=35,now=day0+timedelta(days=36),
+    )
+    assert calls==[["HOT.PA"]]
+
+
 def test_action_refresh_tiers_and_local_ratios_do_not_change_scores() -> None:
     frame=pd.DataFrame({
         "yahoo_ticker":["AAA.PA","BBB.PA","CCC.PA"],
@@ -192,6 +226,47 @@ def test_finnhub_recommendation_refresh_can_skip_target_refresh(tmp_path, monkey
     assert {row["fetched_at_utc"] for row in target_rows}=={day0.isoformat()}
 
 
+def test_finnhub_cache_preferred_defers_due_recommendation_and_target_calls(tmp_path, monkeypatch) -> None:
+    calls=[]
+
+    def fake_fetch(tickers, api_key, delay_seconds=1.1, max_workers=8, *, target_tickers=None):
+        target_set=set(tickers) if target_tickers is None else set(target_tickers)
+        calls.append((list(tickers),target_set))
+        return _finnhub_rows(list(tickers),target_set),[]
+
+    monkeypatch.setattr(finnhub,"fetch_consensus",fake_fetch)
+    cache=tmp_path/"finnhub.json"
+    day0=datetime(2026,8,1,12,0,tzinfo=timezone.utc)
+    finnhub.fetch_consensus_cached(
+        ["AAA"],"key",cache,refresh_budget=10,recommendation_ttl_days=3,
+        target_ttl_days=3,target_refresh_budget=10,max_cache_age_days=14,now=day0,
+    )
+    calls.clear()
+
+    observations,failures,metrics=finnhub.fetch_consensus_cached(
+        ["AAA"],"key",cache,refresh_budget=10,recommendation_ttl_days=3,
+        target_ttl_days=3,target_refresh_budget=10,max_cache_age_days=14,
+        refresh_due=False,now=day0+timedelta(days=4),
+    )
+    assert failures==[]
+    assert calls==[]
+    assert metrics["refresh_due_enabled"] is False
+    assert metrics["due_refresh_suppressed"]==1
+    assert metrics["live_refresh_requested"]==0
+    assert metrics["target_live_refresh_requested"]==0
+    assert {row["cache_state"] for row in observations}=={"CACHE_HIT"}
+    assert {row["fetched_at_utc"] for row in observations}=={day0.isoformat()}
+
+
+def test_slow_source_mode_is_live_by_default_and_cache_preferred_when_requested(monkeypatch) -> None:
+    monkeypatch.delenv("PEA_SLOW_SOURCE_MODE",raising=False)
+    assert waves._slow_source_refresh_due_enabled() is True
+    monkeypatch.setenv("PEA_SLOW_SOURCE_MODE","CACHE_PREFERRED")
+    assert waves._slow_source_refresh_due_enabled() is False
+    monkeypatch.setenv("PEA_SLOW_SOURCE_MODE","LIVE")
+    assert waves._slow_source_refresh_due_enabled() is True
+
+
 def test_parallel_fund_flow_collector_preserves_all_instruments(monkeypatch) -> None:
     universe=pd.DataFrame({
         "instrument_id":[f"I{i}" for i in range(6)],
@@ -222,9 +297,9 @@ def test_parallel_fund_flow_collector_preserves_all_instruments(monkeypatch) -> 
 
 def test_master_config_registers_runtime_optimization_policy() -> None:
     cfg=json.loads(Path("config/V18.2_MASTER_CONFIG.json").read_text(encoding="utf-8"))
-    assert cfg["version"]=="21.13.4"
+    assert cfg["version"]=="21.13.5"
     opt=cfg["runtime_optimization"]
-    assert opt["status"]=="ACTIVE_V21_13_4_PIPELINE_RUNTIME_OPTIMIZED"
+    assert opt["status"]=="ACTIVE_V21_13_5_MONTHLY_RUNTIME_BUDGET_OPTIMIZED"
     assert opt["yfinance_fundamentals"]["ttl_days"]=={"HOT":3,"WARM":10,"COLD":21}
     assert opt["finnhub_consensus"]["tiers"]["HOT"]["target_ttl_days"] > opt["finnhub_consensus"]["tiers"]["HOT"]["recommendation_ttl_days"]
     assert opt["etf_info"]["ttl_days"]=={"HOT":7,"WARM":14,"COLD":30}
@@ -236,4 +311,21 @@ def test_master_config_registers_runtime_optimization_policy() -> None:
     assert policy["source_families"]["OHLCV"]["cadence"]=="EACH_TRADING_DAY"
     assert 6 <= opt["etf_fund_flows"]["max_workers"] <= 8
     assert opt["daily_profile"]["reuse_primary_etf_ohlcv_for_etf_mt"] is True
+    assert opt["daily_profile"]["scheduled_days"]==["MONDAY","TUESDAY","WEDNESDAY","THURSDAY"]
+    assert opt["daily_profile"]["friday_tactical_owned_by_weekly"] is True
+    assert opt["daily_profile"]["slow_source_mode"]=="CACHE_PREFERRED"
+    assert opt["daily_profile"]["action_ct_v22_0_parallel_workers"]==4
+    assert opt["yfinance_fundamentals"]["ordinary_live_refresh_cadence"]=="WEEKLY_FRIDAY"
+    budget=opt["monthly_runtime_budget"]
+    calculated_main=(
+        budget["daily_main_runs_per_average_month"]*budget["daily_main_expected_minutes"]["central"]
+        + budget["weekly_runs_per_average_month"]*budget["weekly_with_friday_tactical_expected_minutes"]["central"]
+    )
+    calculated_all=calculated_main+budget["catalyst_snapshot_runs_per_average_month"]*budget["catalyst_snapshot_target_minutes"]
+    assert abs(calculated_main-budget["scheduled_main_central_minutes_per_month"]) < 0.1
+    assert abs(calculated_all-budget["all_scheduled_central_minutes_per_month"]) < 0.1
+    assert budget["scheduled_main_central_minutes_per_month"] <= budget["scheduled_main_target_minutes_per_month"]
+    assert budget["all_scheduled_central_minutes_per_month"] <= budget["all_scheduled_target_minutes_per_month"]
+    assert budget["all_scheduled_target_minutes_per_month"] < budget["all_scheduled_alert_minutes_per_month"] == 420
+    assert budget["validation_steps_scheduled"] is False
     assert opt["daily_profile"]["decision_logic_changed"] is False

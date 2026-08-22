@@ -15,7 +15,7 @@ La baseline de décision reste **V21.8.1**. Les modules récents ci-dessous sont
 
 Ordre recommandé pour un run contrôlé : validation CI complète → collecte quotidienne → TCT/CT quotidien → snapshots catalyst PREOPEN/POSTMARKET → workflow lourd hebdomadaire. Les rapports SHADOW restent séparés des décisions canoniques.
 
-Le profil quotidien `DAILY_TACTICAL` de V21.13.4 supprime les exports Excel intermédiaires non publiés, parallélise uniquement les calculs OHLCV locaux indépendants et publie une télémétrie mur/CPU par étape. Le Comité hebdomadaire réutilise maintenant le cache OHLCV ETF primaire pour ETF MT au lieu de relancer une collecte identique. Le détail et les invariants sont décrits dans `docs/PIPELINE_RUNTIME_V21_13_4.md`.
+Le profil quotidien `DAILY_TACTICAL` de V21.13.5 s'exécute du lundi au jeudi ; le Comité hebdomadaire produit désormais lui-même les sorties tactiques du vendredi. Yahoo Fundamentals, Finnhub Consensus et Yahoo ETF Info utilisent le cache en priorité sur les runs quotidiens, avec récupération réseau obligatoire des instruments absents ou hors limite, puis refresh ordinaire complet le vendredi. Les validations de compilation restent disponibles en manuel mais ne sont plus refaites sur chaque run planifié. La cible centrale des deux pipelines principaux est de 295,7 minutes par mois moyen. Le détail, le budget GitHub global et les invariants sont décrits dans `docs/PIPELINE_RUNTIME_V21_13_5.md`.
 
 ## Synthèse décisionnelle CI
 

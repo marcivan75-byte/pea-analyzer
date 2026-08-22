@@ -316,6 +316,7 @@ def fetch_consensus_cached(
     target_refresh_budget: int | None = None,
     delay_seconds: float = 1.1,
     max_workers: int = 8,
+    refresh_due: bool = True,
     now: datetime | None = None,
 ) -> tuple[list[dict],list[dict],dict]:
     """Return full-universe consensus using independent recommendation/target TTLs.
@@ -323,8 +324,9 @@ def fetch_consensus_cached(
     Uncached recommendations are bootstrapped exhaustively. Normal runs refresh
     only due recommendations within a bounded budget. Price targets have their
     own longer TTL and their own smaller budget, avoiding an automatic second API
-    call for every recommendation refresh. Cache timestamps remain field-group
-    specific and stale values are never re-dated.
+    call for every recommendation refresh. ``refresh_due=False`` retains missing
+    and hard-stale recovery while deferring ordinary TTL refreshes. Cache timestamps
+    remain field-group specific and stale values are never re-dated.
     """
     unique=sorted({str(t).strip() for t in tickers if str(t).strip()})
     path=Path(cache_path)
@@ -336,7 +338,7 @@ def fetch_consensus_cached(
     reco_budget=max(0,int(refresh_budget))
     target_budget=max(0,int(target_refresh_budget if target_refresh_budget is not None else refresh_budget))
     if not unique:
-        return [],[],{"cache_version":CACHE_VERSION,"requested":0,"live_refresh_requested":0,"target_live_refresh_requested":0,"cache_hit_tickers":0,"negative_cache_hits":0}
+        return [],[],{"cache_version":CACHE_VERSION,"requested":0,"refresh_due_enabled":bool(refresh_due),"due_refresh_suppressed":0,"live_refresh_requested":0,"target_live_refresh_requested":0,"cache_hit_tickers":0,"negative_cache_hits":0}
 
     missing=[]; hard_stale=[]; due=[]; negative_fresh=set()
     for ticker in unique:
@@ -354,7 +356,8 @@ def fetch_consensus_cached(
     due.sort()
     mandatory=list(dict.fromkeys(missing+hard_stale))
     capacity=max(0,reco_budget-len(mandatory))
-    selected=list(dict.fromkeys(mandatory+[ticker for _,ticker in due[:capacity]]))
+    due_selected=[ticker for _,ticker in due[:capacity]] if refresh_due else []
+    selected=list(dict.fromkeys(mandatory+due_selected))
 
     target_missing=[]; target_due=[]
     for ticker in selected:
@@ -463,6 +466,7 @@ def fetch_consensus_cached(
         "max_cache_age_days":float(max_cache_age_days),
         "negative_cache_days":float(negative_cache_days),
         "bootstrap_uncached_all":True,
+        "refresh_due_enabled":bool(refresh_due),
         "stale_after_failure_forbidden_beyond_hard_max":True,
         "auth_or_entitlement_fail_fast":True,
         "target_auth_fail_fast":True,
@@ -495,6 +499,8 @@ def fetch_consensus_cached(
         "cache_entries":len(entries),
         "mandatory_refresh_count":len(mandatory),
         "due_refresh_count":len(due),
+        "due_refresh_suppressed":max(0,min(len(due),capacity)-len(due_selected)),
+        "refresh_due_enabled":bool(refresh_due),
         "live_refresh_requested":len(selected),
         "live_refresh_success":live_success,
         "live_no_data":live_no_data,

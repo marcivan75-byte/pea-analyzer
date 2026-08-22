@@ -10,6 +10,11 @@ on:
         options:
           - PREOPEN
           - POSTMARKET
+      run_validation:
+        description: "Run compile validation already covered by CI"
+        required: false
+        type: boolean
+        default: false
   schedule:
     - cron: "40 6 * * 1-5"
     - cron: "15 21 * * 1-5"
@@ -53,6 +58,7 @@ jobs:
         run: pip install -e .
 
       - name: Compile V24.4.2 catalyst runtime
+        if: ${{ inputs.run_validation }}
         run: |
           python -m py_compile \
             src/v182/sources/tct_catalyst_news_v24_4_2.py \
@@ -67,9 +73,11 @@ jobs:
         run: python -m v182.reporting.tct_next_session_catalyst_run_v24_4_2
 
       - name: Apply fail-closed V24.4.2 PIT OHLC lineage
+        if: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '15 21 * * 1-5' }}
         run: python -m v182.reporting.tct_v24_4_2_pit_lineage
 
       - name: Validate accumulated V24.4.2 PIT ledger
+        if: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '15 21 * * 1-5' }}
         run: python -m v182.reporting.tct_v24_4_2_pit_validator
 
       - name: Publish catalyst summary
