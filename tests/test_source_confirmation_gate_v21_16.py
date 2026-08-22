@@ -15,7 +15,7 @@ def _action(horizon: str, signal: str, *, decision: str = "BUY_CANDIDATE", inves
     return {
         "asset_class": "ACTION",
         "horizon": horizon,
-        "isin": f"FR-{horizon}",
+        "isin": f"FR-{horizon}-{decision}",
         "decision": decision,
         "score": 87.5,
         "boursorama_consensus": 4.2,
@@ -36,6 +36,24 @@ def test_tct_daily_strong_buy_is_fully_validated_without_score_or_decision_mutat
     assert out.loc[0, "decision"] == "BUY_CANDIDATE"
     assert out.loc[0, "score"] == 87.5
     assert out.loc[0, "source_gate_score_influence"] == 0.0
+
+
+def test_exact_tct_t2_is_source_validated_but_never_relabelled_ci_buy():
+    frame = pd.DataFrame([_action("TCT", "STRONG_BUY", decision="T2_CONFIRM_75_SHADOW")])
+    out = apply_source_confirmation_gate(frame, CONTRACT)
+    assert out.loc[0, "investing_required_timeframe"] == "DAILY"
+    assert out.loc[0, "source_validation_state"] == "FULLY_VALIDATED"
+    assert bool(out.loc[0, "source_fully_validated"]) is True
+    assert bool(out.loc[0, "ci_source_eligible"]) is False
+    assert out.loc[0, "decision"] == "T2_CONFIRM_75_SHADOW"
+
+
+def test_exact_tct_t1_is_in_scope_for_sources_but_remains_non_buy_surveillance():
+    frame = pd.DataFrame([_action("TCT", "STRONG_BUY", decision="T1_STARTER_25_SHADOW")])
+    out = apply_source_confirmation_gate(frame, CONTRACT)
+    assert out.loc[0, "source_validation_state"] == "FULLY_VALIDATED"
+    assert bool(out.loc[0, "source_fully_validated"]) is True
+    assert bool(out.loc[0, "ci_source_eligible"]) is False
 
 
 def test_each_horizon_requires_its_exact_investing_timeframe_state():
