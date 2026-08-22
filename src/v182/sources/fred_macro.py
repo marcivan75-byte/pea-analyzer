@@ -1,4 +1,5 @@
 from __future__ import annotations
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 FRED_OBSERVATIONS = "https://api.stlouisfed.org/fred/series/observations"
@@ -43,13 +44,20 @@ def fetch_series(series_id: str, api_key: str, *, limit: int = 180, timeout: int
 
 
 def global_macro_score(api_key: str | None) -> MacroScore:
+    """Score the same three FRED series with bounded independent I/O overlap."""
     if not api_key: return MacroScore(None,0.0,{}, {"FRED_API_KEY":"MISSING"}, "FRED")
     components={}; errors={}; weighted=0.0; denom=0.0; total=sum(v["weight"] for v in GLOBAL_SERIES.values())
-    for series_id,spec in GLOBAL_SERIES.items():
-        values,error=fetch_series(series_id,api_key)
-        if error: errors[series_id]=error; continue
-        score=_series_score(values,spec["direction"])
-        if score is None: errors[series_id]="INSUFFICIENT_HISTORY"; continue
-        components[series_id]=score; w=float(spec["weight"]); weighted+=score*w; denom+=w
+
+    workers=max(1,min(3,len(GLOBAL_SERIES)))
+    with ThreadPoolExecutor(max_workers=workers,thread_name_prefix="fred-global") as pool:
+        futures={series_id:pool.submit(fetch_series,series_id,api_key) for series_id in GLOBAL_SERIES}
+        # Consume in governed GLOBAL_SERIES order so diagnostics and floating-point
+        # accumulation remain deterministic even though network I/O overlaps.
+        for series_id,spec in GLOBAL_SERIES.items():
+            values,error=futures[series_id].result()
+            if error: errors[series_id]=error; continue
+            score=_series_score(values,spec["direction"])
+            if score is None: errors[series_id]="INSUFFICIENT_HISTORY"; continue
+            components[series_id]=score; w=float(spec["weight"]); weighted+=score*w; denom+=w
     score=round(weighted/denom,4) if denom else None
     return MacroScore(score,round(denom/total,4) if total else 0.0,components,errors,"FRED")
