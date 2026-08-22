@@ -1,0 +1,71 @@
+name: Recover Final Package V21.13.16
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/recover_final_package_v21_13_16.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  recover-final-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout immutable final release commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: 694e23821b57ba9027125f0f87bc1a9da19118d3
+          fetch-depth: 1
+
+      - name: Verify immutable source commit
+        run: |
+          test "$(git rev-parse HEAD)" = "694e23821b57ba9027125f0f87bc1a9da19118d3"
+          test -f FINAL_PACKAGE_V21_13_16_MANIFEST.json
+
+      - name: Build exact final archive
+        run: |
+          git archive \
+            --format=zip \
+            --prefix=PEA_ANALYZER_FINAL_V21_13_16/ \
+            --output=PEA_ANALYZER_FINAL_V21_13_16.zip \
+            HEAD
+          sha256sum PEA_ANALYZER_FINAL_V21_13_16.zip > PEA_ANALYZER_FINAL_V21_13_16.sha256
+          git rev-parse HEAD > PEA_ANALYZER_FINAL_V21_13_16.commit.txt
+          unzip -l PEA_ANALYZER_FINAL_V21_13_16.zip > PEA_ANALYZER_FINAL_V21_13_16.contents.txt
+
+      - name: Validate required final content
+        run: |
+          python - <<'PY'
+          from zipfile import ZipFile
+          archive = "PEA_ANALYZER_FINAL_V21_13_16.zip"
+          required = {
+              "PEA_ANALYZER_FINAL_V21_13_16/FINAL_PACKAGE_V21_13_16_MANIFEST.json",
+              "PEA_ANALYZER_FINAL_V21_13_16/requirements-runtime.txt",
+              "PEA_ANALYZER_FINAL_V21_13_16/pyproject.toml",
+              "PEA_ANALYZER_FINAL_V21_13_16/.github/workflows/committee_tct_ct_daily.yml",
+              "PEA_ANALYZER_FINAL_V21_13_16/.github/workflows/committee_master_daily.yml",
+              "PEA_ANALYZER_FINAL_V21_13_16/.github/workflows/tct_next_session_context.yml",
+              "PEA_ANALYZER_FINAL_V21_13_16/src/v182/reporting/unified_runner.py",
+          }
+          with ZipFile(archive) as zf:
+              names = set(zf.namelist())
+          missing = sorted(required - names)
+          assert not missing, f"Missing final package files: {missing}"
+          print(f"Recovered archive OK: {len(names)} tracked entries")
+          PY
+
+      - name: Upload recovered final package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: PEA_ANALYZER_FINAL_V21_13_16_RECOVERED
+          path: |
+            PEA_ANALYZER_FINAL_V21_13_16.zip
+            PEA_ANALYZER_FINAL_V21_13_16.sha256
+            PEA_ANALYZER_FINAL_V21_13_16.commit.txt
+            PEA_ANALYZER_FINAL_V21_13_16.contents.txt
+            FINAL_PACKAGE_V21_13_16_MANIFEST.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
