@@ -6,6 +6,8 @@ import pandas as pd
 from v182.sources.fred_macro import global_macro_score
 from v182.sources.gdelt_news import score_queries, safe_query_text
 
+TOPDOWN_GDELT_MAX_WORKERS = 12
+
 
 @dataclass(frozen=True)
 class TopDownResult:
@@ -178,7 +180,7 @@ def build_topdown(actions: pd.DataFrame, etfs: pd.DataFrame, *, fred_api_key: st
             timespan="2d",
             max_records=50,
             delay_seconds=0.12,
-            max_workers=6,
+            max_workers=TOPDOWN_GDELT_MAX_WORKERS,
         )
         macro=macro_future.result()
         results=news_future.result()
