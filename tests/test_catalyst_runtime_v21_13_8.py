@@ -79,16 +79,18 @@ def test_weekly_runtime_uses_two_state_caches_and_preserves_migration_fallbacks(
     assert "state/sector_rotation_v2/" in workflow
     assert "state/etf_fund_flows/" in workflow
 
-    # No decision, scoring or validation step is removed by the runtime optimization.
+    # No decision, scoring or validation capability is removed by the runtime optimization.
     for required_step in (
         "Run weekly unified Committee pipeline",
         "Friday TCT CT scoring and V21.8",
-        "Action CT V22.0 Friday parent SHADOW",
-        "Action CT V22.1.1 Friday enriched SHADOW",
+        "Action CT V22.0 + V22.1 Friday shared-history SHADOW",
         "Run consolidated Friday POSTMARKET catalyst snapshot V24.4.2",
         "Validate Friday POSTMARKET V24.4.2 PIT ledger",
         "Run ETF Fund Flows V1 SHADOW context",
         "Audit criteria governance",
     ):
         assert required_step in workflow
+    assert workflow.count("python -m v182.reporting.action_ct_shadow_bundle_run") == 1
+    assert "state/action_ct/" in workflow
+    assert "state/action_ct_v22_1/" in workflow
     assert "compression-level: 1" in workflow

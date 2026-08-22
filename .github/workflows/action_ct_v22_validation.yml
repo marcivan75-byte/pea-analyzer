@@ -12,16 +12,20 @@ on:
       - "src/v182/features/sector_rotation.py"
       - "src/v182/reporting/action_ct_shadow_run_v22_0.py"
       - "src/v182/reporting/action_ct_shadow_run_v22_1.py"
+      - "src/v182/reporting/action_ct_shadow_bundle_run.py"
       - "tests/test_action_ct_v22_0.py"
       - "tests/test_action_ct_v22_0_runner.py"
       - "tests/test_action_ct_v22_1.py"
       - "tests/test_action_ct_v22_1_runner.py"
       - "tests/test_action_ct_v22_1_runtime_patch.py"
+      - "tests/test_action_ct_shared_history_runtime_v21_13_10.py"
       - "docs/ACTION_CT_*.md"
+      - "docs/PIPELINE_RUNTIME_V21_13_10*.md"
       - "packages/ACTION_CT_V22_1_0/**"
       - "scripts/build_action_ct_package_v22_1.py"
       - ".github/workflows/action_ct_v22_validation.yml"
       - ".github/workflows/committee_tct_ct_daily.yml"
+      - ".github/workflows/committee_master_daily.yml"
   workflow_dispatch:
 
 permissions:
@@ -47,7 +51,7 @@ jobs:
       - name: Static quality checks
         run: |
           python -m ruff check src tests scripts
-          python -m mypy --follow-imports=skip src/v182/features/action_ct_v22_0.py src/v182/reporting/action_ct_shadow_run_v22_0.py src/v182/reporting/action_ct_shadow_run_v22_1.py
+          python -m mypy --follow-imports=skip src/v182/features/action_ct_v22_0.py src/v182/reporting/action_ct_shadow_run_v22_0.py src/v182/reporting/action_ct_shadow_run_v22_1.py src/v182/reporting/action_ct_shadow_bundle_run.py
       - name: Compile Action CT modules
         run: |
           python -m py_compile src/v182/features/action_ct_v22_0.py
@@ -57,6 +61,7 @@ jobs:
           python -m py_compile src/v182/features/sector_rotation.py
           python -m py_compile src/v182/reporting/action_ct_shadow_run_v22_0.py
           python -m py_compile src/v182/reporting/action_ct_shadow_run_v22_1.py
+          python -m py_compile src/v182/reporting/action_ct_shadow_bundle_run.py
           python -m py_compile scripts/build_action_ct_package_v22_1.py
       - name: Validate configs and scope isolation
         run: |
@@ -91,7 +96,14 @@ jobs:
           assert v221['runtime_observability']['timers_enabled'] is True
           PY
       - name: Unit integration performance and regression tests
-        run: pytest -q tests/test_action_ct_v22_0.py tests/test_action_ct_v22_0_runner.py tests/test_action_ct_v22_1.py tests/test_action_ct_v22_1_runner.py tests/test_action_ct_v22_1_runtime_patch.py
+        run: |
+          pytest -q \
+            tests/test_action_ct_v22_0.py \
+            tests/test_action_ct_v22_0_runner.py \
+            tests/test_action_ct_v22_1.py \
+            tests/test_action_ct_v22_1_runner.py \
+            tests/test_action_ct_v22_1_runtime_patch.py \
+            tests/test_action_ct_shared_history_runtime_v21_13_10.py
       - name: Static workflow isolation guard
         run: |
           python - <<'PY'
@@ -99,6 +111,7 @@ jobs:
           for filename in (
               'src/v182/reporting/action_ct_shadow_run_v22_0.py',
               'src/v182/reporting/action_ct_shadow_run_v22_1.py',
+              'src/v182/reporting/action_ct_shadow_bundle_run.py',
               'src/v182/features/action_ct_v22_0.py',
               'src/v182/features/action_ct_v22_1.py',
               'src/v182/features/action_ct_context_v22_1.py',
@@ -110,11 +123,22 @@ jobs:
           runner=Path('src/v182/reporting/action_ct_shadow_run_v22_1.py').read_text()
           assert 'decision_influence": 0.0' in runner
           assert 'real_orders_enabled": False' in runner
-          workflow=Path('.github/workflows/committee_tct_ct_daily.yml').read_text()
-          assert 'action_ct_shadow_run_v22_0' in workflow
-          assert 'action_ct_shadow_run_v22_1' in workflow
-          assert 'state/action_ct/' in workflow
-          assert 'state/action_ct_v22_1/' in workflow
+          bundle=Path('src/v182/reporting/action_ct_shadow_bundle_run.py').read_text()
+          assert 'action_ct_shadow_run_v22_0 as v220' in bundle
+          assert 'action_ct_shadow_run_v22_1 as v221' in bundle
+          assert '_run_model("ACTION_CT_V22.0", v220.run, root, now)' in bundle
+          assert '_run_model("ACTION_CT_V22.1", v221.run, root, now)' in bundle
+          assert 'frame.copy(deep=True)' in bundle
+          for workflow_path in (
+              '.github/workflows/committee_tct_ct_daily.yml',
+              '.github/workflows/committee_master_daily.yml',
+          ):
+              workflow=Path(workflow_path).read_text()
+              assert workflow.count('python -m v182.reporting.action_ct_shadow_bundle_run') == 1
+              assert 'python -m v182.reporting.action_ct_shadow_run_v22_0' not in workflow
+              assert 'python -m v182.reporting.action_ct_shadow_run_v22_1' not in workflow
+              assert 'state/action_ct/' in workflow
+              assert 'state/action_ct_v22_1/' in workflow
           PY
       - name: Build complete CT package
         run: python scripts/build_action_ct_package_v22_1.py --output dist/ACTION_CT_V22_1_1_COMPLETE.zip
@@ -135,9 +159,12 @@ jobs:
                   'src/v182/features/ct_math.py',
                   'src/v182/features/sector_rotation.py',
                   'src/v182/reporting/action_ct_shadow_run_v22_1.py',
+                  'src/v182/reporting/action_ct_shadow_bundle_run.py',
                   'tests/test_action_ct_v22_1_runtime_patch.py',
+                  'tests/test_action_ct_shared_history_runtime_v21_13_10.py',
                   'docs/ACTION_CT_REFERENTIEL_V22_1_0_FINAL.md',
                   'docs/ACTION_CT_V22_1_1_RUNTIME_PATCH_2026-08-21.md',
+                  'docs/PIPELINE_RUNTIME_V21_13_10.md',
                   'packages/ACTION_CT_V22_1_0/MANIFEST.json',
               }
               assert required <= names
@@ -145,6 +172,9 @@ jobs:
               assert manifest['package']=='ACTION_CT_V22_1_1_COMPLETE'
               assert manifest['decision_version']=='22.1.0'
               assert manifest['runtime_patch_version']=='22.1.1'
+              assert manifest['pipeline_runtime_optimization_version']=='V21.13.10'
+              assert manifest['hard_guards']['shared_history_deep_copy_per_model'] is True
+              assert manifest['hard_guards']['shared_history_expanding_scope_reloads_union'] is True
           PY
       - name: Upload complete CT package
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -153,4 +183,3 @@ jobs:
           path: dist/ACTION_CT_V22_1_1_COMPLETE.zip
           if-no-files-found: error
           retention-days: 30
-
