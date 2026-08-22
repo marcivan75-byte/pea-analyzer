@@ -3,7 +3,6 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from time import monotonic
 import re
 import unicodedata
@@ -72,9 +71,9 @@ def build_grouped_queries(
 ) -> tuple[list[GroupedQuery], list[dict]]:
     """Build deterministic GDELT OR groups without changing the production query path.
 
-    The current V24.4.2 suffix is empty.  This shadow engine deliberately fails
+    The current V24.4.2 suffix is empty. This shadow engine deliberately fails
     closed when a suffix is configured, because nesting or redistributing future
-    query operators could change semantics.  Production continues to use the
+    query operators could change semantics. Production continues to use the
     individual-query implementation regardless of this function's result.
     """
 
@@ -131,7 +130,7 @@ def attribute_group_articles(
     """Attribute only articles whose title contains exactly one grouped company name.
 
     Articles matching zero company names or several company names are discarded,
-    never guessed.  This strictness is intentional: the shadow exists to measure
+    never guessed. This strictness is intentional: the shadow exists to measure
     whether batching is safe, not to manufacture equivalence.
     """
 
@@ -170,7 +169,7 @@ def fetch_candidate_news_grouped_shadow(
     """Fetch grouped GDELT queries for A/B research only.
 
     This function is intentionally not referenced by any scheduled workflow or
-    production catalyst runner.  Missing attribution is represented as an error,
+    production catalyst runner. Missing attribution is represented as an error,
     not as zero-news evidence, so the shadow cannot create false confidence.
     """
 
