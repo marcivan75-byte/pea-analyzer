@@ -50,7 +50,22 @@ jobs:
       - name: Purge obsolete intraday cache
         run: rm -rf data/cache/actions_intraday_5m
 
-      - name: Restore TCT state
+      - name: Restore consolidated tactical decision state
+        id: decision-state
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            state/TCT_V24_1_7_T1_STATE.json
+            state/tct_context/
+            state/action_ct/
+            state/action_ct_v22_1/
+            state/provenance/
+          key: decision-state-v1-${{ github.run_id }}
+          restore-keys: |
+            decision-state-v1-
+
+      - name: Restore legacy TCT state during cache migration
+        if: steps.decision-state.outputs.cache-matched-key == ''
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: state/TCT_V24_1_7_T1_STATE.json
@@ -59,7 +74,8 @@ jobs:
             daily-tct-state-
             tct-v2417-state-
 
-      - name: Restore next-session catalyst state
+      - name: Restore legacy next-session catalyst state during cache migration
+        if: steps.decision-state.outputs.cache-matched-key == ''
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: state/tct_context/
@@ -67,7 +83,8 @@ jobs:
           restore-keys: |
             tct-context-
 
-      - name: Restore Action CT V22.0 parent state
+      - name: Restore legacy Action CT V22.0 state during cache migration
+        if: steps.decision-state.outputs.cache-matched-key == ''
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: state/action_ct/
@@ -75,7 +92,8 @@ jobs:
           restore-keys: |
             action-ct-v22-
 
-      - name: Restore Action CT V22.1 enriched state
+      - name: Restore legacy Action CT V22.1 state during cache migration
+        if: steps.decision-state.outputs.cache-matched-key == ''
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: state/action_ct_v22_1/
@@ -83,7 +101,8 @@ jobs:
           restore-keys: |
             action-ct-v221-
 
-      - name: Restore provenance, V21.8 state and source caches
+      - name: Restore legacy provenance state during cache migration
+        if: steps.decision-state.outputs.cache-matched-key == ''
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: state/provenance/
@@ -199,40 +218,17 @@ jobs:
           path: data/cache/
           key: ohlcv-v3-${{ github.run_id }}
 
-      - name: Save TCT state
-        if: ${{ always() && hashFiles('state/TCT_V24_1_7_T1_STATE.json') != '' }}
+      - name: Save consolidated tactical decision state
+        if: ${{ always() && (hashFiles('state/TCT_V24_1_7_T1_STATE.json', 'state/tct_context/**', 'state/action_ct/**', 'state/action_ct_v22_1/**', 'state/provenance/**') != '') }}
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
-          path: state/TCT_V24_1_7_T1_STATE.json
-          key: daily-tct-state-${{ github.run_id }}
-
-      - name: Save next-session catalyst state
-        if: ${{ always() && hashFiles('state/tct_context/**') != '' }}
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/tct_context/
-          key: tct-context-${{ github.run_id }}
-
-      - name: Save Action CT V22.0 parent state
-        if: ${{ always() && hashFiles('state/action_ct/**') != '' }}
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/action_ct/
-          key: action-ct-v22-${{ github.run_id }}
-
-      - name: Save Action CT V22.1 enriched state
-        if: ${{ always() && hashFiles('state/action_ct_v22_1/**') != '' }}
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/action_ct_v22_1/
-          key: action-ct-v221-${{ github.run_id }}
-
-      - name: Save provenance, V21.8 state and source caches
-        if: ${{ always() && hashFiles('state/provenance/**') != '' }}
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/provenance/
-          key: daily-provenance-v2181-${{ github.run_id }}
+          path: |
+            state/TCT_V24_1_7_T1_STATE.json
+            state/tct_context/
+            state/action_ct/
+            state/action_ct_v22_1/
+            state/provenance/
+          key: decision-state-v1-${{ github.run_id }}
 
       - name: Upload compact daily tactical artifact
         if: always()
@@ -280,4 +276,5 @@ jobs:
             data/cache/actions/history_manifest.json
             data/cache/etf/history_manifest.json
           if-no-files-found: warn
+          compression-level: 1
           retention-days: 7
