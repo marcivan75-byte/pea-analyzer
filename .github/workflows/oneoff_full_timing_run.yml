@@ -13,6 +13,7 @@ concurrency:
 
 permissions:
   contents: read
+  issues: write
 
 env:
   PIP_CONSTRAINT: ${{ github.workspace }}/constraints-ci.txt
@@ -35,6 +36,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Publish run id
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue comment 160 --body "RUN_STARTED run_id=${GITHUB_RUN_ID} sha=${GITHUB_SHA} branch=${GITHUB_REF_NAME}"
 
       - name: Restore persistent OHLCV cache
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
@@ -192,3 +198,52 @@ jobs:
           if-no-files-found: warn
           compression-level: 1
           retention-days: 14
+
+      - name: Publish final timing and CI trace
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY' > /tmp/run_final.md
+          import json
+          from pathlib import Path
+          print(f"RUN_FINISHED run_id=${{ github.run_id }} status=${{ job.status }}")
+          print()
+          print("## Timing consolidé")
+          for path in [
+              Path('outputs/audit/UNIFIED_RUNTIME_V21_13_7.json'),
+              Path('outputs/audit/ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json'),
+              Path('outputs/audit/TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json'),
+              Path('outputs/audit/POSTMARKET_BUNDLE_RUNTIME_V21_13_12.json'),
+          ]:
+              if not path.exists():
+                  continue
+              try:
+                  data=json.loads(path.read_text(encoding='utf-8'))
+              except Exception:
+                  continue
+              print(f"- {path.name}: wall={data.get('wall_seconds','n/a')}s cpu={data.get('cpu_seconds','n/a')}s")
+              steps=data.get('steps')
+              if isinstance(steps, dict):
+                  for name, value in steps.items():
+                      if isinstance(value, dict):
+                          print(f"  - {name}: wall={value.get('wall_seconds','n/a')}s cpu={value.get('cpu_seconds','n/a')}s status={value.get('status','n/a')}")
+          print()
+          print("## Fichiers CI")
+          for p in [
+              'outputs/decision_brief/CI_DECISION_BRIEF_V3.docx',
+              'outputs/committee_master/CI_COMITE_INVESTISSEMENT.docx',
+              'outputs/committee_master/CI_REFERENTIEL_PONDERE.xlsx',
+              'outputs/committee_master/CI_RISQUE_PANIER_RECOMMANDATIONS.docx',
+              'outputs/mobile/ANDROID_CI_CONTROL_CENTER.md',
+          ]:
+              path=Path(p)
+              print(f"- {p}: {'OK' if path.exists() else 'MISSING'}")
+          brief=Path('outputs/decision_brief/DECISION_BRIEF.md')
+          if brief.exists():
+              print()
+              print("## Decision brief")
+              text=brief.read_text(encoding='utf-8', errors='replace')
+              print(text[:18000])
+          PY
+          gh issue comment 160 --body-file /tmp/run_final.md
