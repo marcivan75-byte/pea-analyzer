@@ -22,20 +22,40 @@ def _fmt(value, digits: int = 2) -> str:
         return "N/A"
 
 
+def _basket_available(portfolio: dict) -> bool:
+    if not portfolio:
+        return False
+    if portfolio.get("status") == "OK":
+        return True
+    if portfolio.get("status"):
+        return False
+    legacy_fields = {
+        "portfolio_beta_252d",
+        "portfolio_downside_beta_252d",
+        "diversification_warning",
+        "top_engine",
+        "systematic_stress_scenarios_pct",
+    }
+    return any(field in portfolio for field in legacy_fields)
+
+
 def _basket_lines(portfolio: dict) -> list[str]:
-    if not portfolio or portfolio.get("status") != "OK":
+    if not _basket_available(portfolio):
         return [
             "## Panier des recommandations",
             "",
             "- Analyse indisponible : aucun panier actif avec historique suffisant.",
             "- Portefeuille réellement détenu : **NON RENSEIGNÉ**.",
         ]
+    unique_isins = portfolio.get("unique_isins", portfolio.get("active_rows", "N/A"))
+    duplicate_rows = portfolio.get("duplicate_horizon_rows_removed", "N/A")
+    method = portfolio.get("weight_method", "LEGACY_SUMMARY_SEMANTICS")
     return [
         "## Panier des recommandations — distinct du portefeuille détenu",
         "",
-        f"- ISIN actifs uniques: {portfolio.get('unique_isins', 'N/A')}",
-        f"- Lignes multi-horizons neutralisées: {portfolio.get('duplicate_horizon_rows_removed', 'N/A')}",
-        f"- Méthode de pondération diagnostique: {portfolio.get('weight_method', 'N/A')}",
+        f"- ISIN actifs uniques: {unique_isins}",
+        f"- Lignes multi-horizons neutralisées: {duplicate_rows}",
+        f"- Méthode de pondération diagnostique: {method}",
         f"- Bêta 252j du panier: {_fmt(portfolio.get('portfolio_beta_252d'))}",
         f"- Downside bêta 252j du panier: {_fmt(portfolio.get('portfolio_downside_beta_252d'))}",
         f"- Corrélation moyenne: {_fmt(portfolio.get('mean_pair_correlation_252d'))}",
@@ -108,11 +128,11 @@ def _write_ci_word(path: Path, portfolio: dict, audit: dict) -> None:
         "Il ne représente pas le portefeuille détenu et n'a aucune influence sur les scores, décisions, allocations ou ordres."
     )
     document.add_heading("Synthèse décisionnelle", level=1)
-    if portfolio.get("status") != "OK":
+    if not _basket_available(portfolio):
         document.add_paragraph("Panier actif insuffisant pour produire une analyse de concentration fiable.")
     else:
         items = [
-            f"ISIN actifs uniques : {portfolio.get('unique_isins', 'N/A')}",
+            f"ISIN actifs uniques : {portfolio.get('unique_isins', portfolio.get('active_rows', 'N/A'))}",
             f"Doublons multi-horizons neutralisés : {portfolio.get('duplicate_horizon_rows_removed', 'N/A')}",
             f"Alerte concentration/diversification : {portfolio.get('diversification_warning', 'N/A')}",
             f"Moteur dominant : {portfolio.get('top_engine', 'N/A')} ({_fmt(portfolio.get('top_engine_share_pct'))}%)",
@@ -165,7 +185,7 @@ def run(root: Path = ROOT) -> dict:
         "status": "SUCCESS",
         "output": str(path.relative_to(root)),
         "ci_word_output": str(word_path.relative_to(root)),
-        "analysis_universe": portfolio.get("analysis_universe", "UNAVAILABLE"),
+        "analysis_universe": portfolio.get("analysis_universe", "LEGACY_OR_UNAVAILABLE"),
         "is_real_portfolio": False,
         "real_portfolio_fit_status": "NOT_AVAILABLE_NO_PORTFOLIO_INPUT",
         "score_or_decision_mutation": False,
