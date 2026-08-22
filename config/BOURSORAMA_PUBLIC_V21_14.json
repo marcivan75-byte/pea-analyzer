@@ -1,5 +1,5 @@
 {
-  "version": "V21.14.0",
+  "version": "V21.14.1",
   "enabled": true,
   "mode": "SHADOW_ATTRIBUTED_NO_DECISION_INFLUENCE",
   "purpose": "Measure Boursorama public-page coverage and semantic equivalence before source suppression.",
@@ -12,8 +12,9 @@
     "ttl_hours": 48,
     "request_start_interval_seconds": 1.0,
     "timeout_seconds": 15,
+    "max_workers": 4,
     "daily_mode": "CACHE_ONLY_NO_BOOTSTRAP",
-    "weekly_mode": "BOUNDED_LIVE_REFRESH",
+    "weekly_mode": "BOUNDED_LIVE_REFRESH_OVERLAPPED_WITH_WAVE04",
     "deterministic_code_patterns": {
       "Euronext_Paris_Action": "Yahoo .PA -> Boursorama 1rP{symbol}",
       "Euronext_Amsterdam_Action": "Yahoo .AS -> Boursorama 1rA{symbol}",
@@ -28,6 +29,12 @@
     "persist_source_url": true,
     "persist_page_sha256": true,
     "persist_fetched_at_utc": true
+  },
+  "network_governance": {
+    "request_start_ceiling": "ONE_REQUEST_START_PER_SECOND",
+    "inflight_overlap": 4,
+    "provider_isolation": "BOURSORAMA_ONLY_DISTINCT_FROM_YAHOO_WAVE04",
+    "shadow_failure_blocks_existing_pipeline": false
   },
   "semantic_gates": {
     "consensus_5_bucket_weighting": "EQUIVALENT_FORMULA_TO_FINNHUB_5_4_3_2_1",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -8,11 +9,12 @@ from pathlib import Path
 import json
 import math
 import re
-import time
 from typing import Callable
 
 import pandas as pd
 from bs4 import BeautifulSoup
+
+from v182.sources.rate_limit import StartRateLimiter
 
 BOURSORAMA_BASE = "https://www.boursorama.com"
 CACHE_VERSION = "BOURSORAMA_PUBLIC_V1"
@@ -348,6 +350,62 @@ def _observation(isin: str, field: str, value: object, fetched_at: str, source_u
     }
 
 
+def _default_fetcher(url: str, *, timeout: float):
+    import requests
+
+    return requests.get(
+        url,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; PEA-Analyzer/21.14; public-data-cache)"},
+        timeout=timeout,
+    )
+
+
+def _fetch_snapshot(
+    isin: str,
+    code: str,
+    *,
+    fetcher: Callable[..., object],
+    limiter: StartRateLimiter,
+    timeout_seconds: float,
+    include_key_figures: bool,
+) -> tuple[str, str, dict[str, object] | None, dict[str, str], dict[str, str], dict | None]:
+    urls = action_urls(code)
+    try:
+        limiter.wait()
+        response = fetcher(urls["consensus"], timeout=timeout_seconds)
+        if hasattr(response, "raise_for_status"):
+            response.raise_for_status()
+        html = str(getattr(response, "text", "") or "")
+        fields = parse_action_consensus_html(html)
+        hashes = {"consensus": sha256(html.encode("utf-8", errors="replace")).hexdigest()}
+        source_urls = {"consensus": urls["consensus"]}
+        if include_key_figures:
+            limiter.wait()
+            response_k = fetcher(urls["key_figures"], timeout=timeout_seconds)
+            if hasattr(response_k, "raise_for_status"):
+                response_k.raise_for_status()
+            html_k = str(getattr(response_k, "text", "") or "")
+            fields.update(parse_action_key_figures_html(html_k))
+            hashes["key_figures"] = sha256(html_k.encode("utf-8", errors="replace")).hexdigest()
+            source_urls["key_figures"] = urls["key_figures"]
+        if not fields:
+            return isin, code, None, source_urls, hashes, {
+                "isin": isin,
+                "source": "Boursorama",
+                "reason": "NO_PARSEABLE_FIELDS",
+                "url": urls["consensus"],
+            }
+        return isin, code, fields, source_urls, hashes, None
+    except Exception as exc:
+        return isin, code, None, {}, {}, {
+            "isin": isin,
+            "source": "Boursorama",
+            "reason": type(exc).__name__,
+            "detail": str(exc)[:160],
+            "url": urls["consensus"],
+        }
+
+
 def collect_action_snapshots_cached(
     rows: pd.DataFrame,
     cache_path: str | Path,
@@ -356,6 +414,7 @@ def collect_action_snapshots_cached(
     ttl_hours: float = 48.0,
     request_start_interval_seconds: float = 1.0,
     timeout_seconds: float = 15.0,
+    max_workers: int = 4,
     refresh_due: bool = True,
     bootstrap_missing: bool = True,
     include_key_figures: bool = False,
@@ -364,9 +423,9 @@ def collect_action_snapshots_cached(
 ) -> SnapshotResult:
     """Cache-first public snapshot collector; raw HTML is never persisted.
 
-    Only deterministic Boursorama codes are requested. A response contributes a
-    normalized field dictionary, source URL, fetch timestamp and SHA-256 page hash.
-    The HTML itself is deliberately discarded.
+    Several HTTP responses may overlap, but a process-local thread-safe limiter
+    keeps request starts no faster than the configured cadence. This bounds wall
+    time without increasing public-site request pressure.
     """
     current = (now or _now_utc()).astimezone(timezone.utc)
     path = Path(cache_path)
@@ -394,67 +453,46 @@ def collect_action_snapshots_cached(
     due.sort()
     selected = due[: max(0, int(refresh_budget))]
 
-    if fetcher is None:
-        import requests
-        session = requests.Session()
-        session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; PEA-Analyzer/21.14; public-data-cache)"})
-        fetcher = session.get
-
-    last_start = 0.0
+    effective_fetcher = fetcher or _default_fetcher
+    limiter = StartRateLimiter(request_start_interval_seconds)
+    workers = max(1, min(int(max_workers), len(selected))) if selected else 0
     live_success = 0
-    for _, isin, code in selected:
-        wait = float(request_start_interval_seconds) - (time.monotonic() - last_start)
-        if wait > 0:
-            time.sleep(wait)
-        urls = action_urls(code)
-        try:
-            last_start = time.monotonic()
-            response = fetcher(urls["consensus"], timeout=timeout_seconds)
-            if hasattr(response, "raise_for_status"):
-                response.raise_for_status()
-            html = str(getattr(response, "text", "") or "")
-            fields = parse_action_consensus_html(html)
-            hashes = {"consensus": sha256(html.encode("utf-8", errors="replace")).hexdigest()}
-            source_urls = {"consensus": urls["consensus"]}
-            if include_key_figures:
-                wait = float(request_start_interval_seconds) - (time.monotonic() - last_start)
-                if wait > 0:
-                    time.sleep(wait)
-                last_start = time.monotonic()
-                response_k = fetcher(urls["key_figures"], timeout=timeout_seconds)
-                if hasattr(response_k, "raise_for_status"):
-                    response_k.raise_for_status()
-                html_k = str(getattr(response_k, "text", "") or "")
-                fields.update(parse_action_key_figures_html(html_k))
-                hashes["key_figures"] = sha256(html_k.encode("utf-8", errors="replace")).hexdigest()
-                source_urls["key_figures"] = urls["key_figures"]
-            if not fields:
-                failures.append({"isin": isin, "source": "Boursorama", "reason": "NO_PARSEABLE_FIELDS", "url": urls["consensus"]})
-                continue
-            fetched = current.isoformat()
-            entries[isin] = {
-                "status": "OK",
-                "boursorama_code": code,
-                "fetched_at_utc": fetched,
-                "fields": fields,
-                "source_urls": source_urls,
-                "page_sha256": hashes,
+    if workers:
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="boursorama-public") as pool:
+            futures = {
+                pool.submit(
+                    _fetch_snapshot,
+                    isin,
+                    code,
+                    fetcher=effective_fetcher,
+                    limiter=limiter,
+                    timeout_seconds=float(timeout_seconds),
+                    include_key_figures=bool(include_key_figures),
+                ): (isin, code)
+                for _, isin, code in selected
             }
-            live_success += 1
-        except Exception as exc:
-            failures.append({
-                "isin": isin,
-                "source": "Boursorama",
-                "reason": type(exc).__name__,
-                "detail": str(exc)[:160],
-                "url": urls["consensus"],
-            })
+            for future in as_completed(futures):
+                isin, code, fields, source_urls, hashes, failure = future.result()
+                if failure is not None:
+                    failures.append(failure)
+                    continue
+                fetched = current.isoformat()
+                entries[isin] = {
+                    "status": "OK",
+                    "boursorama_code": code,
+                    "fetched_at_utc": fetched,
+                    "fields": fields,
+                    "source_urls": source_urls,
+                    "page_sha256": hashes,
+                }
+                live_success += 1
 
     payload["updated_at_utc"] = current.isoformat()
     payload["policy"] = {
         "refresh_budget": int(refresh_budget),
         "ttl_hours": float(ttl_hours),
         "request_start_interval_seconds": float(request_start_interval_seconds),
+        "max_workers": int(max_workers),
         "raw_html_persisted": False,
         "deterministic_codes_only": True,
         "mode": "SHADOW_ATTRIBUTED",
@@ -496,6 +534,8 @@ def collect_action_snapshots_cached(
         "cache_hit_tickers": cache_hits,
         "usable_cached_tickers": usable,
         "observations": len(observations),
+        "request_start_interval_seconds": float(request_start_interval_seconds),
+        "max_workers": int(max_workers),
         "raw_html_persisted": False,
         "decision_influence": False,
     }

@@ -1,10 +1,10 @@
-# V21.14.0 — Audit Boursorama public source hub
+# V21.14.1 — Audit Boursorama public source hub
 
 ## Objective
 
 Use Boursorama public instrument pages as a cache-first attributed aggregation source where this can reduce duplicated provider calls without degrading PEA Analyzer data, active criteria, scores, weights, thresholds, freshness, provenance, auditability or CI documents.
 
-This first version is deliberately `SHADOW_ATTRIBUTED_NO_DECISION_INFLUENCE`. It measures real coverage and semantic equivalence before any existing provider is suppressed.
+This version remains deliberately `SHADOW_ATTRIBUTED_NO_DECISION_INFLUENCE`. It measures real coverage and semantic equivalence before any existing provider is suppressed.
 
 ## Verified public data families
 
@@ -82,14 +82,34 @@ Markets where Boursorama identifiers are not deterministic from the Yahoo suffix
 The hub is designed to minimize both provider load and GitHub runtime:
 
 1. cache first;
-2. bounded weekly live refresh budget;
-3. no ordinary daily bootstrap;
-4. conservative request-start interval;
-5. no protected/private/AJAX endpoint use;
-6. no browser automation when public HTML is sufficient;
-7. discard raw HTML immediately after parsing;
-8. persist normalized scalar values, source URL, UTC fetch timestamp and page SHA-256 only;
-9. unsupported/failed instruments retain current provider fallback.
+2. bounded weekly live refresh budget of 120 Action consensus pages during shadow validation;
+3. no ordinary daily bootstrap; daily tactical mode is cache-only;
+4. global minimum interval of 1 second between Boursorama request starts;
+5. up to 4 requests may be in flight so network latency does not serialize the collector, without increasing the request-start cadence;
+6. no protected/private/AJAX endpoint use;
+7. no browser automation when public HTML is sufficient;
+8. discard raw HTML immediately after parsing;
+9. persist normalized scalar values, source URL, UTC fetch timestamp and page SHA-256 only;
+10. unsupported/failed instruments retain current provider fallback.
+
+## Normal-run integration V21.14.1
+
+The shadow Action collector is launched inside the existing enrichment runner as a peer of Yahoo WAVE04:
+
+- Yahoo WAVE04 and Boursorama shadow receive separate immutable copies of the canonical Action frame;
+- their network providers, rate limiters, caches and audit files are independent;
+- the Boursorama branch never calls `apply_observations`, never modifies the Action master and has `decision_influence = 0`;
+- any Boursorama exception is written as `FAILED_SHADOW_NON_BLOCKING` and the existing Yahoo/Finnhub chain continues unchanged;
+- with the 120-page budget, four in-flight requests and one request start per second, the shadow work is intended to remain hidden under the historically much longer WAVE04 wall time;
+- no extra heavy benchmark workflow is created.
+
+Dedicated audit outputs:
+
+- `outputs/audit/BOURSORAMA_PUBLIC_SHADOW_OBSERVATIONS.csv`
+- `outputs/audit/BOURSORAMA_PUBLIC_SHADOW_FAILURES.csv`
+- `outputs/audit/BOURSORAMA_PUBLIC_SHADOW_METRICS.json`
+- `outputs/audit/BOURSORAMA_PUBLIC_EQUIVALENCE.json`
+- `state/provenance/source_cache/BOURSORAMA_PUBLIC_V1.json`
 
 ## Activation gates before any provider suppression
 

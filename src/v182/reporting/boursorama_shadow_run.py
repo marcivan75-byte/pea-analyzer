@@ -116,13 +116,11 @@ def _write_outputs(root: Path, actions: pd.DataFrame, snapshot, *, profile: str,
     return result
 
 
-def run_for_actions(actions: pd.DataFrame, root: Path = ROOT, *, profile: str | None = None) -> dict:
-    """Run the shadow collector against the exact in-process canonical Action frame."""
+def _collect(actions: pd.DataFrame, root: Path, *, profile: str, actions_input: str | None) -> dict:
     cfg_path = root / "config" / "BOURSORAMA_PUBLIC_V21_14.json"
     cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
     action_cfg = cfg.get("actions", {})
-    active_profile = str(profile or os.environ.get("PEA_RUN_PROFILE", "")).strip().upper()
-    daily = active_profile == "DAILY_TACTICAL"
+    daily = profile == "DAILY_TACTICAL"
     cache_path = root / str(cfg.get("cache_path", "state/provenance/source_cache/BOURSORAMA_PUBLIC_V1.json"))
     snapshot = collect_action_snapshots_cached(
         actions,
@@ -131,11 +129,18 @@ def run_for_actions(actions: pd.DataFrame, root: Path = ROOT, *, profile: str | 
         ttl_hours=float(action_cfg.get("ttl_hours", 48)),
         request_start_interval_seconds=float(action_cfg.get("request_start_interval_seconds", 1.0)),
         timeout_seconds=float(action_cfg.get("timeout_seconds", 15)),
+        max_workers=int(action_cfg.get("max_workers", 4)),
         refresh_due=not daily,
         bootstrap_missing=not daily,
         include_key_figures=bool(action_cfg.get("key_figures_enabled", False)),
     )
-    return _write_outputs(root, actions, snapshot, profile=active_profile, actions_input="IN_PROCESS_CANONICAL_FRAME")
+    return _write_outputs(root, actions, snapshot, profile=profile, actions_input=actions_input)
+
+
+def run_for_actions(actions: pd.DataFrame, root: Path = ROOT, *, profile: str | None = None) -> dict:
+    """Run the shadow collector against the exact in-process canonical Action frame."""
+    active_profile = str(profile or os.environ.get("PEA_RUN_PROFILE", "")).strip().upper()
+    return _collect(actions, root, profile=active_profile, actions_input="IN_PROCESS_CANONICAL_FRAME")
 
 
 def run(root: Path = ROOT) -> dict:
@@ -153,9 +158,13 @@ def run(root: Path = ROOT) -> dict:
             json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         return result
-    return run_for_actions(actions, root, profile=os.environ.get("PEA_RUN_PROFILE", "")) | {
-        "actions_input": str(actions_path.relative_to(root)) if actions_path else None
-    }
+    profile = os.environ.get("PEA_RUN_PROFILE", "").strip().upper()
+    return _collect(
+        actions,
+        root,
+        profile=profile,
+        actions_input=str(actions_path.relative_to(root)) if actions_path else None,
+    )
 
 
 def main() -> None:
