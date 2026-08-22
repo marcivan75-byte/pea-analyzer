@@ -25,6 +25,10 @@ YFINANCE_GENERIC_FIELDS={
     "beta","dividend_yield_pct","payout_ratio",
 }
 YFINANCE_SOURCE_COLUMNS=("fundamentals_source","source","source_name","ta_source","consensus_source")
+LEGACY_CONTEXT_FIELDS={
+    "evidence_level","as_of_date","ta_as_of","perf_as_of","yf_consensus_as_of","fundamentals_as_of","per_fix_as_of",
+    *YFINANCE_SOURCE_COLUMNS,
+}
 
 
 def load_master(path: str | Path) -> pd.DataFrame:
@@ -75,26 +79,41 @@ def _has_yfinance_legacy_marker(frame:pd.DataFrame,isin)->bool:
     return False
 
 
-def _legacy_field_metadata(frame:pd.DataFrame,isin,field:str,incoming:dict)->dict:
-    """Resolve evidence for a legacy value that predates per-field provenance."""
+def _legacy_row_context(frame: pd.DataFrame, isin) -> dict:
+    """Compute all legacy row metadata once for repeated field merges on one ISIN."""
     raw_evidence=_cell(frame,isin,"evidence_level")
     row_evidence="D" if is_missing(raw_evidence) else str(raw_evidence).strip().upper()
     if row_evidence not in {"A","B","C","D"}: row_evidence="D"
-    row_as_of=_latest_as_of(frame,isin,("as_of_date",))
+    return {
+        "row_evidence":row_evidence,
+        "row_as_of":_latest_as_of(frame,isin,("as_of_date",)),
+        "ohlcv_as_of":_latest_as_of(frame,isin,("ta_as_of","perf_as_of","as_of_date")),
+        "yfinance_self_as_of":_latest_as_of(frame,isin,("yf_consensus_as_of","fundamentals_as_of","per_fix_as_of","as_of_date")),
+        "yfinance_generic_as_of":_latest_as_of(frame,isin,("fundamentals_as_of","per_fix_as_of","yf_consensus_as_of","as_of_date")),
+        "has_yfinance_marker":_has_yfinance_legacy_marker(frame,isin),
+    }
+
+
+def _legacy_field_metadata(frame:pd.DataFrame,isin,field:str,incoming:dict,context:dict|None=None)->dict:
+    """Resolve evidence for a legacy value that predates per-field provenance.
+
+    ``context`` is an optional per-ISIN cache. When absent this function retains
+    its historical standalone behavior by recomputing from the current frame.
+    """
+    ctx=context if context is not None else _legacy_row_context(frame,isin)
+    row_evidence=str(ctx["row_evidence"])
+    row_as_of=str(ctx["row_as_of"])
     if row_evidence=="A": return {"evidence_level":"A","as_of":row_as_of,"bootstrap":"ROW_A"}
 
     source=str(incoming.get("source") or "").strip().upper()
     if source=="INTERNAL_FROM_OHLCV" and field in OHLCV_BOOTSTRAP_FIELDS:
-        as_of=_latest_as_of(frame,isin,("ta_as_of","perf_as_of","as_of_date"))
-        return {"evidence_level":"C","as_of":as_of,"bootstrap":"LEGACY_OHLCV_C"}
+        return {"evidence_level":"C","as_of":str(ctx["ohlcv_as_of"]),"bootstrap":"LEGACY_OHLCV_C"}
 
     if source=="YFINANCE" and field in YFINANCE_SELF_DESCRIBING_FIELDS:
-        as_of=_latest_as_of(frame,isin,("yf_consensus_as_of","fundamentals_as_of","per_fix_as_of","as_of_date"))
-        return {"evidence_level":"C","as_of":as_of,"bootstrap":"LEGACY_YFINANCE_C"}
+        return {"evidence_level":"C","as_of":str(ctx["yfinance_self_as_of"]),"bootstrap":"LEGACY_YFINANCE_C"}
 
-    if source=="YFINANCE" and field in YFINANCE_GENERIC_FIELDS and _has_yfinance_legacy_marker(frame,isin):
-        as_of=_latest_as_of(frame,isin,("fundamentals_as_of","per_fix_as_of","yf_consensus_as_of","as_of_date"))
-        return {"evidence_level":"C","as_of":as_of,"bootstrap":"LEGACY_YFINANCE_MARKED_C"}
+    if source=="YFINANCE" and field in YFINANCE_GENERIC_FIELDS and bool(ctx["has_yfinance_marker"]):
+        return {"evidence_level":"C","as_of":str(ctx["yfinance_generic_as_of"]),"bootstrap":"LEGACY_YFINANCE_MARKED_C"}
 
     return {"evidence_level":row_evidence,"as_of":row_as_of,"bootstrap":"ROW_FALLBACK"}
 
@@ -133,6 +152,7 @@ def apply_observations(frame: pd.DataFrame, observations: list[dict]) -> tuple[p
     quarantined: list[dict] = []
     base_provenance=load_latest_readonly()
     provenance_updates: dict[tuple[str,str],dict] = {}
+    legacy_contexts: dict[str,dict] = {}
     provenance_records=[]
 
     for obs in observations:
@@ -141,15 +161,16 @@ def apply_observations(frame: pd.DataFrame, observations: list[dict]) -> tuple[p
             provenance_records.append({**obs,"merge_action":"SKIP","merge_reason":"ISIN_OR_FIELD_NOT_IN_MASTER"})
             continue
 
-        if bounds_for_field(str(field)) is not None:
-            valid, domain_reason = validate_numeric_value(str(field), obs.get("value"))
+        field_text=str(field)
+        if bounds_for_field(field_text) is not None:
+            valid, domain_reason = validate_numeric_value(field_text, obs.get("value"))
             if not valid:
                 quarantined.append({**obs,"reason":f"NUMERIC_DOMAIN:{domain_reason}"})
                 provenance_records.append({**obs,"merge_action":"QUARANTINE","merge_reason":f"NUMERIC_DOMAIN:{domain_reason}"})
                 continue
 
         current_value = frame.at[isin, field]
-        key=(str(isin),str(field))
+        isin_text=str(isin); key=(isin_text,field_text)
         meta=provenance_updates.get(key)
         if meta is None:
             meta=base_provenance.get(key)
@@ -158,13 +179,21 @@ def apply_observations(frame: pd.DataFrame, observations: list[dict]) -> tuple[p
         elif meta and retained_meta_matches_value(meta,current_value):
             existing={"value":current_value,"evidence_level":meta.get("evidence_level","D"),"as_of":meta.get("as_of","")}
         else:
-            legacy=_legacy_field_metadata(frame,isin,str(field),obs)
+            context=legacy_contexts.get(isin_text)
+            if context is None:
+                context=_legacy_row_context(frame,isin)
+                legacy_contexts[isin_text]=context
+            legacy=_legacy_field_metadata(frame,isin,field_text,obs,context=context)
             existing={"value":current_value,"evidence_level":legacy["evidence_level"],"as_of":legacy["as_of"]}
         decision=decide(existing,obs)
         if decision.action in {"INSERT","REPLACE"}:
-            _ensure_text_assignable(frame,field)
-            value=obs.get("value"); frame.at[isin,field]="" if value is None else str(value)
+            _ensure_text_assignable(frame,field_text)
+            value=obs.get("value"); frame.at[isin,field_text]="" if value is None else str(value)
             provenance_updates[key]={**obs,"merge_action":decision.action,"merge_reason":decision.reason,"value_sha256":value_hash(value)}
+            # Preserve historical same-batch semantics: if a field used to derive
+            # legacy context changes, the next legacy lookup must see that update.
+            if field_text in LEGACY_CONTEXT_FIELDS:
+                legacy_contexts.pop(isin_text,None)
         elif decision.action=="QUARANTINE":
             quarantined.append({**obs,"reason":decision.reason})
         provenance_records.append({**obs,"merge_action":decision.action,"merge_reason":decision.reason})
