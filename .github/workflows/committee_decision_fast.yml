@@ -1,4 +1,4 @@
-name: PEA Decision Brief Fast V1
+name: PEA Decision Brief Fast V3
 
 on:
   workflow_dispatch:
@@ -27,22 +27,32 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
-      - name: Restore fresh inputs from latest successful global run
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
+      - name: Restore compact V3 decision package from latest successful global run
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
           python -m v182.ci.restore_decision_inputs
           --max-age-hours "${{ inputs.max_artifact_age_hours }}"
-        shell: bash
-      - name: Build synthetic decision brief
+
+      - name: Legacy fallback - install project only when V3 package is unavailable
+        if: ${{ hashFiles('outputs/decision_brief/CI_DECISION_BRIEF_V3.docx') == '' }}
+        run: pip install -e .
+
+      - name: Legacy fallback - rebuild V3 brief
+        if: ${{ hashFiles('outputs/decision_brief/CI_DECISION_BRIEF_V3.docx') == '' }}
         run: python -m v182.reporting.decision_brief
+
       - name: Publish decision brief
         run: cat outputs/decision_brief/DECISION_BRIEF.md >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload compact decision package
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: decision-brief-fast-${{ github.run_id }}
+          name: decision-brief-fast-v3-${{ github.run_id }}
           path: outputs/decision_brief/
           if-no-files-found: error
+          compression-level: 1
           retention-days: 7
-
