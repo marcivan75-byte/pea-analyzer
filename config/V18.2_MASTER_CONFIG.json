@@ -1,24 +1,40 @@
 {
-  "version": "21.13.2",
+  "version": "21.13.3",
   "base": "18.2.0",
-  "theme": "COMPLETENESS_ROTATION_DYNAMIC_WEIGHTS_HISTORY_DEPTH_RUNTIME_OPT",
+  "theme": "COMPLETENESS_ROTATION_DYNAMIC_WEIGHTS_HISTORY_DEPTH_HORIZON_AWARE_RUNTIME_OPT",
   "primary_bulk_source": "yfinance",
   "no_repeat_api_request_policy": true,
   "api_keys": {"MARKETSTACK_API_KEY":"environment","ALPHA_VANTAGE_API_KEY":"environment","FINNHUB_API_KEY":"environment","FRED_API_KEY":"environment","EIA_API_KEY":"environment"},
   "yfinance": {"enabled":true,"requires_key":false,"history_start":"2023-01-01","history_period":"5y","required_history_start":"2023-01-01","history_rolling_months":60,"history_policy":"ANCHOR_2023_THEN_ROLLING_60M","cache_generation":"V21.13.1_START_2023_ROLLING_60M","interval":"1d","auto_adjust":true,"actions_batch_size":100,"etf_batch_size":50,"threads":true,"retry_count":3,"cache_days":1,"fundamental_refresh_days":7},
   "runtime_optimization": {
-    "status": "ACTIVE_V21_13_2",
-    "governance": "REDUCE_NETWORK_REFRESH_WITHOUT_REDUCING_UNIVERSE_OR_CHANGING_DECISION_LOGIC",
+    "status": "ACTIVE_V21_13_3_HORIZON_AWARE",
+    "governance": "REFRESH_BY_DATA_NEED_AND_HORIZON_WITHOUT_REDUCING_UNIVERSE_OR_CHANGING_DECISION_LOGIC",
+    "horizon_data_policy": {
+      "enabled": true,
+      "previous_decisions_path": "outputs/committee_master/COMMITTEE_DECISIONS.csv",
+      "fallback_if_absent": "CURRENT_SCORE_EVENTS_AND_EXISTING_CACHE_POLICY",
+      "priority_order": ["TCT", "CT", "MT", "LT", "STRUCTURAL"],
+      "source_families": {
+        "OHLCV": {"consumer_horizons":["TCT","CT","MT","LT"],"cadence":"EACH_TRADING_DAY","reason":"TCT_AND_CT_REQUIRE_LATEST_MARKET_STATE"},
+        "ACTION_FUNDAMENTALS": {"consumer_horizons":["CT","MT","LT"],"hot_horizons":["CT"],"warm_horizons":["MT"],"candidate_limits":{"TCT":0,"CT":250,"MT":600,"LT":1829},"promotion_buffer_top_n":400},
+        "ACTION_CONSENSUS": {"consumer_horizons":["CT","MT","LT"],"hot_horizons":["CT"],"warm_horizons":["MT"],"candidate_limits":{"TCT":0,"CT":300,"MT":700,"LT":1829},"promotion_buffer_top_n":450},
+        "ETF_INFO": {"consumer_horizons":["CT","MT","LT"],"hot_horizons":["CT"],"warm_horizons":["MT"],"candidate_limits":{"CT":30,"MT":70,"LT":102},"promotion_buffer_top_n":0},
+        "TOPDOWN_NEWS": {"consumer_horizons":["TCT","CT","TOP_DOWN"],"cadence":"EACH_RUN","reason":"SHORT_HORIZON_EVENT_SENSITIVITY"},
+        "ETF_FUND_FLOWS": {"consumer_horizons":["ETF_MT","SECTOR_ROTATION"],"cadence":"WEEKLY_OR_NEW_AS_OF","same_day_reuse_allowed":true},
+        "STRUCTURAL_REFERENCE": {"consumer_horizons":["LT","STRUCTURAL"],"cadence":"SLOW_CHANGE","default_ttl_days":30}
+      }
+    },
     "yfinance_fundamentals": {
       "cache_path": "state/provenance/source_cache/YFINANCE_INFO_V1.json",
-      "ttl_days": {"HOT":3,"WARM":7,"COLD":21},
-      "refresh_budget": 450,
+      "ttl_days": {"HOT":3,"WARM":10,"COLD":21},
+      "refresh_budget": 320,
       "hard_max_age_days": 35,
       "negative_cache_days": 7,
       "warm_top_n": 500,
       "max_workers": 4,
       "local_price_ratio_refresh": true,
-      "bootstrap_uncached_all": true
+      "bootstrap_uncached_all": true,
+      "horizon_policy_family": "ACTION_FUNDAMENTALS"
     },
     "finnhub_consensus": {
       "cache_path": "state/provenance/source_cache/FINNHUB_CONSENSUS_V1.json",
@@ -27,27 +43,40 @@
       "delay_seconds": 1.1,
       "max_workers": 8,
       "tiers": {
-        "HOT": {"refresh_budget":120,"recommendation_ttl_days":3,"target_refresh_budget":60,"target_ttl_days":7,"max_cache_age_days":14},
-        "WARM": {"refresh_budget":80,"recommendation_ttl_days":7,"target_refresh_budget":40,"target_ttl_days":14,"max_cache_age_days":28},
-        "COLD": {"refresh_budget":40,"recommendation_ttl_days":14,"target_refresh_budget":20,"target_ttl_days":28,"max_cache_age_days":42}
+        "HOT": {"refresh_budget":100,"recommendation_ttl_days":2,"target_refresh_budget":50,"target_ttl_days":5,"max_cache_age_days":14},
+        "WARM": {"refresh_budget":60,"recommendation_ttl_days":7,"target_refresh_budget":30,"target_ttl_days":14,"max_cache_age_days":28},
+        "COLD": {"refresh_budget":25,"recommendation_ttl_days":14,"target_refresh_budget":10,"target_ttl_days":28,"max_cache_age_days":42}
       },
-      "bootstrap_uncached_all": true
+      "bootstrap_uncached_all": true,
+      "horizon_policy_family": "ACTION_CONSENSUS"
+    },
+    "etf_info": {
+      "cache_path": "state/provenance/source_cache/YFINANCE_ETF_INFO_V1.json",
+      "ttl_days": {"HOT":7,"WARM":14,"COLD":30},
+      "refresh_budget": 40,
+      "hard_max_age_days": 45,
+      "negative_cache_days": 14,
+      "max_workers": 4,
+      "bootstrap_uncached_all": true,
+      "horizon_policy_family": "ETF_INFO"
     },
     "etf_fund_flows": {
       "max_workers": 8,
       "request_start_delay_seconds": 0.08,
       "chunk_size": 18,
       "reuse_previous_snapshot": true,
-      "history_append_only_by_instrument_date": true
+      "history_append_only_by_instrument_date": true,
+      "source_horizon": "ETF_MT_SECTOR_ROTATION"
     },
     "telemetry": {
       "source_cache_metrics": true,
       "runtime_seconds": true,
       "network_refresh_counts": true,
-      "cache_hit_counts": true
+      "cache_hit_counts": true,
+      "horizon_demand_counts": true
     }
   },
-  "committee_full_coverage": {"actions_fundamentals_scope":"ALL","actions_consensus_scope":"ALL","policy":"Collect the full 1829-Action canonical universe for Committee scoring; missing source data remains missing and is never imputed."},
+  "committee_full_coverage": {"actions_fundamentals_scope":"ALL","actions_consensus_scope":"ALL","policy":"Collect/retain coverage for the full 1829-Action canonical universe; horizon policy changes refresh cadence only. Missing source data remains missing and is never imputed."},
   "canonical_universe": {"actions_reference_version":"V21.3_1829","actions_expected_count":1829,"actions_whitelist_path":"config/V21_3_ACTION_UNIVERSE_1829_ISINS.parts","actions_whitelist_sha256":"1e95d51d5a8fa3e616e97ec3fec0a033b29e841d0971ff5a644efa4f5049c085","strict_when_whitelist_present":true,"do_not_filter_by_count_only":true,"legacy_reference":"1429 canonical + 400 validated quarantine recovered"},
   "topdown": {"enabled":true,"instrument_news_top_n":120,"news_window":"2d","neutral_imputation_forbidden":true,"global_macro_primary":"FRED","country_macro_direct_target":"ECB_EUROSTAT","country_macro_interim":"MARKET_IMPLIED_COUNTRY_REGIME_C","news_primary":"GDELT","market_sentiment_interim":"INTERNAL_PIT_BREADTH_MOMENTUM_C"},
   "derived_features": ["perf_10d_pct","perf_1m_pct","perf_3m_pct","perf_6m_pct","perf_1y_pct","perf_3y_pct","perf_5y_pct","mm20","mm50","mm100","mm200","above_mm20","above_mm50","above_mm200","rsi14","macd","macd_signal","macd_hist","macd_hist_3d_ago","macd_hist_change_3d","atr14","atr14_pct","opening_gap_pct","bb_mid","bb_upper","bb_lower","bb_bandwidth","bb_breakout_cross_flag","bb_breakout_hold_flag","bb_squeeze_fraction_8","bb_bandwidth_expansion_ratio","stoch_k","stoch_d","stoch_bull_cross_flag","rvol20","rvol20_3d_avg","volatility_20d","volatility_60d","volatility_1y_pct","max_drawdown_1y","relative_strength","relative_strength_10d","positive_reversal_flag","high_52w","distance_high_52w_pct","catchup_52w_score","high_52w_bonus_malus_points","sector_rotation_score","sector_catchup_score","action_catchup_score","market_high_regime_score","rotation_candidate_flag","morningstar_action_score","dividend_gt4_score","target_upside_growth_score","total_return_potential_score"],
