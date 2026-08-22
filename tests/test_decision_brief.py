@@ -102,11 +102,16 @@ def test_successful_run_produces_decision_driven_v3_brief(tmp_path: Path):
     assert set(snapshot["isin"]) == {"FR1", "FR2"}
 
 
-def test_failed_pipeline_is_blocked_but_still_publishes_brief(tmp_path: Path):
+def test_failed_pipeline_does_not_infer_false_removals_from_previous_snapshot(tmp_path: Path):
     _write_json(
         tmp_path / "outputs/unified/UNIFIED_SUMMARY_LATEST.json",
         {"status": "PARTIAL_SUCCESS", "run_id": "run-2", "steps": {"refresh": {"status": "FAILED"}, "committee": {"status": "SKIPPED_DEPENDENCY"}}},
     )
+    previous = [
+        {"generated_at_utc": "2026-08-15T20:00:00+00:00", "asset_class": "ACTION", "horizon": "CT", "isin": "FR1", "name": "Alpha", "decision": "WATCH", "score": "72.0", "coverage_pct": "91.0", "consensus_score": "70", "consensus_delta_4w": "1", "target_upside_pct": "10", "entry_state": "WAIT", "position_state": "HOLD", "catalyst_state": "", "data_confidence": "FORTE"},
+    ]
+    snapshot_path = tmp_path / "state/provenance/CI_DECISION_SNAPSHOT.csv"
+    _write_csv(snapshot_path, previous)
 
     payload = run(tmp_path)
 
@@ -115,5 +120,8 @@ def test_failed_pipeline_is_blocked_but_still_publishes_brief(tmp_path: Path):
     assert payload["skipped_dependencies"] == ["committee"]
     assert payload["score_or_decision_mutation"] is False
     assert payload["selected_count"] == 0
+    assert payload["removed_from_selection"] == []
+    snapshot = pd.read_csv(snapshot_path, sep=";")
+    assert list(snapshot["isin"]) == ["FR1"]
     assert (tmp_path / "outputs/decision_brief/DECISION_BRIEF.json").exists()
     assert (tmp_path / "outputs/decision_brief/CI_DECISION_BRIEF_V3.docx").exists()
