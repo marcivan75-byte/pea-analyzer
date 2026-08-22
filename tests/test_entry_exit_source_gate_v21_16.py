@@ -30,10 +30,7 @@ def _ready_ct(**overrides):
 
 
 def test_timing_wait_blocks_entry_before_other_timing_rules():
-    row = _ready_ct(
-        source_validation_state="TIMING_WAIT",
-        investing_horizon_signal="BUY",
-    )
+    row = _ready_ct(source_validation_state="TIMING_WAIT", investing_horizon_signal="BUY")
     state, reasons = classify_entry(pd.Series(row), CFG)
     assert state == "WAIT"
     assert reasons == ["INVESTING_WEEKLY_BUY_NOT_STRONG_BUY"]
@@ -62,8 +59,58 @@ def test_fully_validated_tct_still_requires_exact_t2():
     assert state == "WAIT"
     assert reasons == ["TCT_EXACT_T2_CONFIRMATION_REQUIRED"]
     row["tct_setup"] = "T2_EXACT_TIMING_CONFIRMATION"
-    state, _ = classify_entry(pd.Series(row), CFG)
+    state, reasons = classify_entry(pd.Series(row), CFG)
     assert state == "ACTION"
+    assert reasons == ["TCT_EXACT_T2_AND_SOURCE_CONFIRMATION"]
+
+
+def test_real_tct_t2_shadow_status_can_action_without_generic_ct_mt_evidence():
+    row = {
+        "asset_class": "ACTION",
+        "horizon": "TCT",
+        "decision": "T2_CONFIRM_75_SHADOW",
+        "score": 81.0,
+        "coverage_pct": 100.0,
+        "setup": "T2_CONFIRMATION",
+        "source_validation_state": "FULLY_VALIDATED",
+        "investing_required_timeframe": "DAILY",
+        "investing_horizon_signal": "STRONG_BUY",
+    }
+    state, reasons = classify_entry(pd.Series(row), CFG)
+    assert state == "ACTION"
+    assert reasons == ["TCT_EXACT_T2_AND_SOURCE_CONFIRMATION"]
+
+
+def test_real_tct_t2_waits_if_daily_investing_is_not_strong_buy():
+    row = {
+        "asset_class": "ACTION",
+        "horizon": "TCT",
+        "decision": "T2_CONFIRM_75_SHADOW",
+        "score": 81.0,
+        "setup": "T2_CONFIRMATION",
+        "source_validation_state": "TIMING_WAIT",
+        "investing_required_timeframe": "DAILY",
+        "investing_horizon_signal": "BUY",
+    }
+    state, reasons = classify_entry(pd.Series(row), CFG)
+    assert state == "WAIT"
+    assert reasons == ["INVESTING_DAILY_BUY_NOT_STRONG_BUY"]
+
+
+def test_real_tct_t1_is_watch_only_not_selected_for_entry():
+    row = {
+        "asset_class": "ACTION",
+        "horizon": "TCT",
+        "decision": "T1_STARTER_25_SHADOW",
+        "score": 84.0,
+        "setup": "T1",
+        "source_validation_state": "FULLY_VALIDATED",
+        "investing_required_timeframe": "DAILY",
+        "investing_horizon_signal": "STRONG_BUY",
+    }
+    state, reasons = classify_entry(pd.Series(row), CFG)
+    assert state == "TEMPORARY_REJECT"
+    assert reasons == ["NOT_SELECTED_FOR_ENTRY"]
 
 
 def test_source_gate_can_only_change_entry_readiness_not_score_or_decision():
