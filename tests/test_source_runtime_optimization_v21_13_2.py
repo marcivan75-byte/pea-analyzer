@@ -8,7 +8,11 @@ import pandas as pd
 
 from v182.reporting import etf_fund_flows_shadow_run as flow_runner
 from v182.reporting import waves
-from v182.reporting.horizon_cache_policy import assign_refresh_tiers, previous_horizon_candidates
+from v182.reporting.horizon_cache_policy import (
+    assign_refresh_tiers,
+    previous_horizon_candidates,
+    write_horizon_priority_state,
+)
 from v182.sources import finnhub_consensus as finnhub
 from v182.sources import yfinance_info as yahoo_info
 
@@ -79,19 +83,36 @@ def test_action_refresh_tiers_and_local_ratios_do_not_change_scores() -> None:
     assert waves._positive_ratio(100,-5) is None
 
 
-def test_horizon_policy_uses_previous_ct_before_mt_without_using_tct_for_fundamentals(tmp_path) -> None:
-    decisions_dir=tmp_path/"outputs"/"committee_master"
-    decisions_dir.mkdir(parents=True)
+def test_horizon_priority_state_persists_only_valid_action_etf_rankings(tmp_path) -> None:
+    state_path=tmp_path/"state"/"provenance"/"HORIZON_REFRESH_PRIORITY_V1.csv"
     decisions=pd.DataFrame([
-        {"asset_class":"ACTION","horizon":"TCT","isin":"I1","score":99,"status":"OK"},
-        {"asset_class":"ACTION","horizon":"CT","isin":"I2","score":95,"status":"OK"},
-        {"asset_class":"ACTION","horizon":"MT","isin":"I3","score":90,"status":"OK"},
-        {"asset_class":"ACTION","horizon":"LT","isin":"I4","score":85,"status":"OK"},
+        {"asset_class":"ACTION","horizon":"TCT","isin":"I1","score":99,"status":"OK","decision":"WATCH"},
+        {"asset_class":"ACTION","horizon":"CT","isin":"I2","score":95,"status":"OK","decision":"BUY"},
+        {"asset_class":"ETF","horizon":"MT","isin":"E1","score":90,"status":"OK","decision":"WATCH"},
+        {"asset_class":"GOLD","horizon":"LT","isin":"G1","score":88,"status":"OK","decision":"WATCH"},
+        {"asset_class":"ACTION","horizon":"LT","isin":"I3","score":85,"status":"FAILED","decision":"FAILED"},
     ])
-    decisions.to_csv(decisions_dir/"COMMITTEE_DECISIONS.csv",sep=";",index=False)
+    audit=write_horizon_priority_state(decisions,state_path,generated_at_utc="2026-08-22T08:00:00+00:00")
+    state=pd.read_csv(state_path,sep=";",dtype=str)
+    assert audit["status"]=="SUCCESS"
+    assert audit["decision_logic_changed"] is False
+    assert set(state["isin"])=={"I1","I2","E1"}
+    assert set(state["asset_class"])=={"ACTION","ETF"}
+    assert set(state["generated_at_utc"])=={"2026-08-22T08:00:00+00:00"}
+
+
+def test_horizon_policy_uses_previous_ct_before_mt_without_using_tct_for_fundamentals(tmp_path) -> None:
+    state_path=tmp_path/"state"/"provenance"/"HORIZON_REFRESH_PRIORITY_V1.csv"
+    decisions=pd.DataFrame([
+        {"asset_class":"ACTION","horizon":"TCT","isin":"I1","score":99,"status":"OK","decision":"WATCH"},
+        {"asset_class":"ACTION","horizon":"CT","isin":"I2","score":95,"status":"OK","decision":"WATCH"},
+        {"asset_class":"ACTION","horizon":"MT","isin":"I3","score":90,"status":"OK","decision":"WATCH"},
+        {"asset_class":"ACTION","horizon":"LT","isin":"I4","score":85,"status":"OK","decision":"WATCH"},
+    ])
+    write_horizon_priority_state(decisions,state_path)
     frame=pd.DataFrame({"isin":["I1","I2","I3","I4"],"yahoo_ticker":["T1","T2","T3","T4"]})
     policy={
-        "previous_decisions_path":"outputs/committee_master/COMMITTEE_DECISIONS.csv",
+        "previous_decisions_path":"state/provenance/HORIZON_REFRESH_PRIORITY_V1.csv",
         "consumer_horizons":["CT","MT","LT"],
         "hot_horizons":["CT"],
         "warm_horizons":["MT"],
@@ -124,12 +145,12 @@ def test_horizon_policy_falls_back_safely_when_previous_decisions_are_missing(tm
 
 
 def test_previous_horizon_candidates_respects_per_horizon_limits(tmp_path) -> None:
-    path=tmp_path/"outputs"/"committee_master"; path.mkdir(parents=True)
-    pd.DataFrame([
-        {"asset_class":"ETF","horizon":"CT","isin":"E1","score":90,"status":"OK"},
-        {"asset_class":"ETF","horizon":"CT","isin":"E2","score":80,"status":"OK"},
-        {"asset_class":"ETF","horizon":"MT","isin":"E3","score":70,"status":"OK"},
-    ]).to_csv(path/"COMMITTEE_DECISIONS.csv",sep=";",index=False)
+    state_path=tmp_path/"state"/"provenance"/"HORIZON_REFRESH_PRIORITY_V1.csv"
+    write_horizon_priority_state(pd.DataFrame([
+        {"asset_class":"ETF","horizon":"CT","isin":"E1","score":90,"status":"OK","decision":"WATCH"},
+        {"asset_class":"ETF","horizon":"CT","isin":"E2","score":80,"status":"OK","decision":"WATCH"},
+        {"asset_class":"ETF","horizon":"MT","isin":"E3","score":70,"status":"OK","decision":"WATCH"},
+    ]),state_path)
     candidates,audit=previous_horizon_candidates(tmp_path,"ETF",limits={"CT":1,"MT":1,"LT":2})
     assert candidates["CT"]=={"E1"}
     assert candidates["MT"]=={"E3"}
@@ -208,6 +229,8 @@ def test_master_config_registers_runtime_optimization_policy() -> None:
     assert opt["finnhub_consensus"]["tiers"]["HOT"]["target_ttl_days"] > opt["finnhub_consensus"]["tiers"]["HOT"]["recommendation_ttl_days"]
     assert opt["etf_info"]["ttl_days"]=={"HOT":7,"WARM":14,"COLD":30}
     policy=opt["horizon_data_policy"]
+    assert policy["previous_decisions_path"]=="state/provenance/HORIZON_REFRESH_PRIORITY_V1.csv"
+    assert policy["state_written_after_committee"] is True
     assert policy["source_families"]["ACTION_FUNDAMENTALS"]["consumer_horizons"]==["CT","MT","LT"]
     assert "TCT" not in policy["source_families"]["ACTION_CONSENSUS"]["consumer_horizons"]
     assert policy["source_families"]["OHLCV"]["cadence"]=="EACH_TRADING_DAY"
