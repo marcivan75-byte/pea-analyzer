@@ -77,6 +77,9 @@ class RuntimeTelemetry:
         stage_status = "SUCCESS" if normalized == "SUCCESS" else normalized
         self._close_active(time.perf_counter(), time.process_time(), stage_status)
         self._status = normalized
+        effective_audit_format=os.environ.get("PEA_EFFECTIVE_INTERMEDIATE_AUDIT_FORMAT","").strip().upper()
+        if effective_audit_format and "intermediate_collection_audit_format" in extra:
+            extra["intermediate_collection_audit_format"]=effective_audit_format
         self._extra.update(extra)
         self._write()
         return self.paths
