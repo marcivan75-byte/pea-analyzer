@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
 
 
 DEFAULT_LIMITS = {"TCT": 80, "CT": 250, "MT": 500, "LT": 1000}
+PRIORITY_STATE_COLUMNS = ["asset_class", "horizon", "isin", "score", "status", "decision", "generated_at_utc"]
 
 
 def _read_decisions(path: Path) -> pd.DataFrame:
@@ -17,11 +19,63 @@ def _read_decisions(path: Path) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def write_horizon_priority_state(
+    decisions: pd.DataFrame,
+    path: Path,
+    *,
+    generated_at_utc: str | None = None,
+) -> dict:
+    """Persist the minimal prior-run ranking needed by the next enrichment run.
+
+    This state is operational cache metadata only. It does not replace Committee
+    outputs and cannot alter current-run scores, decisions or universe membership.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if decisions.empty:
+        pd.DataFrame(columns=PRIORITY_STATE_COLUMNS).to_csv(path, sep=";", index=False, encoding="utf-8-sig")
+        return {"status": "EMPTY", "rows": 0, "path": str(path)}
+    required = {"asset_class", "horizon", "isin", "score"}
+    missing = required - set(decisions.columns)
+    if missing:
+        return {"status": "SKIPPED_INVALID_DECISIONS", "rows": 0, "path": str(path), "missing_columns": sorted(missing)}
+    frame = decisions.copy()
+    frame["asset_class"] = frame["asset_class"].astype(str).str.upper()
+    frame["horizon"] = frame["horizon"].astype(str).str.upper()
+    frame["isin"] = frame["isin"].astype(str).str.strip()
+    frame["score"] = pd.to_numeric(frame["score"], errors="coerce")
+    frame = frame[
+        frame["asset_class"].isin(["ACTION", "ETF"])
+        & frame["horizon"].isin(["TCT", "CT", "MT", "LT"])
+        & frame["isin"].ne("")
+        & frame["isin"].ne("nan")
+        & frame["score"].notna()
+    ].copy()
+    if "status" not in frame.columns:
+        frame["status"] = ""
+    if "decision" not in frame.columns:
+        frame["decision"] = ""
+    frame = frame[~frame["status"].astype(str).str.upper().isin(["FAILED", "BLOCKED_DATA"])].copy()
+    stamp = generated_at_utc or datetime.now(timezone.utc).isoformat()
+    frame["generated_at_utc"] = stamp
+    frame = frame.sort_values(["asset_class", "horizon", "score"], ascending=[True, True, False])
+    frame = frame.drop_duplicates(["asset_class", "horizon", "isin"], keep="first")
+    frame = frame[PRIORITY_STATE_COLUMNS]
+    frame.to_csv(path, sep=";", index=False, encoding="utf-8-sig")
+    counts = frame.groupby(["asset_class", "horizon"]).size().to_dict() if not frame.empty else {}
+    return {
+        "status": "SUCCESS",
+        "rows": int(len(frame)),
+        "path": str(path),
+        "counts": {f"{asset}:{horizon}": int(count) for (asset, horizon), count in counts.items()},
+        "decision_logic_changed": False,
+    }
+
+
 def previous_horizon_candidates(
     root: Path,
     asset_class: str,
     *,
-    decisions_path: str = "outputs/committee_master/COMMITTEE_DECISIONS.csv",
+    decisions_path: str = "state/provenance/HORIZON_REFRESH_PRIORITY_V1.csv",
     limits: dict[str, int] | None = None,
 ) -> tuple[dict[str, set[str]], dict]:
     """Return prior-run top ISINs by horizon without affecting current scores."""
@@ -80,11 +134,11 @@ def assign_refresh_tiers(
         return tiers, {"mode": "NO_TICKER_OR_ISIN", "full_universe_preserved": True}
     clean = frame[[isin_col, ticker_col]].copy()
     clean[ticker_col] = clean[ticker_col].astype(str).str.strip()
-    clean = clean[clean[ticker_col].ne("") & clean[ticker_col].ne("nan")]
+    clean = clean[~clean[ticker_col].isin(["", "nan", "None", "<NA>"])]
     for ticker in clean[ticker_col]:
         tiers[str(ticker)] = "COLD"
 
-    decisions_path = str(policy.get("previous_decisions_path", "outputs/committee_master/COMMITTEE_DECISIONS.csv"))
+    decisions_path = str(policy.get("previous_decisions_path", "state/provenance/HORIZON_REFRESH_PRIORITY_V1.csv"))
     limits = policy.get("candidate_limits", DEFAULT_LIMITS)
     candidates, audit = previous_horizon_candidates(
         root,
