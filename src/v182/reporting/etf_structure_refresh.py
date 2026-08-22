@@ -2,6 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 from datetime import datetime, timezone
 import json
+import os
 import pandas as pd
 
 from v182.io.frames import apply_observations, is_missing
@@ -128,8 +129,6 @@ def run(root: Path=ROOT) -> dict:
     if state_replay_obs:
         df,state_replay_quarantined=apply_observations(df,state_replay_obs)
 
-    # V21.10 structural TER/AUM layer, extended in V21.18 with an explicitly
-    # labelled benchmark name from the same exact-ISIN source response.
     structural_observations=[]
     structural_failures=[]
     structural_metrics={"status":"SKIPPED_PROVIDER_COLUMN_MISSING","requested":0}
@@ -193,6 +192,8 @@ def run(root: Path=ROOT) -> dict:
         "status":"SUCCESS",
         "version":"V21.18_ETF_STRUCTURAL_BENCHMARK_STATE",
         "generated_at_utc":datetime.now(timezone.utc).isoformat(),
+        "github_run_id":str(os.environ.get("GITHUB_RUN_ID") or ""),
+        "github_run_attempt":str(os.environ.get("GITHUB_RUN_ATTEMPT") or ""),
         "source":str(source.relative_to(root)),
         "tickers_requested":len(ticker_to_isin),
         "state_replay":state_replay_diag,
