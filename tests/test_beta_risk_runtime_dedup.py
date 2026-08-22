@@ -50,3 +50,53 @@ def test_economic_overlap_keeps_missing_history_semantics():
     )
     scores = beta_portfolio.economic_overlap_scores(rows, {"A": base})
     assert scores == [0.0, None]
+
+
+def test_portfolio_summary_counts_each_active_isin_once_across_horizons():
+    idx = pd.date_range("2025-01-01", periods=260, freq="B")
+    market = pd.Series(np.sin(np.linspace(0, 20, len(idx))) / 100.0, index=idx)
+    returns = {"A": market, "B": market * 0.7}
+    rows = pd.DataFrame(
+        [
+            {
+                "isin": "A",
+                "horizon": "CT",
+                "decision": "BUY_CANDIDATE",
+                "score": 88.0,
+                "risk_engine_tags": "TECH",
+                "risk_beta_252d": 1.2,
+                "risk_downside_beta_252d": 1.3,
+            },
+            {
+                "isin": "A",
+                "horizon": "MT",
+                "decision": "BUY_CANDIDATE",
+                "score": 82.0,
+                "risk_engine_tags": "TECH",
+                "risk_beta_252d": 1.2,
+                "risk_downside_beta_252d": 1.3,
+            },
+            {
+                "isin": "B",
+                "horizon": "MT",
+                "decision": "HOLD",
+                "score": 80.0,
+                "risk_engine_tags": "HEALTH",
+                "risk_beta_252d": 0.8,
+                "risk_downside_beta_252d": 0.9,
+            },
+        ]
+    )
+
+    summary = beta_portfolio.portfolio_summary(rows, returns, market, [-10.0])
+
+    assert summary["analysis_universe"] == "UNIQUE_ACTIVE_COMMITTEE_ISINS_NOT_HELD_PORTFOLIO"
+    assert summary["is_real_portfolio"] is False
+    assert summary["real_portfolio_fit_status"] == "NOT_AVAILABLE_NO_PORTFOLIO_INPUT"
+    assert summary["source_rows_before_isin_dedup"] == 3
+    assert summary["unique_isins"] == 2
+    assert summary["duplicate_horizon_rows_removed"] == 1
+    assert summary["active_rows"] == 2
+    assert summary["weight_method"] == "EQUAL_WEIGHT_UNIQUE_ISIN_DIAGNOSTIC"
+    assert round(summary["portfolio_beta_252d"], 6) == 1.0
+    assert round(summary["portfolio_downside_beta_252d"], 6) == 1.1
