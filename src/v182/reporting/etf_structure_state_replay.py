@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+import os
 
 import pandas as pd
 
@@ -10,6 +11,7 @@ from v182.io.frames import apply_observations, is_missing, save_master
 from v182.state.etf_structure_state import load_replay_observations, load_state_config
 
 ROOT = Path(__file__).resolve().parents[3]
+REFRESH_AUDIT_RELATIVE = Path("outputs/audit/V21_10_ETF_STRUCTURAL_DATA.json")
 
 
 def _coverage(frame: pd.DataFrame, field: str) -> float:
@@ -18,8 +20,70 @@ def _coverage(frame: pd.DataFrame, field: str) -> float:
     return round(float((~frame[field].apply(is_missing)).mean() * 100.0), 2)
 
 
+def _same_github_run_refresh(root: Path) -> dict | None:
+    """Return the successful structural refresh audit for this exact Actions run.
+
+    GitHub re-runs keep the same run id but increment the attempt number, so both
+    identifiers are matched when available. Local/manual execution has no run id
+    and therefore always follows the historical replay path.
+    """
+    run_id=str(os.environ.get("GITHUB_RUN_ID") or "").strip()
+    if not run_id:
+        return None
+    path=root/REFRESH_AUDIT_RELATIVE
+    if not path.exists():
+        return None
+    try:
+        payload=json.loads(path.read_text(encoding="utf-8"))
+    except (OSError,ValueError,TypeError):
+        return None
+    if payload.get("status") != "SUCCESS" or str(payload.get("github_run_id") or "").strip() != run_id:
+        return None
+    attempt=str(os.environ.get("GITHUB_RUN_ATTEMPT") or "").strip()
+    if attempt and str(payload.get("github_run_attempt") or "").strip() != attempt:
+        return None
+    return payload
+
+
+def _write_already_applied_audit(root: Path, config: dict, refresh: dict) -> dict:
+    coverage=dict(refresh.get("coverage_pct") or {})
+    audit = {
+        "version": config.get("version"),
+        "status": "SUCCESS",
+        "execution_mode": "SKIPPED_ALREADY_APPLIED_CURRENT_GITHUB_RUN",
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "github_run_id": str(os.environ.get("GITHUB_RUN_ID") or ""),
+        "github_run_attempt": str(os.environ.get("GITHUB_RUN_ATTEMPT") or ""),
+        "canonical_universe_count": 102,
+        "state": {
+            "status": "CURRENT_WEEKLY_REFRESH_ALREADY_APPLIED",
+            "refresh_version": refresh.get("version"),
+            "refresh_generated_at_utc": refresh.get("generated_at_utc"),
+            "changed_cells": refresh.get("changed_cells"),
+        },
+        "replay_observations": 0,
+        "merge_quarantined": 0,
+        "coverage_before_pct": coverage,
+        "coverage_after_pct": coverage,
+        "governance": config.get("governance", {}),
+    }
+    audit_path = root / str(config["audit_replay_path"])
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    print(json.dumps(audit, ensure_ascii=False, indent=2, default=str))
+    return audit
+
+
 def run(root: Path = ROOT) -> dict:
     config = load_state_config(root / "config" / "ETF_STRUCTURE_STATE_V21_15.json")
+    refresh=_same_github_run_refresh(root)
+    if refresh is not None:
+        # The weekly refresh already replayed governed state before collecting new
+        # structure, wrote the current enriched master, and persisted a new state
+        # snapshot. Replaying that snapshot immediately again would only create
+        # duplicate KEEP/provenance work for the Friday tactical consumers.
+        return _write_already_applied_audit(root,config,refresh)
+
     master_path = root / "outputs" / "V18.2_PEA_ETF_MASTER_ENRICHED.csv"
     if not master_path.exists() or master_path.stat().st_size == 0:
         raise FileNotFoundError("ETF_STRUCTURE_STATE_REPLAY_REQUIRES_CURRENT_ENRICHED_MASTER")
@@ -39,7 +103,10 @@ def run(root: Path = ROOT) -> dict:
     audit = {
         "version": config.get("version"),
         "status": "SUCCESS" if state_diag.get("status") in {"SUCCESS", "NO_STATE", "NO_ELIGIBLE_STATE_ROWS"} else "STATE_INVALID_FAIL_CLOSED",
+        "execution_mode": "REPLAY_EXECUTED",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "github_run_id": str(os.environ.get("GITHUB_RUN_ID") or ""),
+        "github_run_attempt": str(os.environ.get("GITHUB_RUN_ATTEMPT") or ""),
         "canonical_universe_count": 102,
         "state": state_diag,
         "replay_observations": int(len(observations)),
