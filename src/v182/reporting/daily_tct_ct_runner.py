@@ -10,6 +10,7 @@ from v182.decision.committee_master import decisions_from_scores, load_registry,
 from v182.decision.tct_baseline_v24_1_8 import build_tct_baseline, NORMALIZATION_POLICY
 from v182.decision.tct_timing_exact_v24_1_7 import build_exact_timing_snapshot
 from v182.decision.tct_v24_1_7 import load_tct_config
+from v182.reporting.selected_source_enrichment import attach_master_identity, enrich_selected_rows
 from v182.risk.entry_exit_governance_v21_8 import (
     STATE_RELATIVE_PATH,
     _attach_temporal_state,
@@ -19,7 +20,7 @@ from v182.risk.entry_exit_governance_v21_8 import (
 )
 
 ROOT = Path(__file__).resolve().parents[3]
-VERSION = "DAILY_TCT_CT_V1"
+VERSION = "DAILY_TCT_CT_V1_SOURCE_CONTRACT_V21_15"
 
 
 def _read(path: Path) -> pd.DataFrame:
@@ -38,7 +39,8 @@ def _android_summary(governed: pd.DataFrame, generated_at: str) -> str:
         "",
         f"Généré UTC : {generated_at}",
         "Périmètre : ACTION TCT + ACTION CT + ETF CT. L'horizon MT et les modules lourds restent hebdomadaires.",
-        "Aucun ordre réel. V21.8 est une aide à la décision uniquement.",
+        "Après présélection, Boursorama enrichit prioritairement les Actions et Investing confirme le signal technique multi-horizon.",
+        "Ces sources post-sélection ne modifient ni score, ni seuil, ni ordre réel.",
         "",
     ]
     if priority.empty:
@@ -61,6 +63,21 @@ def _android_summary(governed: pd.DataFrame, generated_at: str) -> str:
             lines.append(f"- **{asset} {name}** — score {score_txt} — {decision} — entrée {entry} — position {position}")
             if reasons:
                 lines.append(f"  - V21.8 : {reasons}")
+            investing = str(row.get("investing_horizon_signal") or "").strip()
+            daily = str(row.get("investing_daily_signal") or "").strip()
+            weekly = str(row.get("investing_weekly_signal") or "").strip()
+            monthly = str(row.get("investing_monthly_signal") or "").strip()
+            if investing or daily or weekly or monthly:
+                lines.append(
+                    f"  - Investing : horizon={investing or 'N/A'} | jour={daily or 'N/A'} | semaine={weekly or 'N/A'} | mois={monthly or 'N/A'}"
+                )
+            b_consensus = str(row.get("boursorama_consensus") or "").strip()
+            b_target = pd.to_numeric(pd.Series([row.get("boursorama_target_median")]), errors="coerce").iloc[0]
+            b_upside = pd.to_numeric(pd.Series([row.get("boursorama_target_upside_pct")]), errors="coerce").iloc[0]
+            if b_consensus or pd.notna(b_target) or pd.notna(b_upside):
+                target_txt = "N/A" if pd.isna(b_target) else f"{float(b_target):.2f}"
+                upside_txt = "N/A" if pd.isna(b_upside) else f"{float(b_upside):.1f}%"
+                lines.append(f"  - Boursorama : consensus={b_consensus or 'N/A'} | objectif médian={target_txt} | potentiel={upside_txt}")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -102,6 +119,9 @@ def run(root: Path = ROOT) -> dict:
     decisions["generated_at_utc"] = generated_at
     decisions["live_orders_enabled"] = False
     decisions["daily_tactical_scope"] = True
+
+    source_input = attach_master_identity(decisions, actions, etfs)
+    decisions, source_context = enrich_selected_rows(source_input, root, profile="DAILY_TCT_CT")
     decisions.to_csv(outdir / "DAILY_TCT_CT_DECISIONS.csv", sep=";", index=False, encoding="utf-8-sig")
 
     state_path = root / STATE_RELATIVE_PATH
@@ -121,6 +141,7 @@ def run(root: Path = ROOT) -> dict:
         "scope": ["ACTION_TCT", "ACTION_CT", "ETF_CT"],
         "rows": int(len(governed)),
         "rows_by_asset_horizon": governed.groupby(["asset_class", "horizon"], dropna=False).size().reset_index(name="count").to_dict("records"),
+        "selected_source_context": source_context,
         "tct_baseline": {
             "universe_rows": baseline.universe_rows,
             "ranked_rows": baseline.ranked_rows,
@@ -150,6 +171,7 @@ def run(root: Path = ROOT) -> dict:
             "decisions": "outputs/daily_tct_ct/DAILY_TCT_CT_DECISIONS.csv",
             "entry_exit": "outputs/daily_tct_ct/DAILY_TCT_CT_V21_8.csv",
             "android": "outputs/mobile/ANDROID_DAILY_TCT_CT.md",
+            "source_context": "outputs/source_context/DAILY_TCT_CT_SOURCE_OBSERVATIONS.csv",
         },
     }
     (auditdir / "DAILY_TCT_CT_AUDIT.json").write_text(

@@ -7,6 +7,7 @@ import os
 import sys
 
 from v182.io.frames import load_master
+from v182.reporting.selected_source_enrichment import attach_master_identity, enrich_selected_rows
 from v182.reporting.waves import resolve_etf_tickers
 from v182.sources.yfinance_bulk import download_history
 from v182.features.etf_mt_v2081 import load_histories_from_cache, write_outputs
@@ -14,6 +15,22 @@ from v182.features.etf_mt_history_integrity import sanitize_histories, score_sna
 from v182.features.etf_mt_v2082_dynamic import apply_dynamic_weighting
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def _attach_selected_source_context(dynamic_snapshot, etf_with_tickers, root: Path):
+    if "dynamic_selected" not in dynamic_snapshot:
+        return dynamic_snapshot, {"status":"NO_DYNAMIC_SELECTION_COLUMN","decision_influence":False,"score_influence":0.0}
+    selected=dynamic_snapshot[dynamic_snapshot["dynamic_selected"].fillna(False).astype(bool)].copy()
+    if selected.empty:
+        return dynamic_snapshot, {"status":"NO_PRESELECTED_ROWS","decision_influence":False,"score_influence":0.0}
+    selected["asset_class"]="ETF"; selected["horizon"]="MT"; selected["decision"]="SHADOW_CANDIDATE"
+    selected=attach_master_identity(selected,None,etf_with_tickers)
+    enriched,context=enrich_selected_rows(selected,root,profile="ETF_MT")
+    source_columns=[c for c in enriched.columns if c.startswith("investing_") or c.startswith("boursorama_")]
+    if not source_columns:
+        return dynamic_snapshot,context
+    context_rows=enriched[["isin"]+source_columns].drop_duplicates("isin")
+    return dynamic_snapshot.merge(context_rows,on="isin",how="left"),context
 
 
 def run(
@@ -51,6 +68,7 @@ def run(
     strict_snapshot,strict_summary=score_snapshot_integrity(histories,etf_with_tickers,mt_cfg); run_id=os.environ.get("V2081_RUN_ID") or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"); strict_summary["run_id"]=run_id; strict_summary["download"]=download_summary; strict_summary["status"]="ACTIVE_REFERENCE_SCORING_NO_REAL_ORDERS"; strict_paths=write_outputs(strict_snapshot,strict_summary,outputs); strict_summary["outputs"]=strict_paths
 
     dynamic_snapshot,dynamic_summary=apply_dynamic_weighting(strict_snapshot,scoring_histories,etf_with_tickers,mt_cfg,dynamic_cfg); dynamic_snapshot.loc[dynamic_snapshot["dynamic_selected"].fillna(False).astype(bool),"dynamic_decision"]="SHADOW_CANDIDATE"; dynamic_summary["promotion_allowed"]=False; dynamic_summary["real_orders_allowed"]=False; dynamic_summary["history_session_policy"]="OBSERVED_NUMERIC_CLOSE_ONLY"; dynamic_summary["run_id"]=run_id; dynamic_summary["download"]=strict_summary["download"]; dynamic_summary["strict_reference"]={"version":strict_summary.get("version"),"scorable_etfs":strict_summary.get("scorable_etfs"),"selected":strict_summary.get("selected"),"historical_attribution":"90.91% OOS 2021-2023 exact complete-38 only","history_session_policy":strict_summary.get("history_session_policy"),"real_orders_allowed":False}
+    dynamic_snapshot,source_context=_attach_selected_source_context(dynamic_snapshot,etf_with_tickers,root); dynamic_summary["selected_source_context"]=source_context; dynamic_summary["source_context_score_influence"]=0.0; dynamic_summary["source_context_weights_unchanged"]=True
     outputs.mkdir(parents=True,exist_ok=True); dynamic_csv=outputs/"V20.8.2_ETF_MT_DYNAMIC_RANKING.csv"; dynamic_json=outputs/"V20.8.2_ETF_MT_DYNAMIC_SUMMARY.json"; dynamic_snapshot.to_csv(dynamic_csv,sep=";",index=False,encoding="utf-8-sig"); dynamic_json.write_text(json.dumps(dynamic_summary,ensure_ascii=False,indent=2,default=str),encoding="utf-8"); dynamic_summary["outputs"]={"ranking_csv":str(dynamic_csv),"summary_json":str(dynamic_json),"strict_reference_ranking":strict_paths["ranking_csv"],"strict_reference_summary":strict_paths["summary_json"]}
 
     print(f"ETF MT V20.8.2 — {dynamic_summary['scorable_etfs']} ETF scorables après renormalisation, regime_allowed={dynamic_summary['regime']['allowed']}, selected={len(dynamic_summary['selected'])}; V20.8.1 strict conservée pour attribution historique")

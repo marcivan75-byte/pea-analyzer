@@ -13,8 +13,10 @@ import pandas as pd
 
 from v182.decision.action_mt_decision_v1 import ActionCandidate, MarketRegime, select_action_mt_candidates
 from v182.features.action_mt_v1 import ENGINE_VERSION, compute_action_mt_snapshot
+from v182.reporting.selected_source_enrichment import attach_master_identity, enrich_selected_rows
 from v182.sources.action_mt_cache_v1 import ActionMTHistoryCache, write_cache_manifest
 
+ROOT = Path(__file__).resolve().parents[3]
 
 CONTEXT_FIELDS = (
     "quality_score", "morningstar_action_score", "profitability_score", "roe_score",
@@ -72,6 +74,22 @@ def _market_regime(rows: pd.DataFrame, histories: dict[str, pd.DataFrame]) -> Ma
     return MarketRegime(breadth, median1, median6, market_above)
 
 
+def _attach_selected_source_context(frame: pd.DataFrame, master: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    selected = frame[pd.to_numeric(frame.get("selected_rank"), errors="coerce").notna()].copy()
+    if selected.empty:
+        return frame, {"status": "NO_PRESELECTED_ROWS", "decision_influence": False, "score_influence": 0.0}
+    selected["asset_class"] = "ACTION"
+    selected["horizon"] = "MT"
+    selected["decision"] = "SHADOW_CANDIDATE"
+    selected = attach_master_identity(selected, master, None)
+    enriched, context = enrich_selected_rows(selected, ROOT, profile="ACTION_MT")
+    source_columns = [c for c in enriched.columns if c.startswith("investing_") or c.startswith("boursorama_")]
+    if not source_columns:
+        return frame, context
+    context_rows = enriched[["isin"] + source_columns].drop_duplicates("isin")
+    return frame.merge(context_rows, on="isin", how="left"), context
+
+
 def run(master: pd.DataFrame, cfg: dict, cache: ActionMTHistoryCache, output_dir: Path, now: datetime | None = None) -> dict:
     started = perf_counter()
     now = now or datetime.now(timezone.utc)
@@ -117,6 +135,7 @@ def run(master: pd.DataFrame, cfg: dict, cache: ActionMTHistoryCache, output_dir
     committee = select_action_mt_candidates(candidates, regime, cfg)
     selected = {candidate.isin: rank for rank, candidate in enumerate(committee.selected, start=1)}
     frame["selected_rank"] = frame["isin"].map(selected)
+    frame, source_context = _attach_selected_source_context(frame, master)
     frame["version_engine"] = frame.get("version_engine", ENGINE_VERSION)
     frame["config_sha256"] = config_fingerprint(cfg)
     frame["snapshot_fingerprint"] = frame.apply(lambda row: snapshot_fingerprint(row.to_dict()), axis=1)
@@ -135,12 +154,16 @@ def run(master: pd.DataFrame, cfg: dict, cache: ActionMTHistoryCache, output_dir
         "universe_rows": int(len(eligible)),
         "successful_rows": int((frame["status"] == "SUCCESS_SHADOW").sum()),
         "selected_isins": [candidate.isin for candidate in committee.selected],
+        "selected_source_context": source_context,
         "abstention_reason": committee.abstention_reason,
         "rejected_counts": committee.rejected_counts,
         "regime": regime.__dict__,
         "cache": cache.manifest(),
         "pit_duplicates_ignored": duplicates,
         "duration_seconds": perf_counter() - started,
+        "weights_unchanged": True,
+        "thresholds_unchanged": True,
+        "source_context_score_influence": 0.0,
     }
     (output_dir / "ACTION_MT_RUN_REPORT.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (output_dir / "ACTION_MT_COMMITTEE.txt").write_text(
@@ -167,4 +190,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

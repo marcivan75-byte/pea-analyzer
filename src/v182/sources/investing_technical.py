@@ -1,0 +1,371 @@
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from hashlib import sha256
+from pathlib import Path
+import json
+import math
+import re
+import unicodedata
+from typing import Callable
+
+from bs4 import BeautifulSoup
+import pandas as pd
+
+from v182.sources.rate_limit import StartRateLimiter
+
+INVESTING_BASE = "https://www.investing.com"
+CACHE_VERSION = "INVESTING_TECHNICAL_V1"
+SIGNAL_SCORE = {"STRONG_SELL": -2, "SELL": -1, "NEUTRAL": 0, "BUY": 1, "STRONG_BUY": 2}
+
+
+@dataclass(frozen=True)
+class InvestingResult:
+    observations: list[dict]
+    failures: list[dict]
+    metrics: dict
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _parse_utc(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _age_hours(value: object, now: datetime) -> float:
+    parsed = _parse_utc(value)
+    if parsed is None:
+        return math.inf
+    return max(0.0, (now - parsed).total_seconds() / 3600.0)
+
+
+def _visible_text(html: str) -> str:
+    try:
+        return " ".join(BeautifulSoup(html, "lxml").stripped_strings)
+    except Exception:
+        return ""
+
+
+def _canon_signal(value: str) -> str | None:
+    text = " ".join(str(value or "").strip().upper().replace("_", " ").split())
+    aliases = {
+        "STRONG SELL": "STRONG_SELL",
+        "SELL": "SELL",
+        "NEUTRAL": "NEUTRAL",
+        "BUY": "BUY",
+        "STRONG BUY": "STRONG_BUY",
+        "VENTE FORTE": "STRONG_SELL",
+        "VENTE": "SELL",
+        "NEUTRE": "NEUTRAL",
+        "ACHAT": "BUY",
+        "ACHAT FORT": "STRONG_BUY",
+        "VENDI ADESSO": "STRONG_SELL",
+        "VENDI": "SELL",
+        "NEUTRALE": "NEUTRAL",
+        "COMPRA": "BUY",
+        "COMPRA ADESSO": "STRONG_BUY",
+    }
+    return aliases.get(text)
+
+
+def parse_technical_summary_html(html: str) -> dict[str, object]:
+    """Extract Investing daily/weekly/monthly technical-summary recommendations.
+
+    The source exposes one of five states. We preserve the source verdict verbatim
+    as a canonical enum and add a small ordinal solely for comparison/reporting;
+    this module never changes a model score or threshold.
+    """
+    text = _visible_text(html)
+    if not text:
+        return {}
+    state_pattern = r"(Strong Sell|Strong Buy|Sell|Buy|Neutral|Vente Forte|Achat Fort|Vente|Achat|Neutre|Vendi Adesso|Compra Adesso|Vendi|Compra|Neutrale)"
+    patterns = {
+        "daily": rf"(?:Daily|Journalier|Giornaliero)\s+{state_pattern}",
+        "weekly": rf"(?:Weekly|Hebdomadaire|Settimanale)\s+{state_pattern}",
+        "monthly": rf"(?:Monthly|Mensuel|Mensile)\s+{state_pattern}",
+    }
+    fields: dict[str, object] = {}
+    for timeframe, pattern in patterns.items():
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        signal = _canon_signal(match.group(1))
+        if signal is None:
+            continue
+        fields[f"investing_{timeframe}_signal"] = signal
+        fields[f"investing_{timeframe}_score"] = SIGNAL_SCORE[signal]
+    if all(f"investing_{tf}_signal" in fields for tf in ("daily", "weekly", "monthly")):
+        fields["investing_technical_complete"] = True
+    return fields
+
+
+def horizon_signal(fields: dict[str, object], horizon: str) -> tuple[object | None, object | None]:
+    tf = {"TCT": "daily", "CT": "weekly", "MT": "monthly"}.get(str(horizon or "").upper())
+    if tf is None:
+        return None, None
+    return fields.get(f"investing_{tf}_signal"), fields.get(f"investing_{tf}_score")
+
+
+def _slug(value: object) -> str:
+    text = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii").lower()
+    # Remove legal-form suffix words, but preserve semantic words such as
+    # "Holding" and "Group" because they are part of real Investing slugs.
+    text = re.sub(r"\b(sa|se|nv|ag|plc|spa|s\.p\.a|inc|ltd|limited)\b", " ", text)
+    text = text.replace("&", " and ")
+    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+    return re.sub(r"-+", "-", text)
+
+
+def _ticker_market_slug(ticker: str) -> str | None:
+    ticker = str(ticker or "").strip().upper()
+    if "." not in ticker:
+        return None
+    base, suffix = ticker.rsplit(".", 1)
+    market = {"PA": "paris", "AS": "amsterdam", "BR": "brussels", "MC": "madrid", "MI": "milan", "DE": "xetra", "LS": "lisbon"}.get(suffix)
+    if not market or not re.fullmatch(r"[A-Z0-9-]{1,20}", base):
+        return None
+    return f"{base.lower()}-{market}"
+
+
+def _candidate_base_urls(row: object) -> list[str]:
+    getter = row.get if hasattr(row, "get") else lambda key, default=None: default
+    asset = str(getter("asset_class", "ACTION") or "ACTION").upper()
+    section = "etfs" if asset == "ETF" else "equities"
+    explicit = str(getter("investing_url", "") or getter("investing_technical_url", "") or "").strip()
+    urls: list[str] = []
+    if explicit:
+        base = explicit.split("?", 1)[0].rstrip("/")
+        if base.endswith("-technical"):
+            base = base[: -len("-technical")]
+        if base.startswith("https://www.investing.com/") or base.startswith("https://fr.investing.com/"):
+            path = base.split(".com", 1)[1]
+            urls.append(f"{INVESTING_BASE}{path}")
+    ticker_market = _ticker_market_slug(str(getter("yahoo_ticker", "") or ""))
+    if asset == "ETF" and ticker_market:
+        urls.append(f"{INVESTING_BASE}/{section}/{ticker_market}")
+    for key in ("name", "long_name_yf"):
+        candidate = _slug(getter(key, ""))
+        if candidate:
+            urls.append(f"{INVESTING_BASE}/{section}/{candidate}")
+    if asset != "ETF" and ticker_market:
+        urls.append(f"{INVESTING_BASE}/{section}/{ticker_market}")
+    dedup: list[str] = []
+    for url in urls:
+        if url not in dedup:
+            dedup.append(url)
+    return dedup[:4]
+
+
+def _load(path: Path, version: str) -> dict:
+    if not path.exists():
+        return {"version": version, "entries": {}}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {"version": version, "entries": {}}
+    if data.get("version") != version or not isinstance(data.get("entries"), dict):
+        return {"version": version, "entries": {}}
+    return data
+
+
+def _save(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _default_fetcher(url: str, *, timeout: float):
+    import requests
+
+    return requests.get(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; PEA-Analyzer/21.15; selected-public-context)",
+            "Accept-Language": "en-US,en;q=0.8",
+        },
+        timeout=timeout,
+        allow_redirects=True,
+    )
+
+
+def _resolve_base_url(
+    row: object,
+    isin: str,
+    *,
+    fetcher: Callable[..., object],
+    limiter: StartRateLimiter,
+    timeout_seconds: float,
+) -> tuple[str | None, str | None]:
+    for url in _candidate_base_urls(row):
+        try:
+            limiter.wait()
+            response = fetcher(url, timeout=timeout_seconds)
+            if hasattr(response, "raise_for_status"):
+                response.raise_for_status()
+            html = str(getattr(response, "text", "") or "")
+            if isin and isin.upper() not in html.upper():
+                continue
+            final = str(getattr(response, "url", url) or url).split("?", 1)[0].rstrip("/")
+            if final.endswith("-technical"):
+                final = final[: -len("-technical")]
+            return final, sha256(html.encode("utf-8", errors="replace")).hexdigest()
+        except Exception:
+            continue
+    return None, None
+
+
+def collect_technical_context_cached(
+    rows: pd.DataFrame,
+    cache_path: str | Path,
+    mapping_path: str | Path,
+    *,
+    refresh_budget: int = 40,
+    ttl_hours: float = 6.0,
+    request_start_interval_seconds: float = 1.0,
+    timeout_seconds: float = 15.0,
+    max_workers: int = 4,
+    fetcher: Callable[..., object] | None = None,
+    now: datetime | None = None,
+) -> InvestingResult:
+    current = (now or _now_utc()).astimezone(timezone.utc)
+    cache_file = Path(cache_path)
+    mapping_file = Path(mapping_path)
+    cache = _load(cache_file, CACHE_VERSION)
+    mappings = _load(mapping_file, "INVESTING_URL_MAP_V1")
+    fetch = fetcher or _default_fetcher
+    limiter = StartRateLimiter(request_start_interval_seconds)
+    failures: list[dict] = []
+
+    unique = rows.drop_duplicates("isin").copy() if "isin" in rows else pd.DataFrame()
+    due: list[tuple[str, object]] = []
+    for _, row in unique.iterrows():
+        isin = str(row.get("isin") or "").strip()
+        if not isin:
+            continue
+        entry = cache["entries"].get(isin)
+        if entry is None or _age_hours(entry.get("fetched_at_utc"), current) >= ttl_hours:
+            due.append((isin, row))
+    due = due[: max(0, int(refresh_budget))]
+
+    def worker(item: tuple[str, object]) -> tuple[str, dict | None, dict | None]:
+        isin, row = item
+        mapped = mappings["entries"].get(isin, {})
+        base_url = str(mapped.get("base_url") or "").strip()
+        if not base_url:
+            base_url, overview_hash = _resolve_base_url(
+                row,
+                isin,
+                fetcher=fetch,
+                limiter=limiter,
+                timeout_seconds=timeout_seconds,
+            )
+            if not base_url:
+                return isin, None, {"isin": isin, "source": "Investing.com", "reason": "NO_VALIDATED_PUBLIC_URL"}
+            mappings["entries"][isin] = {
+                "base_url": base_url,
+                "validated_isin": isin,
+                "resolved_at_utc": current.isoformat(),
+                "overview_sha256": overview_hash,
+            }
+        technical_url = base_url.rstrip("/") + "-technical"
+        try:
+            limiter.wait()
+            response = fetch(technical_url, timeout=timeout_seconds)
+            if hasattr(response, "raise_for_status"):
+                response.raise_for_status()
+            html = str(getattr(response, "text", "") or "")
+            fields = parse_technical_summary_html(html)
+            if not fields:
+                return isin, None, {"isin": isin, "source": "Investing.com", "reason": "NO_TECHNICAL_SUMMARY", "url": technical_url}
+            return isin, {
+                "fetched_at_utc": current.isoformat(),
+                "source_url": technical_url,
+                "fields": fields,
+                "page_sha256": sha256(html.encode("utf-8", errors="replace")).hexdigest(),
+            }, None
+        except Exception as exc:
+            return isin, None, {"isin": isin, "source": "Investing.com", "reason": type(exc).__name__, "detail": str(exc)[:160], "url": technical_url}
+
+    workers = max(1, min(int(max_workers), len(due))) if due else 0
+    success = 0
+    if workers:
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="investing-selected") as pool:
+            futures = [pool.submit(worker, item) for item in due]
+            for future in as_completed(futures):
+                isin, entry, failure = future.result()
+                if failure:
+                    failures.append(failure)
+                    continue
+                cache["entries"][isin] = entry
+                success += 1
+
+    cache["updated_at_utc"] = current.isoformat()
+    cache["policy"] = {
+        "selected_only": True,
+        "refresh_budget": int(refresh_budget),
+        "ttl_hours": float(ttl_hours),
+        "request_start_interval_seconds": float(request_start_interval_seconds),
+        "max_workers": int(max_workers),
+        "raw_html_persisted": False,
+        "decision_influence": False,
+    }
+    mappings["updated_at_utc"] = current.isoformat()
+    _save(cache_file, cache)
+    _save(mapping_file, mappings)
+
+    observations: list[dict] = []
+    usable = 0
+    for _, row in rows.iterrows():
+        isin = str(row.get("isin") or "").strip()
+        entry = cache["entries"].get(isin)
+        if not entry or _age_hours(entry.get("fetched_at_utc"), current) > max(ttl_hours * 4.0, 48.0):
+            continue
+        usable += 1
+        fields = dict(entry.get("fields") or {})
+        signal, score = horizon_signal(fields, str(row.get("horizon") or ""))
+        if signal is not None:
+            fields["investing_horizon_signal"] = signal
+            fields["investing_horizon_score"] = score
+        for field, value in fields.items():
+            observations.append({
+                "isin": isin,
+                "asset_class": str(row.get("asset_class") or ""),
+                "horizon": str(row.get("horizon") or ""),
+                "field": field,
+                "value": value,
+                "source": "Investing.com public technical summary",
+                "source_url": entry.get("source_url"),
+                "collected_at": entry.get("fetched_at_utc"),
+                "validation_status": "POST_SELECTION_CONTEXT_ONLY",
+            })
+
+    return InvestingResult(
+        observations=observations,
+        failures=failures,
+        metrics={
+            "requested_rows": int(len(rows)),
+            "unique_instruments": int(len(unique)),
+            "live_refresh_requested": int(len(due)),
+            "live_refresh_success": int(success),
+            "usable_rows": int(usable),
+            "observations": int(len(observations)),
+            "selected_only": True,
+            "decision_influence": False,
+            "score_influence": 0.0,
+            "raw_html_persisted": False,
+        },
+    )
