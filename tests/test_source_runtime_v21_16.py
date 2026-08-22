@@ -11,6 +11,7 @@ from v182.reporting.selected_source_enrichment import (
     _investing_budgeted_rows,
     _migrate_cache_version,
     _pivot,
+    select_preselected_rows,
 )
 
 
@@ -26,6 +27,16 @@ def test_action_cache_v1_to_v2_migration_preserves_entries(tmp_path: Path):
     migrated = json.loads(path.read_text(encoding="utf-8"))
     assert migrated["version"] == "BOURSORAMA_SELECTED_V2"
     assert migrated["entries"]["FR1"] == original_entry
+
+
+def test_source_budget_prioritizes_buy_before_higher_scored_watch():
+    rows = pd.DataFrame([
+        {"isin": "WATCH_HIGH", "decision": "WATCH", "score": 99.0},
+        {"isin": "BUY_LOWER", "decision": "BUY_CANDIDATE", "score": 75.0},
+        {"isin": "REVIEW_HIGH", "decision": "REVIEW", "score": 100.0},
+    ])
+    selected = select_preselected_rows(rows, max_unique_instruments=1)
+    assert list(selected["isin"].unique()) == ["BUY_LOWER"]
 
 
 def test_investing_resolution_budget_never_excludes_already_known_isins(tmp_path: Path):
