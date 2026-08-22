@@ -55,10 +55,11 @@ def _clean(value, default: str = "n/a") -> str:
     if value is None:
         return default
     try:
-        if pd.isna(value):
-            return default
+        missing = bool(pd.isna(value))
     except (TypeError, ValueError):
-        pass
+        missing = False
+    if missing:
+        return default
     text = str(value).strip()
     return text if text and text.lower() != "nan" else default
 
@@ -402,7 +403,11 @@ def _write_word_report(path: Path, context: pd.DataFrame, detail: pd.DataFrame) 
     frame = frame.sort_values(["_priority", "_score"], ascending=[True, False])
 
     document.add_heading("Synthèse de la sélection", level=1)
-    summary = frame.groupby(["asset_class", "horizon", "decision"], dropna=False).size().reset_index(name="count")
+    summary = (
+        frame.groupby(["asset_class", "horizon", "decision"], dropna=False)
+        .size()
+        .reset_index(name="count")
+    )
     for item in summary.itertuples():
         document.add_paragraph(
             f"{item.asset_class} — {item.horizon} — {item.decision} : {item.count}",
@@ -432,7 +437,7 @@ def _write_word_report(path: Path, context: pd.DataFrame, detail: pd.DataFrame) 
 
         document.add_paragraph(_decision_comment(row, detail))
 
-        document.add_paragraph("Facteurs les plus contributifs :").runs[0].bold = True
+        document.add_paragraph("Facteurs les plus contributifs :", style=None).runs[0].bold = True
         positive = _factor_frame(detail, isin, horizon, True, 5)
         if positive.empty:
             document.add_paragraph("Aucun facteur actif documenté.", style="List Bullet")
@@ -440,20 +445,22 @@ def _write_word_report(path: Path, context: pd.DataFrame, detail: pd.DataFrame) 
             for factor in positive.itertuples():
                 contribution = _num(getattr(factor, "weighted_contribution_points", None))
                 criterion_score = _num(getattr(factor, "criterion_score_0_100", None))
-                effective_weight = _num(getattr(factor, "effective_weight_pct", None)) or 0.0
                 source = _clean(getattr(factor, "source", None), "source non publiée")
                 as_of = _clean(getattr(factor, "as_of", None), "date n/a")
-                text = (
-                    f"{factor.criterion} — score critère {criterion_score:.1f}/100"
-                    if criterion_score is not None
-                    else f"{factor.criterion} — score critère n/a"
+                document.add_paragraph(
+                    f"{factor.criterion} — score critère "
+                    f"{criterion_score:.1f}/100" if criterion_score is not None else f"{factor.criterion} — score critère n/a",
+                    style="List Bullet",
                 )
-                p = document.add_paragraph(text, style="List Bullet")
-                p.add_run(f" ; poids effectif {effective_weight:.2f}%")
-                p.add_run(f" ; contribution {contribution:.2f} pt" if contribution is not None else " ; contribution n/a")
+                p = document.paragraphs[-1]
+                p.add_run(
+                    f" ; poids effectif {_num(getattr(factor, 'effective_weight_pct', None)) or 0.0:.2f}%"
+                    f" ; contribution {contribution:.2f} pt" if contribution is not None
+                    else f" ; poids effectif {_num(getattr(factor, 'effective_weight_pct', None)) or 0.0:.2f}% ; contribution n/a"
+                )
                 p.add_run(f" ; preuve {source}, {as_of}")
 
-        document.add_paragraph("Critères les moins favorables / points à surveiller :").runs[0].bold = True
+        document.add_paragraph("Critères les moins favorables / points à surveiller :", style=None).runs[0].bold = True
         weak = _factor_frame(detail, isin, horizon, False, 5)
         if weak.empty:
             document.add_paragraph("Aucun critère actif documenté.", style="List Bullet")
@@ -468,7 +475,7 @@ def _write_word_report(path: Path, context: pd.DataFrame, detail: pd.DataFrame) 
                 )
 
         warnings = _warnings(row)
-        document.add_paragraph("Alertes de contexte :").runs[0].bold = True
+        document.add_paragraph("Alertes de contexte :", style=None).runs[0].bold = True
         if warnings:
             for warning in warnings:
                 document.add_paragraph(warning, style="List Bullet")
