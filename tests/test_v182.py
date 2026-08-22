@@ -108,8 +108,8 @@ def test_wave6_etf_info_maps_dividend_yield_only():
     from v182.reporting.waves import wave6_etf_info
     etf_df = pd.DataFrame([{"isin": "FR0013380607", "yahoo_ticker": "CAC.PA"}])
     cfg = {"yfinance": {"info_delay_seconds": 0}}
-    fake_obs = [{"ticker": "CAC.PA", "field": "dividend_yield_pct", "value": 1.8, "source": "yfinance"}]
-    with patch("v182.reporting.waves.collect_info", return_value=(fake_obs, [])):
+    fake_obs = [{"ticker": "CAC.PA", "field": "dividend_yield_pct", "value": 1.8, "source": "yfinance", "cache_state": "LIVE_REFRESH"}]
+    with patch("v182.reporting.waves.collect_info_cached", return_value=(fake_obs, [], {})):
         obs, _ = wave6_etf_info(etf_df, cfg)
     assert {o["field"] for o in obs} == {"dividend_yield_pct", "dividend_data_status"}
 
