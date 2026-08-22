@@ -16,7 +16,8 @@
     "NO_FIXED_STOP_LOSS_PROMOTED",
     "HOLDOUT_LOCKED",
     "NO_AUTOMATIC_RETUNING",
-    "SECONDARY_NEWS_PROVIDER_CONTRACT_INACTIVE_UNTIL_QUALIFIED"
+    "SECONDARY_NEWS_PROVIDER_CONTRACT_INACTIVE_UNTIL_QUALIFIED",
+    "POSTMARKET_RUNTIME_SINGLE_PROCESS_NO_DECISION_CHANGE"
   ],
   "files": [
     "config/TCT_V24_1_7_SHADOW.json",
@@ -49,6 +50,7 @@
     "src/v182/reporting/tct_v24_4_pit_validator.py",
     "src/v182/reporting/tct_v24_4_pit_validator_runtime.py",
     "src/v182/reporting/tct_v24_4_2_pit_validator.py",
+    "src/v182/reporting/tct_postmarket_bundle_run.py",
     "src/v182/backtest/tct_v24_4_2_weight_calibration.py",
     ".github/workflows/committee_tct_ct_daily.yml",
     ".github/workflows/tct_next_session_context.yml",
@@ -56,6 +58,7 @@
     "docs/TCT_CDC_V24_4_2_FINAL.md",
     "docs/TCT_REFERENTIEL_V24_4_2_FINAL.md",
     "docs/PROCESS_REFERENCE_V21_8_1_TCT_V24_4_2_ADDENDUM.md",
+    "docs/PIPELINE_RUNTIME_V21_13_12.md",
     "docs/TCT_RELEASE_MANIFEST_V24_4_2.json",
     "tests/fixtures/tct_v24_4_2_catalyst_golden_set.json",
     "tests/test_tct_next_session_workflow_v24_4.py",
@@ -67,6 +70,7 @@
     "tests/test_tct_v24_4_2_process_reference.py",
     "tests/test_tct_v24_4_pit_lineage_workflows.py",
     "tests/test_tct_v24_4_pit_workflow.py",
+    "tests/test_tct_postmarket_bundle_runtime_v21_13_12.py",
     "scripts/build_tct_package_v24_4_2.py",
     "tests/test_tct_v24_4_2_release_package.py"
   ],
