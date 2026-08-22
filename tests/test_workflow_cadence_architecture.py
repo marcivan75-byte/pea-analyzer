@@ -10,6 +10,7 @@ def _text(name: str) -> str:
 def test_daily_workflow_runs_collection_and_only_tactical_decision_runner():
     source = _text("committee_tct_ct_daily.yml")
     assert 'cron: "15 18 * * 1-5"' in source
+    assert "PEA_RUN_PROFILE: DAILY_TACTICAL" in source
     assert "python -m v182.reporting.run" in source
     assert "python -m v182.reporting.daily_tct_ct_runner" in source
     assert "v182.reporting.unified_runner" not in source
@@ -37,3 +38,17 @@ def test_standalone_etf_mt_is_manual_only():
     assert "workflow_dispatch:" in trigger_block
     assert "schedule:" not in trigger_block
     assert "cron:" not in trigger_block
+
+
+def test_fund_flows_schedule_is_owned_only_by_weekly_committee():
+    standalone = _text("etf_fund_flows_daily.yml")
+    trigger_block = standalone.split("permissions:", 1)[0]
+    assert "workflow_dispatch:" in trigger_block
+    assert "schedule:" not in trigger_block
+    assert "cron:" not in trigger_block
+    assert "run_validation:" in standalone
+    assert "if: ${{ inputs.run_validation }}" in standalone
+
+    weekly = _text("committee_master_daily.yml")
+    assert 'cron: "45 18 * * 5"' in weekly
+    assert "python -m v182.reporting.etf_fund_flows_shadow_run" in weekly

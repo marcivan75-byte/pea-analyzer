@@ -1,6 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
 import json
 import pandas as pd
 import numpy as np
@@ -99,9 +100,16 @@ def _history_frames(cache_dir: str) -> list[pd.DataFrame]:
     return frames
 
 
-def wave3_derived_features(cache_dir: str, ticker_isin_map: dict[str, str], universe: str) -> list[dict]:
+def wave3_derived_features(
+    cache_dir: str,
+    ticker_isin_map: dict[str, str],
+    universe: str,
+    *,
+    history_frames: list[pd.DataFrame] | None = None,
+) -> list[dict]:
     observations=[]; per_ticker_perf_1y={}; per_ticker_perf_10d={}; per_ticker_indicators={}
-    for frame in _history_frames(cache_dir):
+    frames=_history_frames(cache_dir) if history_frames is None else history_frames
+    for frame in frames:
         if not hasattr(frame.columns,"levels"): continue
         for ticker in frame.columns.get_level_values(0).unique():
             isin=ticker_isin_map.get(ticker)
@@ -120,9 +128,16 @@ def wave3_derived_features(cache_dir: str, ticker_isin_map: dict[str, str], univ
     return observations
 
 
-def wave3_etf_beta3y(cache_dir: str, ticker_isin_map: dict[str, str], min_sessions: int = 252) -> list[dict]:
+def wave3_etf_beta3y(
+    cache_dir: str,
+    ticker_isin_map: dict[str, str],
+    min_sessions: int = 252,
+    *,
+    history_frames: list[pd.DataFrame] | None = None,
+) -> list[dict]:
     close_by_ticker={}
-    for frame in _history_frames(cache_dir):
+    frames=_history_frames(cache_dir) if history_frames is None else history_frames
+    for frame in frames:
         if not hasattr(frame.columns,"levels"): continue
         for ticker in frame.columns.get_level_values(0).unique():
             if ticker not in ticker_isin_map: continue
@@ -140,6 +155,56 @@ def wave3_etf_beta3y(cache_dir: str, ticker_isin_map: dict[str, str], min_sessio
         beta=float(pair.iloc[:,0].cov(pair.iloc[:,1])/pair.iloc[:,1].var())
         if np.isfinite(beta): out.append(_obs("ETF",ticker_isin_map[ticker],"direct_beta3y",round(beta,6),"INTERNAL_PEA_ETF_EQUAL_WEIGHT_PROXY","C"))
     return out
+
+
+def wave3_local_features(
+    actions_cache_dir: str,
+    actions_ticker_isin_map: dict[str, str],
+    etf_cache_dir: str,
+    etf_ticker_isin_map: dict[str, str],
+    *,
+    max_workers: int = 2,
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Compute independent Action/ETF branches concurrently from local OHLCV.
+
+    ETF parquet batches are loaded once and shared by the derived-feature and
+    beta calculations.  This helper performs no network I/O and preserves the
+    existing feature and decision functions unchanged.
+    """
+
+    def action_branch() -> list[dict]:
+        frames=_history_frames(actions_cache_dir)
+        return wave3_derived_features(
+            actions_cache_dir,
+            actions_ticker_isin_map,
+            "ACTION",
+            history_frames=frames,
+        )
+
+    def etf_branch() -> tuple[list[dict],list[dict]]:
+        frames=_history_frames(etf_cache_dir)
+        derived=wave3_derived_features(
+            etf_cache_dir,
+            etf_ticker_isin_map,
+            "ETF",
+            history_frames=frames,
+        )
+        beta=wave3_etf_beta3y(
+            etf_cache_dir,
+            etf_ticker_isin_map,
+            history_frames=frames,
+        )
+        return derived,beta
+
+    workers=max(1,min(2,int(max_workers)))
+    if workers == 1:
+        obs_actions=action_branch(); obs_etf,obs_beta=etf_branch()
+        return obs_actions,obs_etf,obs_beta
+    with ThreadPoolExecutor(max_workers=workers,thread_name_prefix="wave3-local") as pool:
+        action_future=pool.submit(action_branch)
+        etf_future=pool.submit(etf_branch)
+        obs_actions=action_future.result(); obs_etf,obs_beta=etf_future.result()
+    return obs_actions,obs_etf,obs_beta
 
 
 def _positive_ratio(numerator, denominator) -> float | None:

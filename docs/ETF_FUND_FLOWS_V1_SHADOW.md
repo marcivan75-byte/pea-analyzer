@@ -150,12 +150,14 @@ Le fichier `CRYPTO_FUND_FLOW_WEEKLY_CONTROL.csv` permet d'intégrer un contrôle
 
 ## 11. Exécution GitHub
 
-### Quotidien
+### Workflow autonome à la demande
 
-Workflow `etf_fund_flows_daily.yml`, jours ouvrés après clôture américaine :
+Le workflow `etf_fund_flows_daily.yml` est manuel. L'input booléen
+`run_validation` permet d'ajouter les tests ciblés avant une collecte de
+diagnostic :
 
 1. restauration de `state/etf_fund_flows/` ;
-2. tests ciblés ;
+2. tests ciblés uniquement si demandés ;
 3. collecte ;
 4. calcul des flux/overlays ;
 5. sauvegarde de l'historique PIT ;
@@ -163,7 +165,7 @@ Workflow `etf_fund_flows_daily.yml`, jours ouvrés après clôture américaine :
 
 ### Hebdomadaire
 
-`committee_master_daily.yml` restaure le même historique, exécute Fund Flows comme contexte SHADOW non bloquant, publie l'audit et conserve l'état. Une panne Fund Flows ne doit jamais altérer une décision canonique du Comité.
+`committee_master_daily.yml` est l'unique cadence planifiée, chaque vendredi. Il restaure le même historique, exécute Fund Flows comme contexte SHADOW non bloquant, publie l'audit et conserve l'état. Une panne Fund Flows ne doit jamais altérer une décision canonique du Comité.
 
 ## 12. Outputs
 

@@ -222,9 +222,9 @@ def test_parallel_fund_flow_collector_preserves_all_instruments(monkeypatch) -> 
 
 def test_master_config_registers_runtime_optimization_policy() -> None:
     cfg=json.loads(Path("config/V18.2_MASTER_CONFIG.json").read_text(encoding="utf-8"))
-    assert cfg["version"]=="21.13.3"
+    assert cfg["version"]=="21.13.4"
     opt=cfg["runtime_optimization"]
-    assert opt["status"]=="ACTIVE_V21_13_3_HORIZON_AWARE"
+    assert opt["status"]=="ACTIVE_V21_13_4_PIPELINE_RUNTIME_OPTIMIZED"
     assert opt["yfinance_fundamentals"]["ttl_days"]=={"HOT":3,"WARM":10,"COLD":21}
     assert opt["finnhub_consensus"]["tiers"]["HOT"]["target_ttl_days"] > opt["finnhub_consensus"]["tiers"]["HOT"]["recommendation_ttl_days"]
     assert opt["etf_info"]["ttl_days"]=={"HOT":7,"WARM":14,"COLD":30}
@@ -235,3 +235,5 @@ def test_master_config_registers_runtime_optimization_policy() -> None:
     assert "TCT" not in policy["source_families"]["ACTION_CONSENSUS"]["consumer_horizons"]
     assert policy["source_families"]["OHLCV"]["cadence"]=="EACH_TRADING_DAY"
     assert 6 <= opt["etf_fund_flows"]["max_workers"] <= 8
+    assert opt["daily_profile"]["reuse_primary_etf_ohlcv_for_etf_mt"] is True
+    assert opt["daily_profile"]["decision_logic_changed"] is False
