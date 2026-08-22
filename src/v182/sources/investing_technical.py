@@ -121,7 +121,9 @@ def horizon_signal(fields: dict[str, object], horizon: str) -> tuple[object | No
 
 def _slug(value: object) -> str:
     text = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii").lower()
-    text = re.sub(r"\b(sa|se|nv|ag|plc|spa|s\.p\.a|inc|ltd|limited|group|holding nv|holding)\b", " ", text)
+    # Remove legal-form suffix words, but preserve semantic words such as
+    # "Holding" and "Group" because they are part of real Investing slugs.
+    text = re.sub(r"\b(sa|se|nv|ag|plc|spa|s\.p\.a|inc|ltd|limited)\b", " ", text)
     text = text.replace("&", " and ")
     text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
     return re.sub(r"-+", "-", text)
