@@ -27,9 +27,9 @@
       "delay_seconds": 1.1,
       "max_workers": 8,
       "tiers": {
-        "HOT": {"refresh_budget":120,"max_cache_age_days":10},
-        "WARM": {"refresh_budget":80,"max_cache_age_days":21},
-        "COLD": {"refresh_budget":40,"max_cache_age_days":35}
+        "HOT": {"refresh_budget":120,"recommendation_ttl_days":3,"target_refresh_budget":60,"target_ttl_days":7,"max_cache_age_days":14},
+        "WARM": {"refresh_budget":80,"recommendation_ttl_days":7,"target_refresh_budget":40,"target_ttl_days":14,"max_cache_age_days":28},
+        "COLD": {"refresh_budget":40,"recommendation_ttl_days":14,"target_refresh_budget":20,"target_ttl_days":28,"max_cache_age_days":42}
       },
       "bootstrap_uncached_all": true
     },
