@@ -21,6 +21,28 @@ def _read_contract(root: Path) -> dict:
     return json.loads((root / CONTRACT_PATH).read_text(encoding="utf-8"))
 
 
+def _json_cache(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _migrate_cache_version(path: Path, *, old_version: str, new_version: str) -> bool:
+    payload = _json_cache(path)
+    if payload.get("version") != old_version or not isinstance(payload.get("entries"), dict):
+        return False
+    payload["version"] = new_version
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    tmp.replace(path)
+    return True
+
+
 def _score_sort(frame: pd.DataFrame) -> pd.DataFrame:
     out = frame.copy()
     out["_source_priority_score"] = pd.to_numeric(out.get("score"), errors="coerce")
@@ -65,7 +87,7 @@ def attach_master_identity(selected: pd.DataFrame, actions: pd.DataFrame | None,
     result = selected.copy()
     if "asset_class" not in result:
         result["asset_class"] = "ACTION"
-    result = result.merge(identity, on=["isin", "asset_class"], how="left", suffixes=("", "_master"))
+    result = result.merge(identity, on=["isin", "asset_class"], how="left", suffixes=("", "_master"), sort=False, validate="many_to_one")
     for field in identity_fields[1:]:
         master_field = f"{field}_master"
         if master_field not in result:
@@ -89,19 +111,16 @@ def _append_source_metadata(observations: list[dict]) -> list[dict]:
         if not isinstance(key_values, tuple):
             key_values = (key_values,)
         base = dict(zip(keys, key_values))
-        for provider, mask in (
-            ("boursorama", group["source"].astype(str).str.startswith("Boursorama")),
-            ("investing", group["source"].astype(str).str.startswith("Investing")),
-        ):
-            subset = group[mask]
+        factual = group[group.get("validation_status", pd.Series("", index=group.index)).astype(str).ne("SOURCE_FRESHNESS_METADATA")]
+        for provider, prefix in (("boursorama", "Boursorama"), ("investing", "Investing")):
+            subset = factual[factual["source"].astype(str).str.startswith(prefix)]
             if subset.empty:
                 continue
             urls = sorted({str(v) for v in subset.get("source_url", pd.Series(dtype=object)).dropna() if str(v).strip()})
             dates = sorted({str(v) for v in subset.get("collected_at", pd.Series(dtype=object)).dropna() if str(v).strip()})
             for field, value in ((f"{provider}_source_urls", " | ".join(urls)), (f"{provider}_latest_collected_at", dates[-1] if dates else "")):
-                if not value:
-                    continue
-                synthetic.append({**base, "field": field, "value": value, "source": f"{provider} provenance aggregate", "source_url": urls[0] if urls else None, "collected_at": dates[-1] if dates else None, "validation_status": "SOURCE_PROVENANCE_AGGREGATE"})
+                if value:
+                    synthetic.append({**base, "field": field, "value": value, "source": f"{provider} provenance aggregate", "source_url": urls[0] if urls else None, "collected_at": dates[-1] if dates else None, "validation_status": "SOURCE_PROVENANCE_AGGREGATE"})
     return observations + synthetic
 
 
@@ -112,7 +131,30 @@ def _pivot(observations: list[dict]) -> pd.DataFrame:
     if not {"isin", "horizon", "field", "value"}.issubset(frame.columns):
         return pd.DataFrame()
     index = [c for c in ("isin", "asset_class", "horizon") if c in frame]
-    return frame.pivot_table(index=index, columns="field", values="value", aggfunc="last", dropna=False).reset_index()
+    result = frame.pivot_table(index=index, columns="field", values="value", aggfunc="last").reset_index()
+    if result.duplicated(index).any():
+        raise RuntimeError("SOURCE_CONTEXT_PIVOT_DUPLICATE_KEYS")
+    return result
+
+
+def _investing_budgeted_rows(selected: pd.DataFrame, root: Path, max_unmapped: int) -> tuple[pd.DataFrame, int]:
+    if selected.empty:
+        return selected, 0
+    mapping = _json_cache(root / "state" / "provenance" / "source_cache" / "INVESTING_URL_MAP_V1.json").get("entries", {})
+    technical = _json_cache(root / "state" / "provenance" / "source_cache" / "INVESTING_TECHNICAL_V1.json").get("entries", {})
+    mapping = mapping if isinstance(mapping, dict) else {}; technical = technical if isinstance(technical, dict) else {}
+    keep_indices: list[int] = []; unknown_seen: set[str] = set(); unknown_allowed: set[str] = set()
+    for idx, row in selected.iterrows():
+        isin = str(row.get("isin") or "").strip()
+        if isin in mapping or isin in technical:
+            keep_indices.append(idx); continue
+        if isin not in unknown_seen:
+            unknown_seen.add(isin)
+            if len(unknown_allowed) < max(0, int(max_unmapped)):
+                unknown_allowed.add(isin)
+        if isin in unknown_allowed:
+            keep_indices.append(idx)
+    return selected.loc[keep_indices].copy(), len(unknown_seen - unknown_allowed)
 
 
 def enrich_selected_rows(rows: pd.DataFrame, root: Path = ROOT, *, profile: str = "SELECTED", network_policy: str = "LIVE_IF_DUE", persist_outputs: bool = True) -> tuple[pd.DataFrame, dict]:
@@ -126,14 +168,17 @@ def enrich_selected_rows(rows: pd.DataFrame, root: Path = ROOT, *, profile: str 
         return rows.copy(), {"status": "NO_PRESELECTED_ROWS", "profile": profile, "selected_rows": 0, "network_policy": policy, "decision_influence": False, "score_influence": 0.0}
 
     bcfg = contract["boursorama"]; icfg = contract["investing"]
+    action_cache = root / "state" / "provenance" / "source_cache" / "BOURSORAMA_SELECTED_V1.json"
+    action_cache_migrated = _migrate_cache_version(action_cache, old_version="BOURSORAMA_SELECTED_V1", new_version="BOURSORAMA_SELECTED_V2")
     asset_upper = selected["asset_class"].astype(str).str.upper(); action_selected = selected[asset_upper.eq("ACTION")].copy(); etf_selected = selected[asset_upper.eq("ETF")].copy()
+    investing_input, deferred_unmapped = _investing_budgeted_rows(selected, root, int(icfg.get("max_unmapped_resolution_per_run", 8))) if allow_network else (selected, 0)
 
     def run_boursorama():
         shared_limiter = StartRateLimiter(float(bcfg["request_start_interval_seconds"]))
         total_inflight = max(1, int(bcfg.get("max_provider_inflight", 4))); per_branch_workers = max(1, total_inflight // 2)
         def actions_branch():
             if action_selected.empty or not bool(bcfg.get("priority_for_selected_actions", True)): return None
-            return collect_selected_action_context_cached(action_selected, root/"state"/"provenance"/"source_cache"/"BOURSORAMA_SELECTED_V1.json", dynamic_ttl_hours=float(bcfg["dynamic_ttl_hours"]), performance_ttl_hours=float(bcfg.get("performance_ttl_hours", 24)), deep_ttl_hours=float(bcfg["deep_ttl_hours"]), refresh_budget=int(bcfg["refresh_budget"]), request_start_interval_seconds=float(bcfg["request_start_interval_seconds"]), max_workers=per_branch_workers, limiter=shared_limiter, allow_network=allow_network)
+            return collect_selected_action_context_cached(action_selected, action_cache, dynamic_ttl_hours=float(bcfg["dynamic_ttl_hours"]), performance_ttl_hours=float(bcfg.get("performance_ttl_hours", 24)), deep_ttl_hours=float(bcfg["deep_ttl_hours"]), refresh_budget=int(bcfg["refresh_budget"]), request_start_interval_seconds=float(bcfg["request_start_interval_seconds"]), max_workers=per_branch_workers, limiter=shared_limiter, allow_network=allow_network)
         def etfs_branch():
             if etf_selected.empty or not bool(bcfg.get("priority_for_selected_etfs", True)): return None
             return collect_selected_etf_context_cached(etf_selected, root/"state"/"provenance"/"source_cache"/"BOURSORAMA_SELECTED_ETF_V1.json", dynamic_ttl_hours=float(bcfg["dynamic_ttl_hours"]), deep_ttl_hours=float(bcfg["deep_ttl_hours"]), refresh_budget=int(bcfg["refresh_budget"]), request_start_interval_seconds=float(bcfg["request_start_interval_seconds"]), max_workers=per_branch_workers, limiter=shared_limiter, allow_network=allow_network)
@@ -141,7 +186,7 @@ def enrich_selected_rows(rows: pd.DataFrame, root: Path = ROOT, *, profile: str 
             fa = pool.submit(actions_branch); fe = pool.submit(etfs_branch); return fa.result(), fe.result()
 
     def run_investing():
-        return collect_technical_context_cached(selected, root/"state"/"provenance"/"source_cache"/"INVESTING_TECHNICAL_V1.json", root/"state"/"provenance"/"source_cache"/"INVESTING_URL_MAP_V1.json", refresh_budget=int(icfg["refresh_budget"]), ttl_hours=float(icfg["ttl_hours"]), request_start_interval_seconds=float(icfg["request_start_interval_seconds"]), max_workers=int(icfg["max_workers"]), allow_network=allow_network)
+        return collect_technical_context_cached(investing_input, root/"state"/"provenance"/"source_cache"/"INVESTING_TECHNICAL_V1.json", root/"state"/"provenance"/"source_cache"/"INVESTING_URL_MAP_V1.json", refresh_budget=int(icfg["refresh_budget"]), ttl_hours=float(icfg["ttl_hours"]), request_start_interval_seconds=float(icfg["request_start_interval_seconds"]), max_workers=int(icfg["max_workers"]), allow_network=allow_network)
 
     b_action = b_etf = investing = None; branch_errors: list[dict] = []
     with ThreadPoolExecutor(max_workers=2, thread_name_prefix="selected-source-provider") as pool:
@@ -158,11 +203,16 @@ def enrich_selected_rows(rows: pd.DataFrame, root: Path = ROOT, *, profile: str 
     for result in (b_action, b_etf, investing):
         if result is not None:
             observations.extend(result.observations); failures.extend(result.failures)
+    if deferred_unmapped:
+        failures.append({"source": "Investing.com", "reason": "UNMAPPED_RESOLUTION_BUDGET_DEFERRED", "count": int(deferred_unmapped)})
     observations = _append_source_metadata(observations)
     context = _pivot(observations); enriched = rows.copy()
     if not context.empty:
         keys = [c for c in ("isin", "asset_class", "horizon") if c in enriched and c in context]
-        enriched = enriched.merge(context, on=keys, how="left")
+        before_count = len(enriched)
+        enriched = enriched.merge(context, on=keys, how="left", sort=False, validate="many_to_one")
+        if len(enriched) != before_count:
+            raise RuntimeError("SOURCE_CONTEXT_JOIN_ROW_COUNT_MUTATION")
 
     safe_profile = "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in profile.upper())
     if persist_outputs:
@@ -175,6 +225,8 @@ def enrich_selected_rows(rows: pd.DataFrame, root: Path = ROOT, *, profile: str 
         "status": "SUCCESS_WITH_CONTEXT" if observations else "SUCCESS_NO_SOURCE_DATA", "version": contract["version"], "profile": profile,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(), "network_policy": policy, "network_allowed": allow_network,
         "selected_rows": int(len(selected)), "selected_unique_isins": int(selected["isin"].nunique()),
+        "boursorama_action_cache_migrated_v1_to_v2": action_cache_migrated,
+        "investing_unmapped_resolution_deferred": int(deferred_unmapped),
         "boursorama_actions": b_action.metrics if b_action is not None else {"status": "NO_ACTION_SELECTED_OR_BRANCH_FAILED"},
         "boursorama_etfs": b_etf.metrics if b_etf is not None else {"status": "NO_ETF_SELECTED_OR_BRANCH_FAILED"},
         "investing": investing.metrics if investing is not None else {"status": "BRANCH_FAILED"}, "failures": int(len(failures)),
