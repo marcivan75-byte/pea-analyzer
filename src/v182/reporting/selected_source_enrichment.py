@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+import math
 
 import pandas as pd
 
@@ -194,20 +195,60 @@ def _pivot(observations: list[dict]) -> pd.DataFrame:
     return result
 
 
-def _investing_budgeted_rows(selected: pd.DataFrame, root: Path, max_unmapped: int) -> tuple[pd.DataFrame, int]:
-    """Keep every already-resolved ISIN and allocate discovery slots by decision priority."""
+def _age_hours(value: object, now: datetime) -> float:
+    text = str(value or "").strip()
+    if not text:
+        return math.inf
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return math.inf
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return max(0.0, (now - parsed.astimezone(timezone.utc)).total_seconds() / 3600.0)
+
+
+def _mapping_is_resolved(entry: object) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    base = str(entry.get("base_url") or "").strip()
+    return bool(base and str(entry.get("status") or "RESOLVED").upper() != "UNRESOLVED")
+
+
+def _mapping_in_cooldown(entry: object, now: datetime, retry_ttl_hours: float) -> bool:
+    if not isinstance(entry, dict) or str(entry.get("status") or "").upper() != "UNRESOLVED":
+        return False
+    return _age_hours(entry.get("last_failed_at_utc"), now) < max(0.0, float(retry_ttl_hours))
+
+
+def _investing_budgeted_rows(
+    selected: pd.DataFrame,
+    root: Path,
+    max_unmapped: int,
+    *,
+    unmapped_retry_ttl_hours: float = 24.0,
+    now: datetime | None = None,
+) -> tuple[pd.DataFrame, int, int]:
+    """Keep resolved/cache ISINs, skip cooled failures, then allocate discovery slots by decision priority."""
     if selected.empty:
-        return selected, 0
+        return selected, 0, 0
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     mapping = _json_cache(root / "state" / "provenance" / "source_cache" / "INVESTING_URL_MAP_V1.json").get("entries", {})
     technical = _json_cache(root / "state" / "provenance" / "source_cache" / "INVESTING_TECHNICAL_V1.json").get("entries", {})
     mapping = mapping if isinstance(mapping, dict) else {}
     technical = technical if isinstance(technical, dict) else {}
-    known_isins = {str(value) for value in mapping} | {str(value) for value in technical}
+    known_isins = {str(isin) for isin in technical} | {str(isin) for isin, entry in mapping.items() if _mapping_is_resolved(entry)}
+    cooldown_isins = {
+        str(isin)
+        for isin, entry in mapping.items()
+        if _mapping_in_cooldown(entry, current, unmapped_retry_ttl_hours) and str(isin) not in known_isins
+    }
     ordered = _score_sort(selected)
     unknown_order: list[str] = []
     seen: set[str] = set()
+    selected_isins = set(ordered["isin"].astype(str))
     for isin in ordered["isin"].astype(str):
-        if not isin or isin in known_isins or isin in seen:
+        if not isin or isin in known_isins or isin in cooldown_isins or isin in seen:
             continue
         seen.add(isin)
         unknown_order.append(isin)
@@ -215,7 +256,9 @@ def _investing_budgeted_rows(selected: pd.DataFrame, root: Path, max_unmapped: i
     allowed_new = set(unknown_order[:allowance])
     keep_isins = known_isins | allowed_new
     filtered = ordered[ordered["isin"].astype(str).isin(keep_isins)].copy()
-    return filtered, max(0, len(unknown_order) - len(allowed_new))
+    deferred = max(0, len(unknown_order) - len(allowed_new))
+    cooldown_skipped = len(cooldown_isins & selected_isins)
+    return filtered, deferred, cooldown_skipped
 
 
 def enrich_selected_rows(
@@ -249,6 +292,7 @@ def enrich_selected_rows(
 
     bcfg = contract["boursorama"]
     icfg = contract["investing"]
+    retry_ttl = float(icfg.get("unmapped_retry_ttl_hours", 24.0))
     action_cache = root / "state" / "provenance" / "source_cache" / "BOURSORAMA_SELECTED_V1.json"
     action_cache_migrated = _migrate_cache_version(
         action_cache,
@@ -258,10 +302,15 @@ def enrich_selected_rows(
     asset_upper = selected["asset_class"].astype(str).str.upper()
     action_selected = selected[asset_upper.eq("ACTION")].copy()
     etf_selected = selected[asset_upper.eq("ETF")].copy()
-    investing_input, deferred_unmapped = (
-        _investing_budgeted_rows(selected, root, int(icfg.get("max_unmapped_resolution_per_run", 8)))
+    investing_input, deferred_unmapped, cooldown_skipped = (
+        _investing_budgeted_rows(
+            selected,
+            root,
+            int(icfg.get("max_unmapped_resolution_per_run", 8)),
+            unmapped_retry_ttl_hours=retry_ttl,
+        )
         if allow_network
-        else (selected, 0)
+        else (selected, 0, 0)
     )
 
     def run_boursorama():
@@ -312,6 +361,7 @@ def enrich_selected_rows(
             root / "state" / "provenance" / "source_cache" / "INVESTING_URL_MAP_V1.json",
             refresh_budget=int(icfg["refresh_budget"]),
             ttl_hours=float(icfg["ttl_hours"]),
+            unmapped_retry_ttl_hours=retry_ttl,
             request_start_interval_seconds=float(icfg["request_start_interval_seconds"]),
             max_workers=int(icfg["max_workers"]),
             allow_network=allow_network,
@@ -346,6 +396,14 @@ def enrich_selected_rows(
                 "source": "Investing.com",
                 "reason": "UNMAPPED_RESOLUTION_BUDGET_DEFERRED",
                 "count": int(deferred_unmapped),
+            }
+        )
+    if cooldown_skipped:
+        failures.append(
+            {
+                "source": "Investing.com",
+                "reason": "UNRESOLVED_COOLDOWN_SKIPPED_NO_NETWORK",
+                "count": int(cooldown_skipped),
             }
         )
     observations = _append_source_metadata(observations)
@@ -395,6 +453,8 @@ def enrich_selected_rows(
         "source_priority_order": list(SOURCE_DECISION_PRIORITY),
         "boursorama_action_cache_migrated_v1_to_v2": action_cache_migrated,
         "investing_unmapped_resolution_deferred": int(deferred_unmapped),
+        "investing_unresolved_cooldown_skipped": int(cooldown_skipped),
+        "investing_unmapped_retry_ttl_hours": retry_ttl,
         "boursorama_actions": b_action.metrics if b_action is not None else {"status": "NO_ACTION_SELECTED_OR_BRANCH_FAILED"},
         "boursorama_etfs": b_etf.metrics if b_etf is not None else {"status": "NO_ETF_SELECTED_OR_BRANCH_FAILED"},
         "investing": investing.metrics if investing is not None else {"status": "BRANCH_FAILED"},
