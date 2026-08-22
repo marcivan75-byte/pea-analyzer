@@ -90,10 +90,55 @@ def build_equivalence_audit(actions: pd.DataFrame, observations: list[dict]) -> 
     }
 
 
-def run(root: Path = ROOT) -> dict:
+def _write_outputs(root: Path, actions: pd.DataFrame, snapshot, *, profile: str, actions_input: str | None) -> dict:
+    audit_dir = root / "outputs" / "audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    observations = pd.DataFrame(snapshot.observations)
+    failures = pd.DataFrame(snapshot.failures)
+    observations.to_csv(audit_dir / "BOURSORAMA_PUBLIC_SHADOW_OBSERVATIONS.csv", sep=";", index=False, encoding="utf-8-sig")
+    failures.to_csv(audit_dir / "BOURSORAMA_PUBLIC_SHADOW_FAILURES.csv", sep=";", index=False, encoding="utf-8-sig")
+    equivalence = build_equivalence_audit(actions, snapshot.observations)
+    (audit_dir / "BOURSORAMA_PUBLIC_EQUIVALENCE.json").write_text(
+        json.dumps(equivalence, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    result = {
+        **snapshot.metrics,
+        "status": "SHADOW_ONLY_NO_DECISION_INFLUENCE",
+        "profile": profile or "UNSPECIFIED",
+        "actions_input": actions_input,
+        "equivalence_audit": equivalence,
+        "decision_influence": False,
+        "existing_provider_suppression": False,
+    }
+    (audit_dir / "BOURSORAMA_PUBLIC_SHADOW_METRICS.json").write_text(
+        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return result
+
+
+def run_for_actions(actions: pd.DataFrame, root: Path = ROOT, *, profile: str | None = None) -> dict:
+    """Run the shadow collector against the exact in-process canonical Action frame."""
     cfg_path = root / "config" / "BOURSORAMA_PUBLIC_V21_14.json"
     cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
     action_cfg = cfg.get("actions", {})
+    active_profile = str(profile or os.environ.get("PEA_RUN_PROFILE", "")).strip().upper()
+    daily = active_profile == "DAILY_TACTICAL"
+    cache_path = root / str(cfg.get("cache_path", "state/provenance/source_cache/BOURSORAMA_PUBLIC_V1.json"))
+    snapshot = collect_action_snapshots_cached(
+        actions,
+        cache_path,
+        refresh_budget=int(action_cfg.get("weekly_refresh_budget", 120)),
+        ttl_hours=float(action_cfg.get("ttl_hours", 48)),
+        request_start_interval_seconds=float(action_cfg.get("request_start_interval_seconds", 1.0)),
+        timeout_seconds=float(action_cfg.get("timeout_seconds", 15)),
+        refresh_due=not daily,
+        bootstrap_missing=not daily,
+        include_key_figures=bool(action_cfg.get("key_figures_enabled", False)),
+    )
+    return _write_outputs(root, actions, snapshot, profile=active_profile, actions_input="IN_PROCESS_CANONICAL_FRAME")
+
+
+def run(root: Path = ROOT) -> dict:
     inputs = root / "inputs"
     outputs = root / "outputs"
     audit_dir = outputs / "audit"
@@ -108,43 +153,9 @@ def run(root: Path = ROOT) -> dict:
             json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         return result
-
-    profile = os.environ.get("PEA_RUN_PROFILE", "").strip().upper()
-    daily = profile == "DAILY_TACTICAL"
-    cache_path = root / str(cfg.get("cache_path", "state/provenance/source_cache/BOURSORAMA_PUBLIC_V1.json"))
-    snapshot = collect_action_snapshots_cached(
-        actions,
-        cache_path,
-        refresh_budget=int(action_cfg.get("weekly_refresh_budget", 120)),
-        ttl_hours=float(action_cfg.get("ttl_hours", 48)),
-        request_start_interval_seconds=float(action_cfg.get("request_start_interval_seconds", 1.0)),
-        timeout_seconds=float(action_cfg.get("timeout_seconds", 15)),
-        refresh_due=not daily,
-        bootstrap_missing=not daily,
-        include_key_figures=bool(action_cfg.get("key_figures_enabled", False)),
-    )
-
-    observations = pd.DataFrame(snapshot.observations)
-    failures = pd.DataFrame(snapshot.failures)
-    observations.to_csv(audit_dir / "BOURSORAMA_PUBLIC_SHADOW_OBSERVATIONS.csv", sep=";", index=False, encoding="utf-8-sig")
-    failures.to_csv(audit_dir / "BOURSORAMA_PUBLIC_SHADOW_FAILURES.csv", sep=";", index=False, encoding="utf-8-sig")
-    equivalence = build_equivalence_audit(actions, snapshot.observations)
-    (audit_dir / "BOURSORAMA_PUBLIC_EQUIVALENCE.json").write_text(
-        json.dumps(equivalence, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    result = {
-        **snapshot.metrics,
-        "status": "SHADOW_ONLY_NO_DECISION_INFLUENCE",
-        "profile": profile or "UNSPECIFIED",
-        "actions_input": str(actions_path.relative_to(root)) if actions_path else None,
-        "equivalence_audit": equivalence,
-        "decision_influence": False,
-        "existing_provider_suppression": False,
+    return run_for_actions(actions, root, profile=os.environ.get("PEA_RUN_PROFILE", "")) | {
+        "actions_input": str(actions_path.relative_to(root)) if actions_path else None
     }
-    (audit_dir / "BOURSORAMA_PUBLIC_SHADOW_METRICS.json").write_text(
-        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return result
 
 
 def main() -> None:
