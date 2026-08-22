@@ -10,7 +10,7 @@ import pandas as pd
 
 from v182.sources.boursorama_selected import collect_selected_action_context_cached
 from v182.sources.boursorama_selected_etf import collect_selected_etf_context_cached
-from v182.sources.investing_technical import collect_technical_context_cached
+from v182.sources.investing_technical import _safe_investing_url, collect_technical_context_cached
 from v182.sources.rate_limit import StartRateLimiter
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -212,7 +212,10 @@ def _mapping_is_resolved(entry: object) -> bool:
     if not isinstance(entry, dict):
         return False
     base = str(entry.get("base_url") or "").strip()
-    return bool(base and str(entry.get("status") or "RESOLVED").upper() != "UNRESOLVED")
+    return bool(
+        str(entry.get("status") or "RESOLVED").upper() != "UNRESOLVED"
+        and _safe_investing_url(base, allow_technical=False)
+    )
 
 
 def _mapping_in_cooldown(entry: object, now: datetime, retry_ttl_hours: float) -> bool:
