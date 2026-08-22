@@ -1,0 +1,59 @@
+{
+  "version": "V21.14.2",
+  "enabled": true,
+  "mode": "SHADOW_ATTRIBUTED_NO_DECISION_INFLUENCE",
+  "purpose": "Measure Boursorama public-page coverage and semantic equivalence before source suppression.",
+  "cache_path": "state/provenance/source_cache/BOURSORAMA_PUBLIC_V1.json",
+  "actions": {
+    "consensus_enabled": true,
+    "key_figures_enabled": false,
+    "news_enabled": false,
+    "weekly_refresh_budget": 120,
+    "ttl_hours": 48,
+    "request_start_interval_seconds": 1.0,
+    "timeout_seconds": 15,
+    "max_workers": 4,
+    "daily_mode": "CACHE_ONLY_NO_BOOTSTRAP",
+    "weekly_mode": "BOUNDED_LIVE_REFRESH_OVERLAPPED_WITH_WAVE04",
+    "deterministic_code_patterns": {
+      "Euronext_Paris_Action": "Yahoo .PA -> Boursorama 1rP{symbol}",
+      "Euronext_Amsterdam_Action": "Yahoo .AS -> Boursorama 1rA{symbol}",
+      "Euronext_Lisbon_Action": "Yahoo .LS -> Boursorama 1rL{symbol}",
+      "Euronext_Brussels_Action": "Yahoo .BR -> Boursorama FF11-{symbol}",
+      "Bolsa_Madrid_Action": "Yahoo .MC -> Boursorama FF55-{symbol}",
+      "Borsa_Italiana_Action": "Yahoo .MI -> Boursorama 1g{symbol}",
+      "Xetra_Action": "Yahoo .DE -> Boursorama 1z{symbol}",
+      "Euronext_Paris_ETF": "Yahoo .PA -> Boursorama 1rT{symbol}"
+    },
+    "unsupported_markets_policy": "NO_PUBLIC_SEARCH; REQUIRE_VALIDATED_STATIC_OVERRIDE_OR_FALLBACK"
+  },
+  "storage": {
+    "persist_raw_html": false,
+    "persist_normalized_values": true,
+    "persist_source_url": true,
+    "persist_page_sha256": true,
+    "persist_fetched_at_utc": true
+  },
+  "network_governance": {
+    "request_start_ceiling": "ONE_REQUEST_START_PER_SECOND",
+    "inflight_overlap": 4,
+    "provider_isolation": "BOURSORAMA_ONLY_DISTINCT_FROM_YAHOO_WAVE04",
+    "shadow_failure_blocks_existing_pipeline": false
+  },
+  "semantic_gates": {
+    "consensus_5_bucket_weighting": "EQUIVALENT_FORMULA_TO_FINNHUB_5_4_3_2_1",
+    "target_price": "NOT_EQUIVALENT_YET_BOURSORAMA_MEDIAN_VS_FINNHUB_YAHOO_MEAN",
+    "free_cash_flow": "NOT_DIRECTLY_COVERED_ON_VERIFIED_STRUCTURED_PAGES",
+    "action_beta": "NOT_DIRECTLY_COVERED_ON_VERIFIED_STRUCTURED_PAGES",
+    "instrument_news_sentiment": "NOT_EQUIVALENT_YET_CURRENT_GDELT_LEXICON_IS_ENGLISH"
+  },
+  "replacement_activation": {
+    "requires_shadow_comparison": true,
+    "requires_parser_success_pct": 95.0,
+    "requires_supported_code_coverage_report": true,
+    "requires_no_active_criterion_coverage_regression": true,
+    "requires_no_weight_or_threshold_change": true,
+    "requires_normal_run_telemetry": true,
+    "extra_heavy_benchmark_run_required": false
+  }
+}

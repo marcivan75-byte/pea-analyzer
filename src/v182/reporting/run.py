@@ -123,6 +123,42 @@ def _collect_wave5_wave6_parallel(
     return None,waves.wave6_etf_info(etf_with_tickers,cfg)
 
 
+def _collect_wave4_boursorama_shadow_parallel(
+    actions_df: pd.DataFrame,
+    cfg: dict,
+    run_profile: str,
+) -> tuple[tuple[list[dict], list[dict]], dict]:
+    """Hide bounded Boursorama shadow I/O under the long Yahoo WAVE04 branch.
+
+    The shadow branch receives an immutable copy of the same canonical Action frame,
+    writes only dedicated cache/audit files, and never applies observations to the
+    master. A shadow failure is recorded but cannot block the existing Yahoo/Finnhub
+    decision path. Providers and rate limiters are independent.
+    """
+    from v182.reporting.boursorama_shadow_run import run_for_actions
+
+    def shadow_step() -> dict:
+        try:
+            return run_for_actions(actions_df.copy(), ROOT, profile=run_profile)
+        except Exception as exc:
+            payload={
+                "status":"FAILED_SHADOW_NON_BLOCKING",
+                "error":type(exc).__name__,
+                "detail":str(exc)[:500],
+                "decision_influence":False,
+                "existing_provider_suppression":False,
+            }
+            (OUTPUTS/"audit"/"BOURSORAMA_PUBLIC_SHADOW_METRICS.json").write_text(
+                json.dumps(payload,ensure_ascii=False,indent=2),encoding="utf-8"
+            )
+            return payload
+
+    with ThreadPoolExecutor(max_workers=2,thread_name_prefix="wave4-boursorama-shadow") as pool:
+        wave4_future=pool.submit(waves.wave4_info_actions,actions_df.copy(),cfg)
+        shadow_future=pool.submit(shadow_step)
+        return wave4_future.result(),shadow_future.result()
+
+
 def _run_pipeline(run_id: str, run_profile: str, runtime: RuntimeTelemetry) -> dict:
     runtime.transition("INITIALIZATION", "PROCESSING")
     cfg = _load_cfg()
@@ -212,13 +248,20 @@ def _run_pipeline(run_id: str, run_profile: str, runtime: RuntimeTelemetry) -> d
 
     runtime.transition("WAVE_04_ACTION_FUNDAMENTALS", "COLLECTION")
     if not checkpoint.done("WAVE_04"):
-        obs4, failures4 = waves.wave4_info_actions(actions_df, cfg)
+        (obs4, failures4), boursorama_shadow = _collect_wave4_boursorama_shadow_parallel(actions_df, cfg, run_profile)
         actions_df, q3 = apply_and_track(actions_df, obs4)
         quarantine_log += q3
         _write_failures("V18.2_WAVE04_YFINANCE", failures4)
         checkpoint.mark("WAVE_04", "DONE", observed=len(obs4), failed=len(failures4))
         _audit(actions_df,etf_df,"WAVE_04_ACTION_FUNDAMENTALS",failures=failures4+q3,source_context="yfinance fondamentaux/metadonnees")
         print(f"WAVE_04 — {len(obs4)} champs fondamentaux/métadonnées Actions, {len(failures4)} échecs")
+        print(
+            "BOURSORAMA_SHADOW — "
+            f"{boursorama_shadow.get('status','UNKNOWN')} | "
+            f"live={boursorama_shadow.get('live_refresh_success',0)}/"
+            f"{boursorama_shadow.get('live_refresh_requested',0)} | "
+            f"observations={boursorama_shadow.get('observations',0)} | decision_influence=0"
+        )
 
     finnhub_key = os.environ.get("FINNHUB_API_KEY")
     run_wave5=not checkpoint.done("WAVE_05") and bool(finnhub_key)
