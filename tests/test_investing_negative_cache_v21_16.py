@@ -33,9 +33,13 @@ def _row() -> pd.DataFrame:
     ])
 
 
-def test_safe_url_rejects_non_instrument_paths_and_wrong_hosts():
-    assert _safe_investing_url("https://www.investing.com/equities/air-liquide") is True
-    assert _safe_investing_url("https://www.investing.com/equities/air-liquide-technical") is True
+def test_safe_url_rejects_non_instrument_paths_wrong_hosts_and_technical_as_base():
+    base = "https://www.investing.com/equities/air-liquide"
+    technical = base + "-technical"
+    assert _safe_investing_url(base) is True
+    assert _safe_investing_url(technical) is True
+    assert _safe_investing_url(base, allow_technical=False) is True
+    assert _safe_investing_url(technical, allow_technical=False) is False
     assert _safe_investing_url("https://www.investing.com/etfs/amundi-test") is True
     assert _safe_investing_url("https://www.investing.com/news/stock-market-news") is False
     assert _safe_investing_url("https://example.com/equities/air-liquide") is False
@@ -53,14 +57,8 @@ def test_unresolved_mapping_is_persisted_without_raw_html_and_skips_network_duri
     mapping = tmp_path / "mapping.json"
     now = datetime(2026, 8, 23, 0, 0, tzinfo=timezone.utc)
     first = collect_technical_context_cached(
-        _row(),
-        cache,
-        mapping,
-        refresh_budget=1,
-        request_start_interval_seconds=0,
-        unmapped_retry_ttl_hours=24,
-        fetcher=unresolved_fetcher,
-        now=now,
+        _row(), cache, mapping, refresh_budget=1, request_start_interval_seconds=0,
+        unmapped_retry_ttl_hours=24, fetcher=unresolved_fetcher, now=now,
     )
     assert first.metrics["live_refresh_requested"] == 1
     assert first.metrics["live_refresh_success"] == 0
@@ -76,14 +74,8 @@ def test_unresolved_mapping_is_persisted_without_raw_html_and_skips_network_duri
         raise AssertionError(f"network call forbidden during negative cooldown: {url}")
 
     second = collect_technical_context_cached(
-        _row(),
-        cache,
-        mapping,
-        refresh_budget=1,
-        request_start_interval_seconds=0,
-        unmapped_retry_ttl_hours=24,
-        fetcher=must_not_call,
-        now=now + timedelta(hours=1),
+        _row(), cache, mapping, refresh_budget=1, request_start_interval_seconds=0,
+        unmapped_retry_ttl_hours=24, fetcher=must_not_call, now=now + timedelta(hours=1),
     )
     assert second.metrics["live_refresh_requested"] == 0
     assert second.metrics["resolution_cooldown_skipped"] == 1
@@ -94,40 +86,26 @@ def test_expired_negative_cache_retries_and_replaces_unresolved_mapping(tmp_path
     cache = tmp_path / "technical.json"
     mapping = tmp_path / "mapping.json"
     now = datetime(2026, 8, 23, 0, 0, tzinfo=timezone.utc)
-    mapping.write_text(
-        json.dumps({
-            "version": "INVESTING_URL_MAP_V1",
-            "entries": {
-                "FR0000000001": {
-                    "status": "UNRESOLVED",
-                    "last_failed_at_utc": (now - timedelta(hours=25)).isoformat(),
-                    "reason": "NO_VALIDATED_PUBLIC_URL",
-                    "failure_count": 2,
-                }
-            },
-        }),
-        encoding="utf-8",
-    )
+    mapping.write_text(json.dumps({
+        "version": "INVESTING_URL_MAP_V1",
+        "entries": {"FR0000000001": {
+            "status": "UNRESOLVED",
+            "last_failed_at_utc": (now - timedelta(hours=25)).isoformat(),
+            "reason": "NO_VALIDATED_PUBLIC_URL",
+            "failure_count": 2,
+        }},
+    }), encoding="utf-8")
     calls: list[str] = []
 
     def resolved_fetcher(url, timeout):
         calls.append(url)
         if url.endswith("-technical"):
-            return FakeResponse(
-                "Daily Strong Buy Weekly Strong Buy Monthly Buy",
-                url,
-            )
+            return FakeResponse("Daily Strong Buy Weekly Strong Buy Monthly Buy", url)
         return FakeResponse("FR0000000001 Alpha Test", "https://www.investing.com/equities/alpha-test")
 
     result = collect_technical_context_cached(
-        _row(),
-        cache,
-        mapping,
-        refresh_budget=1,
-        request_start_interval_seconds=0,
-        unmapped_retry_ttl_hours=24,
-        fetcher=resolved_fetcher,
-        now=now,
+        _row(), cache, mapping, refresh_budget=1, request_start_interval_seconds=0,
+        unmapped_retry_ttl_hours=24, fetcher=resolved_fetcher, now=now,
     )
     assert result.metrics["live_refresh_requested"] == 1
     assert result.metrics["live_refresh_success"] == 1
@@ -141,34 +119,53 @@ def test_expired_negative_cache_retries_and_replaces_unresolved_mapping(tmp_path
     assert technical["fields"]["investing_monthly_signal"] == "BUY"
 
 
+def test_corrupt_technical_url_stored_as_base_is_re_resolved_not_doubled(tmp_path: Path):
+    cache = tmp_path / "technical.json"
+    mapping = tmp_path / "mapping.json"
+    mapping.write_text(json.dumps({
+        "version": "INVESTING_URL_MAP_V1",
+        "entries": {"FR0000000001": {
+            "status": "RESOLVED",
+            "base_url": "https://www.investing.com/equities/alpha-test-technical",
+            "validated_isin": "FR0000000001",
+        }},
+    }), encoding="utf-8")
+    calls: list[str] = []
+
+    def fetcher(url, timeout):
+        calls.append(url)
+        assert not url.endswith("-technical-technical")
+        if url.endswith("-technical"):
+            return FakeResponse("Daily Strong Buy Weekly Strong Buy Monthly Strong Buy", url)
+        return FakeResponse("FR0000000001 Alpha Test", "https://www.investing.com/equities/alpha-test")
+
+    result = collect_technical_context_cached(
+        _row(), cache, mapping, refresh_budget=1, request_start_interval_seconds=0,
+        fetcher=fetcher, now=datetime(2026, 8, 23, 0, 0, tzinfo=timezone.utc),
+    )
+    assert result.metrics["live_refresh_success"] == 1
+    mapped = json.loads(mapping.read_text(encoding="utf-8"))["entries"]["FR0000000001"]
+    assert mapped["base_url"] == "https://www.investing.com/equities/alpha-test"
+
+
 def test_unsafe_redirect_never_populates_technical_cache(tmp_path: Path):
     cache = tmp_path / "technical.json"
     mapping = tmp_path / "mapping.json"
-    mapping.write_text(
-        json.dumps({
-            "version": "INVESTING_URL_MAP_V1",
-            "entries": {
-                "FR0000000001": {
-                    "status": "RESOLVED",
-                    "base_url": "https://www.investing.com/equities/alpha-test",
-                    "validated_isin": "FR0000000001",
-                }
-            },
-        }),
-        encoding="utf-8",
-    )
+    mapping.write_text(json.dumps({
+        "version": "INVESTING_URL_MAP_V1",
+        "entries": {"FR0000000001": {
+            "status": "RESOLVED",
+            "base_url": "https://www.investing.com/equities/alpha-test",
+            "validated_isin": "FR0000000001",
+        }},
+    }), encoding="utf-8")
 
     def redirect_fetcher(url, timeout):
         return FakeResponse("Daily Strong Buy Weekly Strong Buy Monthly Strong Buy", "https://www.investing.com/news/redirected")
 
     result = collect_technical_context_cached(
-        _row(),
-        cache,
-        mapping,
-        refresh_budget=1,
-        request_start_interval_seconds=0,
-        fetcher=redirect_fetcher,
-        now=datetime(2026, 8, 23, 0, 0, tzinfo=timezone.utc),
+        _row(), cache, mapping, refresh_budget=1, request_start_interval_seconds=0,
+        fetcher=redirect_fetcher, now=datetime(2026, 8, 23, 0, 0, tzinfo=timezone.utc),
     )
     assert result.metrics["live_refresh_success"] == 0
     assert any(row["reason"] == "ValueError" for row in result.failures)
