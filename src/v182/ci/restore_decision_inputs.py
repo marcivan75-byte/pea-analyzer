@@ -18,6 +18,20 @@ REQUIRED = {
     "outputs/committee_master/COMMITTEE_DECISIONS.csv",
 }
 OPTIONAL = {"outputs/audit/CI_EXPLAINABILITY_AUDIT.json"}
+DECISION_PACKAGE_V3 = {
+    "outputs/decision_brief/DECISION_BRIEF.json",
+    "outputs/decision_brief/DECISION_BRIEF.md",
+    "outputs/decision_brief/CI_DECISION_BRIEF_V3.docx",
+    "outputs/decision_brief/CI_DECISION_MATRIX_V3.csv",
+}
+FALLBACK_CONTEXT = {
+    "outputs/committee_master/CI_REFERENTIEL_PONDERE.xlsx",
+    "outputs/committee_master/V21_8_ENTRY_EXIT_CHALLENGER.csv",
+    "outputs/committee_master/COMMITTEE_SECTOR_ROTATION_V2_CONTEXT.csv",
+    "outputs/risk/BETA_CORRELATION_RISK_ROWS.csv",
+    "outputs/daily_tct_ct/TCT_NEXT_SESSION_CATALYST_V24_4_2.csv",
+    "state/provenance/CI_DECISION_SNAPSHOT.csv",
+}
 ARTIFACT_PREFIXES = ("committee-weekly-v21-8-1-", "committee-master-v21-8-1-")
 
 
@@ -35,7 +49,7 @@ def _request(url: str, token: str, accept: str = "application/vnd.github+json"):
         headers={
             "Accept": accept,
             "Authorization": f"Bearer {token}",
-            "User-Agent": "pea-analyzer-decision-fast-v1",
+            "User-Agent": "pea-analyzer-decision-fast-v3",
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
@@ -79,15 +93,26 @@ def _select_artifact(payload: dict) -> dict:
     return max(candidates, key=lambda item: int(item.get("id", 0)))
 
 
+def _extract_targets(names: set[str]) -> tuple[set[str], bool]:
+    missing = sorted(REQUIRED - names)
+    if missing:
+        raise RuntimeError("Source artifact is incomplete: " + ", ".join(missing))
+    package_ready = DECISION_PACKAGE_V3 <= names
+    targets = set(REQUIRED) | (OPTIONAL & names)
+    if package_ready:
+        targets |= DECISION_PACKAGE_V3
+    else:
+        targets |= FALLBACK_CONTEXT & names
+    return targets, package_ready
+
+
 def _extract_required(archive: Path, root: Path) -> list[str]:
     extracted: list[str] = []
     root = root.resolve()
     with zipfile.ZipFile(archive) as bundle:
         names = {name.replace("\\", "/").lstrip("./") for name in bundle.namelist()}
-        missing = sorted(REQUIRED - names)
-        if missing:
-            raise RuntimeError("Source artifact is incomplete: " + ", ".join(missing))
-        for required in sorted(REQUIRED | (OPTIONAL & names)):
+        targets, _package_ready = _extract_targets(names)
+        for required in sorted(targets):
             target = (root / required).resolve()
             if root not in target.parents:
                 raise RuntimeError(f"Unsafe artifact path: {required}")
@@ -115,8 +140,9 @@ def run(repo: str, token: str, current_run_id: int, root: Path, max_age_hours: f
         extracted = _extract_required(archive, root)
     finally:
         archive.unlink(missing_ok=True)
+    restored = set(extracted)
     metadata = {
-        "version": "DECISION_FAST_INPUTS_V1",
+        "version": "DECISION_FAST_INPUTS_V3",
         "source_run_id": int(source_run["id"]),
         "source_head_sha": source_run.get("head_sha"),
         "source_updated_at": source_run.get("updated_at"),
@@ -124,6 +150,8 @@ def run(repo: str, token: str, current_run_id: int, root: Path, max_age_hours: f
         "artifact_name": artifact.get("name"),
         "artifact_age_hours": source_run["artifact_age_hours"],
         "max_age_hours": max_age_hours,
+        "decision_package_v3_restored": DECISION_PACKAGE_V3 <= restored,
+        "fallback_context_restored": sorted(FALLBACK_CONTEXT & restored),
         "extracted": extracted,
     }
     out = root / "outputs" / "decision_brief" / "SOURCE_RUN.json"
@@ -147,4 +175,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
