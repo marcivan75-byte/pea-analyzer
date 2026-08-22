@@ -9,6 +9,7 @@ import pandas as pd
 from v182.risk.beta_metrics import jaccard
 
 ACTIVE_DECISIONS = {"BUY", "BUY_CANDIDATE", "HOLD"}
+DECISION_PRIORITY = {"BUY": 0, "BUY_CANDIDATE": 1, "HOLD": 2}
 
 
 def economic_overlap_scores(rows: pd.DataFrame, returns_by_isin: dict[str, pd.Series]) -> list[float | None]:
@@ -94,24 +95,69 @@ def _weight_column(frame: pd.DataFrame) -> str | None:
     return None
 
 
+def _unique_active_isins(rows: pd.DataFrame, returns_by_isin: dict[str, pd.Series]) -> tuple[pd.DataFrame, int]:
+    """Return one representative active Committee row per ISIN.
+
+    The risk basket is a diagnostic of distinct recommendations, not a position
+    ledger. Repeated horizons for the same security must therefore never create
+    extra synthetic exposure. The representative row is deterministic: highest
+    decision priority, then highest published score, then horizon name.
+    """
+    active = rows[rows["decision"].astype(str).str.upper().isin(ACTIVE_DECISIONS)].copy()
+    active = active[active["isin"].astype(str).isin(returns_by_isin)]
+    source_rows = int(len(active))
+    if active.empty:
+        return active, source_rows
+    active["_decision_priority"] = active["decision"].astype(str).str.upper().map(DECISION_PRIORITY).fillna(9)
+    active["_score_priority"] = pd.to_numeric(active.get("score"), errors="coerce").fillna(-1.0)
+    active["_horizon_priority"] = active.get("horizon", pd.Series("", index=active.index)).astype(str)
+    active = active.sort_values(
+        ["isin", "_decision_priority", "_score_priority", "_horizon_priority"],
+        ascending=[True, True, False, True],
+    )
+    active = active.drop_duplicates("isin", keep="first").drop(
+        columns=["_decision_priority", "_score_priority", "_horizon_priority"],
+        errors="ignore",
+    )
+    return active, source_rows
+
+
 def portfolio_summary(
     rows: pd.DataFrame,
     returns_by_isin: dict[str, pd.Series],
     benchmark: pd.Series,
     scenarios_pct: list[float],
 ) -> dict:
-    active = rows[rows["decision"].astype(str).str.upper().isin(ACTIVE_DECISIONS)].copy()
-    active = active[active["isin"].astype(str).isin(returns_by_isin)]
+    """Describe concentration of unique active Committee recommendations.
+
+    This is deliberately not labelled a held portfolio: no real holdings ledger
+    is available to this function. Any fallback weighting is applied once per
+    unique ISIN, never once per horizon row.
+    """
+    active, source_rows = _unique_active_isins(rows, returns_by_isin)
     if active.empty:
-        return {"status": "NO_ACTIVE_DECISIONS_WITH_HISTORY", "active_rows": 0, "weight_method": "NONE"}
+        return {
+            "status": "NO_ACTIVE_DECISIONS_WITH_HISTORY",
+            "analysis_universe": "UNIQUE_ACTIVE_COMMITTEE_ISINS_NOT_HELD_PORTFOLIO",
+            "is_real_portfolio": False,
+            "real_portfolio_fit_status": "NOT_AVAILABLE_NO_PORTFOLIO_INPUT",
+            "source_rows_before_isin_dedup": source_rows,
+            "unique_isins": 0,
+            "duplicate_horizon_rows_removed": 0,
+            "active_rows": 0,
+            "weight_method": "NONE",
+        }
+
+    unique_isins = int(active["isin"].astype(str).nunique())
+    duplicate_rows = max(0, source_rows - unique_isins)
     weight_col = _weight_column(active)
     weights = pd.to_numeric(active[weight_col], errors="coerce").clip(lower=0) if weight_col else pd.Series(1.0, index=active.index)
     if weights.fillna(0).sum() <= 0:
         weights = pd.Series(1.0, index=active.index)
-        weight_method = "EQUAL_WEIGHT_FALLBACK"
+        weight_method = "EQUAL_WEIGHT_UNIQUE_ISIN_DIAGNOSTIC"
     else:
         weights = weights.fillna(0)
-        weight_method = weight_col or "EQUAL_WEIGHT_FALLBACK"
+        weight_method = weight_col or "EQUAL_WEIGHT_UNIQUE_ISIN_DIAGNOSTIC"
     weights = weights / weights.sum()
     active = active.assign(_risk_weight=weights)
 
@@ -161,7 +207,13 @@ def portfolio_summary(
     scenarios = {str(float(s)): round(float(s) * stress_beta, 4) if stress_beta is not None else None for s in scenarios_pct}
     return {
         "status": "OK",
-        "active_rows": int(len(active)),
+        "analysis_universe": "UNIQUE_ACTIVE_COMMITTEE_ISINS_NOT_HELD_PORTFOLIO",
+        "is_real_portfolio": False,
+        "real_portfolio_fit_status": "NOT_AVAILABLE_NO_PORTFOLIO_INPUT",
+        "source_rows_before_isin_dedup": source_rows,
+        "unique_isins": unique_isins,
+        "duplicate_horizon_rows_removed": duplicate_rows,
+        "active_rows": unique_isins,
         "weight_method": weight_method,
         "portfolio_beta_252d": round(portfolio_beta, 6) if portfolio_beta is not None else None,
         "portfolio_downside_beta_252d": round(portfolio_down, 6) if portfolio_down is not None else None,
