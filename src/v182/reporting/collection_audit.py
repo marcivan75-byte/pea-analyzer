@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import os
 import shutil
+import threading
 import pandas as pd
 
 from v182.audit.provenance import actual_sources_by_field
@@ -22,6 +23,10 @@ SOURCE_HINTS = [
 ]
 TECHNICAL_FIELDS={"canonical_seed_status"}
 MISSING_TEXT_TOKENS={"", "MISSING", "UNKNOWN", MISSING_TOKEN, "NOT_LOADED", "NAN", "<NA>", "N/A", "NA", "NULL"}
+STATE_UNCHANGED_WAVES={"WAVE_00_ETF_TICKERS","WAVE_01_ACTION_OHLCV","WAVE_02_ETF_OHLCV"}
+_AUDIT_CACHE_LOCK=threading.RLock()
+_LAST_INVENTORY: pd.DataFrame | None=None
+_LAST_PROVENANCE: pd.DataFrame | None=None
 
 
 def source_hint(field: str) -> str:
@@ -43,6 +48,7 @@ def _missing_mask(series: pd.Series) -> pd.Series:
 
 def _field_status(frame: pd.DataFrame, asset_class: str, wave_id: str) -> pd.DataFrame:
     rows=[]; n=max(len(frame),1); identity={"isin","name"}|TECHNICAL_FIELDS
+    generated=datetime.now(timezone.utc).isoformat()
     for field in frame.columns:
         if field in identity: continue
         available=int((~_missing_mask(frame[field])).sum()); coverage=available/n*100.0
@@ -51,7 +57,7 @@ def _field_status(frame: pd.DataFrame, asset_class: str, wave_id: str) -> pd.Dat
             "collection":wave_id,"asset_class":asset_class,"field":field,"status":status,
             "available_rows":available,"missing_rows":int(len(frame)-available),"universe_rows":int(len(frame)),
             "coverage_pct":round(coverage,2),"source_theorique":source_hint(field),
-            "generated_at_utc":datetime.now(timezone.utc).isoformat(),
+            "generated_at_utc":generated,
         })
     return pd.DataFrame(rows)
 
@@ -78,20 +84,7 @@ def _github_compact_intermediate_enabled(wave_id: str) -> bool:
     return on_github and source_mode in {"LIVE","CACHE_PREFERRED"}
 
 
-def write_collection_audit(
-    actions: pd.DataFrame, etfs: pd.DataFrame, wave_id: str, output_root: str | Path,
-    *, failures: list[dict] | None = None, source_context: str = "", write_excel: bool = True,
-) -> str:
-    """Write a post-collection audit with retained-source provenance.
-
-    Actual sources are joined by ``asset_class + field`` so identically named
-    Action and ETF fields cannot contaminate each other's lineage. Canonical
-    bookkeeping columns are excluded from data-availability statistics. GitHub
-    production runs use compact lossless CSV between waves and still publish the
-    final Excel audit once at WAVE_99. Local/manual non-production calls retain
-    the explicit ``write_excel`` behavior.
-    """
-    root=Path(output_root); root.mkdir(parents=True,exist_ok=True)
+def _build_inventory(actions: pd.DataFrame, etfs: pd.DataFrame, wave_id: str) -> tuple[pd.DataFrame,pd.DataFrame]:
     inventory=pd.concat([_field_status(actions,"ACTION",wave_id),_field_status(etfs,"ETF",wave_id)],ignore_index=True)
     provenance=actual_sources_by_field()
     if not provenance.empty:
@@ -102,10 +95,62 @@ def write_collection_audit(
     for col in ("sources_reelles","source_urls","evidence_levels","last_as_of"):
         if col not in inventory.columns: inventory[col]=""
     inventory["source_reelle_absente"]=(inventory["sources_reelles"].fillna("").astype(str).str.strip()=="")
+    return inventory,provenance
+
+
+def _inventory_for_audit(
+    actions: pd.DataFrame,
+    etfs: pd.DataFrame,
+    wave_id: str,
+    *,
+    reuse_previous_state: bool,
+) -> tuple[pd.DataFrame,pd.DataFrame,bool]:
+    """Reuse the previous full inventory only when the caller proves state unchanged."""
+    global _LAST_INVENTORY,_LAST_PROVENANCE
+    if reuse_previous_state:
+        with _AUDIT_CACHE_LOCK:
+            if _LAST_INVENTORY is not None and _LAST_PROVENANCE is not None:
+                inventory=_LAST_INVENTORY.copy(deep=True)
+                provenance=_LAST_PROVENANCE.copy(deep=True)
+                generated=datetime.now(timezone.utc).isoformat()
+                inventory["collection"]=wave_id
+                inventory["generated_at_utc"]=generated
+                return inventory,provenance,True
+
+    inventory,provenance=_build_inventory(actions,etfs,wave_id)
+    with _AUDIT_CACHE_LOCK:
+        _LAST_INVENTORY=inventory.copy(deep=True)
+        _LAST_PROVENANCE=provenance.copy(deep=True)
+    return inventory,provenance,False
+
+
+def _reset_audit_cache_for_tests() -> None:
+    global _LAST_INVENTORY,_LAST_PROVENANCE
+    with _AUDIT_CACHE_LOCK:
+        _LAST_INVENTORY=None
+        _LAST_PROVENANCE=None
+
+
+def write_collection_audit(
+    actions: pd.DataFrame, etfs: pd.DataFrame, wave_id: str, output_root: str | Path,
+    *, failures: list[dict] | None = None, source_context: str = "", write_excel: bool = True,
+    reuse_previous_state: bool = False,
+) -> str:
+    """Write a post-collection audit with retained-source provenance.
+
+    GitHub production runs use compact lossless CSV between waves and still publish
+    the final Excel audit once at WAVE_99. The three cache-only waves that provably
+    cannot alter either master automatically reuse the preceding complete inventory;
+    their own per-wave file, source context, failures and history remain published.
+    All other waves always recompute unless an explicit trusted caller opts in.
+    """
+    root=Path(output_root); root.mkdir(parents=True,exist_ok=True)
+    reuse=bool(reuse_previous_state or wave_id in STATE_UNCHANGED_WAVES)
+    inventory,provenance,reused=_inventory_for_audit(actions,etfs,wave_id,reuse_previous_state=reuse)
     missing=inventory[inventory["status"]=="MISSING"].copy(); partial=inventory[inventory["status"]=="PARTIAL"].copy(); available=inventory[inventory["status"]=="AVAILABLE"].copy()
     summary=pd.DataFrame([
-        {"collection":wave_id,"asset_class":"ACTION","universe_rows":len(actions),"missing_fields":int((inventory.query("asset_class=='ACTION' and status=='MISSING'")).shape[0]),"partial_fields":int((inventory.query("asset_class=='ACTION' and status=='PARTIAL'")).shape[0]),"fields_with_actual_source":int(((inventory.asset_class=="ACTION")&(~inventory.source_reelle_absente)).sum()),"source_context":source_context},
-        {"collection":wave_id,"asset_class":"ETF","universe_rows":len(etfs),"missing_fields":int((inventory.query("asset_class=='ETF' and status=='MISSING'")).shape[0]),"partial_fields":int((inventory.query("asset_class=='ETF' and status=='PARTIAL'")).shape[0]),"fields_with_actual_source":int(((inventory.asset_class=="ETF")&(~inventory.source_reelle_absente)).sum()),"source_context":source_context},
+        {"collection":wave_id,"asset_class":"ACTION","universe_rows":len(actions),"missing_fields":int((inventory.query("asset_class=='ACTION' and status=='MISSING'")).shape[0]),"partial_fields":int((inventory.query("asset_class=='ACTION' and status=='PARTIAL'")).shape[0]),"fields_with_actual_source":int(((inventory.asset_class=="ACTION")&(~inventory.source_reelle_absente)).sum()),"source_context":source_context,"inventory_reused":reused},
+        {"collection":wave_id,"asset_class":"ETF","universe_rows":len(etfs),"missing_fields":int((inventory.query("asset_class=='ETF' and status=='MISSING'")).shape[0]),"partial_fields":int((inventory.query("asset_class=='ETF' and status=='PARTIAL'")).shape[0]),"fields_with_actual_source":int(((inventory.asset_class=="ETF")&(~inventory.source_reelle_absente)).sum()),"source_context":source_context,"inventory_reused":reused},
     ])
     failures_df=pd.DataFrame(failures or []); safe="".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in wave_id)[:40]
     compact_runtime=_github_compact_intermediate_enabled(wave_id)
@@ -125,7 +170,7 @@ def write_collection_audit(
         _format_excel(path); latest=root/"COLLECTION_DATA_AVAILABILITY_LATEST.xlsx"; shutil.copyfile(path,latest)
     else:
         path=root/f"COLLECTION_AUDIT_{safe}.csv"
-        compact=inventory.copy(); compact["source_context"]=source_context
+        compact=inventory.copy(); compact["source_context"]=source_context; compact["inventory_reused"]=reused
         compact.to_csv(path,sep=";",encoding="utf-8-sig",index=False)
         if not failures_df.empty:
             failures_df.to_csv(root/f"COLLECTION_AUDIT_{safe}_FAILURES.csv",sep=";",encoding="utf-8-sig",index=False)
