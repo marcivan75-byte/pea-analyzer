@@ -1,0 +1,27 @@
+name: OPS dispatch weekly heavy once
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - RUN_CANONICAL_WEEKLY_HEAVY_NOW.txt
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch canonical heavy Committee workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run committee_master_daily.yml --repo "${GITHUB_REPOSITORY}" --ref main -f run_validation=false
+          sleep 4
+          RUN_ID=$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow committee_master_daily.yml --branch main --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId')
+          echo "Dispatched canonical weekly heavy run ${RUN_ID}"
+          gh issue comment 160 --repo "${GITHUB_REPOSITORY}" --body "OPTIMIZED_WEEKLY_RUN_DISPATCHED run_id=${RUN_ID} workflow=committee_master_daily.yml ref=main sha=${GITHUB_SHA}"
