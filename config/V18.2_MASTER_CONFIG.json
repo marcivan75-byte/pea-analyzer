@@ -1,11 +1,52 @@
 {
-  "version": "21.13.1",
+  "version": "21.13.2",
   "base": "18.2.0",
-  "theme": "COMPLETENESS_ROTATION_DYNAMIC_WEIGHTS_HISTORY_DEPTH",
+  "theme": "COMPLETENESS_ROTATION_DYNAMIC_WEIGHTS_HISTORY_DEPTH_RUNTIME_OPT",
   "primary_bulk_source": "yfinance",
   "no_repeat_api_request_policy": true,
   "api_keys": {"MARKETSTACK_API_KEY":"environment","ALPHA_VANTAGE_API_KEY":"environment","FINNHUB_API_KEY":"environment","FRED_API_KEY":"environment","EIA_API_KEY":"environment"},
   "yfinance": {"enabled":true,"requires_key":false,"history_start":"2023-01-01","history_period":"5y","required_history_start":"2023-01-01","history_rolling_months":60,"history_policy":"ANCHOR_2023_THEN_ROLLING_60M","cache_generation":"V21.13.1_START_2023_ROLLING_60M","interval":"1d","auto_adjust":true,"actions_batch_size":100,"etf_batch_size":50,"threads":true,"retry_count":3,"cache_days":1,"fundamental_refresh_days":7},
+  "runtime_optimization": {
+    "status": "ACTIVE_V21_13_2",
+    "governance": "REDUCE_NETWORK_REFRESH_WITHOUT_REDUCING_UNIVERSE_OR_CHANGING_DECISION_LOGIC",
+    "yfinance_fundamentals": {
+      "cache_path": "state/provenance/source_cache/YFINANCE_INFO_V1.json",
+      "ttl_days": {"HOT":3,"WARM":7,"COLD":21},
+      "refresh_budget": 450,
+      "hard_max_age_days": 35,
+      "negative_cache_days": 7,
+      "warm_top_n": 500,
+      "max_workers": 4,
+      "local_price_ratio_refresh": true,
+      "bootstrap_uncached_all": true
+    },
+    "finnhub_consensus": {
+      "cache_path": "state/provenance/source_cache/FINNHUB_CONSENSUS_V1.json",
+      "warm_top_n": 500,
+      "negative_cache_days": 7,
+      "delay_seconds": 1.1,
+      "max_workers": 8,
+      "tiers": {
+        "HOT": {"refresh_budget":120,"max_cache_age_days":10},
+        "WARM": {"refresh_budget":80,"max_cache_age_days":21},
+        "COLD": {"refresh_budget":40,"max_cache_age_days":35}
+      },
+      "bootstrap_uncached_all": true
+    },
+    "etf_fund_flows": {
+      "max_workers": 8,
+      "request_start_delay_seconds": 0.08,
+      "chunk_size": 18,
+      "reuse_previous_snapshot": true,
+      "history_append_only_by_instrument_date": true
+    },
+    "telemetry": {
+      "source_cache_metrics": true,
+      "runtime_seconds": true,
+      "network_refresh_counts": true,
+      "cache_hit_counts": true
+    }
+  },
   "committee_full_coverage": {"actions_fundamentals_scope":"ALL","actions_consensus_scope":"ALL","policy":"Collect the full 1829-Action canonical universe for Committee scoring; missing source data remains missing and is never imputed."},
   "canonical_universe": {"actions_reference_version":"V21.3_1829","actions_expected_count":1829,"actions_whitelist_path":"config/V21_3_ACTION_UNIVERSE_1829_ISINS.parts","actions_whitelist_sha256":"1e95d51d5a8fa3e616e97ec3fec0a033b29e841d0971ff5a644efa4f5049c085","strict_when_whitelist_present":true,"do_not_filter_by_count_only":true,"legacy_reference":"1429 canonical + 400 validated quarantine recovered"},
   "topdown": {"enabled":true,"instrument_news_top_n":120,"news_window":"2d","neutral_imputation_forbidden":true,"global_macro_primary":"FRED","country_macro_direct_target":"ECB_EUROSTAT","country_macro_interim":"MARKET_IMPLIED_COUNTRY_REGIME_C","news_primary":"GDELT","market_sentiment_interim":"INTERNAL_PIT_BREADTH_MOMENTUM_C"},
