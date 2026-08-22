@@ -1,0 +1,68 @@
+{
+  "package_name": "PEA_ANALYZER_FINAL_V21_13_16",
+  "package_version": "V21.13.16",
+  "functional_baseline_commit": "e407926256fb1918ae3d88e98ffa5228a5f0b84e",
+  "generated_from_branch": "main",
+  "status": "FINAL_VALIDATED_RUNTIME_PACKAGE",
+  "active_scope": {
+    "actions": ["TCT", "CT", "MT"],
+    "etf": ["CT", "MT"],
+    "connected_modules": [
+      "sector_rotation",
+      "etf_fund_flows",
+      "risk_context",
+      "committee_ci_restitution"
+    ]
+  },
+  "excluded_from_active_runtime": [
+    "ACTIONS_LT",
+    "ETF_LT",
+    "GOLD_FULL_PROCESS",
+    "CRYPTO_ETP_FULL_PROCESS",
+    "IPO_PROCESS"
+  ],
+  "governance": {
+    "t1_t2_scope": "ACTION_TCT_ONLY",
+    "premarket_scope": "UNION_OF_TCT_AND_CT_PRESELECTED_ACTIONS_ONLY",
+    "postmarket_scope": "UNION_OF_TCT_AND_CT_PRESELECTED_ACTIONS_ONLY",
+    "pit_anti_lookahead_unchanged": true,
+    "weights_unchanged_by_runtime_optimizations": true,
+    "thresholds_unchanged_by_runtime_optimizations": true,
+    "criteria_unchanged_by_runtime_optimizations": true,
+    "production_gdelt_grouping_enabled": false,
+    "real_orders_enabled": false
+  },
+  "runtime_optimizations_included": [
+    "V21.13.8_PREMARKET_MINIMAL_DEPENDENCIES",
+    "V21.13.9_CONSOLIDATED_STATE_CACHE_AND_ARTIFACT_IO",
+    "V21.13.10_ACTION_CT_SHARED_HISTORY_BATCH",
+    "V21.13.11_TACTICAL_SHARED_PARQUET_RUNTIME",
+    "V21.13.12_POSTMARKET_SINGLE_PROCESS_BUNDLE",
+    "V21.13.13_GDELT_GROUPED_SHADOW_ONLY",
+    "V21.13.14_GDELT_LOW_COST_AB_HARNESS",
+    "V21.13.15_DAILY_RUNTIME_INSTALL",
+    "V21.13.16_WEEKLY_RUNTIME_INSTALL"
+  ],
+  "runtime_dependency_contract": {
+    "file": "requirements-runtime.txt",
+    "count": 13,
+    "must_equal_pyproject_project_dependencies": true
+  },
+  "production_workflows": {
+    "daily": ".github/workflows/committee_tct_ct_daily.yml",
+    "weekly": ".github/workflows/committee_master_daily.yml",
+    "premarket": ".github/workflows/tct_next_session_context.yml"
+  },
+  "final_validation": {
+    "tct_module_validation": "SUCCESS",
+    "action_ct_v22_validation": "SUCCESS",
+    "committee_master_validation": "SUCCESS",
+    "action_identity_hydration_audit": "SUCCESS"
+  },
+  "package_contents_policy": "COMPLETE_GIT_TRACKED_REPOSITORY_AT_RELEASE_COMMIT",
+  "integrity": {
+    "archive_format": "zip",
+    "sha256_sidecar": true,
+    "manifest_included": true
+  }
+}
