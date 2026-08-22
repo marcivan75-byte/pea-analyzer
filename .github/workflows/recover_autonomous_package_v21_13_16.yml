@@ -1,0 +1,289 @@
+name: Recover Autonomous Package V21.13.16
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/recover_autonomous_package_v21_13_16.yml"
+      - "RECOVER_AUTONOMOUS_PACKAGE_V21_13_16.trigger"
+
+permissions:
+  contents: read
+
+jobs:
+  recover-autonomous-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout immutable final release commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: 694e23821b57ba9027125f0f87bc1a9da19118d3
+          fetch-depth: 1
+
+      - name: Verify immutable source commit
+        run: |
+          test "$(git rev-parse HEAD)" = "694e23821b57ba9027125f0f87bc1a9da19118d3"
+
+      - name: Restore latest persistent OHLCV cache
+        id: ohlcv-cache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: data/cache/
+          key: ohlcv-v3-autonomous-recovery-${{ github.run_id }}
+          restore-keys: |
+            ohlcv-v3-
+
+      - name: Restore consolidated tactical decision state
+        id: decision-state
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            state/TCT_V24_1_7_T1_STATE.json
+            state/tct_context/
+            state/action_ct/
+            state/action_ct_v22_1/
+            state/provenance/
+          key: decision-state-v1-autonomous-recovery-${{ github.run_id }}
+          restore-keys: |
+            decision-state-v1-
+
+      - name: Restore legacy TCT state if consolidated state is unavailable
+        id: legacy-tct
+        if: steps.decision-state.outputs.cache-matched-key == ''
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: state/TCT_V24_1_7_T1_STATE.json
+          key: tct-v2417-state-autonomous-recovery-${{ github.run_id }}
+          restore-keys: |
+            daily-tct-state-
+            tct-v2417-state-
+
+      - name: Restore legacy catalyst state if consolidated state is unavailable
+        id: legacy-context
+        if: steps.decision-state.outputs.cache-matched-key == ''
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: state/tct_context/
+          key: tct-context-autonomous-recovery-${{ github.run_id }}
+          restore-keys: |
+            tct-context-
+
+      - name: Restore legacy Action CT V22.0 state if consolidated state is unavailable
+        id: legacy-ct22
+        if: steps.decision-state.outputs.cache-matched-key == ''
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: state/action_ct/
+          key: action-ct-v22-autonomous-recovery-${{ github.run_id }}
+          restore-keys: |
+            action-ct-v22-
+
+      - name: Restore legacy Action CT V22.1 state if consolidated state is unavailable
+        id: legacy-ct221
+        if: steps.decision-state.outputs.cache-matched-key == ''
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: state/action_ct_v22_1/
+          key: action-ct-v221-autonomous-recovery-${{ github.run_id }}
+          restore-keys: |
+            action-ct-v221-
+
+      - name: Restore legacy provenance state if consolidated state is unavailable
+        id: legacy-provenance
+        if: steps.decision-state.outputs.cache-matched-key == ''
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: state/provenance/
+          key: provenance-v2181-autonomous-recovery-${{ github.run_id }}
+          restore-keys: |
+            daily-provenance-v2181-
+            provenance-v2181-
+            provenance-v2161-
+            provenance-v216-
+            provenance-v215-
+            provenance-v214-
+
+      - name: Restore consolidated weekly research state
+        id: weekly-state
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            state/sector_rotation_v2/
+            state/etf_fund_flows/
+          key: weekly-research-state-v1-autonomous-recovery-${{ github.run_id }}
+          restore-keys: |
+            weekly-research-state-v1-
+
+      - name: Restore legacy Sector Rotation V2 state if weekly state is unavailable
+        id: legacy-sector
+        if: steps.weekly-state.outputs.cache-matched-key == ''
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: state/sector_rotation_v2/
+          key: sector-rotation-v2-autonomous-recovery-${{ github.run_id }}
+          restore-keys: |
+            sector-rotation-v2-
+
+      - name: Restore legacy ETF Fund Flow state if weekly state is unavailable
+        id: legacy-flows
+        if: steps.weekly-state.outputs.cache-matched-key == ''
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: state/etf_fund_flows/
+          key: etf-fund-flow-v1-autonomous-recovery-${{ github.run_id }}
+          restore-keys: |
+            etf-fund-flow-v1-
+
+      - name: Validate restored runtime material
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          cache_files = [p for p in Path("data/cache").rglob("*") if p.is_file()] if Path("data/cache").exists() else []
+          state_files = [p for p in Path("state").rglob("*") if p.is_file()] if Path("state").exists() else []
+          tactical = any(str(p).startswith("state/tct_context/") or str(p).startswith("state/action_ct/") or str(p).startswith("state/action_ct_v22_1/") for p in state_files)
+          research = any(str(p).startswith("state/sector_rotation_v2/") or str(p).startswith("state/etf_fund_flows/") for p in state_files)
+          assert cache_files, "NO_OHLCV_CACHE_RESTORED"
+          assert tactical, "NO_TACTICAL_STATE_RESTORED"
+          assert research, "NO_WEEKLY_RESEARCH_STATE_RESTORED"
+          print(f"Restored runtime material OK: cache_files={len(cache_files)} state_files={len(state_files)}")
+          PY
+
+      - name: Build autonomous package with recovery documentation
+        env:
+          FINAL_COMMIT: 694e23821b57ba9027125f0f87bc1a9da19118d3
+          OHLCV_KEY: ${{ steps.ohlcv-cache.outputs.cache-matched-key }}
+          DECISION_KEY: ${{ steps.decision-state.outputs.cache-matched-key }}
+          WEEKLY_KEY: ${{ steps.weekly-state.outputs.cache-matched-key }}
+          LEGACY_TCT_KEY: ${{ steps.legacy-tct.outputs.cache-matched-key }}
+          LEGACY_CONTEXT_KEY: ${{ steps.legacy-context.outputs.cache-matched-key }}
+          LEGACY_CT22_KEY: ${{ steps.legacy-ct22.outputs.cache-matched-key }}
+          LEGACY_CT221_KEY: ${{ steps.legacy-ct221.outputs.cache-matched-key }}
+          LEGACY_PROVENANCE_KEY: ${{ steps.legacy-provenance.outputs.cache-matched-key }}
+          LEGACY_SECTOR_KEY: ${{ steps.legacy-sector.outputs.cache-matched-key }}
+          LEGACY_FLOWS_KEY: ${{ steps.legacy-flows.outputs.cache-matched-key }}
+        run: |
+          rm -rf AUTONOMOUS_PACKAGE_V21_13_16
+          mkdir -p AUTONOMOUS_PACKAGE_V21_13_16
+          git archive --format=tar HEAD | tar -xf - -C AUTONOMOUS_PACKAGE_V21_13_16
+          mkdir -p AUTONOMOUS_PACKAGE_V21_13_16/data AUTONOMOUS_PACKAGE_V21_13_16/state
+          cp -a data/cache AUTONOMOUS_PACKAGE_V21_13_16/data/
+          cp -a state/. AUTONOMOUS_PACKAGE_V21_13_16/state/
+          python - <<'PY'
+          from __future__ import annotations
+          import hashlib
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          root = Path("AUTONOMOUS_PACKAGE_V21_13_16")
+          cache = root / "data" / "cache"
+          state = root / "state"
+          def stats(path: Path):
+              files=[p for p in path.rglob("*") if p.is_file()] if path.exists() else []
+              return {"files": len(files), "bytes": sum(p.stat().st_size for p in files)}
+          keys={
+              "ohlcv": os.environ.get("OHLCV_KEY", ""),
+              "decision": os.environ.get("DECISION_KEY", ""),
+              "weekly": os.environ.get("WEEKLY_KEY", ""),
+              "legacy_tct": os.environ.get("LEGACY_TCT_KEY", ""),
+              "legacy_context": os.environ.get("LEGACY_CONTEXT_KEY", ""),
+              "legacy_ct22": os.environ.get("LEGACY_CT22_KEY", ""),
+              "legacy_ct221": os.environ.get("LEGACY_CT221_KEY", ""),
+              "legacy_provenance": os.environ.get("LEGACY_PROVENANCE_KEY", ""),
+              "legacy_sector": os.environ.get("LEGACY_SECTOR_KEY", ""),
+              "legacy_flows": os.environ.get("LEGACY_FLOWS_KEY", ""),
+          }
+          payload={
+              "package_name": "PEA_ANALYZER_AUTONOMOUS_V21_13_16",
+              "release_commit": os.environ["FINAL_COMMIT"],
+              "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+              "tracked_repository_included": True,
+              "runtime_caches_included": True,
+              "restored_cache_keys": keys,
+              "data_cache": stats(cache),
+              "state": stats(state),
+              "secrets_included": False,
+              "git_directory_included": False,
+              "virtual_environment_included": False,
+              "real_orders_enabled": False,
+          }
+          (root/"AUTONOMOUS_RECOVERY_STATUS.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+          readme=f'''# PEA Analyzer — package autonome V21.13.16
+
+Ce package reprend la release figée **V21.13.16** au commit `{os.environ["FINAL_COMMIT"]}` et y ajoute les derniers caches/états restaurables depuis GitHub Actions.
+
+## Inclus
+
+- dépôt complet suivi par Git : code, `README.md`, configurations, référentiels, workflows, tests et documentation ;
+- `data/cache/` restauré depuis le cache OHLCV de production ;
+- états TCT et catalyst ;
+- états Action CT V22.0 / V22.1 ;
+- provenance ;
+- états Sector Rotation V2 et ETF Fund Flows ;
+- manifeste final V21.13.16 ;
+- inventaire et statut de récupération autonome.
+
+## Non inclus volontairement
+
+- secrets/API keys ;
+- `.git/` ;
+- environnements virtuels ;
+- caches pip/système ;
+- artefacts CI temporaires sans rôle de reprise.
+
+## Reprise
+
+1. Décompresser l'archive en conservant l'arborescence.
+2. Utiliser Python 3.12.
+3. Installer `requirements-runtime.txt`.
+4. Définir `PYTHONPATH=src`.
+5. Renseigner les secrets API dans GitHub Secrets ou l'environnement, jamais dans les fichiers du package.
+6. Conserver `data/cache/` et `state/` à leur emplacement : les workflows de production les réutilisent directement.
+
+Le fichier `AUTONOMOUS_RECOVERY_STATUS.json` indique les clés de cache effectivement restaurées et le volume de données inclus.
+'''
+          (root/"README_REPRISE_AUTONOME.md").write_text(readme, encoding="utf-8")
+          files=sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file())
+          (root/"AUTONOMOUS_CONTENTS.txt").write_text("\n".join(files)+"\n", encoding="utf-8")
+          PY
+          zip -q -r PEA_ANALYZER_AUTONOMOUS_V21_13_16.zip AUTONOMOUS_PACKAGE_V21_13_16
+          sha256sum PEA_ANALYZER_AUTONOMOUS_V21_13_16.zip > PEA_ANALYZER_AUTONOMOUS_V21_13_16.sha256
+          printf '%s\n' '694e23821b57ba9027125f0f87bc1a9da19118d3' > PEA_ANALYZER_AUTONOMOUS_V21_13_16.commit.txt
+
+      - name: Validate autonomous archive
+        run: |
+          python - <<'PY'
+          from zipfile import ZipFile
+          archive="PEA_ANALYZER_AUTONOMOUS_V21_13_16.zip"
+          with ZipFile(archive) as zf:
+              bad=zf.testzip()
+              names=set(zf.namelist())
+          assert bad is None, bad
+          required={
+              "AUTONOMOUS_PACKAGE_V21_13_16/README.md",
+              "AUTONOMOUS_PACKAGE_V21_13_16/README_REPRISE_AUTONOME.md",
+              "AUTONOMOUS_PACKAGE_V21_13_16/AUTONOMOUS_RECOVERY_STATUS.json",
+              "AUTONOMOUS_PACKAGE_V21_13_16/AUTONOMOUS_CONTENTS.txt",
+              "AUTONOMOUS_PACKAGE_V21_13_16/FINAL_PACKAGE_V21_13_16_MANIFEST.json",
+              "AUTONOMOUS_PACKAGE_V21_13_16/requirements-runtime.txt",
+          }
+          assert not (required-names), sorted(required-names)
+          assert any(n.startswith("AUTONOMOUS_PACKAGE_V21_13_16/data/cache/") and not n.endswith("/") for n in names)
+          assert any(n.startswith("AUTONOMOUS_PACKAGE_V21_13_16/state/tct_context/") and not n.endswith("/") for n in names)
+          assert any(n.startswith("AUTONOMOUS_PACKAGE_V21_13_16/state/sector_rotation_v2/") and not n.endswith("/") for n in names)
+          print(f"Autonomous archive OK: {len(names)} entries")
+          PY
+
+      - name: Upload autonomous package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: PEA_ANALYZER_AUTONOMOUS_V21_13_16
+          path: |
+            PEA_ANALYZER_AUTONOMOUS_V21_13_16.zip
+            PEA_ANALYZER_AUTONOMOUS_V21_13_16.sha256
+            PEA_ANALYZER_AUTONOMOUS_V21_13_16.commit.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
