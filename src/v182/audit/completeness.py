@@ -15,12 +15,15 @@ def _measured_fields(fields: Sequence[str]) -> list[str]:
 
 
 def _frame_completeness(frame: pd.DataFrame, fields: Sequence[str]) -> dict:
-    measured=[field for field in _measured_fields(fields) if field in frame.columns]
+    measured=_measured_fields(fields)
     possible=len(frame)*len(measured)
     if not possible:
         return {"observed":0,"possible":possible,"coverage_pct":0}
 
-    data=frame.loc[:,measured]
+    # Reindex rather than filtering columns: the historical row.get(field) path
+    # counted an absent requested column in the denominator and treated every cell
+    # in it as missing. Preserve that exact contract.
+    data=frame.reindex(columns=measured)
     missing=data.isna()
     # Masters are overwhelmingly strings. Pandas' nullable string dtype keeps
     # genuine NA values as NA while vectorizing the exact canonical text-token
