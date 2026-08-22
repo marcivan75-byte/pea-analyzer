@@ -15,6 +15,13 @@ from v182.sources.rate_limit import StartRateLimiter
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACT_PATH = Path("config/SOURCE_FUNCTIONAL_CONTRACT_V21_16.json")
 NETWORK_POLICIES = {"LIVE_IF_DUE", "CACHE_ONLY"}
+SOURCE_DECISION_PRIORITY = {
+    "BUY_CANDIDATE": 0,
+    "SHADOW_CANDIDATE": 1,
+    "WATCH": 2,
+    "WATCH_NOT_TOP2": 3,
+    "REVIEW": 4,
+}
 
 
 def _read_contract(root: Path) -> dict:
@@ -45,9 +52,16 @@ def _migrate_cache_version(path: Path, *, old_version: str, new_version: str) ->
 
 def _score_sort(frame: pd.DataFrame) -> pd.DataFrame:
     out = frame.copy()
+    decision = out["decision"] if "decision" in out else out.get("dynamic_decision", pd.Series("", index=out.index))
+    out["_source_decision_priority"] = decision.astype(str).str.upper().map(SOURCE_DECISION_PRIORITY).fillna(9)
     out["_source_priority_score"] = pd.to_numeric(out.get("score"), errors="coerce")
     out["_selected_rank"] = pd.to_numeric(out["selected_rank"], errors="coerce") if "selected_rank" in out else pd.NA
-    return out.sort_values(["_selected_rank", "_source_priority_score"], ascending=[True, False], na_position="last")
+    return out.sort_values(
+        ["_source_decision_priority", "_selected_rank", "_source_priority_score"],
+        ascending=[True, True, False],
+        na_position="last",
+        kind="stable",
+    )
 
 
 def select_preselected_rows(rows: pd.DataFrame, *, max_unique_instruments: int = 40, accepted_statuses: tuple[str, ...] = ("BUY_CANDIDATE", "WATCH", "REVIEW", "WATCH_NOT_TOP2", "SHADOW_CANDIDATE")) -> pd.DataFrame:
