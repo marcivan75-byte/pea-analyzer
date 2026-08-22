@@ -127,11 +127,16 @@ def test_v2441_isolated_pit_epoch_and_weights_are_coherent():
 def test_workflows_activate_v2442_without_intraday_runtime_and_keep_v2441_historical():
     next_session = (ROOT / ".github" / "workflows" / "tct_next_session_context.yml").read_text(encoding="utf-8")
     daily = (ROOT / ".github" / "workflows" / "committee_tct_ct_daily.yml").read_text(encoding="utf-8")
+    postmarket = (ROOT / "src" / "v182" / "reporting" / "tct_postmarket_bundle_run.py").read_text(encoding="utf-8")
     assert "tct_next_session_catalyst_run_v24_4_2" in next_session
     assert "tct_v24_4_2_pit_lineage" in next_session
     assert "tct_v24_4_2_pit_validator" in next_session
     assert "TCT_V24_4_2_CATALYST_LEDGER.csv" in next_session
-    assert "tct_pit_ohlc_ledger_v24_4_2" in daily
+    assert "python -m v182.reporting.tct_postmarket_bundle_run" in daily
+    assert "ohlc_ledger.run(root=root)" in postmarket
+    assert 'catalyst.run(root=root, phase="POSTMARKET")' in postmarket
+    assert "lineage.run(root=root)" in postmarket
+    assert "validator.run(root=root)" in postmarket
     assert (ROOT / "src" / "v182" / "reporting" / "tct_next_session_catalyst_run_v24_4_1.py").exists()
     assert "actions_intraday_5m" not in next_session
     assert "5m" not in next_session.lower()
