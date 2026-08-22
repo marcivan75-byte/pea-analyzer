@@ -62,21 +62,9 @@ def _visible_text(html: str) -> str:
 def _canon_signal(value: str) -> str | None:
     text = " ".join(str(value or "").strip().upper().replace("_", " ").split())
     return {
-        "STRONG SELL": "STRONG_SELL",
-        "SELL": "SELL",
-        "NEUTRAL": "NEUTRAL",
-        "BUY": "BUY",
-        "STRONG BUY": "STRONG_BUY",
-        "VENTE FORTE": "STRONG_SELL",
-        "VENTE": "SELL",
-        "NEUTRE": "NEUTRAL",
-        "ACHAT": "BUY",
-        "ACHAT FORT": "STRONG_BUY",
-        "VENDI ADESSO": "STRONG_SELL",
-        "VENDI": "SELL",
-        "NEUTRALE": "NEUTRAL",
-        "COMPRA": "BUY",
-        "COMPRA ADESSO": "STRONG_BUY",
+        "STRONG SELL": "STRONG_SELL", "SELL": "SELL", "NEUTRAL": "NEUTRAL", "BUY": "BUY", "STRONG BUY": "STRONG_BUY",
+        "VENTE FORTE": "STRONG_SELL", "VENTE": "SELL", "NEUTRE": "NEUTRAL", "ACHAT": "BUY", "ACHAT FORT": "STRONG_BUY",
+        "VENDI ADESSO": "STRONG_SELL", "VENDI": "SELL", "NEUTRALE": "NEUTRAL", "COMPRA": "BUY", "COMPRA ADESSO": "STRONG_BUY",
     }.get(text)
 
 
@@ -103,8 +91,10 @@ def parse_technical_summary_html(html: str) -> dict[str, object]:
 
 
 def horizon_signal(fields: dict[str, object], horizon: str) -> tuple[object | None, object | None]:
-    tf = {"TCT": "daily", "CT": "weekly", "MT": "monthly"}.get(str(horizon or "").upper())
-    return (None, None) if tf is None else (fields.get(f"investing_{tf}_signal"), fields.get(f"investing_{tf}_score"))
+    timeframe = {"TCT": "daily", "CT": "weekly", "MT": "monthly"}.get(str(horizon or "").upper())
+    if timeframe is None:
+        return None, None
+    return fields.get(f"investing_{timeframe}_signal"), fields.get(f"investing_{timeframe}_score")
 
 
 def _slug(value: object) -> str:
@@ -123,7 +113,6 @@ def _ticker_market_slug(ticker: str) -> str | None:
 
 
 def _safe_investing_url(url: str, *, allow_technical: bool = True) -> bool:
-    """Allow only public Investing instrument pages used by this collector."""
     try:
         parsed = urlparse(str(url or ""))
     except ValueError:
@@ -145,15 +134,14 @@ def _candidate_base_urls(row: object) -> list[str]:
     if explicit and _safe_investing_url(explicit):
         base = explicit.split("?", 1)[0].rstrip("/")
         base = base[: -len("-technical")] if base.endswith("-technical") else base
-        path = urlparse(base).path
-        urls.append(f"{INVESTING_BASE}{path}")
+        urls.append(f"{INVESTING_BASE}{urlparse(base).path}")
     ticker_market = _ticker_market_slug(str(getter("yahoo_ticker", "") or ""))
     if asset == "ETF" and ticker_market:
         urls.append(f"{INVESTING_BASE}/{section}/{ticker_market}")
     for key in ("name", "long_name_yf"):
-        candidate = _slug(getter(key, ""))
-        if candidate:
-            urls.append(f"{INVESTING_BASE}/{section}/{candidate}")
+        slug = _slug(getter(key, ""))
+        if slug:
+            urls.append(f"{INVESTING_BASE}/{section}/{slug}")
     if asset != "ETF" and ticker_market:
         urls.append(f"{INVESTING_BASE}/{section}/{ticker_market}")
     return list(dict.fromkeys(urls))[:4]
@@ -178,26 +166,15 @@ def _save(path: Path, payload: dict) -> None:
 
 def _default_fetcher(url: str, *, timeout: float):
     import requests
-
     return requests.get(
         url,
-        headers={
-            "User-Agent": "Mozilla/5.0 (compatible; PEA-Analyzer/21.16; selected-public-context)",
-            "Accept-Language": "en-US,en;q=0.8",
-        },
+        headers={"User-Agent": "Mozilla/5.0 (compatible; PEA-Analyzer/21.16; selected-public-context)", "Accept-Language": "en-US,en;q=0.8"},
         timeout=timeout,
         allow_redirects=True,
     )
 
 
-def _resolve_base_url(
-    row: object,
-    isin: str,
-    *,
-    fetcher: Callable[..., object],
-    limiter: StartRateLimiter,
-    timeout_seconds: float,
-) -> tuple[str | None, str | None, int]:
+def _resolve_base_url(row: object, isin: str, *, fetcher: Callable[..., object], limiter: StartRateLimiter, timeout_seconds: float) -> tuple[str | None, str | None, int]:
     attempts = 0
     for url in _candidate_base_urls(row):
         try:
@@ -220,10 +197,29 @@ def _resolve_base_url(
 
 
 def _unresolved_cooldown_active(mapping: dict, current: datetime, retry_ttl_hours: float) -> bool:
-    return (
-        str(mapping.get("status") or "").upper() == "UNRESOLVED"
-        and _age_hours(mapping.get("last_failed_at_utc"), current) < max(0.0, float(retry_ttl_hours))
-    )
+    return str(mapping.get("status") or "").upper() == "UNRESOLVED" and _age_hours(mapping.get("last_failed_at_utc"), current) < max(0.0, float(retry_ttl_hours))
+
+
+def _technical_failure_cooldown_active(mapping: dict, current: datetime, retry_ttl_hours: float) -> bool:
+    return _age_hours(mapping.get("technical_last_failed_at_utc"), current) < max(0.0, float(retry_ttl_hours))
+
+
+def _resolved_mapping(mapping: dict, isin: str, base_url: str, current: datetime, overview_hash: str | None = None) -> dict:
+    out = dict(mapping)
+    out.update({"status": "RESOLVED", "base_url": base_url, "validated_isin": isin})
+    if overview_hash is not None:
+        out["resolved_at_utc"] = current.isoformat()
+        out["overview_sha256"] = overview_hash
+    for key in ("last_failed_at_utc", "reason", "failure_count", "last_candidate_attempts"):
+        out.pop(key, None)
+    return out
+
+
+def _clear_technical_failure(mapping: dict) -> dict:
+    out = dict(mapping)
+    for key in ("technical_last_failed_at_utc", "technical_failure_reason", "technical_failure_count"):
+        out.pop(key, None)
+    return out
 
 
 def collect_technical_context_cached(
@@ -234,6 +230,7 @@ def collect_technical_context_cached(
     refresh_budget: int = 40,
     ttl_hours: float = 6.0,
     unmapped_retry_ttl_hours: float = 24.0,
+    technical_failure_retry_ttl_hours: float = 2.0,
     request_start_interval_seconds: float = 1.0,
     timeout_seconds: float = 15.0,
     max_workers: int = 4,
@@ -242,16 +239,14 @@ def collect_technical_context_cached(
     now: datetime | None = None,
 ) -> InvestingResult:
     current = (now or _now_utc()).astimezone(timezone.utc)
-    cache_file = Path(cache_path)
-    mapping_file = Path(mapping_path)
+    cache_file, mapping_file = Path(cache_path), Path(mapping_path)
     cache = _load(cache_file, CACHE_VERSION)
     mappings = _load(mapping_file, MAPPING_VERSION)
     fetch = fetcher or _default_fetcher
     limiter = StartRateLimiter(request_start_interval_seconds)
     failures: list[dict] = []
-    mapping_changed = False
-    cache_changed = False
-    cooldown_skipped = 0
+    mapping_changed = cache_changed = False
+    resolution_cooldown_skipped = technical_cooldown_skipped = 0
 
     unique = rows.drop_duplicates("isin").copy() if "isin" in rows else pd.DataFrame()
     due: list[tuple[str, object]] = []
@@ -262,51 +257,36 @@ def collect_technical_context_cached(
         entry = cache["entries"].get(isin)
         if entry is not None and _age_hours(entry.get("fetched_at_utc"), current) < ttl_hours:
             continue
-        mapping = mappings["entries"].get(isin, {})
+        mapping = dict(mappings["entries"].get(isin, {}) or {})
         base_url = str(mapping.get("base_url") or "").strip()
-        if not _safe_investing_url(base_url, allow_technical=False) and _unresolved_cooldown_active(mapping, current, unmapped_retry_ttl_hours):
-            cooldown_skipped += 1
+        base_valid = _safe_investing_url(base_url, allow_technical=False)
+        if not base_valid and _unresolved_cooldown_active(mapping, current, unmapped_retry_ttl_hours):
+            resolution_cooldown_skipped += 1
+            continue
+        if base_valid and _technical_failure_cooldown_active(mapping, current, technical_failure_retry_ttl_hours):
+            technical_cooldown_skipped += 1
             continue
         due.append((isin, row))
     due = due[: max(0, int(refresh_budget))]
 
     def worker(item: tuple[str, object]):
         isin, row = item
-        previous_mapping = dict(mappings["entries"].get(isin, {}) or {})
-        base_url = str(previous_mapping.get("base_url") or "").strip()
-        resolved_now = False
+        previous = dict(mappings["entries"].get(isin, {}) or {})
+        base_url = str(previous.get("base_url") or "").strip()
         mapping_entry: dict | None = None
         if not _safe_investing_url(base_url, allow_technical=False):
-            base_url, overview_hash, attempts = _resolve_base_url(
-                row,
-                isin,
-                fetcher=fetch,
-                limiter=limiter,
-                timeout_seconds=timeout_seconds,
-            )
+            base_url, overview_hash, attempts = _resolve_base_url(row, isin, fetcher=fetch, limiter=limiter, timeout_seconds=timeout_seconds)
             if not base_url:
-                failure_count = min(9999, int(previous_mapping.get("failure_count") or 0) + 1)
-                mapping_entry = {
+                return isin, {
                     "status": "UNRESOLVED",
                     "last_failed_at_utc": current.isoformat(),
                     "reason": "NO_VALIDATED_PUBLIC_URL",
-                    "failure_count": failure_count,
+                    "failure_count": min(9999, int(previous.get("failure_count") or 0) + 1),
                     "last_candidate_attempts": int(attempts),
-                }
-                return isin, mapping_entry, None, {
-                    "isin": isin,
-                    "source": "Investing.com",
-                    "reason": "NO_VALIDATED_PUBLIC_URL",
-                    "candidate_attempts": int(attempts),
-                }
-            resolved_now = True
-            mapping_entry = {
-                "status": "RESOLVED",
-                "base_url": base_url,
-                "validated_isin": isin,
-                "resolved_at_utc": current.isoformat(),
-                "overview_sha256": overview_hash,
-            }
+                }, None, {"isin": isin, "source": "Investing.com", "reason": "NO_VALIDATED_PUBLIC_URL", "candidate_attempts": int(attempts)}
+            mapping_entry = _resolved_mapping(previous, isin, base_url, current, overview_hash)
+        else:
+            mapping_entry = _resolved_mapping(previous, isin, base_url, current)
 
         technical_url = base_url.rstrip("/") + "-technical"
         try:
@@ -320,27 +300,16 @@ def collect_technical_context_cached(
             html = str(getattr(response, "text", "") or "")
             fields = parse_technical_summary_html(html)
             if not fields:
-                return isin, mapping_entry if resolved_now else None, None, {
-                    "isin": isin,
-                    "source": "Investing.com",
-                    "reason": "NO_TECHNICAL_SUMMARY",
-                    "url": technical_url,
-                }
-            cache_entry = {
-                "fetched_at_utc": current.isoformat(),
-                "source_url": final_url,
-                "fields": fields,
-                "page_sha256": sha256(html.encode("utf-8", errors="replace")).hexdigest(),
-            }
-            return isin, mapping_entry if resolved_now else None, cache_entry, None
+                raise ValueError("NO_TECHNICAL_SUMMARY")
+            mapping_entry = _clear_technical_failure(mapping_entry)
+            cache_entry = {"fetched_at_utc": current.isoformat(), "source_url": final_url, "fields": fields, "page_sha256": sha256(html.encode("utf-8", errors="replace")).hexdigest()}
+            return isin, mapping_entry, cache_entry, None
         except Exception as exc:
-            return isin, mapping_entry if resolved_now else None, None, {
-                "isin": isin,
-                "source": "Investing.com",
-                "reason": type(exc).__name__,
-                "detail": str(exc)[:160],
-                "url": technical_url,
-            }
+            failed_mapping = dict(mapping_entry)
+            failed_mapping["technical_last_failed_at_utc"] = current.isoformat()
+            failed_mapping["technical_failure_reason"] = type(exc).__name__ if str(exc) != "NO_TECHNICAL_SUMMARY" else "NO_TECHNICAL_SUMMARY"
+            failed_mapping["technical_failure_count"] = min(9999, int(previous.get("technical_failure_count") or 0) + 1)
+            return isin, failed_mapping, None, {"isin": isin, "source": "Investing.com", "reason": failed_mapping["technical_failure_reason"], "detail": str(exc)[:160], "url": technical_url}
 
     success = 0
     workers = max(1, min(int(max_workers), len(due))) if due else 0
@@ -349,7 +318,7 @@ def collect_technical_context_cached(
             futures = [pool.submit(worker, item) for item in due]
             for future in as_completed(futures):
                 isin, mapping_entry, cache_entry, failure = future.result()
-                if mapping_entry is not None:
+                if mapping_entry is not None and mapping_entry != mappings["entries"].get(isin):
                     mappings["entries"][isin] = mapping_entry
                     mapping_changed = True
                 if cache_entry is not None:
@@ -361,24 +330,11 @@ def collect_technical_context_cached(
 
     if cache_changed:
         cache["updated_at_utc"] = current.isoformat()
-        cache["policy"] = {
-            "selected_only": True,
-            "refresh_budget": int(refresh_budget),
-            "ttl_hours": float(ttl_hours),
-            "request_start_interval_seconds": float(request_start_interval_seconds),
-            "max_workers": int(max_workers),
-            "raw_html_persisted": False,
-            "decision_influence": False,
-        }
+        cache["policy"] = {"selected_only": True, "refresh_budget": int(refresh_budget), "ttl_hours": float(ttl_hours), "request_start_interval_seconds": float(request_start_interval_seconds), "max_workers": int(max_workers), "raw_html_persisted": False, "decision_influence": False}
         _save(cache_file, cache)
     if mapping_changed:
         mappings["updated_at_utc"] = current.isoformat()
-        mappings["policy"] = {
-            "unmapped_retry_ttl_hours": float(unmapped_retry_ttl_hours),
-            "negative_cache_is_temporary": True,
-            "permanent_blacklist": False,
-            "raw_html_persisted": False,
-        }
+        mappings["policy"] = {"unmapped_retry_ttl_hours": float(unmapped_retry_ttl_hours), "technical_failure_retry_ttl_hours": float(technical_failure_retry_ttl_hours), "negative_cache_is_temporary": True, "permanent_blacklist": False, "raw_html_persisted": False}
         _save(mapping_file, mappings)
 
     observations: list[dict] = []
@@ -398,40 +354,13 @@ def collect_technical_context_cached(
         fields["investing_age_hours"] = age
         for field, value in fields.items():
             metadata = field == "investing_age_hours"
-            observations.append(
-                {
-                    "isin": isin,
-                    "asset_class": str(row.get("asset_class") or ""),
-                    "horizon": str(row.get("horizon") or ""),
-                    "field": field,
-                    "value": value,
-                    "source": "Investing cache metadata" if metadata else "Investing.com public technical summary",
-                    "source_url": entry.get("source_url"),
-                    "collected_at": entry.get("fetched_at_utc"),
-                    "validation_status": "SOURCE_FRESHNESS_METADATA" if metadata else "POST_SELECTION_CONTEXT_ONLY",
-                }
-            )
+            observations.append({"isin": isin, "asset_class": str(row.get("asset_class") or ""), "horizon": str(row.get("horizon") or ""), "field": field, "value": value, "source": "Investing cache metadata" if metadata else "Investing.com public technical summary", "source_url": entry.get("source_url"), "collected_at": entry.get("fetched_at_utc"), "validation_status": "SOURCE_FRESHNESS_METADATA" if metadata else "POST_SELECTION_CONTEXT_ONLY"})
 
-    return InvestingResult(
-        observations,
-        failures,
-        {
-            "requested_rows": int(len(rows)),
-            "unique_instruments": int(len(unique)),
-            "live_refresh_requested": int(len(due)),
-            "live_refresh_success": int(success),
-            "resolution_cooldown_skipped": int(cooldown_skipped),
-            "unmapped_retry_ttl_hours": float(unmapped_retry_ttl_hours),
-            "usable_rows": int(usable),
-            "observations": int(len(observations)),
-            "selected_only": True,
-            "network_allowed": bool(allow_network),
-            "cache_write_performed": bool(cache_changed),
-            "mapping_write_performed": bool(mapping_changed),
-            "negative_cache_is_temporary": True,
-            "permanent_blacklist": False,
-            "decision_influence": False,
-            "score_influence": 0.0,
-            "raw_html_persisted": False,
-        },
-    )
+    return InvestingResult(observations, failures, {
+        "requested_rows": int(len(rows)), "unique_instruments": int(len(unique)), "live_refresh_requested": int(len(due)), "live_refresh_success": int(success),
+        "resolution_cooldown_skipped": int(resolution_cooldown_skipped), "technical_failure_cooldown_skipped": int(technical_cooldown_skipped),
+        "unmapped_retry_ttl_hours": float(unmapped_retry_ttl_hours), "technical_failure_retry_ttl_hours": float(technical_failure_retry_ttl_hours),
+        "usable_rows": int(usable), "observations": int(len(observations)), "selected_only": True, "network_allowed": bool(allow_network),
+        "cache_write_performed": bool(cache_changed), "mapping_write_performed": bool(mapping_changed), "negative_cache_is_temporary": True,
+        "permanent_blacklist": False, "decision_influence": False, "score_influence": 0.0, "raw_html_persisted": False,
+    })
