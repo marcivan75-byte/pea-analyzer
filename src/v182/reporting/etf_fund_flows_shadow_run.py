@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+import time
 
 import pandas as pd
 
@@ -155,8 +157,64 @@ def _write_markdown(instruments: pd.DataFrame, rotations: pd.DataFrame, diagnost
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _collect_snapshot_parallel(
+    universe: pd.DataFrame,
+    official: pd.DataFrame,
+    *,
+    max_workers: int,
+    chunk_size: int,
+    delay_seconds: float,
+) -> tuple[pd.DataFrame,pd.DataFrame,dict]:
+    """Run the existing validated collector in bounded independent chunks."""
+    started=time.perf_counter()
+    if universe.empty:
+        return pd.DataFrame(),pd.DataFrame(),{"mode":"EMPTY","runtime_seconds":0.0,"chunks":0,"workers":0}
+    size=max(1,int(chunk_size))
+    chunks=[universe.iloc[start:start+size].copy() for start in range(0,len(universe),size)]
+    workers=max(1,min(int(max_workers),len(chunks)))
+    snapshots=[]; failures=[]
+
+    def _run_chunk(chunk: pd.DataFrame) -> tuple[pd.DataFrame,pd.DataFrame]:
+        ids=set(chunk["instrument_id"].astype(str))
+        official_chunk=official[official["instrument_id"].astype(str).isin(ids)].copy() if not official.empty else pd.DataFrame()
+        return collect_current_snapshot(chunk,official_input=official_chunk,delay_seconds=delay_seconds)
+
+    if workers==1:
+        for chunk in chunks:
+            snap,fail=_run_chunk(chunk); snapshots.append(snap); failures.append(fail)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures=[executor.submit(_run_chunk,chunk) for chunk in chunks]
+            for future in as_completed(futures):
+                snap,fail=future.result(); snapshots.append(snap); failures.append(fail)
+    snapshot_frames=[frame for frame in snapshots if frame is not None and not frame.empty]
+    failure_frames=[frame for frame in failures if frame is not None and not frame.empty]
+    snapshot=pd.concat(snapshot_frames,ignore_index=True,sort=False) if snapshot_frames else pd.DataFrame()
+    failed=pd.concat(failure_frames,ignore_index=True,sort=False) if failure_frames else pd.DataFrame()
+    elapsed=round(time.perf_counter()-started,3)
+    metrics={
+        "mode":"BOUNDED_PARALLEL_CHUNKS" if workers>1 else "SERIAL_FALLBACK",
+        "runtime_seconds":elapsed,
+        "universe_count":int(len(universe)),
+        "chunks":int(len(chunks)),
+        "chunk_size":size,
+        "workers":workers,
+        "request_start_delay_seconds_per_worker":float(delay_seconds),
+        "snapshot_rows":int(len(snapshot)),
+        "collection_failures":int(len(failed)),
+        "history_rebuilt":False,
+        "decision_logic_changed":False,
+    }
+    return snapshot,failed,metrics
+
+
 def run(root: Path = ROOT) -> dict:
     cfg = load_config(root / "config" / "ETF_FUND_FLOW_V1_SHADOW.json")
+    try:
+        master_cfg=json.loads((root/"config"/"V18.2_MASTER_CONFIG.json").read_text(encoding="utf-8"))
+    except Exception:
+        master_cfg={}
+    runtime_opt=master_cfg.get("runtime_optimization",{}).get("etf_fund_flows",{})
     master, master_source = _read_pea_master(root)
     pea_universe = build_pea_flow_universe(master)
     external = load_external_flow_universe(root / "config" / "ETF_FUND_FLOW_EXTERNAL_UNIVERSE_V1.csv")
@@ -175,9 +233,16 @@ def run(root: Path = ROOT) -> dict:
             official_failures["stage"] = "OFFICIAL_INPUT"
             official_failures["reason"] = "UNKNOWN_INSTRUMENT_ID"
             official = official.loc[~unknown_mask].copy()
-    snapshot, failures = collect_current_snapshot(universe, official_input=official)
+    snapshot, failures, collection_metrics = _collect_snapshot_parallel(
+        universe,
+        official,
+        max_workers=int(runtime_opt.get("max_workers",8)),
+        chunk_size=int(runtime_opt.get("chunk_size",18)),
+        delay_seconds=float(runtime_opt.get("request_start_delay_seconds",0.08)),
+    )
     failure_frames = [frame for frame in (official_failures, failures) if not frame.empty]
     failures = pd.concat(failure_frames, ignore_index=True, sort=False) if failure_frames else pd.DataFrame()
+    collection_metrics["collection_failures_total"]=int(len(failures))
 
     state_dir = root / "state" / "etf_fund_flows"
     out_dir = root / "outputs" / "etf_fund_flows"
@@ -185,6 +250,7 @@ def run(root: Path = ROOT) -> dict:
     gaps_dir = root / "outputs" / "gaps"
     for directory in (state_dir, out_dir, audit_dir, gaps_dir):
         directory.mkdir(parents=True, exist_ok=True)
+    (audit_dir/"ETF_FUND_FLOW_COLLECTION_RUNTIME_V21_13_2.json").write_text(json.dumps(collection_metrics,ensure_ascii=False,indent=2),encoding="utf-8")
 
     weekly_control = _load_weekly_crypto_control(root / "inputs" / "CRYPTO_FUND_FLOW_WEEKLY_CONTROL.csv")
     weekly_control_path = out_dir / "CRYPTO_WEEKLY_EXTERNAL_CONTROL.json"
@@ -202,6 +268,7 @@ def run(root: Path = ROOT) -> dict:
             "master_source": master_source,
             "universe_count": int(len(universe)),
             "current_snapshot_rows": 0,
+            "collection_runtime": collection_metrics,
             "crypto_weekly_external_control": weekly_control,
             "decision_influence": 0.0,
             "live_orders_enabled": False,
@@ -215,6 +282,7 @@ def run(root: Path = ROOT) -> dict:
 
     result = build_flow_computation(history, cfg)
     result.diagnostics["crypto_weekly_external_control"] = weekly_control
+    result.diagnostics["collection_runtime"] = collection_metrics
     instruments_path = out_dir / "ETF_FLOW_INSTRUMENTS_SHADOW.csv"
     families_path = out_dir / "ETF_FLOW_FAMILIES_SHADOW.csv"
     rotations_path = out_dir / "SECTOR_ROTATION_FLOW_OVERLAY_V1.csv"
@@ -253,6 +321,7 @@ def run(root: Path = ROOT) -> dict:
             "external_universe_count": int(len(external)),
             "current_snapshot_rows": int(len(snapshot)),
             "collection_failures": int(len(failures)),
+            "collection_runtime": collection_metrics,
             "state_history_path": str(history_path.relative_to(root)),
             "instrument_output": str(instruments_path.relative_to(root)),
             "family_output": str(families_path.relative_to(root)),
