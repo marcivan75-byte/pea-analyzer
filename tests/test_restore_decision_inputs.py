@@ -6,25 +6,50 @@ import pytest
 
 import urllib.request
 
-from v182.ci.restore_decision_inputs import OPTIONAL, REQUIRED, _SafeRedirectHandler, _extract_required, _select_artifact, _select_run
+from v182.ci.restore_decision_inputs import (
+    DECISION_PACKAGE_V3,
+    FALLBACK_CONTEXT,
+    OPTIONAL,
+    REQUIRED,
+    _SafeRedirectHandler,
+    _extract_required,
+    _select_artifact,
+    _select_run,
+)
 
 
-def test_extract_required_only_restores_decision_inputs(tmp_path: Path):
+def test_extract_required_prefers_compact_v3_decision_package(tmp_path: Path):
     archive = tmp_path / "artifact.zip"
     with zipfile.ZipFile(archive, "w") as bundle:
-        for name in REQUIRED | OPTIONAL:
-            bundle.writestr(name, "{}" if name.endswith(".json") else "decision;score\nWATCH;50\n")
+        for name in REQUIRED | OPTIONAL | DECISION_PACKAGE_V3 | FALLBACK_CONTEXT:
+            payload = "{}" if name.endswith(".json") else "decision;score\nWATCH;50\n"
+            bundle.writestr(name, payload)
         bundle.writestr("state/provenance/VERY_LARGE.csv", "must not be extracted")
 
     root = tmp_path / "root"
-    extracted = _extract_required(archive, root)
+    extracted = set(_extract_required(archive, root))
 
-    assert set(extracted) == REQUIRED | OPTIONAL
+    assert extracted == REQUIRED | OPTIONAL | DECISION_PACKAGE_V3
     assert not (root / "state/provenance/VERY_LARGE.csv").exists()
+    for name in FALLBACK_CONTEXT:
+        assert not (root / name).exists()
+
+
+def test_extract_required_restores_fallback_context_for_legacy_artifact(tmp_path: Path):
+    archive = tmp_path / "legacy.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for name in REQUIRED | OPTIONAL | FALLBACK_CONTEXT:
+            payload = "{}" if name.endswith(".json") else "decision;score\nWATCH;50\n"
+            bundle.writestr(name, payload)
+
+    extracted = set(_extract_required(archive, tmp_path / "root"))
+
+    assert extracted == REQUIRED | OPTIONAL | FALLBACK_CONTEXT
+    assert not (DECISION_PACKAGE_V3 & extracted)
 
 
 def test_extract_required_accepts_artifact_before_optional_explainability(tmp_path: Path):
-    archive = tmp_path / "legacy.zip"
+    archive = tmp_path / "oldest.zip"
     with zipfile.ZipFile(archive, "w") as bundle:
         for name in REQUIRED:
             bundle.writestr(name, "{}" if name.endswith(".json") else "decision;score\nWATCH;50\n")
@@ -59,4 +84,3 @@ def test_cross_host_redirect_does_not_leak_github_authorization():
     )
 
     assert redirected.get_header("Authorization") is None
-
