@@ -247,17 +247,22 @@ def parse_action_consensus_html(html: str) -> dict[str, object]:
             value = _number(table.iloc[idx, current_col])
             if value is not None:
                 fields["boursorama_target_median"] = value
+        if "potentiel" in label:
+            value = _number(table.iloc[idx, current_col])
+            if value is not None:
+                fields["boursorama_target_upside_pct"] = value
         if "note median" in label or "note med" in label:
             value = _number(table.iloc[idx, current_col])
             if value is not None:
                 fields["boursorama_median_note"] = value
 
-    visible = _visible_text(html)
-    potentials = re.findall(r"\bPotentiel\s*:?\s*([+-]?\d+(?:[,.]\d+)?)\s*%", visible, flags=re.IGNORECASE)
-    if potentials:
-        value = _number(potentials[-1])
-        if value is not None:
-            fields["boursorama_target_upside_pct"] = value
+    if "boursorama_target_upside_pct" not in fields:
+        visible = _visible_text(html)
+        potentials = re.findall(r"\bPotentiel\s*:?\s*([+-]?\d+(?:[,.]\d+)?)\s*%", visible, flags=re.IGNORECASE)
+        if potentials:
+            value = _number(potentials[-1])
+            if value is not None:
+                fields["boursorama_target_upside_pct"] = value
     return fields
 
 
