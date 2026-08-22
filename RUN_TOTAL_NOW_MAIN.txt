@@ -1,0 +1,1 @@
+Trigger canonical weekly heavy Committee run for timing measurement and full CI publication on 2026-08-22.
