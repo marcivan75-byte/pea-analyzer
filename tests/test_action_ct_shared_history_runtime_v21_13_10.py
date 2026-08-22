@@ -71,17 +71,18 @@ def test_v220_v221_share_same_governed_history_contract():
         assert cfg0["data_policy"][field] == cfg1["data_policy"][field]
 
 
-def test_daily_and_weekly_workflows_run_one_shared_action_ct_bundle():
+def test_daily_and_weekly_workflows_keep_v211310_bundle_inside_tactical_bundle():
     daily = (ROOT / ".github" / "workflows" / "committee_tct_ct_daily.yml").read_text(encoding="utf-8")
     weekly = (ROOT / ".github" / "workflows" / "committee_master_daily.yml").read_text(encoding="utf-8")
+    tactical = (ROOT / "src" / "v182" / "reporting" / "tactical_shadow_bundle_run.py").read_text(encoding="utf-8")
 
     for workflow in (daily, weekly):
-        assert workflow.count("python -m v182.reporting.action_ct_shadow_bundle_run") == 1
+        assert workflow.count("python -m v182.reporting.tactical_shadow_bundle_run") == 1
         assert "python -m v182.reporting.action_ct_shadow_run_v22_0" not in workflow
         assert "python -m v182.reporting.action_ct_shadow_run_v22_1" not in workflow
-        assert "tct_daily_trader_shadow_run_v24_3_1" in workflow
         assert "tct_next_session_catalyst_run_v24_4_2" in workflow
 
+    assert "action_ct_bundle.run(root=root)" in tactical
     assert "ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json" in daily
 
 
