@@ -28,6 +28,7 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PYTHONPATH: ${{ github.workspace }}/src
       PEA_SLOW_SOURCE_MODE: LIVE
       PEA_PROVENANCE_PATH: state/provenance/OBSERVATION_PROVENANCE.csv
       FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
@@ -143,10 +144,10 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
-          cache-dependency-path: pyproject.toml
+          cache-dependency-path: requirements-runtime.txt
 
-      - name: Install project
-        run: pip install -e .
+      - name: Install production runtime
+        run: pip install --prefer-binary -r requirements-runtime.txt
 
       - name: Full Python compile and static safety gate
         if: ${{ inputs.run_validation }}
