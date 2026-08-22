@@ -1,0 +1,1 @@
+Trigger optimized canonical weekly heavy Committee run after OHLCV cache hardening merge d4a3b459 on 2026-08-22.
