@@ -8,6 +8,7 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
+from v182.audit.provenance import load_latest_events_readonly
 from v182.decision.committee_master import _pct_score, active_criteria, load_registry, resolve_field
 from v182.features.etf_mt_v2081 import _criterion_scores
 
@@ -205,18 +206,12 @@ def _latest_provenance(root: Path, isins: set[str], fields: set[str]) -> dict[tu
     path = root / "state" / "provenance" / "OBSERVATION_PROVENANCE.csv"
     if not path.exists() or not isins or not fields:
         return {}
-    usecols = ["recorded_at_utc", "isin", "field", "source", "source_url", "evidence_level", "as_of", "validation_status"]
-    chunks: list[pd.DataFrame] = []
-    for chunk in pd.read_csv(path, sep=";", encoding="utf-8-sig", usecols=usecols, dtype=str, chunksize=200_000, low_memory=False):
-        mask = chunk["isin"].isin(isins) & chunk["field"].isin(fields)
-        if mask.any():
-            chunks.append(chunk.loc[mask].copy())
-    if not chunks:
-        return {}
-    frame = pd.concat(chunks, ignore_index=True)
-    frame["recorded_at_utc"] = pd.to_datetime(frame["recorded_at_utc"], errors="coerce", utc=True)
-    frame = frame.sort_values("recorded_at_utc").drop_duplicates(["isin", "field"], keep="last")
-    return {(str(r["isin"]), str(r["field"])): r.to_dict() for _, r in frame.iterrows()}
+    latest_events=load_latest_events_readonly(path)
+    return {
+        key:dict(meta)
+        for key,meta in latest_events.items()
+        if key[0] in isins and key[1] in fields
+    }
 
 
 def _attach_provenance(root: Path, detail: pd.DataFrame) -> pd.DataFrame:
