@@ -1,0 +1,7 @@
+# Minimal dependencies for the autonomous PREMARKET catalyst workflow.
+# Keep this list intentionally narrow: the scheduled catalyst snapshot does not
+# use the full committee/reporting dependency stack.
+numpy>=2.0
+pandas>=2.2
+requests>=2.32
+yfinance>=0.2
