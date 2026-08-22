@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 
@@ -43,7 +44,7 @@ def test_investing_resolution_budget_never_excludes_already_known_isins(tmp_path
     cache_dir = tmp_path / "state" / "provenance" / "source_cache"
     cache_dir.mkdir(parents=True)
     (cache_dir / "INVESTING_URL_MAP_V1.json").write_text(
-        json.dumps({"version": "INVESTING_URL_MAP_V1", "entries": {"KNOWN_MAP": {"base_url": "https://www.investing.com/equities/test"}}}),
+        json.dumps({"version": "INVESTING_URL_MAP_V1", "entries": {"KNOWN_MAP": {"status": "RESOLVED", "base_url": "https://www.investing.com/equities/test"}}}),
         encoding="utf-8",
     )
     (cache_dir / "INVESTING_TECHNICAL_V1.json").write_text(
@@ -51,16 +52,17 @@ def test_investing_resolution_budget_never_excludes_already_known_isins(tmp_path
         encoding="utf-8",
     )
     rows = pd.DataFrame([{"isin": value} for value in ["KNOWN_MAP", "KNOWN_CACHE", "NEW1", "NEW2", "NEW3"]])
-    selected, deferred = _investing_budgeted_rows(rows, tmp_path, 2)
+    selected, deferred, cooldown = _investing_budgeted_rows(rows, tmp_path, 2)
     assert set(selected["isin"]) == {"KNOWN_MAP", "KNOWN_CACHE", "NEW1", "NEW2"}
     assert deferred == 1
+    assert cooldown == 0
 
 
 def test_investing_new_url_resolution_slots_follow_decision_priority_not_input_order(tmp_path: Path):
     cache_dir = tmp_path / "state" / "provenance" / "source_cache"
     cache_dir.mkdir(parents=True)
     (cache_dir / "INVESTING_URL_MAP_V1.json").write_text(
-        json.dumps({"version": "INVESTING_URL_MAP_V1", "entries": {"KNOWN": {"base_url": "https://www.investing.com/equities/known"}}}),
+        json.dumps({"version": "INVESTING_URL_MAP_V1", "entries": {"KNOWN": {"status": "RESOLVED", "base_url": "https://www.investing.com/equities/known"}}}),
         encoding="utf-8",
     )
     rows = pd.DataFrame([
@@ -70,10 +72,71 @@ def test_investing_new_url_resolution_slots_follow_decision_priority_not_input_o
         {"isin": "NEW_T2", "decision": "T2_CONFIRM_75_SHADOW", "score": 80.0},
         {"isin": "NEW_BUY", "decision": "BUY_CANDIDATE", "score": 76.0},
     ])
-    selected, deferred = _investing_budgeted_rows(rows, tmp_path, 2)
+    selected, deferred, cooldown = _investing_budgeted_rows(rows, tmp_path, 2)
     assert set(selected["isin"]) == {"KNOWN", "NEW_BUY", "NEW_T2"}
     assert list(selected[selected["isin"] != "KNOWN"]["isin"].unique()) == ["NEW_BUY", "NEW_T2"]
     assert deferred == 2
+    assert cooldown == 0
+
+
+def test_investing_cooldown_releases_slot_to_next_priority_candidate(tmp_path: Path):
+    cache_dir = tmp_path / "state" / "provenance" / "source_cache"
+    cache_dir.mkdir(parents=True)
+    now = datetime(2026, 8, 23, 0, 0, tzinfo=timezone.utc)
+    (cache_dir / "INVESTING_URL_MAP_V1.json").write_text(
+        json.dumps({
+            "version": "INVESTING_URL_MAP_V1",
+            "entries": {
+                "BUY_COOLDOWN": {
+                    "status": "UNRESOLVED",
+                    "last_failed_at_utc": (now - timedelta(hours=2)).isoformat(),
+                    "reason": "NO_VALIDATED_PUBLIC_URL",
+                }
+            },
+        }),
+        encoding="utf-8",
+    )
+    rows = pd.DataFrame([
+        {"isin": "BUY_COOLDOWN", "decision": "BUY_CANDIDATE", "score": 95.0},
+        {"isin": "T2_NEXT", "decision": "T2_CONFIRM_75_SHADOW", "score": 80.0},
+        {"isin": "WATCH_LATER", "decision": "WATCH", "score": 99.0},
+    ])
+    selected, deferred, cooldown = _investing_budgeted_rows(
+        rows,
+        tmp_path,
+        1,
+        unmapped_retry_ttl_hours=24,
+        now=now,
+    )
+    assert list(selected["isin"].unique()) == ["T2_NEXT"]
+    assert deferred == 1
+    assert cooldown == 1
+
+
+def test_investing_expired_cooldown_becomes_retry_eligible_in_priority_order(tmp_path: Path):
+    cache_dir = tmp_path / "state" / "provenance" / "source_cache"
+    cache_dir.mkdir(parents=True)
+    now = datetime(2026, 8, 23, 0, 0, tzinfo=timezone.utc)
+    (cache_dir / "INVESTING_URL_MAP_V1.json").write_text(
+        json.dumps({
+            "version": "INVESTING_URL_MAP_V1",
+            "entries": {
+                "BUY_RETRY": {
+                    "status": "UNRESOLVED",
+                    "last_failed_at_utc": (now - timedelta(hours=25)).isoformat(),
+                }
+            },
+        }),
+        encoding="utf-8",
+    )
+    rows = pd.DataFrame([
+        {"isin": "WATCH", "decision": "WATCH", "score": 99.0},
+        {"isin": "BUY_RETRY", "decision": "BUY_CANDIDATE", "score": 70.0},
+    ])
+    selected, deferred, cooldown = _investing_budgeted_rows(rows, tmp_path, 1, unmapped_retry_ttl_hours=24, now=now)
+    assert list(selected["isin"].unique()) == ["BUY_RETRY"]
+    assert deferred == 1
+    assert cooldown == 0
 
 
 def test_source_metadata_uses_factual_collection_time_not_synthetic_age_timestamp():
