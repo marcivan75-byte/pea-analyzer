@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import numpy as np
 import pandas as pd
 
 from v182.io.frames import is_missing
 from v182.reporting.collection_audit import _missing_mask, write_collection_audit
+from v182.reporting.runtime_telemetry import RuntimeTelemetry
 
 
 def test_vectorized_missing_mask_matches_scalar_missing_policy() -> None:
@@ -70,10 +72,20 @@ def test_github_production_intermediate_is_csv_but_final_remains_excel(tmp_path,
     assert (tmp_path/"COLLECTION_AUDIT_WAVE_99_FINAL.xlsx").exists()
     assert (tmp_path/"COLLECTION_DATA_AVAILABILITY_LATEST.xlsx").exists()
     assert (tmp_path/"COLLECTION_AUDIT_HISTORY.csv").exists()
+    assert __import__("os").environ["PEA_EFFECTIVE_INTERMEDIATE_AUDIT_FORMAT"] == "CSV"
+
+
+def test_runtime_telemetry_reports_effective_compact_format(tmp_path,monkeypatch) -> None:
+    monkeypatch.setenv("PEA_EFFECTIVE_INTERMEDIATE_AUDIT_FORMAT","CSV")
+    telemetry=RuntimeTelemetry(tmp_path,run_id="TEST",profile="FULL")
+    telemetry.finalize("SUCCESS",intermediate_collection_audit_format="XLSX")
+    payload=json.loads(telemetry.json_path.read_text(encoding="utf-8"))
+    assert payload["intermediate_collection_audit_format"] == "CSV"
 
 
 def test_local_explicit_excel_behavior_is_preserved(tmp_path,monkeypatch) -> None:
     monkeypatch.delenv("GITHUB_ACTIONS",raising=False)
+    monkeypatch.delenv("PEA_EFFECTIVE_INTERMEDIATE_AUDIT_FORMAT",raising=False)
     monkeypatch.setenv("PEA_SLOW_SOURCE_MODE","LIVE")
     monkeypatch.setenv("PEA_PROVENANCE_PATH",str(tmp_path/"missing_provenance.csv"))
     actions,etfs=_small_frames()
