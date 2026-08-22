@@ -1,4 +1,4 @@
-name: PEA Weekly Heavy Committee V21.8.1
+name: PEA Weekly Heavy Committee V21.16
 
 on:
   workflow_dispatch:
@@ -261,9 +261,9 @@ jobs:
         continue-on-error: true
         run: python -m v182.reporting.tct_postmarket_bundle_run
 
-      - name: Build synthetic decision brief
+      - name: Build source-gated decision brief V21.16
         if: always()
-        run: python -m v182.reporting.decision_brief
+        run: python -m v182.reporting.decision_brief_v21_16
 
       - name: Run ETF Fund Flows V1 SHADOW context
         continue-on-error: true
@@ -368,11 +368,11 @@ jobs:
             state/etf_fund_flows/
           key: weekly-research-state-v1-${{ github.run_id }}
 
-      - name: Upload complete weekly Committee V21.8.1 results
+      - name: Upload complete weekly Committee V21.16 results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: committee-weekly-v21-8-1-${{ github.run_id }}
+          name: committee-weekly-v21-16-${{ github.run_id }}
           path: |
             outputs/unified/
             outputs/decision_brief/
