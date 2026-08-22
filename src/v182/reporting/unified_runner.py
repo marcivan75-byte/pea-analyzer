@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 import argparse
@@ -58,6 +59,40 @@ def _sector_validation_from_step(step: dict) -> dict:
     return validation
 
 
+def _primary_etf_cache_ready(root: Path) -> bool:
+    """Parallel ETF structure/MT only when ETF MT is guaranteed cache-only."""
+    cache=root/"data"/"cache"/"etf"
+    return cache.is_dir() and any(cache.glob("history_*.parquet"))
+
+
+def _cached_etf_mt(root: Path) -> dict:
+    return _safe_step(
+        "etf_mt",
+        lambda: etf_mt_v2081_run.run(
+            root,
+            history_cache_dir=root/"data"/"cache"/"etf",
+            refresh_history=False,
+            refresh_if_reuse_cache_missing=True,
+        ),
+    )
+
+
+def _post_risk_outputs_parallel(root: Path) -> tuple[dict,dict]:
+    """Build independent risk-control and CI documents after risk state is frozen."""
+    with ThreadPoolExecutor(max_workers=2,thread_name_prefix="post-risk-output") as pool:
+        risk_control=pool.submit(
+            _safe_step,
+            "risk_control_center",
+            lambda: android_risk_control_center.run(root),
+        )
+        ci=pool.submit(
+            _safe_step,
+            "ci_explainability",
+            lambda: committee_ci_explainability.run(root),
+        )
+        return risk_control.result(),ci.result()
+
+
 def run(root: Path = ROOT) -> dict:
     wall_start=time.perf_counter(); cpu_start=time.process_time()
     outdir = root / "outputs" / "unified"
@@ -66,20 +101,37 @@ def run(root: Path = ROOT) -> dict:
     steps: dict[str, dict] = {}
 
     steps["refresh"] = _safe_step("refresh", enrichment_run.run)
-    steps["etf_structure"] = _safe_step("etf_structure", lambda: etf_structure_refresh.run(root))
-    if steps["refresh"]["status"] == "SUCCESS":
-        steps["etf_mt"] = _safe_step(
-            "etf_mt",
-            lambda: etf_mt_v2081_run.run(
-                root,
-                history_cache_dir=root/"data"/"cache"/"etf",
-                refresh_history=False,
-                refresh_if_reuse_cache_missing=True,
-            ),
-        )
+    refresh_ok=steps["refresh"]["status"] == "SUCCESS"
+    cache_only_etf_mt=refresh_ok and _primary_etf_cache_ready(root)
+
+    if cache_only_etf_mt:
+        # The structure branch never touches the OHLCV ETF cache used by ETF MT.
+        # With history already present, ETF MT makes no Yahoo history request, so
+        # overlapping these two branches reduces wall time without increasing
+        # provider concurrency or changing any downstream dependency.
+        with ThreadPoolExecutor(max_workers=2,thread_name_prefix="etf-independent") as pool:
+            structure=pool.submit(
+                _safe_step,
+                "etf_structure",
+                lambda: etf_structure_refresh.run(root),
+            )
+            mt=pool.submit(_cached_etf_mt,root)
+            steps["etf_structure"]=structure.result()
+            steps["etf_mt"]=mt.result()
     else:
-        steps["etf_mt"] = _safe_step("etf_mt", lambda: etf_mt_v2081_run.run(root))
-    if steps["refresh"]["status"] == "SUCCESS":
+        # Preserve the historical sequential path whenever cache-only execution
+        # is not guaranteed, especially the ETF MT Yahoo fallback.
+        steps["etf_structure"] = _safe_step(
+            "etf_structure", lambda: etf_structure_refresh.run(root)
+        )
+        if refresh_ok:
+            steps["etf_mt"]=_cached_etf_mt(root)
+        else:
+            steps["etf_mt"] = _safe_step(
+                "etf_mt", lambda: etf_mt_v2081_run.run(root)
+            )
+
+    if refresh_ok:
         steps["sector_rotation_v2"] = _safe_step(
             "sector_rotation_v2", lambda: sector_rotation_v2_shadow_run.run(root)
         )
@@ -103,15 +155,16 @@ def run(root: Path = ROOT) -> dict:
         )
 
     if steps["committee"]["status"] == "SUCCESS":
+        # Risk mutates COMMITTEE_DECISIONS.csv, so it intentionally remains
+        # serialized after the rotation context reader. Once risk is frozen,
+        # its mobile/Word supplement and CI explainability are read-only peers
+        # with disjoint output files and can be generated concurrently.
         steps["risk_context"] = _safe_step(
             "risk_context", lambda: beta_correlation_engine.run(root)
         )
-        steps["risk_control_center"] = _safe_step(
-            "risk_control_center", lambda: android_risk_control_center.run(root)
-        )
-        steps["ci_explainability"] = _safe_step(
-            "ci_explainability", lambda: committee_ci_explainability.run(root)
-        )
+        risk_control,ci=_post_risk_outputs_parallel(root)
+        steps["risk_control_center"]=risk_control
+        steps["ci_explainability"]=ci
     else:
         steps["risk_context"] = _skip_dependency(
             "Requires SUCCESS current Committee decisions. Risk V1.1 never operates on stale decisions."
