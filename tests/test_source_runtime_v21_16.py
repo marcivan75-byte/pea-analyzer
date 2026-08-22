@@ -56,6 +56,26 @@ def test_investing_resolution_budget_never_excludes_already_known_isins(tmp_path
     assert deferred == 1
 
 
+def test_investing_new_url_resolution_slots_follow_decision_priority_not_input_order(tmp_path: Path):
+    cache_dir = tmp_path / "state" / "provenance" / "source_cache"
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "INVESTING_URL_MAP_V1.json").write_text(
+        json.dumps({"version": "INVESTING_URL_MAP_V1", "entries": {"KNOWN": {"base_url": "https://www.investing.com/equities/known"}}}),
+        encoding="utf-8",
+    )
+    rows = pd.DataFrame([
+        {"isin": "NEW_REVIEW", "decision": "REVIEW", "score": 99.0},
+        {"isin": "KNOWN", "decision": "WATCH", "score": 50.0},
+        {"isin": "NEW_T1", "decision": "T1_STARTER_25_SHADOW", "score": 82.0},
+        {"isin": "NEW_T2", "decision": "T2_CONFIRM_75_SHADOW", "score": 80.0},
+        {"isin": "NEW_BUY", "decision": "BUY_CANDIDATE", "score": 76.0},
+    ])
+    selected, deferred = _investing_budgeted_rows(rows, tmp_path, 2)
+    assert set(selected["isin"]) == {"KNOWN", "NEW_BUY", "NEW_T2"}
+    assert list(selected[selected["isin"] != "KNOWN"]["isin"].unique()) == ["NEW_BUY", "NEW_T2"]
+    assert deferred == 2
+
+
 def test_source_metadata_uses_factual_collection_time_not_synthetic_age_timestamp():
     observations = [
         {"isin": "FR1", "asset_class": "ACTION", "horizon": "CT", "field": "boursorama_consensus", "value": 4.2, "source": "Boursorama public priority fiche", "source_url": "https://example.test/fact", "collected_at": "2026-08-22T18:00:00+00:00", "validation_status": "POST_SELECTION_PRIORITY_CONTEXT"},
