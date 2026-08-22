@@ -130,6 +130,41 @@ def _aggregate_sources(retained: pd.DataFrame) -> pd.DataFrame:
     ).reset_index()
 
 
+def _refresh_sources_for_impacted(
+    current: pd.DataFrame,
+    rows_map: dict[tuple[str,str,str],dict],
+    impacted: set[tuple[str,str]],
+) -> pd.DataFrame:
+    """Recompute source aggregation only for universe+field groups just changed.
+
+    ``current`` is already the exact aggregate for the pre-append retained state.
+    Replacements can remove an old source from a group, so simply unioning the new
+    values would be incorrect. Rebuild each impacted group from the authoritative
+    retained-row map, keep all untouched groups byte-for-byte, then restore the
+    same sorted key order produced by pandas groupby.
+    """
+    if not impacted:
+        return current
+    impacted_records=[
+        record for (universe,_isin,field),record in rows_map.items()
+        if (str(universe),str(field)) in impacted
+    ]
+    refreshed=_aggregate_sources(
+        pd.DataFrame.from_records(impacted_records,columns=COLUMNS)
+        if impacted_records else pd.DataFrame(columns=COLUMNS)
+    )
+    if current.empty:
+        return refreshed.sort_values(["universe","field"]).reset_index(drop=True)
+    keys=pd.MultiIndex.from_frame(current[["universe","field"]].astype(str))
+    impacted_index=pd.MultiIndex.from_tuples(sorted(impacted),names=["universe","field"])
+    untouched=current.loc[~keys.isin(impacted_index)].copy()
+    return (
+        pd.concat([untouched,refreshed],ignore_index=True,sort=False)
+        .sort_values(["universe","field"])
+        .reset_index(drop=True)
+    )
+
+
 def _cache_key(path: Path) -> str:
     try:
         return str(path.resolve())
@@ -223,9 +258,9 @@ def append_records(records:list[dict],path:str|Path|None=None)->None:
     rows_df.to_csv(p,sep=";",encoding="utf-8-sig",index=False,mode="a",header=not p.exists())
     signature_after=_file_signature(p)
 
-    # Update both event and retained maps directly. Every appended row is the next
-    # event for its key in this append-only process; only INSERT/REPLACE can alter
-    # the retained-value maps used by the merge authority.
+    # Update event and retained maps directly. If source aggregation was already
+    # materialized, refresh only the universe+field groups touched by retained
+    # changes instead of invalidating and regrouping the complete retained state.
     with _CACHE_LOCK:
         if cached is not None and cached.signature == signature_before:
             event_map=cached.latest_event_map.copy()
@@ -245,26 +280,32 @@ def append_records(records:list[dict],path:str|Path|None=None)->None:
             else:
                 latest_map=cached.latest_map.copy()
                 rows_map=cached.retained_rows_map.copy()
+                impacted:set[tuple[str,str]]=set()
                 for record in new_retained.to_dict("records"):
                     isin=str(record.get("isin","")); field=str(record.get("field","")); universe=str(record.get("universe",""))
                     latest_map[(isin,field)]=record
                     row_key=(universe,isin,field)
                     rows_map.pop(row_key,None)
                     rows_map[row_key]=record
+                    impacted.add((universe,field))
+                sources=(
+                    _refresh_sources_for_impacted(cached.sources_by_field,rows_map,impacted)
+                    if cached.sources_by_field is not None else None
+                )
                 _LATEST_RETAINED_CACHE[key]=_RetainedCacheEntry(
                     signature=signature_after,
                     latest=None,
                     latest_map=latest_map,
                     retained_rows_map=rows_map,
                     latest_event_map=event_map,
-                    sources_by_field=None,
+                    sources_by_field=sources,
                 )
         else:
             _LATEST_RETAINED_CACHE.pop(key,None)
 
 
 def actual_sources_by_field(path:str|Path|None=None)->pd.DataFrame:
-    """Aggregate latest retained sources once per retained-state change."""
+    """Aggregate latest retained sources once, then reuse incremental updates."""
     p=Path(path) if path is not None else provenance_path(); key=_cache_key(p)
     entry=_latest_entry_for_path(p)
     with _CACHE_LOCK:
