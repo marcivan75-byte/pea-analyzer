@@ -35,19 +35,16 @@ def _action_refresh_tiers(actions_df: pd.DataFrame, warm_n: int = 500) -> dict[s
         return tiers
     for ticker in actions_df["yahoo_ticker"]:
         if not is_missing(ticker): tiers[str(ticker)]="COLD"
-
     if "score_brut" in actions_df.columns:
         scored=actions_df[["yahoo_ticker","score_brut"]].copy()
         scored["_score"]=pd.to_numeric(scored["score_brut"],errors="coerce")
         scored=scored.dropna(subset=["_score"]).sort_values("_score",ascending=False).head(max(0,int(warm_n)))
         for ticker in scored["yahoo_ticker"]:
             if not is_missing(ticker): tiers[str(ticker)]="WARM"
-
     if "comite_status" in actions_df.columns:
         hot=actions_df[actions_df["comite_status"].astype(str).str.upper().isin(["COMMITTEE","WATCH"])]
         for ticker in hot["yahoo_ticker"]:
             if not is_missing(ticker): tiers[str(ticker)]="HOT"
-
     if "earnings_within_30d_flag" in actions_df.columns:
         flags=pd.to_numeric(actions_df["earnings_within_30d_flag"],errors="coerce").fillna(0)
         warm=actions_df[flags.gt(0)]
@@ -62,20 +59,10 @@ def _action_refresh_tiers(actions_df: pd.DataFrame, warm_n: int = 500) -> dict[s
 
 
 def wave_history(df: pd.DataFrame, universe: str, cache_dir: str, cfg: dict) -> DownloadResult:
-    if universe == "ACTION":
-        qualify_action_yahoo_tickers(df)
+    if universe == "ACTION": qualify_action_yahoo_tickers(df)
     valid=df[df["yahoo_ticker"].apply(lambda v:not is_missing(v))]; tickers=valid["yahoo_ticker"].tolist(); batch_key="actions_batch_size" if universe=="ACTION" else "etf_batch_size"
     yf_cfg=cfg["yfinance"]
-    return download_history(
-        tickers=tickers,
-        cache_dir=cache_dir,
-        period=yf_cfg["history_period"],
-        interval=yf_cfg["interval"],
-        batch_size=yf_cfg[batch_key],
-        auto_adjust=yf_cfg["auto_adjust"],
-        start=yf_cfg.get("history_start", "2023-01-01"),
-        rolling_months=int(yf_cfg.get("history_rolling_months", 60)),
-    )
+    return download_history(tickers=tickers,cache_dir=cache_dir,period=yf_cfg["history_period"],interval=yf_cfg["interval"],batch_size=yf_cfg[batch_key],auto_adjust=yf_cfg["auto_adjust"],start=yf_cfg.get("history_start","2023-01-01"),rolling_months=int(yf_cfg.get("history_rolling_months",60)))
 
 
 def resolve_etf_tickers(etf_df: pd.DataFrame, mapping_path: str | Path) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -141,12 +128,9 @@ def wave3_etf_beta3y(cache_dir: str, ticker_isin_map: dict[str, str], min_sessio
 
 
 def _positive_ratio(numerator, denominator) -> float | None:
-    try:
-        num=float(numerator); den=float(denominator)
-    except (TypeError,ValueError):
-        return None
-    if not np.isfinite(num) or not np.isfinite(den) or num <= 0 or den <= 0:
-        return None
+    try: num=float(numerator); den=float(denominator)
+    except (TypeError,ValueError): return None
+    if not np.isfinite(num) or not np.isfinite(den) or num<=0 or den<=0: return None
     return round(num/den,6)
 
 
@@ -157,42 +141,20 @@ def wave4_info_actions(actions_df: pd.DataFrame, cfg: dict, top_n: int = 300) ->
     opt=cfg.get("runtime_optimization",{}).get("yfinance_fundamentals",{})
     tiers=_action_refresh_tiers(selected,warm_n=int(opt.get("warm_top_n",500)))
     cache_path=root/str(opt.get("cache_path","state/provenance/source_cache/YFINANCE_INFO_V1.json"))
-    observations,failures,metrics=collect_info_cached(
-        list(ticker_to_isin),
-        cache_path,
-        priority_tiers=tiers,
-        ttl_days=opt.get("ttl_days",{"HOT":3,"WARM":7,"COLD":21}),
-        refresh_budget=int(opt.get("refresh_budget",450)),
-        hard_max_age_days=float(opt.get("hard_max_age_days",35)),
-        negative_cache_days=float(opt.get("negative_cache_days",7)),
-        delay_seconds=float(cfg["yfinance"].get("info_delay_seconds",0.4)),
-        max_workers=int(opt.get("max_workers",4)),
-    )
+    observations,failures,metrics=collect_info_cached(list(ticker_to_isin),cache_path,priority_tiers=tiers,ttl_days=opt.get("ttl_days",{"HOT":3,"WARM":7,"COLD":21}),refresh_budget=int(opt.get("refresh_budget",450)),hard_max_age_days=float(opt.get("hard_max_age_days",35)),negative_cache_days=float(opt.get("negative_cache_days",7)),delay_seconds=float(cfg["yfinance"].get("info_delay_seconds",0.4)),max_workers=int(opt.get("max_workers",4)))
     audit_path=root/"outputs"/"audit"/"YFINANCE_INFO_CACHE_V1.json"; audit_path.parent.mkdir(parents=True,exist_ok=True); audit_path.write_text(json.dumps(metrics,ensure_ascii=False,indent=2),encoding="utf-8")
-    result=[]
-    fields_by_ticker: dict[str,dict[str,object]]={}
+    result=[]; fields_by_ticker: dict[str,dict[str,object]]={}
     for row in observations:
-        ticker=str(row.get("ticker") or "")
-        isin=ticker_to_isin.get(ticker)
+        ticker=str(row.get("ticker") or ""); isin=ticker_to_isin.get(ticker)
         if isin is None: continue
-        field=str(row.get("field") or "")
-        fields_by_ticker.setdefault(ticker,{})[field]=row.get("value")
-        fetched_at=str(row.get("fetched_at_utc") or NOW())
-        source="yfinance" if row.get("cache_state")=="LIVE_REFRESH" else "yfinance_CACHE"
+        field=str(row.get("field") or ""); fields_by_ticker.setdefault(ticker,{})[field]=row.get("value")
+        fetched_at=str(row.get("fetched_at_utc") or NOW()); source="yfinance" if row.get("cache_state")=="LIVE_REFRESH" else "yfinance_CACHE"
         result.append({"universe":"ACTION","isin":isin,"field":field,"value":row["value"],"source":source,"collected_at":fetched_at,"as_of":fetched_at[:10],"evidence_level":"C","validation_status":"AUTO_MATCH"})
-
-    # Price-dependent ratios are recalculated locally from the latest OHLCV close
-    # and cached fundamental denominators. This keeps them current without a new
-    # Yahoo metadata request and does not modify any scoring weight or threshold.
     last_close_by_ticker={str(t):c for t,c in zip(selected["yahoo_ticker"],selected.get("last_close",pd.Series(index=selected.index,dtype=float))) if not is_missing(t)}
     for ticker,fields in fields_by_ticker.items():
         isin=ticker_to_isin.get(ticker); close=last_close_by_ticker.get(ticker)
         if isin is None: continue
-        local={
-            "per_ttm_yf":_positive_ratio(close,fields.get("trailing_eps_yf")),
-            "per_forward_yf":_positive_ratio(close,fields.get("forward_eps_yf")),
-            "pb":_positive_ratio(close,fields.get("book_value_per_share_yf")),
-        }
+        local={"per_ttm_yf":_positive_ratio(close,fields.get("trailing_eps_yf")),"per_forward_yf":_positive_ratio(close,fields.get("forward_eps_yf")),"pb":_positive_ratio(close,fields.get("book_value_per_share_yf"))}
         for field,value in local.items():
             if value is not None: result.append(_obs("ACTION",isin,field,value,"INTERNAL_OHLCV_X_YF_FUNDAMENTALS","C"))
     return result,failures
@@ -202,73 +164,51 @@ def wave5_consensus_finnhub(actions_df: pd.DataFrame, api_key: str, top_n: int =
     from v182.sources.finnhub_consensus import fetch_consensus_cached
     selected=actions_df.copy(); ticker_to_isin={str(t):i for t,i in zip(selected["yahoo_ticker"],selected["isin"]) if not is_missing(t)}
     root=Path(__file__).resolve().parents[3]
-    cache_path=root/"state"/"provenance"/"source_cache"/"FINNHUB_CONSENSUS_V1.json"
+    if cfg is None:
+        try: cfg=json.loads((root/"config"/"V18.2_MASTER_CONFIG.json").read_text(encoding="utf-8"))
+        except Exception: cfg={}
     opt=(cfg or {}).get("runtime_optimization",{}).get("finnhub_consensus",{})
+    cache_path=root/str(opt.get("cache_path","state/provenance/source_cache/FINNHUB_CONSENSUS_V1.json"))
     tiers=_action_refresh_tiers(selected,warm_n=int(opt.get("warm_top_n",500)))
     tier_policy=opt.get("tiers",{
-        "HOT":{"refresh_budget":120,"max_cache_age_days":10},
-        "WARM":{"refresh_budget":80,"max_cache_age_days":21},
-        "COLD":{"refresh_budget":40,"max_cache_age_days":35},
+        "HOT":{"refresh_budget":120,"recommendation_ttl_days":3,"target_refresh_budget":60,"target_ttl_days":7,"max_cache_age_days":14},
+        "WARM":{"refresh_budget":80,"recommendation_ttl_days":7,"target_refresh_budget":40,"target_ttl_days":14,"max_cache_age_days":28},
+        "COLD":{"refresh_budget":40,"recommendation_ttl_days":14,"target_refresh_budget":20,"target_ttl_days":28,"max_cache_age_days":42},
     })
     obs_raw=[]; failures=[]; tier_metrics={}
     for tier in ("HOT","WARM","COLD"):
         tickers=[ticker for ticker in ticker_to_isin if tiers.get(ticker,"COLD")==tier]
         if not tickers:
-            tier_metrics[tier]={"requested":0,"live_refresh_requested":0}
-            continue
+            tier_metrics[tier]={"requested":0,"live_refresh_requested":0,"target_live_refresh_requested":0}; continue
         policy=tier_policy.get(tier,{})
-        tier_obs,tier_fail,tier_metric=fetch_consensus_cached(
-            tickers,
-            api_key,
-            cache_path,
-            refresh_budget=int(policy.get("refresh_budget",0)),
-            max_cache_age_days=float(policy.get("max_cache_age_days",35)),
-            negative_cache_days=float(opt.get("negative_cache_days",7)),
-            delay_seconds=float(opt.get("delay_seconds",1.1)),
-            max_workers=int(opt.get("max_workers",8)),
-        )
+        tier_obs,tier_fail,tier_metric=fetch_consensus_cached(tickers,api_key,cache_path,refresh_budget=int(policy.get("refresh_budget",0)),max_cache_age_days=float(policy.get("max_cache_age_days",42)),negative_cache_days=float(opt.get("negative_cache_days",7)),recommendation_ttl_days=float(policy.get("recommendation_ttl_days",14)),target_ttl_days=float(policy.get("target_ttl_days",28)),target_refresh_budget=int(policy.get("target_refresh_budget",max(0,int(policy.get("refresh_budget",0))//2))),delay_seconds=float(opt.get("delay_seconds",1.1)),max_workers=int(opt.get("max_workers",8)))
         obs_raw.extend(tier_obs); failures.extend(tier_fail); tier_metrics[tier]=tier_metric
-    metrics={
-        "policy":"HOT_WARM_COLD_BOUNDED_REFRESH",
-        "tier_counts":{tier:sum(1 for value in tiers.values() if value==tier) for tier in ("HOT","WARM","COLD")},
-        "tiers":tier_metrics,
-        "requested":len(ticker_to_isin),
-        "live_refresh_requested":sum(int(m.get("live_refresh_requested",0)) for m in tier_metrics.values()),
-        "cache_hit_tickers":sum(int(m.get("cache_hit_tickers",0)) for m in tier_metrics.values()),
-        "full_universe_preserved":True,
-    }
+    metrics={"policy":"HOT_WARM_COLD_INDEPENDENT_RECOMMENDATION_TARGET_TTLS","tier_counts":{tier:sum(1 for value in tiers.values() if value==tier) for tier in ("HOT","WARM","COLD")},"tiers":tier_metrics,"requested":len(ticker_to_isin),"live_refresh_requested":sum(int(m.get("live_refresh_requested",0)) for m in tier_metrics.values()),"target_live_refresh_requested":sum(int(m.get("target_live_refresh_requested",0)) for m in tier_metrics.values()),"target_calls_avoided":sum(int(m.get("target_calls_avoided",0)) for m in tier_metrics.values()),"cache_hit_tickers":sum(int(m.get("cache_hit_tickers",0)) for m in tier_metrics.values()),"full_universe_preserved":True}
     audit_path=root/"outputs"/"audit"/"FINNHUB_CONSENSUS_CACHE_V1.json"; audit_path.parent.mkdir(parents=True,exist_ok=True); audit_path.write_text(json.dumps(metrics,ensure_ascii=False,indent=2),encoding="utf-8")
     result=[]
     for row in obs_raw:
         isin=ticker_to_isin.get(str(row.get("ticker") or ""))
         if isin is None: continue
-        fetched_at=str(row.get("fetched_at_utc") or NOW())
-        source="Finnhub" if row.get("cache_state")=="LIVE_REFRESH" else "Finnhub_CACHE"
+        fetched_at=str(row.get("fetched_at_utc") or NOW()); source="Finnhub" if row.get("cache_state")=="LIVE_REFRESH" else "Finnhub_CACHE"
         result.append({"universe":"ACTION","isin":isin,"field":row["field"],"value":row["value"],"source":source,"collected_at":fetched_at,"as_of":fetched_at[:10],"evidence_level":"B","validation_status":"AUTO_MATCH"})
     return result,failures
 
 
 def _finite_float(value) -> float | None:
-    try:
-        number=float(value)
-    except (TypeError,ValueError):
-        return None
+    try: number=float(value)
+    except (TypeError,ValueError): return None
     return number if np.isfinite(number) else None
 
 
 def _yahoo_expense_ratio_pct(value) -> float | None:
-    """Yahoo annualReportExpenseRatio is a decimal ratio; promote only safe raw values."""
     number=_finite_float(value)
-    if number is None or number < 0 or number > 1:
-        return None
+    if number is None or number<0 or number>1: return None
     return round(number*100.0,6)
 
 
 def _yahoo_total_assets_eur_m(value, asset_currency) -> float | None:
-    """Convert totalAssets only with a dedicated fund-assets currency, never quote currency."""
     number=_finite_float(value)
-    if number is None or number < 0 or str(asset_currency or "").strip().upper() != "EUR":
-        return None
+    if number is None or number<0 or str(asset_currency or "").strip().upper()!="EUR": return None
     return round(number/1_000_000.0,6)
 
 
@@ -277,36 +217,23 @@ def wave6_etf_info(etf_with_tickers: pd.DataFrame, cfg: dict) -> tuple[list[dict
     ticker_to_isin=dict(zip(valid["yahoo_ticker"],valid["isin"]))
     obs_raw,failures=collect_info(list(ticker_to_isin),delay_seconds=cfg["yfinance"].get("info_delay_seconds",0.4))
     result=[]
-    allowed={
-        "dividend_yield_pct","sector_yf","industry_yf","country_yf","exchange_yf",
-        "full_exchange_name_yf","currency_yf","long_name_yf","quote_type_yf",
-        "annual_report_expense_ratio_yf","total_assets_yf","fund_family_yf","category_yf",
-        "legal_type_yf","beta3y_yf","yield_yf",
-    }
-    by_ticker: dict[str, dict[str, object]]={}
+    allowed={"dividend_yield_pct","sector_yf","industry_yf","country_yf","exchange_yf","full_exchange_name_yf","currency_yf","long_name_yf","quote_type_yf","annual_report_expense_ratio_yf","total_assets_yf","fund_family_yf","category_yf","legal_type_yf","beta3y_yf","yield_yf"}
+    by_ticker: dict[str,dict[str,object]]={}
     for row in obs_raw:
-        ticker=str(row.get("ticker") or "")
-        field=str(row.get("field") or "")
-        if ticker:
-            by_ticker.setdefault(ticker,{})[field]=row.get("value")
+        ticker=str(row.get("ticker") or ""); field=str(row.get("field") or "")
+        if ticker: by_ticker.setdefault(ticker,{})[field]=row.get("value")
         isin=ticker_to_isin.get(ticker)
         if isin is None or field not in allowed: continue
         result.append(_obs("ETF",isin,field,row["value"],"yfinance","C"))
         if field=="dividend_yield_pct": result.append(_obs("ETF",isin,"dividend_data_status","OK","yfinance","C"))
-
     for ticker,fields in by_ticker.items():
         isin=ticker_to_isin.get(ticker)
         if isin is None: continue
         ter=_yahoo_expense_ratio_pct(fields.get("annual_report_expense_ratio_yf"))
-        if ter is not None:
-            result.append(_obs("ETF",isin,"ter_pct",ter,"yfinance:annualReportExpenseRatio","C"))
-        # Yahoo exposes quote currency separately from totalAssets and does not
-        # provide a dedicated total-assets currency through get_info(). Preserve
-        # total_assets_yf raw, but never infer EUR AUM from currency_yf.
+        if ter is not None: result.append(_obs("ETF",isin,"ter_pct",ter,"yfinance:annualReportExpenseRatio","C"))
         assets=_yahoo_total_assets_eur_m(fields.get("total_assets_yf"),fields.get("total_assets_currency_yf"))
         if assets is not None:
-            result.append(_obs("ETF",isin,"fund_total_assets_eur_m",assets,"yfinance:totalAssets+explicitAssetCurrency=EUR","C"))
-            result.append(_obs("ETF",isin,"aum_m",assets,"yfinance:totalAssets+explicitAssetCurrency=EUR","C"))
+            result.append(_obs("ETF",isin,"fund_total_assets_eur_m",assets,"yfinance:totalAssets+explicitAssetCurrency=EUR","C")); result.append(_obs("ETF",isin,"aum_m",assets,"yfinance:totalAssets+explicitAssetCurrency=EUR","C"))
     return result,failures
 
 
