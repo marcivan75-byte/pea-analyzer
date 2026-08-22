@@ -19,7 +19,7 @@ def _obs_for(ticker: str, value: float = 4.0) -> list[dict]:
 def test_cache_bootstrap_fetches_entire_uncached_universe_even_when_budget_is_small(tmp_path, monkeypatch) -> None:
     calls: list[list[str]] = []
 
-    def fake_fetch(tickers, api_key, delay_seconds=1.1, max_workers=8):
+    def fake_fetch(tickers, api_key, delay_seconds=1.1, max_workers=8, *, target_tickers=None):
         calls.append(list(tickers))
         rows = [row for ticker in tickers for row in _obs_for(ticker)]
         return rows, []
@@ -28,7 +28,8 @@ def test_cache_bootstrap_fetches_entire_uncached_universe_even_when_budget_is_sm
     now = datetime(2026, 8, 16, 12, 0, tzinfo=timezone.utc)
     tickers = ["AAA", "BBB", "CCC", "DDD", "EEE"]
     observations, failures, metrics = consensus.fetch_consensus_cached(
-        tickers, "key", tmp_path / "cache.json", refresh_budget=2, now=now,
+        tickers, "key", tmp_path / "cache.json", refresh_budget=2,
+        recommendation_ttl_days=7, target_ttl_days=14, now=now,
     )
 
     assert failures == []
@@ -43,7 +44,7 @@ def test_cache_bootstrap_fetches_entire_uncached_universe_even_when_budget_is_sm
 def test_warm_cache_rotates_only_budget_and_preserves_original_cache_timestamp(tmp_path, monkeypatch) -> None:
     calls: list[list[str]] = []
 
-    def fake_fetch(tickers, api_key, delay_seconds=1.1, max_workers=8):
+    def fake_fetch(tickers, api_key, delay_seconds=1.1, max_workers=8, *, target_tickers=None):
         calls.append(list(tickers))
         rows = [row for ticker in tickers for row in _obs_for(ticker, 4.2)]
         return rows, []
@@ -52,11 +53,16 @@ def test_warm_cache_rotates_only_budget_and_preserves_original_cache_timestamp(t
     cache_path = tmp_path / "cache.json"
     day0 = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
     tickers = ["AAA", "BBB", "CCC", "DDD", "EEE"]
-    consensus.fetch_consensus_cached(tickers, "key", cache_path, refresh_budget=1, now=day0)
+    consensus.fetch_consensus_cached(
+        tickers, "key", cache_path, refresh_budget=1,
+        recommendation_ttl_days=1, target_ttl_days=7, now=day0,
+    )
     calls.clear()
 
     observations, failures, metrics = consensus.fetch_consensus_cached(
-        tickers, "key", cache_path, refresh_budget=2, now=day0 + timedelta(days=1),
+        tickers, "key", cache_path, refresh_budget=2,
+        recommendation_ttl_days=1, target_ttl_days=7,
+        now=day0 + timedelta(days=1),
     )
     assert failures == []
     assert calls == [["AAA", "BBB"]]
@@ -92,13 +98,14 @@ def test_expired_cache_is_not_reused_after_transient_refresh_failure(tmp_path, m
     monkeypatch.setattr(
         consensus,
         "fetch_consensus",
-        lambda tickers, api_key, delay_seconds=1.1, max_workers=8: (
+        lambda tickers, api_key, delay_seconds=1.1, max_workers=8, target_tickers=None: (
             [], [{"ticker": "AAA", "reason": "Timeout", "detail": "network"}]
         ),
     )
     now = old + timedelta(days=11)
     observations, failures, metrics = consensus.fetch_consensus_cached(
-        ["AAA"], "key", cache_path, refresh_budget=1, max_cache_age_days=10, now=now,
+        ["AAA"], "key", cache_path, refresh_budget=1, max_cache_age_days=10,
+        recommendation_ttl_days=3, target_ttl_days=7, now=now,
     )
     assert observations == []
     assert metrics["mandatory_refresh_count"] == 1
@@ -126,12 +133,13 @@ def test_recent_cache_can_be_used_after_transient_refresh_failure(tmp_path, monk
     monkeypatch.setattr(
         consensus,
         "fetch_consensus",
-        lambda tickers, api_key, delay_seconds=1.1, max_workers=8: (
+        lambda tickers, api_key, delay_seconds=1.1, max_workers=8, target_tickers=None: (
             [], [{"ticker": "AAA", "reason": "Timeout", "detail": "network"}]
         ),
     )
     observations, failures, metrics = consensus.fetch_consensus_cached(
         ["AAA"], "key", cache_path, refresh_budget=1, max_cache_age_days=10,
+        recommendation_ttl_days=1, target_ttl_days=7,
         now=old + timedelta(days=2),
     )
     assert len(observations) == 1
@@ -144,7 +152,7 @@ def test_recent_cache_can_be_used_after_transient_refresh_failure(tmp_path, monk
 def test_negative_cache_avoids_immediate_repeat_calls(tmp_path, monkeypatch) -> None:
     calls = 0
 
-    def fake_fetch(tickers, api_key, delay_seconds=1.1, max_workers=8):
+    def fake_fetch(tickers, api_key, delay_seconds=1.1, max_workers=8, *, target_tickers=None):
         nonlocal calls
         calls += 1
         return [], [{"ticker": ticker, "reason": "NO_RECOMMENDATION_DATA"} for ticker in tickers]
@@ -152,9 +160,13 @@ def test_negative_cache_avoids_immediate_repeat_calls(tmp_path, monkeypatch) -> 
     monkeypatch.setattr(consensus, "fetch_consensus", fake_fetch)
     cache_path = tmp_path / "cache.json"
     now = datetime(2026, 8, 16, 12, 0, tzinfo=timezone.utc)
-    consensus.fetch_consensus_cached(["AAA"], "key", cache_path, refresh_budget=400, now=now)
+    consensus.fetch_consensus_cached(
+        ["AAA"], "key", cache_path, refresh_budget=400,
+        recommendation_ttl_days=3, target_ttl_days=7, now=now,
+    )
     _, _, metrics = consensus.fetch_consensus_cached(
         ["AAA"], "key", cache_path, refresh_budget=400, negative_cache_days=3,
+        recommendation_ttl_days=3, target_ttl_days=7,
         now=now + timedelta(days=1),
     )
     assert calls == 1
