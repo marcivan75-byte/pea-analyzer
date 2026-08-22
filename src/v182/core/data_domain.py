@@ -30,8 +30,6 @@ def bounds_for_field(field: str) -> tuple[float | None, float | None] | None:
     if field in NUMERIC_BOUNDS:
         return NUMERIC_BOUNDS[field]
     if field.startswith("perf_") and field.endswith("_pct"):
-        # Simple total return cannot lose more than 100%. The upper bound is
-        # deliberately broad because multi-year winners can exceed 100%.
         return (-100.0, 100000.0)
     if field in {"max_drawdown_1y_pct", "max_drawdown_1y"}:
         return (-100.0, 0.0)
@@ -41,6 +39,8 @@ def bounds_for_field(field: str) -> tuple[float | None, float | None] | None:
 def is_effectively_missing(value: Any) -> bool:
     if value is None:
         return True
+    if isinstance(value,str):
+        return value.strip().upper() in MISSING_TEXT
     try:
         if pd.isna(value):
             return True
