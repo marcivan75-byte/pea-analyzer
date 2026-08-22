@@ -23,6 +23,7 @@ SOURCE_HINTS = [
 ]
 TECHNICAL_FIELDS={"canonical_seed_status"}
 MISSING_TEXT_TOKENS={"", "MISSING", "UNKNOWN", MISSING_TOKEN, "NOT_LOADED", "NAN", "<NA>", "N/A", "NA", "NULL"}
+STATE_UNCHANGED_WAVES={"WAVE_00_ETF_TICKERS","WAVE_01_ACTION_OHLCV","WAVE_02_ETF_OHLCV"}
 _AUDIT_CACHE_LOCK=threading.RLock()
 _LAST_INVENTORY: pd.DataFrame | None=None
 _LAST_PROVENANCE: pd.DataFrame | None=None
@@ -104,12 +105,7 @@ def _inventory_for_audit(
     *,
     reuse_previous_state: bool,
 ) -> tuple[pd.DataFrame,pd.DataFrame,bool]:
-    """Reuse the previous full inventory only when the caller proves state unchanged.
-
-    This is deliberately opt-in. Cache-only waves can retain a complete per-wave
-    audit while avoiding another scan of every master column and another provenance
-    aggregation. Any wave that may alter a master must use the normal full path.
-    """
+    """Reuse the previous full inventory only when the caller proves state unchanged."""
     global _LAST_INVENTORY,_LAST_PROVENANCE
     if reuse_previous_state:
         with _AUDIT_CACHE_LOCK:
@@ -142,18 +138,15 @@ def write_collection_audit(
 ) -> str:
     """Write a post-collection audit with retained-source provenance.
 
-    Actual sources are joined by ``asset_class + field`` so identically named
-    Action and ETF fields cannot contaminate each other's lineage. Canonical
-    bookkeeping columns are excluded from data-availability statistics. GitHub
-    production runs use compact lossless CSV between waves and still publish the
-    final Excel audit once at WAVE_99. For waves that provably do not mutate either
-    master, callers may reuse the previous complete inventory; the per-wave file,
-    failures and history are still emitted with the current wave identity.
+    GitHub production runs use compact lossless CSV between waves and still publish
+    the final Excel audit once at WAVE_99. The three cache-only waves that provably
+    cannot alter either master automatically reuse the preceding complete inventory;
+    their own per-wave file, source context, failures and history remain published.
+    All other waves always recompute unless an explicit trusted caller opts in.
     """
     root=Path(output_root); root.mkdir(parents=True,exist_ok=True)
-    inventory,provenance,reused=_inventory_for_audit(
-        actions,etfs,wave_id,reuse_previous_state=bool(reuse_previous_state),
-    )
+    reuse=bool(reuse_previous_state or wave_id in STATE_UNCHANGED_WAVES)
+    inventory,provenance,reused=_inventory_for_audit(actions,etfs,wave_id,reuse_previous_state=reuse)
     missing=inventory[inventory["status"]=="MISSING"].copy(); partial=inventory[inventory["status"]=="PARTIAL"].copy(); available=inventory[inventory["status"]=="AVAILABLE"].copy()
     summary=pd.DataFrame([
         {"collection":wave_id,"asset_class":"ACTION","universe_rows":len(actions),"missing_fields":int((inventory.query("asset_class=='ACTION' and status=='MISSING'")).shape[0]),"partial_fields":int((inventory.query("asset_class=='ACTION' and status=='PARTIAL'")).shape[0]),"fields_with_actual_source":int(((inventory.asset_class=="ACTION")&(~inventory.source_reelle_absente)).sum()),"source_context":source_context,"inventory_reused":reused},
