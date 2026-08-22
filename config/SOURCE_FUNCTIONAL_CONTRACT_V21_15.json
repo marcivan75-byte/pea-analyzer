@@ -1,0 +1,56 @@
+{
+  "version": "V21.15.0",
+  "purpose": "Restore and lock previously validated source functions so later runtime optimizations cannot silently remove them.",
+  "scope": {
+    "selected_only_max_unique_instruments": 40,
+    "preselection_statuses": ["BUY_CANDIDATE", "WATCH", "REVIEW", "SHADOW_CANDIDATE"],
+    "horizons": ["TCT", "CT", "MT"],
+    "asset_classes": ["ACTION", "ETF"]
+  },
+  "boursorama": {
+    "required_function": "POST_SELECTION_PRIORITY_ENRICHMENT",
+    "priority_for_selected_actions": true,
+    "full_universe_daily_scrape_forbidden": true,
+    "dynamic_ttl_hours": 8,
+    "deep_ttl_hours": 168,
+    "refresh_budget": 40,
+    "request_start_interval_seconds": 1.0,
+    "max_workers": 4,
+    "required_context_families": [
+      "quote_volume_market_cap_sector_pea",
+      "consensus_analyst_count_target_upside_revisions",
+      "estimated_per_yield_dividend_eps",
+      "financials_margin_roe_debt_revenue_net_income",
+      "esg_when_publicly_displayed"
+    ],
+    "raw_html_persisted": false
+  },
+  "investing": {
+    "required_function": "POST_SELECTION_MULTI_HORIZON_TECHNICAL_CONFIRMATION",
+    "public_pages_only": true,
+    "selected_only": true,
+    "timeframes": ["DAILY", "WEEKLY", "MONTHLY"],
+    "allowed_states": ["STRONG_SELL", "SELL", "NEUTRAL", "BUY", "STRONG_BUY"],
+    "horizon_mapping": {
+      "TCT": "DAILY",
+      "CT": "WEEKLY",
+      "MT": "MONTHLY"
+    },
+    "ttl_hours": 6,
+    "refresh_budget": 40,
+    "request_start_interval_seconds": 1.0,
+    "max_workers": 4,
+    "raw_html_persisted": false
+  },
+  "governance": {
+    "post_selection_only": true,
+    "changes_reference_scores": false,
+    "changes_weights": false,
+    "changes_thresholds": false,
+    "can_create_buy": false,
+    "can_trigger_real_order": false,
+    "missing_source_data_policy": "EXPLICIT_NA_WITH_FAILURE_AUDIT_NO_IMPUTATION",
+    "source_contract_must_be_tested_in_ci": true,
+    "silent_function_removal_forbidden": true
+  }
+}
