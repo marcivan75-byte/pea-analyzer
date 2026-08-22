@@ -4,16 +4,17 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 import json
-import time
 
 import pandas as pd
 
 from v182.sources.boursorama_selected import collect_selected_action_context_cached
 from v182.sources.boursorama_selected_etf import collect_selected_etf_context_cached
 from v182.sources.investing_technical import collect_technical_context_cached
+from v182.sources.rate_limit import StartRateLimiter
 
 ROOT = Path(__file__).resolve().parents[3]
-CONTRACT_PATH = Path("config/SOURCE_FUNCTIONAL_CONTRACT_V21_15.json")
+CONTRACT_PATH = Path("config/SOURCE_FUNCTIONAL_CONTRACT_V21_16.json")
+NETWORK_POLICIES = {"LIVE_IF_DUE", "CACHE_ONLY"}
 
 
 def _read_contract(root: Path) -> dict:
@@ -23,25 +24,11 @@ def _read_contract(root: Path) -> dict:
 def _score_sort(frame: pd.DataFrame) -> pd.DataFrame:
     out = frame.copy()
     out["_source_priority_score"] = pd.to_numeric(out.get("score"), errors="coerce")
-    if "selected_rank" in out:
-        rank = pd.to_numeric(out["selected_rank"], errors="coerce")
-        out["_selected_rank"] = rank
-    else:
-        out["_selected_rank"] = pd.NA
+    out["_selected_rank"] = pd.to_numeric(out["selected_rank"], errors="coerce") if "selected_rank" in out else pd.NA
     return out.sort_values(["_selected_rank", "_source_priority_score"], ascending=[True, False], na_position="last")
 
 
-def select_preselected_rows(
-    rows: pd.DataFrame,
-    *,
-    max_unique_instruments: int = 40,
-    accepted_statuses: tuple[str, ...] = ("BUY_CANDIDATE", "WATCH", "REVIEW", "SHADOW_CANDIDATE"),
-) -> pd.DataFrame:
-    """Select only instruments already retained by upstream models.
-
-    No source data can create its own candidate. This function is intentionally
-    downstream of scoring and preserves all horizon rows for a selected ISIN.
-    """
+def select_preselected_rows(rows: pd.DataFrame, *, max_unique_instruments: int = 40, accepted_statuses: tuple[str, ...] = ("BUY_CANDIDATE", "WATCH", "REVIEW", "WATCH_NOT_TOP2", "SHADOW_CANDIDATE")) -> pd.DataFrame:
     if rows.empty or "isin" not in rows:
         return pd.DataFrame(columns=rows.columns)
     frame = rows.copy()
@@ -58,8 +45,7 @@ def select_preselected_rows(
     frame = frame[selected].copy()
     if frame.empty:
         return frame
-    ordered = _score_sort(frame)
-    unique_isins = list(dict.fromkeys(ordered["isin"].astype(str).tolist()))[: max(0, int(max_unique_instruments))]
+    unique_isins = list(dict.fromkeys(_score_sort(frame)["isin"].astype(str).tolist()))[: max(0, int(max_unique_instruments))]
     return frame[frame["isin"].astype(str).isin(unique_isins)].copy()
 
 
@@ -67,25 +53,12 @@ def attach_master_identity(selected: pd.DataFrame, actions: pd.DataFrame | None,
     if selected.empty:
         return selected
     frames = []
+    identity_fields = ("isin", "name", "yahoo_ticker", "long_name_yf", "investing_url", "investing_technical_url", "boursorama_code")
     for master, asset in ((actions, "ACTION"), (etfs, "ETF")):
         if master is None or master.empty or "isin" not in master:
             continue
-        keep = [
-            c
-            for c in (
-                "isin",
-                "name",
-                "yahoo_ticker",
-                "long_name_yf",
-                "investing_url",
-                "investing_technical_url",
-                "boursorama_code",
-            )
-            if c in master
-        ]
-        part = master[keep].copy()
-        part["asset_class"] = asset
-        frames.append(part)
+        keep = [c for c in identity_fields if c in master]
+        part = master[keep].copy(); part["asset_class"] = asset; frames.append(part)
     if not frames:
         return selected
     identity = pd.concat(frames, ignore_index=True, sort=False).drop_duplicates(["isin", "asset_class"])
@@ -93,165 +66,121 @@ def attach_master_identity(selected: pd.DataFrame, actions: pd.DataFrame | None,
     if "asset_class" not in result:
         result["asset_class"] = "ACTION"
     result = result.merge(identity, on=["isin", "asset_class"], how="left", suffixes=("", "_master"))
-    for field in (
-        "name",
-        "yahoo_ticker",
-        "long_name_yf",
-        "investing_url",
-        "investing_technical_url",
-        "boursorama_code",
-    ):
+    for field in identity_fields[1:]:
         master_field = f"{field}_master"
-        if master_field in result:
-            if field not in result:
-                result[field] = result[master_field]
-            else:
-                missing = result[field].isna() | result[field].astype(str).str.strip().isin({"", "nan", "None"})
-                result.loc[missing, field] = result.loc[missing, master_field]
-            result = result.drop(columns=[master_field])
+        if master_field not in result:
+            continue
+        if field not in result:
+            result[field] = result[master_field]
+        else:
+            missing = result[field].isna() | result[field].astype(str).str.strip().isin({"", "nan", "None"})
+            result.loc[missing, field] = result.loc[missing, master_field]
+        result = result.drop(columns=[master_field])
     return result
+
+
+def _append_source_metadata(observations: list[dict]) -> list[dict]:
+    if not observations:
+        return observations
+    frame = pd.DataFrame(observations)
+    keys = [c for c in ("isin", "asset_class", "horizon") if c in frame]
+    synthetic: list[dict] = []
+    for key_values, group in frame.groupby(keys, dropna=False):
+        if not isinstance(key_values, tuple):
+            key_values = (key_values,)
+        base = dict(zip(keys, key_values))
+        for provider, mask in (
+            ("boursorama", group["source"].astype(str).str.startswith("Boursorama")),
+            ("investing", group["source"].astype(str).str.startswith("Investing")),
+        ):
+            subset = group[mask]
+            if subset.empty:
+                continue
+            urls = sorted({str(v) for v in subset.get("source_url", pd.Series(dtype=object)).dropna() if str(v).strip()})
+            dates = sorted({str(v) for v in subset.get("collected_at", pd.Series(dtype=object)).dropna() if str(v).strip()})
+            for field, value in ((f"{provider}_source_urls", " | ".join(urls)), (f"{provider}_latest_collected_at", dates[-1] if dates else "")):
+                if not value:
+                    continue
+                synthetic.append({**base, "field": field, "value": value, "source": f"{provider} provenance aggregate", "source_url": urls[0] if urls else None, "collected_at": dates[-1] if dates else None, "validation_status": "SOURCE_PROVENANCE_AGGREGATE"})
+    return observations + synthetic
 
 
 def _pivot(observations: list[dict]) -> pd.DataFrame:
     if not observations:
         return pd.DataFrame()
     frame = pd.DataFrame(observations)
-    required = {"isin", "horizon", "field", "value"}
-    if not required.issubset(frame.columns):
+    if not {"isin", "horizon", "field", "value"}.issubset(frame.columns):
         return pd.DataFrame()
     index = [c for c in ("isin", "asset_class", "horizon") if c in frame]
-    return frame.pivot_table(index=index, columns="field", values="value", aggfunc="last").reset_index()
+    return frame.pivot_table(index=index, columns="field", values="value", aggfunc="last", dropna=False).reset_index()
 
 
-def enrich_selected_rows(
-    rows: pd.DataFrame,
-    root: Path = ROOT,
-    *,
-    profile: str = "SELECTED",
-) -> tuple[pd.DataFrame, dict]:
-    contract = _read_contract(root)
-    scope = contract["scope"]
-    selected = select_preselected_rows(
-        rows,
-        max_unique_instruments=int(scope["selected_only_max_unique_instruments"]),
-        accepted_statuses=tuple(scope["preselection_statuses"]),
-    )
+def enrich_selected_rows(rows: pd.DataFrame, root: Path = ROOT, *, profile: str = "SELECTED", network_policy: str = "LIVE_IF_DUE", persist_outputs: bool = True) -> tuple[pd.DataFrame, dict]:
+    policy = str(network_policy).upper()
+    if policy not in NETWORK_POLICIES:
+        raise ValueError(f"UNSUPPORTED_SOURCE_NETWORK_POLICY:{network_policy}")
+    allow_network = policy == "LIVE_IF_DUE"
+    contract = _read_contract(root); scope = contract["scope"]
+    selected = select_preselected_rows(rows, max_unique_instruments=int(scope["selected_only_max_unique_instruments"]), accepted_statuses=tuple(scope["preselection_statuses"]))
     if selected.empty:
-        return rows.copy(), {
-            "status": "NO_PRESELECTED_ROWS",
-            "profile": profile,
-            "selected_rows": 0,
-            "decision_influence": False,
-            "score_influence": 0.0,
-        }
+        return rows.copy(), {"status": "NO_PRESELECTED_ROWS", "profile": profile, "selected_rows": 0, "network_policy": policy, "decision_influence": False, "score_influence": 0.0}
 
-    bcfg = contract["boursorama"]
-    icfg = contract["investing"]
-    asset_upper = selected["asset_class"].astype(str).str.upper()
-    action_selected = selected[asset_upper.eq("ACTION")].copy()
-    etf_selected = selected[asset_upper.eq("ETF")].copy()
+    bcfg = contract["boursorama"]; icfg = contract["investing"]
+    asset_upper = selected["asset_class"].astype(str).str.upper(); action_selected = selected[asset_upper.eq("ACTION")].copy(); etf_selected = selected[asset_upper.eq("ETF")].copy()
 
-    def run_boursorama() -> tuple[object | None, object | None]:
-        """Serialize Action/ETF Boursorama branches to preserve one provider cadence."""
-        action_result = None
-        etf_result = None
-        if not action_selected.empty and bool(bcfg.get("priority_for_selected_actions", True)):
-            action_result = collect_selected_action_context_cached(
-                action_selected,
-                root / "state" / "provenance" / "source_cache" / "BOURSORAMA_SELECTED_V1.json",
-                dynamic_ttl_hours=float(bcfg["dynamic_ttl_hours"]),
-                deep_ttl_hours=float(bcfg["deep_ttl_hours"]),
-                refresh_budget=int(bcfg["refresh_budget"]),
-                request_start_interval_seconds=float(bcfg["request_start_interval_seconds"]),
-                max_workers=int(bcfg["max_workers"]),
-            )
-        if not etf_selected.empty and bool(bcfg.get("priority_for_selected_etfs", False)):
-            if action_result is not None:
-                time.sleep(float(bcfg["request_start_interval_seconds"]))
-            etf_result = collect_selected_etf_context_cached(
-                etf_selected,
-                root / "state" / "provenance" / "source_cache" / "BOURSORAMA_SELECTED_ETF_V1.json",
-                dynamic_ttl_hours=float(bcfg["dynamic_ttl_hours"]),
-                deep_ttl_hours=float(bcfg["deep_ttl_hours"]),
-                refresh_budget=int(bcfg["refresh_budget"]),
-                request_start_interval_seconds=float(bcfg["request_start_interval_seconds"]),
-                max_workers=int(bcfg["max_workers"]),
-            )
-        return action_result, etf_result
+    def run_boursorama():
+        shared_limiter = StartRateLimiter(float(bcfg["request_start_interval_seconds"]))
+        total_inflight = max(1, int(bcfg.get("max_provider_inflight", 4))); per_branch_workers = max(1, total_inflight // 2)
+        def actions_branch():
+            if action_selected.empty or not bool(bcfg.get("priority_for_selected_actions", True)): return None
+            return collect_selected_action_context_cached(action_selected, root/"state"/"provenance"/"source_cache"/"BOURSORAMA_SELECTED_V1.json", dynamic_ttl_hours=float(bcfg["dynamic_ttl_hours"]), performance_ttl_hours=float(bcfg.get("performance_ttl_hours", 24)), deep_ttl_hours=float(bcfg["deep_ttl_hours"]), refresh_budget=int(bcfg["refresh_budget"]), request_start_interval_seconds=float(bcfg["request_start_interval_seconds"]), max_workers=per_branch_workers, limiter=shared_limiter, allow_network=allow_network)
+        def etfs_branch():
+            if etf_selected.empty or not bool(bcfg.get("priority_for_selected_etfs", True)): return None
+            return collect_selected_etf_context_cached(etf_selected, root/"state"/"provenance"/"source_cache"/"BOURSORAMA_SELECTED_ETF_V1.json", dynamic_ttl_hours=float(bcfg["dynamic_ttl_hours"]), deep_ttl_hours=float(bcfg["deep_ttl_hours"]), refresh_budget=int(bcfg["refresh_budget"]), request_start_interval_seconds=float(bcfg["request_start_interval_seconds"]), max_workers=per_branch_workers, limiter=shared_limiter, allow_network=allow_network)
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="boursorama-asset") as pool:
+            fa = pool.submit(actions_branch); fe = pool.submit(etfs_branch); return fa.result(), fe.result()
 
     def run_investing():
-        return collect_technical_context_cached(
-            selected,
-            root / "state" / "provenance" / "source_cache" / "INVESTING_TECHNICAL_V1.json",
-            root / "state" / "provenance" / "source_cache" / "INVESTING_URL_MAP_V1.json",
-            refresh_budget=int(icfg["refresh_budget"]),
-            ttl_hours=float(icfg["ttl_hours"]),
-            request_start_interval_seconds=float(icfg["request_start_interval_seconds"]),
-            max_workers=int(icfg["max_workers"]),
-        )
+        return collect_technical_context_cached(selected, root/"state"/"provenance"/"source_cache"/"INVESTING_TECHNICAL_V1.json", root/"state"/"provenance"/"source_cache"/"INVESTING_URL_MAP_V1.json", refresh_budget=int(icfg["refresh_budget"]), ttl_hours=float(icfg["ttl_hours"]), request_start_interval_seconds=float(icfg["request_start_interval_seconds"]), max_workers=int(icfg["max_workers"]), allow_network=allow_network)
 
-    b_action_result = None
-    b_etf_result = None
-    i_result = None
-    branch_errors: list[dict] = []
-    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="selected-source") as pool:
+    b_action = b_etf = investing = None; branch_errors: list[dict] = []
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="selected-source-provider") as pool:
         futures = {"boursorama": pool.submit(run_boursorama), "investing": pool.submit(run_investing)}
         for name, future in futures.items():
             try:
                 result = future.result()
-                if name == "boursorama":
-                    b_action_result, b_etf_result = result
-                else:
-                    i_result = result
+                if name == "boursorama": b_action, b_etf = result
+                else: investing = result
             except Exception as exc:
                 branch_errors.append({"source": name, "reason": type(exc).__name__, "detail": str(exc)[:240]})
 
-    observations: list[dict] = []
-    failures: list[dict] = list(branch_errors)
-    for result in (b_action_result, b_etf_result, i_result):
-        if result is None:
-            continue
-        observations.extend(result.observations)
-        failures.extend(result.failures)
-
-    context = _pivot(observations)
-    enriched = rows.copy()
+    observations: list[dict] = []; failures: list[dict] = list(branch_errors)
+    for result in (b_action, b_etf, investing):
+        if result is not None:
+            observations.extend(result.observations); failures.extend(result.failures)
+    observations = _append_source_metadata(observations)
+    context = _pivot(observations); enriched = rows.copy()
     if not context.empty:
         keys = [c for c in ("isin", "asset_class", "horizon") if c in enriched and c in context]
         enriched = enriched.merge(context, on=keys, how="left")
 
-    outdir = root / "outputs" / "source_context"
-    auditdir = root / "outputs" / "audit"
-    outdir.mkdir(parents=True, exist_ok=True)
-    auditdir.mkdir(parents=True, exist_ok=True)
     safe_profile = "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in profile.upper())
-    selected.to_csv(outdir / f"{safe_profile}_PRESELECTED_INPUT.csv", sep=";", index=False, encoding="utf-8-sig")
-    pd.DataFrame(observations).to_csv(outdir / f"{safe_profile}_SOURCE_OBSERVATIONS.csv", sep=";", index=False, encoding="utf-8-sig")
-    pd.DataFrame(failures).to_csv(outdir / f"{safe_profile}_SOURCE_FAILURES.csv", sep=";", index=False, encoding="utf-8-sig")
+    if persist_outputs:
+        outdir = root/"outputs"/"source_context"; auditdir = root/"outputs"/"audit"; outdir.mkdir(parents=True, exist_ok=True); auditdir.mkdir(parents=True, exist_ok=True)
+        selected.to_csv(outdir/f"{safe_profile}_PRESELECTED_INPUT.csv", sep=";", index=False, encoding="utf-8-sig")
+        pd.DataFrame(observations).to_csv(outdir/f"{safe_profile}_SOURCE_OBSERVATIONS.csv", sep=";", index=False, encoding="utf-8-sig")
+        pd.DataFrame(failures).to_csv(outdir/f"{safe_profile}_SOURCE_FAILURES.csv", sep=";", index=False, encoding="utf-8-sig")
 
     payload = {
-        "status": "SUCCESS_WITH_CONTEXT" if observations else "SUCCESS_NO_SOURCE_DATA",
-        "version": contract["version"],
-        "profile": profile,
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "selected_rows": int(len(selected)),
-        "selected_unique_isins": int(selected["isin"].nunique()),
-        "boursorama_actions": (
-            b_action_result.metrics if b_action_result is not None else {"status": "NO_ACTION_SELECTED_OR_BRANCH_FAILED"}
-        ),
-        "boursorama_etfs": (
-            b_etf_result.metrics if b_etf_result is not None else {"status": "NO_ETF_SELECTED_OR_BRANCH_FAILED"}
-        ),
-        "investing": i_result.metrics if i_result is not None else {"status": "BRANCH_FAILED"},
-        "failures": int(len(failures)),
-        "weights_unchanged": True,
-        "thresholds_unchanged": True,
-        "decision_influence": False,
-        "score_influence": 0.0,
-        "can_create_buy": False,
-        "functional_contract": "config/SOURCE_FUNCTIONAL_CONTRACT_V21_15.json",
+        "status": "SUCCESS_WITH_CONTEXT" if observations else "SUCCESS_NO_SOURCE_DATA", "version": contract["version"], "profile": profile,
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(), "network_policy": policy, "network_allowed": allow_network,
+        "selected_rows": int(len(selected)), "selected_unique_isins": int(selected["isin"].nunique()),
+        "boursorama_actions": b_action.metrics if b_action is not None else {"status": "NO_ACTION_SELECTED_OR_BRANCH_FAILED"},
+        "boursorama_etfs": b_etf.metrics if b_etf is not None else {"status": "NO_ETF_SELECTED_OR_BRANCH_FAILED"},
+        "investing": investing.metrics if investing is not None else {"status": "BRANCH_FAILED"}, "failures": int(len(failures)),
+        "weights_unchanged": True, "thresholds_unchanged": True, "decision_influence": False, "score_influence": 0.0, "can_create_buy": False,
+        "functional_contract": str(CONTRACT_PATH), "persisted_context_outputs": bool(persist_outputs),
     }
-    (auditdir / f"{safe_profile}_SELECTED_SOURCE_CONTEXT.json").write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
-    )
+    if persist_outputs:
+        (root/"outputs"/"audit"/f"{safe_profile}_SELECTED_SOURCE_CONTEXT.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     return enriched, payload
