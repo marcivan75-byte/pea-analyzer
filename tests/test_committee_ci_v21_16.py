@@ -7,6 +7,8 @@ import pandas as pd
 from v182.reporting.committee_ci_explainability_v21_16 import (
     _attach_provenance_preserving_internal,
     _report_context,
+    _source_validation,
+    _tct_exact_details,
 )
 
 
@@ -26,13 +28,101 @@ def test_pending_buy_is_translated_only_for_human_facing_context():
     assert context.equals(original)
 
 
+def test_tct_t2_exact_components_reconstruct_published_score():
+    selected = pd.DataFrame([
+        {
+            "asset_class": "ACTION",
+            "horizon": "TCT",
+            "isin": "FR-T2",
+            "name": "T2 Test",
+            "decision": "T2_CONFIRM_75_SHADOW",
+            "score": 80.5,
+            "setup": "T2_CONFIRMATION",
+            "t2_component_bandwidth_expansion": 90.0,
+            "t2_component_macd_confirmation": 80.0,
+            "t2_component_volume_persistence": 70.0,
+            "t2_component_breakout_hold": 85.0,
+            "t2_component_relative_strength_continuation": 75.0,
+            "t2_component_non_extension": 82.5,
+        }
+    ])
+    detail = _tct_exact_details(selected)
+    assert len(detail) == 6
+    assert set(detail["criterion_status"]) == {"ACTIVE"}
+    reconstructed = pd.to_numeric(detail["weighted_contribution_points"], errors="coerce").sum()
+    expected = 90 * 0.25 + 80 * 0.20 + 70 * 0.20 + 85 * 0.15 + 75 * 0.10 + 82.5 * 0.10
+    assert abs(reconstructed - expected) < 1e-12
+    assert abs(detail["effective_weight_pct"].sum() - 100.0) < 1e-12
+
+
+def test_tct_exact_components_renormalize_missing_weight_like_engine():
+    selected = pd.DataFrame([
+        {
+            "asset_class": "ACTION",
+            "horizon": "TCT",
+            "isin": "FR-T1",
+            "name": "T1 Test",
+            "decision": "T1_STARTER_25_SHADOW",
+            "score": 80.0,
+            "setup": "T1",
+            "t1_component_compression": 80.0,
+            "t1_component_volume_acceleration": 80.0,
+            "t1_component_breakout_quality": 80.0,
+            "t1_component_momentum_acceleration": 80.0,
+            "t1_component_relative_strength": 80.0,
+            "t1_component_risk_control": None,
+        }
+    ])
+    detail = _tct_exact_details(selected)
+    active = detail[detail["criterion_status"] == "ACTIVE"]
+    assert len(active) == 5
+    assert abs(active["effective_weight_pct"].sum() - 100.0) < 1e-9
+    assert abs(pd.to_numeric(active["weighted_contribution_points"]).sum() - 80.0) < 1e-9
+
+
+def test_tct_source_validation_distinguishes_t1_t2_and_never_promotes_t2_to_buy(tmp_path: Path):
+    committee = tmp_path / "outputs" / "committee_master"
+    committee.mkdir(parents=True)
+    pd.DataFrame([
+        {
+            "asset_class": "ACTION", "horizon": "TCT", "isin": "T2", "decision": "T2_CONFIRM_75_SHADOW",
+            "source_fully_validated": True, "ci_source_eligible": False,
+        },
+        {
+            "asset_class": "ACTION", "horizon": "TCT", "isin": "T1", "decision": "T1_STARTER_25_SHADOW",
+            "source_fully_validated": True, "ci_source_eligible": False,
+        },
+    ]).to_csv(committee / "V21_8_ENTRY_EXIT_CHALLENGER.csv", sep=";", index=False, encoding="utf-8-sig")
+    selected = pd.DataFrame([
+        {
+            "asset_class": "ACTION", "horizon": "TCT", "isin": "T2", "decision": "T2_CONFIRM_75_SHADOW",
+            "score": 82.0, "source_fully_validated": True, "ci_source_eligible": False,
+        },
+        {
+            "asset_class": "ACTION", "horizon": "TCT", "isin": "T1", "decision": "T1_STARTER_25_SHADOW",
+            "score": 81.0, "source_fully_validated": True, "ci_source_eligible": False,
+        },
+    ])
+    out = _source_validation(tmp_path, selected)
+    states = dict(zip(out["isin"], out["ci_final_status"]))
+    assert states["T2"] == "TCT_T2_SOURCE_CONFIRMED"
+    assert states["T1"] == "TCT_T1_SURVEILLANCE"
+    assert "RECOMMANDATION_TOTALEMENT_VALIDEE" not in states.values()
+
+
 def test_internal_tct_provenance_is_preserved_without_raw_ledger_lookup(monkeypatch, tmp_path: Path):
     detail = pd.DataFrame([
         {
-            "asset_class": "ACTION", "horizon": "TCT", "isin": "FR1", "criterion": "TCT_BASELINE_SQUEEZE",
+            "asset_class": "ACTION", "horizon": "TCT", "isin": "FR1", "criterion": "TCT_T2_BANDWIDTH_EXPANSION",
+            "source_field": "t2_component_bandwidth_expansion", "source": "TCT_V24_1_7_EXACT_COMPONENTS",
+            "source_url": None, "as_of": "2026-08-22T20:00:00+00:00", "evidence_level": "A_INTERNAL_GOVERNED",
+            "validation_status": "T2_EXACT_COMPONENTS_AVAILABLE_WEIGHT_RENORMALIZED",
+        },
+        {
+            "asset_class": "ACTION", "horizon": "TCT", "isin": "FR1B", "criterion": "TCT_BASELINE_GATE_SQUEEZE",
             "source_field": "tct_baseline_component_squeeze", "source": "TCT_BASELINE_V24_1_8",
             "source_url": None, "as_of": "2026-08-22T20:00:00+00:00", "evidence_level": "A_INTERNAL_GOVERNED",
-            "validation_status": "ACTIVE_AVAILABLE_PILLARS_RENORMALIZED_TO_100_SETUP_EXCLUDED",
+            "validation_status": "BASELINE_TOP20_AND_COVERAGE_PREREQUISITE_CONTEXT_ONLY",
         },
         {
             "asset_class": "ACTION", "horizon": "CT", "isin": "FR2", "criterion": "momentum",
@@ -52,8 +142,6 @@ def test_internal_tct_provenance_is_preserved_without_raw_ledger_lookup(monkeypa
     from v182.reporting import committee_ci_explainability_v21_16 as module
     monkeypatch.setattr(module.legacy, "_attach_provenance", fake_attach)
     out = _attach_provenance_preserving_internal(tmp_path, detail)
-    tct = out[out["isin"] == "FR1"].iloc[0]
-    ct = out[out["isin"] == "FR2"].iloc[0]
-    assert tct["source"] == "TCT_BASELINE_V24_1_8"
-    assert tct["evidence_level"] == "A_INTERNAL_GOVERNED"
-    assert ct["source"] == "LEDGER_SOURCE"
+    assert out[out["isin"] == "FR1"].iloc[0]["source"] == "TCT_V24_1_7_EXACT_COMPONENTS"
+    assert out[out["isin"] == "FR1B"].iloc[0]["source"] == "TCT_BASELINE_V24_1_8"
+    assert out[out["isin"] == "FR2"].iloc[0]["source"] == "LEDGER_SOURCE"
