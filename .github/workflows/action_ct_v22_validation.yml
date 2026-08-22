@@ -137,8 +137,8 @@ jobs:
           tactical=Path('src/v182/reporting/tactical_shadow_bundle_run.py').read_text()
           assert 'action_ct_bundle.run(root=root)' in tactical
           assert 'tct_trader.run(root=root)' in tactical
-          assert 'pd.read_parquet = parquet_cache' in tactical
-          assert 'pd.read_parquet = original_read_parquet' in tactical
+          assert 'setattr(pd, "read_parquet", parquet_cache)' in tactical
+          assert 'setattr(pd, "read_parquet", original_read_parquet)' in tactical
           for workflow_path in (
               '.github/workflows/committee_tct_ct_daily.yml',
               '.github/workflows/committee_master_daily.yml',
