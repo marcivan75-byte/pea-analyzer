@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import os
 import shutil
 import pandas as pd
 
 from v182.audit.provenance import actual_sources_by_field
-from v182.io.frames import is_missing
+from v182.io.frames import MISSING_TOKEN, is_missing
 
 SOURCE_HINTS = [
     (("morningstar",), "Morningstar / source autorisee ou snapshot attribue"),
@@ -20,6 +21,7 @@ SOURCE_HINTS = [
     (("per", "pb", "roe", "roa", "margin", "growth", "debt", "fcf", "market_cap"), "yfinance / Alpha Vantage / Emetteur"),
 ]
 TECHNICAL_FIELDS={"canonical_seed_status"}
+MISSING_TEXT_TOKENS={"", "MISSING", "UNKNOWN", MISSING_TOKEN, "NOT_LOADED", "NAN", "<NA>", "N/A", "NA", "NULL"}
 
 
 def source_hint(field: str) -> str:
@@ -29,11 +31,21 @@ def source_hint(field: str) -> str:
     return "Referentiel / source specifique du champ / non determinee"
 
 
+def _missing_mask(series: pd.Series) -> pd.Series:
+    """Vectorized equivalent of frames.is_missing for master/audit columns."""
+    mask=series.isna()
+    remaining=~mask
+    if remaining.any():
+        normalized=series.loc[remaining].astype(str).str.strip().str.upper()
+        mask.loc[remaining]=normalized.isin(MISSING_TEXT_TOKENS)
+    return mask.astype(bool)
+
+
 def _field_status(frame: pd.DataFrame, asset_class: str, wave_id: str) -> pd.DataFrame:
     rows=[]; n=max(len(frame),1); identity={"isin","name"}|TECHNICAL_FIELDS
     for field in frame.columns:
         if field in identity: continue
-        available=int((~frame[field].apply(is_missing)).sum()); coverage=available/n*100.0
+        available=int((~_missing_mask(frame[field])).sum()); coverage=available/n*100.0
         status="MISSING" if available==0 else "PARTIAL" if available<len(frame) else "AVAILABLE"
         rows.append({
             "collection":wave_id,"asset_class":asset_class,"field":field,"status":status,
@@ -57,6 +69,15 @@ def _format_excel(path: Path) -> None:
     wb.save(path)
 
 
+def _github_compact_intermediate_enabled(wave_id: str) -> bool:
+    """Use lossless CSV between waves on production GitHub runs; keep final XLSX."""
+    if wave_id == "WAVE_99_FINAL":
+        return False
+    on_github=os.environ.get("GITHUB_ACTIONS","").strip().lower()=="true"
+    source_mode=os.environ.get("PEA_SLOW_SOURCE_MODE","").strip().upper()
+    return on_github and source_mode in {"LIVE","CACHE_PREFERRED"}
+
+
 def write_collection_audit(
     actions: pd.DataFrame, etfs: pd.DataFrame, wave_id: str, output_root: str | Path,
     *, failures: list[dict] | None = None, source_context: str = "", write_excel: bool = True,
@@ -65,9 +86,10 @@ def write_collection_audit(
 
     Actual sources are joined by ``asset_class + field`` so identically named
     Action and ETF fields cannot contaminate each other's lineage. Canonical
-    bookkeeping columns are excluded from data-availability statistics. Daily
-    tactical runs may use compact CSV between waves and still publish the final
-    Excel audit once at WAVE_99.
+    bookkeeping columns are excluded from data-availability statistics. GitHub
+    production runs use compact lossless CSV between waves and still publish the
+    final Excel audit once at WAVE_99. Local/manual non-production calls retain
+    the explicit ``write_excel`` behavior.
     """
     root=Path(output_root); root.mkdir(parents=True,exist_ok=True)
     inventory=pd.concat([_field_status(actions,"ACTION",wave_id),_field_status(etfs,"ETF",wave_id)],ignore_index=True)
@@ -86,7 +108,8 @@ def write_collection_audit(
         {"collection":wave_id,"asset_class":"ETF","universe_rows":len(etfs),"missing_fields":int((inventory.query("asset_class=='ETF' and status=='MISSING'")).shape[0]),"partial_fields":int((inventory.query("asset_class=='ETF' and status=='PARTIAL'")).shape[0]),"fields_with_actual_source":int(((inventory.asset_class=="ETF")&(~inventory.source_reelle_absente)).sum()),"source_context":source_context},
     ])
     failures_df=pd.DataFrame(failures or []); safe="".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in wave_id)[:40]
-    if write_excel:
+    effective_write_excel=bool(write_excel) and not _github_compact_intermediate_enabled(wave_id)
+    if effective_write_excel:
         path=root/f"COLLECTION_AUDIT_{safe}.xlsx"
         with pd.ExcelWriter(path,engine="openpyxl") as writer:
             summary.to_excel(writer,sheet_name="Synthese",index=False)
