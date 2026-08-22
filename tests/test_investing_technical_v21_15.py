@@ -4,6 +4,7 @@ from pathlib import Path
 import pandas as pd
 
 from v182.sources.investing_technical import (
+    _candidate_base_urls,
     collect_technical_context_cached,
     horizon_signal,
     parse_technical_summary_html,
@@ -26,6 +27,17 @@ def test_parse_french_summary_and_horizon_mapping():
     assert horizon_signal(fields, "TCT") == ("STRONG_SELL", -2)
     assert horizon_signal(fields, "CT") == ("NEUTRAL", 0)
     assert horizon_signal(fields, "MT") == ("STRONG_BUY", 2)
+
+
+def test_company_slug_preserves_semantic_holding_word():
+    urls = _candidate_base_urls(
+        {
+            "asset_class": "ACTION",
+            "name": "ASML Holding NV",
+            "yahoo_ticker": "ASML.AS",
+        }
+    )
+    assert "https://www.investing.com/equities/asml-holding" in urls
 
 
 class FakeResponse:
