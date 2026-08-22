@@ -22,9 +22,10 @@ def test_v2442_standalone_context_workflow_runs_only_preopen_snapshot():
 
 def test_daily_workflow_persists_context_seed_and_runs_one_consolidated_postmarket_snapshot():
     workflow = (ROOT / ".github" / "workflows" / "committee_tct_ct_daily.yml").read_text(encoding="utf-8")
-    assert "Restore next-session catalyst state" in workflow
-    assert "Save next-session catalyst state" in workflow
+    assert "Restore consolidated tactical decision state" in workflow
+    assert "Save consolidated tactical decision state" in workflow
     assert "state/tct_context/" in workflow
+    assert "decision-state-v1-${{ github.run_id }}" in workflow
     assert "TCT_DAILY_TRADER_LATEST.csv" in workflow
     assert "TCT_CATALYST_PHASE: POSTMARKET" in workflow
     assert workflow.count("tct_next_session_catalyst_run_v24_4_2")==1
