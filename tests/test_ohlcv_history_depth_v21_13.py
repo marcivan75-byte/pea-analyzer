@@ -12,7 +12,10 @@ from v182.audit.ohlcv_history_depth import (
 from v182.sources.yfinance_bulk import (
     CACHE_FORMAT_VERSION,
     DEFAULT_BOOTSTRAP_START,
+    DEFAULT_ROLLING_MONTHS,
     _cache_is_usable,
+    _rolling_window_start,
+    _trim_to_rolling_window,
 )
 
 
@@ -101,19 +104,49 @@ def test_cache_reader_ignores_union_index_padding(tmp_path: Path):
     assert series["BBB.PA"].index.min() == pd.Timestamp("2026-08-19", tz="UTC")
 
 
-def test_master_config_uses_exact_2020_start_not_ten_year_window():
+def test_master_config_uses_post_covid_anchor_and_rolling_60_months():
     config = json.loads(Path("config/V18.2_MASTER_CONFIG.json").read_text(encoding="utf-8"))
     yf = config["yfinance"]
-    assert yf["history_start"] == "2020-01-01"
-    assert yf["required_history_start"] == "2020-01-01"
-    assert yf["cache_generation"] == "V21.13_START_2020_STRESS_READY"
-    assert yf["history_period"] == "5y"  # fallback only when start=None
+    assert yf["history_start"] == "2023-01-01"
+    assert yf["required_history_start"] == "2023-01-01"
+    assert yf["history_rolling_months"] == 60
+    assert yf["history_policy"] == "ANCHOR_2023_THEN_ROLLING_60M"
+    assert yf["cache_generation"] == "V21.13.1_START_2023_ROLLING_60M"
+    assert yf["history_period"] == "5y"  # provider fallback only; retention is date-driven
     assert yf["actions_batch_size"] == 100
     assert yf["etf_batch_size"] == 50
     assert DEFAULT_BOOTSTRAP_START == yf["history_start"]
+    assert DEFAULT_ROLLING_MONTHS == yf["history_rolling_months"]
 
 
-def test_legacy_manifest_without_bootstrap_start_is_incompatible(tmp_path: Path):
+def test_rolling_window_stays_on_2023_anchor_until_60_months_are_available():
+    cutoff = _rolling_window_start(
+        "2023-01-01",
+        60,
+        now=pd.Timestamp("2026-08-22", tz="UTC"),
+    )
+    assert cutoff == pd.Timestamp("2023-01-01")
+
+
+def test_rolling_window_advances_after_2028():
+    cutoff = _rolling_window_start(
+        "2023-01-01",
+        60,
+        now=pd.Timestamp("2028-02-15", tz="UTC"),
+    )
+    assert cutoff == pd.Timestamp("2023-02-15")
+
+
+def test_trim_removes_rows_older_than_active_rolling_floor():
+    frame = pd.DataFrame(
+        {"Close": [1.0, 2.0, 3.0, 4.0]},
+        index=pd.to_datetime(["2023-01-01", "2023-02-14", "2023-02-15", "2028-02-15"]),
+    )
+    trimmed = _trim_to_rolling_window(frame, pd.Timestamp("2023-02-15"))
+    assert list(trimmed.index) == [pd.Timestamp("2023-02-15"), pd.Timestamp("2028-02-15")]
+
+
+def test_legacy_manifest_without_2023_rolling_policy_is_incompatible(tmp_path: Path):
     cache = tmp_path / "cache"
     cache.mkdir()
     manifest = {
@@ -134,9 +167,11 @@ def test_legacy_manifest_without_bootstrap_start_is_incompatible(tmp_path: Path)
         True,
         True,
         DEFAULT_BOOTSTRAP_START,
+        DEFAULT_ROLLING_MONTHS,
     ) is False
 
-    manifest["bootstrap_start"] = "2020-01-01"
+    manifest["bootstrap_start"] = DEFAULT_BOOTSTRAP_START
+    manifest["rolling_months"] = DEFAULT_ROLLING_MONTHS
     (cache / "history_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     assert _cache_is_usable(
         cache,
@@ -146,4 +181,5 @@ def test_legacy_manifest_without_bootstrap_start_is_incompatible(tmp_path: Path)
         True,
         True,
         DEFAULT_BOOTSTRAP_START,
+        DEFAULT_ROLLING_MONTHS,
     ) is True
