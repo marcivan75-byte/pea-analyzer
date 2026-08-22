@@ -53,11 +53,7 @@ def _cell(frame:pd.DataFrame,isin,field:str):
 
 
 def _latest_as_of(frame:pd.DataFrame,isin,candidates:tuple[str,...])->str:
-    """Return the latest parseable UTC evidence timestamp from candidate columns.
-
-    Values that are not timestamps are deliberately ignored. This prevents a
-    price-like legacy cell from being promoted to freshness metadata.
-    """
+    """Return the latest parseable UTC evidence timestamp from candidate columns."""
     values: list[tuple[pd.Timestamp, str]]=[]
     for field in candidates:
         value=_cell(frame,isin,field)
@@ -80,13 +76,7 @@ def _has_yfinance_legacy_marker(frame:pd.DataFrame,isin)->bool:
 
 
 def _legacy_field_metadata(frame:pd.DataFrame,isin,field:str,incoming:dict)->dict:
-    """Resolve evidence for a legacy value that predates per-field provenance.
-
-    Historical Action masters carried one broad row-level evidence grade. That
-    grade must not freeze source-identifiable technical/yfinance cells forever.
-    We only reclassify source semantics that are objectively identifiable. A row
-    explicitly graded A remains A, and unrelated legacy B fields remain B.
-    """
+    """Resolve evidence for a legacy value that predates per-field provenance."""
     raw_evidence=_cell(frame,isin,"evidence_level")
     row_evidence="D" if is_missing(raw_evidence) else str(raw_evidence).strip().upper()
     if row_evidence not in {"A","B","C","D"}: row_evidence="D"
@@ -95,8 +85,6 @@ def _legacy_field_metadata(frame:pd.DataFrame,isin,field:str,incoming:dict)->dic
 
     source=str(incoming.get("source") or "").strip().upper()
     if source=="INTERNAL_FROM_OHLCV" and field in OHLCV_BOOTSTRAP_FIELDS:
-        # ohlcv_last in the legacy master is a price, not a timestamp. Never use
-        # it as freshness evidence. Prefer explicit technical/performance dates.
         as_of=_latest_as_of(frame,isin,("ta_as_of","perf_as_of","as_of_date"))
         return {"evidence_level":"C","as_of":as_of,"bootstrap":"LEGACY_OHLCV_C"}
 
@@ -133,19 +121,18 @@ def _materialize_missing_observation_fields(frame: pd.DataFrame, observations: l
 
 def apply_observations(frame: pd.DataFrame, observations: list[dict]) -> tuple[pd.DataFrame, list[dict]]:
     """Merge observations with provenance, freshness and numeric-domain gates."""
-    # Preserve the historical RangeIndex return contract while avoiding a full
-    # provenance-ledger parse when a source legitimately produced no observation.
     if not observations:
         return frame.reset_index(drop=True), []
 
-    from v182.audit.provenance import append_records, load_latest, retained_meta_matches_value, value_hash
+    from v182.audit.provenance import append_records, load_latest_readonly, retained_meta_matches_value, value_hash
     from v182.core.data_domain import bounds_for_field, validate_numeric_value
     from v182.core.merge import decide
 
     frame = frame.set_index("isin", drop=False)
     frame = _materialize_missing_observation_fields(frame, observations)
     quarantined: list[dict] = []
-    provenance=load_latest()
+    base_provenance=load_latest_readonly()
+    provenance_updates: dict[tuple[str,str],dict] = {}
     provenance_records=[]
 
     for obs in observations:
@@ -154,9 +141,6 @@ def apply_observations(frame: pd.DataFrame, observations: list[dict]) -> tuple[p
             provenance_records.append({**obs,"merge_action":"SKIP","merge_reason":"ISIN_OR_FIELD_NOT_IN_MASTER"})
             continue
 
-        # Fail closed on bounded quantitative fields. The raw observation remains
-        # in the quarantine/provenance trail but can never replace a valid master
-        # value or become an automated score input. Values are not clipped.
         if bounds_for_field(str(field)) is not None:
             valid, domain_reason = validate_numeric_value(str(field), obs.get("value"))
             if not valid:
@@ -165,7 +149,10 @@ def apply_observations(frame: pd.DataFrame, observations: list[dict]) -> tuple[p
                 continue
 
         current_value = frame.at[isin, field]
-        key=(str(isin),str(field)); meta=provenance.get(key)
+        key=(str(isin),str(field))
+        meta=provenance_updates.get(key)
+        if meta is None:
+            meta=base_provenance.get(key)
         if is_missing(current_value):
             existing=None
         elif meta and retained_meta_matches_value(meta,current_value):
@@ -177,7 +164,7 @@ def apply_observations(frame: pd.DataFrame, observations: list[dict]) -> tuple[p
         if decision.action in {"INSERT","REPLACE"}:
             _ensure_text_assignable(frame,field)
             value=obs.get("value"); frame.at[isin,field]="" if value is None else str(value)
-            provenance[key]={**obs,"merge_action":decision.action,"merge_reason":decision.reason,"value_sha256":value_hash(value)}
+            provenance_updates[key]={**obs,"merge_action":decision.action,"merge_reason":decision.reason,"value_sha256":value_hash(value)}
         elif decision.action=="QUARANTINE":
             quarantined.append({**obs,"reason":decision.reason})
         provenance_records.append({**obs,"merge_action":decision.action,"merge_reason":decision.reason})
