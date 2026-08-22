@@ -1,0 +1,34 @@
+name: OPS Dispatch Weekly Heavy Once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - RUN_TOTAL_NOW_MAIN.txt
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch canonical weekly heavy workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          before=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          gh workflow run committee_master_daily.yml --repo "$GITHUB_REPOSITORY" --ref main -f run_validation=false
+          run_id=""
+          for i in $(seq 1 20); do
+            run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow committee_master_daily.yml --branch main --event workflow_dispatch --limit 5 --json databaseId,createdAt --jq ".[] | select(.createdAt >= \"$before\") | .databaseId" | head -n1)
+            if [ -n "$run_id" ]; then break; fi
+            sleep 2
+          done
+          if [ -z "$run_id" ]; then
+            gh issue comment 160 --repo "$GITHUB_REPOSITORY" --body "DISPATCH_SENT but run_id not resolved immediately."
+            exit 0
+          fi
+          gh issue comment 160 --repo "$GITHUB_REPOSITORY" --body "WEEKLY_RUN_DISPATCHED run_id=${run_id} workflow=committee_master_daily.yml ref=main"
