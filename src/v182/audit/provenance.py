@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from types import MappingProxyType
+from collections.abc import Mapping
 import hashlib
 import os
 import threading
@@ -22,17 +24,16 @@ class _RetainedCacheEntry:
     """Process-local views derived from one exact append-only ledger signature."""
 
     signature: tuple[int,int] | None
-    latest: pd.DataFrame
+    latest: pd.DataFrame | None
     latest_map: dict[tuple[str,str],dict]
+    retained_rows_map: dict[tuple[str,str,str],dict]
     sources_by_field: pd.DataFrame | None = None
 
 
-# The provenance ledger is append-only and can become large. A single Committee
-# process used to reread and re-reduce the complete CSV for every merge and every
-# collection audit. Keep the latest retained rows and their derived read views in
-# memory, keyed by the exact on-disk file signature. External file changes always
-# invalidate these views. Public callers receive copies, so their mutations can
-# never contaminate the process-local cache. This changes CPU/I/O only.
+# The on-disk CSV remains the inter-process authority. In-process merges use the
+# retained maps directly and materialize a DataFrame only when an audit actually
+# needs one. This avoids copying/reducing the whole retained state after every
+# observation wave while preserving the exact append-only ledger.
 _LATEST_RETAINED_CACHE: dict[str, _RetainedCacheEntry] = {}
 _CACHE_LOCK = threading.RLock()
 
@@ -78,6 +79,17 @@ def _latest_mapping(latest: pd.DataFrame) -> dict[tuple[str,str],dict]:
     return out
 
 
+def _retained_rows_mapping(latest: pd.DataFrame) -> dict[tuple[str,str,str],dict]:
+    """Preserve the full universe+ISIN+field retained state for audit aggregation."""
+    if latest.empty or not {"universe","isin","field"}.issubset(latest.columns):
+        return {}
+    out: dict[tuple[str,str,str],dict]={}
+    for record in latest.to_dict("records"):
+        key=(str(record.get("universe","")),str(record.get("isin","")),str(record.get("field","")))
+        out[key]=record
+    return out
+
+
 def _aggregate_sources(retained: pd.DataFrame) -> pd.DataFrame:
     columns=["universe","field","sources_reelles","source_urls","evidence_levels","last_as_of"]
     if retained.empty or not {"universe","field"}.issubset(retained.columns):
@@ -109,6 +121,15 @@ def _file_signature(path: Path) -> tuple[int,int] | None:
     return int(stat.st_mtime_ns),int(stat.st_size)
 
 
+def _entry_from_latest(signature: tuple[int,int] | None, latest: pd.DataFrame) -> _RetainedCacheEntry:
+    return _RetainedCacheEntry(
+        signature=signature,
+        latest=latest,
+        latest_map=_latest_mapping(latest),
+        retained_rows_map=_retained_rows_mapping(latest),
+    )
+
+
 def _latest_entry_for_path(path: Path) -> _RetainedCacheEntry:
     """Return exact retained state and derived lookup while the file is unchanged."""
     key=_cache_key(path); signature=_file_signature(path)
@@ -117,36 +138,48 @@ def _latest_entry_for_path(path: Path) -> _RetainedCacheEntry:
         if cached is not None and cached.signature == signature:
             return cached
 
-    # Read outside the lock: the normal pipeline is single-writer and this avoids
-    # holding the cache mutex across a potentially large CSV parse.
     latest=_latest_retained_rows(_read_ledger(path))
     signature_after=_file_signature(path)
-    entry=_RetainedCacheEntry(
-        signature=signature_after,
-        latest=latest,
-        latest_map=_latest_mapping(latest),
-    )
+    entry=_entry_from_latest(signature_after,latest)
     with _CACHE_LOCK:
         _LATEST_RETAINED_CACHE[key]=entry
     return entry
 
 
+def _retained_frame(entry: _RetainedCacheEntry) -> pd.DataFrame:
+    """Materialize retained rows lazily from the exact retained-row mapping."""
+    with _CACHE_LOCK:
+        if entry.latest is not None:
+            return entry.latest
+        records=list(entry.retained_rows_map.values())
+    frame=pd.DataFrame.from_records(records,columns=COLUMNS) if records else pd.DataFrame(columns=COLUMNS)
+    with _CACHE_LOCK:
+        if entry.latest is None:
+            entry.latest=frame
+        return entry.latest
+
+
 def _latest_retained_for_path(path: Path) -> pd.DataFrame:
     """Backward-compatible internal retained-row view used by existing callers/tests."""
-    return _latest_entry_for_path(path).latest
+    return _retained_frame(_latest_entry_for_path(path))
 
 
 def load_latest(path: str | Path | None = None) -> dict[tuple[str,str],dict]:
-    """Return independent metadata for the value actually retained in the master.
-
-    KEEP/QUARANTINE/SKIP events remain in the append-only observation ledger but
-    must never supersede the provenance of the currently retained field value.
-    Callers may mutate the returned mapping safely: both the outer mapping and
-    each metadata record are copied from the internal cached read view.
-    """
+    """Return independent metadata for the value actually retained in the master."""
     p=Path(path) if path is not None else provenance_path(); entry=_latest_entry_for_path(p)
     with _CACHE_LOCK:
         return {key:dict(meta) for key,meta in entry.latest_map.items()}
+
+
+def load_latest_readonly(path: str | Path | None = None) -> Mapping[tuple[str,str],dict]:
+    """Return a zero-copy read-only outer view for trusted in-process merge code.
+
+    The nested metadata dictionaries must be treated as immutable. Public callers
+    that need mutation isolation must keep using ``load_latest``.
+    """
+    p=Path(path) if path is not None else provenance_path(); entry=_latest_entry_for_path(p)
+    with _CACHE_LOCK:
+        return MappingProxyType(entry.latest_map)
 
 
 def append_records(records:list[dict],path:str|Path|None=None)->None:
@@ -161,10 +194,9 @@ def append_records(records:list[dict],path:str|Path|None=None)->None:
     rows_df.to_csv(p,sep=";",encoding="utf-8-sig",index=False,mode="a",header=not p.exists())
     signature_after=_file_signature(p)
 
-    # If our cached view described exactly the pre-append file, update it from
-    # only the retained records just written. Derived source aggregation survives
-    # KEEP/QUARANTINE/SKIP-only appends and is invalidated by any retained change.
-    # Otherwise force one authoritative disk reload on the next read.
+    # Update retained maps directly. The large retained DataFrame is invalidated
+    # and rebuilt only if a later audit actually requests it; no full concat/sort/
+    # drop_duplicates pass occurs on the critical merge path.
     with _CACHE_LOCK:
         if cached is not None and cached.signature == signature_before:
             new_retained=_latest_retained_rows(rows_df)
@@ -173,17 +205,23 @@ def append_records(records:list[dict],path:str|Path|None=None)->None:
                     signature=signature_after,
                     latest=cached.latest,
                     latest_map=cached.latest_map,
+                    retained_rows_map=cached.retained_rows_map,
                     sources_by_field=cached.sources_by_field,
                 )
             else:
-                latest=_latest_retained_rows(pd.concat([cached.latest,new_retained],ignore_index=True,sort=False))
                 latest_map=cached.latest_map.copy()
+                rows_map=cached.retained_rows_map.copy()
                 for record in new_retained.to_dict("records"):
-                    latest_map[(str(record.get("isin","")),str(record.get("field","")))]=record
+                    isin=str(record.get("isin","")); field=str(record.get("field","")); universe=str(record.get("universe",""))
+                    latest_map[(isin,field)]=record
+                    row_key=(universe,isin,field)
+                    rows_map.pop(row_key,None)
+                    rows_map[row_key]=record
                 _LATEST_RETAINED_CACHE[key]=_RetainedCacheEntry(
                     signature=signature_after,
-                    latest=latest,
+                    latest=None,
                     latest_map=latest_map,
+                    retained_rows_map=rows_map,
                     sources_by_field=None,
                 )
         else:
@@ -199,17 +237,15 @@ def actual_sources_by_field(path:str|Path|None=None)->pd.DataFrame:
         if current is entry and current.sources_by_field is not None:
             return current.sources_by_field.copy(deep=True)
 
-    aggregate=_aggregate_sources(entry.latest)
+    aggregate=_aggregate_sources(_retained_frame(entry))
     with _CACHE_LOCK:
         current=_LATEST_RETAINED_CACHE.get(key)
         if current is entry:
             current.sources_by_field=aggregate
             return aggregate.copy(deep=True)
 
-    # A concurrent/external ledger change occurred while aggregating. Re-resolve
-    # from the file-authoritative state instead of returning a stale aggregate.
     fresh=_latest_entry_for_path(p)
-    aggregate=_aggregate_sources(fresh.latest)
+    aggregate=_aggregate_sources(_retained_frame(fresh))
     with _CACHE_LOCK:
         current=_LATEST_RETAINED_CACHE.get(key)
         if current is fresh:
