@@ -12,6 +12,7 @@ import time
 from typing import Callable
 
 import pandas as pd
+from bs4 import BeautifulSoup
 
 BOURSORAMA_BASE = "https://www.boursorama.com"
 CACHE_VERSION = "BOURSORAMA_PUBLIC_V1"
@@ -53,7 +54,8 @@ def _age_hours(value: object, now: datetime) -> float:
 def _ascii_key(value: object) -> str:
     text = str(value or "").strip().lower()
     table = str.maketrans("àâäáãåçéèêëíìîïñóòôöõúùûüýÿœ", "aaaaaaceeeeiiiinooooouuuuyyo")
-    return " ".join(text.translate(table).split())
+    text = " ".join(text.translate(table).split())
+    return re.sub(r"^\d+\.\s*", "", text)
 
 
 def _number(value: object) -> float | None:
@@ -175,6 +177,13 @@ def _label_from_score(score: float) -> str:
     return "STRONG_SELL"
 
 
+def _visible_text(html: str) -> str:
+    try:
+        return " ".join(BeautifulSoup(html, "lxml").stripped_strings)
+    except Exception:
+        return ""
+
+
 def parse_action_consensus_html(html: str) -> dict[str, object]:
     """Parse FactSet consensus exposed on a public Boursorama action page.
 
@@ -236,14 +245,17 @@ def parse_action_consensus_html(html: str) -> dict[str, object]:
             value = _number(table.iloc[idx, current_col])
             if value is not None:
                 fields["boursorama_target_median"] = value
-        if "potentiel" in label:
-            value = _number(table.iloc[idx, current_col])
-            if value is not None:
-                fields["boursorama_target_upside_pct"] = value
         if "note median" in label or "note med" in label:
             value = _number(table.iloc[idx, current_col])
             if value is not None:
                 fields["boursorama_median_note"] = value
+
+    visible = _visible_text(html)
+    potential = re.search(r"\bPotentiel\s*:?\s*([+-]?\d+(?:[,.]\d+)?)\s*%", visible, flags=re.IGNORECASE)
+    if potential:
+        value = _number(potential.group(1))
+        if value is not None:
+            fields["boursorama_target_upside_pct"] = value
     return fields
 
 
