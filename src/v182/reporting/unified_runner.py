@@ -6,6 +6,7 @@ import argparse
 import json
 import logging
 import os
+import time
 
 from v182.reporting import run as enrichment_run
 from v182.reporting import (
@@ -21,6 +22,7 @@ from v182.reporting import (
 from v182.decision import gold_v1_1, ipo_outcomes_v1_2
 from v182.decision import ipo_radar_v1_3 as ipo_radar_v1
 from v182.risk import beta_correlation_engine
+from v182.reporting.runtime_telemetry import write_step_runtime
 
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[3]
@@ -29,17 +31,21 @@ PROCESS_VERSION = "UNIFIED_V21_8_1_ENTRY_EXIT_BASELINE_SECTOR_ROTATION_V2_PIT_OO
 
 
 def _safe_step(name: str, func) -> dict:
+    wall_start=time.perf_counter(); cpu_start=time.process_time()
     try:
         result = func()
         result = dict(result.__dict__) if hasattr(result, "__dict__") else result
-        return {"status": "SUCCESS", "result": result}
+        payload={"status": "SUCCESS", "result": result}
     except Exception as exc:
         logger.exception("Unified runner step %s failed; independent steps continue", name)
-        return {"status": "FAILED", "error": type(exc).__name__, "detail": str(exc)[:500]}
+        payload={"status": "FAILED", "error": type(exc).__name__, "detail": str(exc)[:500]}
+    payload["wall_seconds"]=round(time.perf_counter()-wall_start,6)
+    payload["cpu_seconds"]=round(time.process_time()-cpu_start,6)
+    return payload
 
 
 def _skip_dependency(reason: str) -> dict:
-    return {"status": "SKIPPED_DEPENDENCY", "reason": reason}
+    return {"status": "SKIPPED_DEPENDENCY", "reason": reason, "wall_seconds": 0.0, "cpu_seconds": 0.0}
 
 
 def _exit_code(payload: dict) -> int:
@@ -57,6 +63,7 @@ def _sector_validation_from_step(step: dict) -> dict:
 
 
 def run(root: Path = ROOT) -> dict:
+    wall_start=time.perf_counter(); cpu_start=time.process_time()
     outdir = root / "outputs" / "unified"
     outdir.mkdir(parents=True, exist_ok=True)
     run_id = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
@@ -64,7 +71,18 @@ def run(root: Path = ROOT) -> dict:
 
     steps["refresh"] = _safe_step("refresh", enrichment_run.run)
     steps["etf_structure"] = _safe_step("etf_structure", lambda: etf_structure_refresh.run(root))
-    steps["etf_mt"] = _safe_step("etf_mt", etf_mt_v2081_run.run)
+    if steps["refresh"]["status"] == "SUCCESS":
+        steps["etf_mt"] = _safe_step(
+            "etf_mt",
+            lambda: etf_mt_v2081_run.run(
+                root,
+                history_cache_dir=root/"data"/"cache"/"etf",
+                refresh_history=False,
+                refresh_if_reuse_cache_missing=True,
+            ),
+        )
+    else:
+        steps["etf_mt"] = _safe_step("etf_mt", lambda: etf_mt_v2081_run.run(root))
     steps["gold"] = _safe_step("gold", lambda: gold_v1_1.run(root, os.environ.get("FRED_API_KEY")))
     steps["ipo_radar"] = _safe_step("ipo_radar", lambda: ipo_radar_v1.run(root))
 
@@ -130,7 +148,19 @@ def run(root: Path = ROOT) -> dict:
     steps["performance"] = {
         "status": "SKIPPED_GOVERNANCE",
         "reason": "V21.8 disables legacy fixed-stop risk sizing and virtual execution until a separately validated sizing policy exists.",
+        "wall_seconds": 0.0,
+        "cpu_seconds": 0.0,
     }
+
+    runtime_wall=time.perf_counter()-wall_start; runtime_cpu=time.process_time()-cpu_start
+    runtime_paths=write_step_runtime(
+        root/"outputs"/"audit",
+        run_id=run_id,
+        profile="WEEKLY_FULL_COMMITTEE",
+        wall_seconds=runtime_wall,
+        cpu_seconds=runtime_cpu,
+        steps=steps,
+    )
 
     outputs = {
         "decisions": "outputs/committee_master/COMMITTEE_DECISIONS.csv",
@@ -183,6 +213,8 @@ def run(root: Path = ROOT) -> dict:
         "ipo_validation": "outputs/ipo_radar/IPO_VALIDATION_STATUS.json",
         "ipo_calibration": "outputs/ipo_radar/IPO_CALIBRATION_STATUS.json",
         "ipo_outcomes": "state/ipo_radar/IPO_OUTCOMES.csv",
+        "unified_runtime_json": "outputs/audit/UNIFIED_RUNTIME_V21_13_4.json",
+        "unified_runtime_csv": "outputs/audit/UNIFIED_RUNTIME_V21_13_4.csv",
     }
     existing = {key: value for key, value in outputs.items() if (root / value).exists()}
     failed = [key for key, value in steps.items() if value["status"] == "FAILED"]
@@ -218,6 +250,13 @@ def run(root: Path = ROOT) -> dict:
         "persisted_outputs": existing,
         "decision_tracks": decision_tracks,
         "sector_rotation_v2_validation": sector_validation,
+        "runtime": {
+            "version": "UNIFIED_RUNTIME_V21_13_4",
+            "wall_seconds": round(runtime_wall,6),
+            "cpu_seconds": round(runtime_cpu,6),
+            "paths": runtime_paths,
+            "decision_logic_changed": False,
+        },
         "governance": [
             "Runtime/software version is distinct from model versions; decision_tracks is the authoritative model-version map.",
             "Missing canonical Action ISINs are materialized as identity-only rows; no ticker/name/market data are invented.",

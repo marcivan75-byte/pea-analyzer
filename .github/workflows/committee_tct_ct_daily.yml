@@ -22,6 +22,7 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PEA_RUN_PROFILE: DAILY_TACTICAL
       PEA_PROVENANCE_PATH: state/provenance/OBSERVATION_PROVENANCE.csv
       FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
       FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -168,6 +169,7 @@ jobs:
           if [ -f outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json ]; then cat outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json; fi
           if [ -f outputs/audit/TCT_V24_4_2_PIT_OHLC_LEDGER_AUDIT.json ]; then cat outputs/audit/TCT_V24_4_2_PIT_OHLC_LEDGER_AUDIT.json; fi
           if [ -f outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json ]; then cat outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json; fi
+          if [ -f outputs/audit/PIPELINE_RUNTIME_V21_13_4.json ]; then cat outputs/audit/PIPELINE_RUNTIME_V21_13_4.json; fi
           if [ -f data/cache/actions/history_manifest.json ]; then cat data/cache/actions/history_manifest.json; fi
 
       - name: Save persistent OHLCV cache
@@ -240,6 +242,8 @@ jobs:
             outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json
             outputs/audit/TCT_V24_4_2_PIT_OHLC_LEDGER_AUDIT.json
             outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json
+            outputs/audit/PIPELINE_RUNTIME_V21_13_4.json
+            outputs/audit/PIPELINE_RUNTIME_V21_13_4.csv
             outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx
             state/action_ct/
             state/action_ct_v22_1/

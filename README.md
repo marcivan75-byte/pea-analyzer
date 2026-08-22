@@ -15,6 +15,8 @@ La baseline de décision reste **V21.8.1**. Les modules récents ci-dessous sont
 
 Ordre recommandé pour un run contrôlé : validation CI complète → collecte quotidienne → TCT/CT quotidien → snapshots catalyst PREOPEN/POSTMARKET → workflow lourd hebdomadaire. Les rapports SHADOW restent séparés des décisions canoniques.
 
+Le profil quotidien `DAILY_TACTICAL` de V21.13.4 supprime les exports Excel intermédiaires non publiés, parallélise uniquement les calculs OHLCV locaux indépendants et publie une télémétrie mur/CPU par étape. Le Comité hebdomadaire réutilise maintenant le cache OHLCV ETF primaire pour ETF MT au lieu de relancer une collecte identique. Le détail et les invariants sont décrits dans `docs/PIPELINE_RUNTIME_V21_13_4.md`.
+
 ## Synthèse décisionnelle CI
 
 Le run global publie désormais une synthèse unique sous `outputs/decision_brief/DECISION_BRIEF.md` et `DECISION_BRIEF.json`. Pour les consultations courantes, le workflow manuel `committee_decision_fast.yml` restaure uniquement les trois entrées nécessaires depuis le dernier run global réussi et frais (8 jours maximum par défaut), sans collecte ni recalcul lourd ; son budget d’exécution est plafonné à 15 minutes. Elle affiche en tête du résumé GitHub le statut exploitable (`READY_FOR_REVIEW`, `REVIEW_WITH_WARNINGS` ou `BLOCKED`), la santé des étapes, les sélections prioritaires, les blocages et les artefacts de preuve. Cette couche est strictement en lecture seule : elle ne modifie aucun score, poids, seuil, décision ni état d’ordre, et maintient les ordres réels désactivés.

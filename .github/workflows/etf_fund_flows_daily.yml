@@ -1,9 +1,13 @@
-name: ETF Fund Flows V1 Shadow Daily
+name: ETF Fund Flows V1 Shadow On Demand
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "45 21 * * 1-5"
+    inputs:
+      run_validation:
+        description: Run targeted engine tests before collection
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: etf-fund-flows-v1-${{ github.ref }}
@@ -41,9 +45,14 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install project
+        run: pip install -e .
+
+      - name: Install validation dependencies
+        if: ${{ inputs.run_validation }}
         run: pip install -e ".[test]"
 
       - name: Validate Fund Flow V21.16 and ETP Satellite engines
+        if: ${{ inputs.run_validation }}
         run: |
           python -m compileall -q src/v182/features/etf_fund_flows_v1.py src/v182/sources/etf_fund_flows.py src/v182/reporting/etf_fund_flows_shadow_run.py src/v182/features/etp_satellite_v1.py src/v182/reporting/etp_satellite_shadow_run.py
           ruff check src/v182/features/etf_fund_flows_v1.py src/v182/sources/etf_fund_flows.py src/v182/reporting/etf_fund_flows_shadow_run.py tests/test_etf_fund_flows_v1.py tests/test_etf_fund_flows_v21_16_window_readiness.py tests/test_etf_fund_flows_v21_16_temporal_integrity.py tests/test_etf_fund_flows_v21_16_blackrock_dates.py tests/test_etp_satellite_v1.py

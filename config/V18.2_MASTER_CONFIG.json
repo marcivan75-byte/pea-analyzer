@@ -1,5 +1,5 @@
 {
-  "version": "21.13.3",
+  "version": "21.13.4",
   "base": "18.2.0",
   "theme": "COMPLETENESS_ROTATION_DYNAMIC_WEIGHTS_HISTORY_DEPTH_HORIZON_AWARE_RUNTIME_OPT",
   "primary_bulk_source": "yfinance",
@@ -7,7 +7,7 @@
   "api_keys": {"MARKETSTACK_API_KEY":"environment","ALPHA_VANTAGE_API_KEY":"environment","FINNHUB_API_KEY":"environment","FRED_API_KEY":"environment","EIA_API_KEY":"environment"},
   "yfinance": {"enabled":true,"requires_key":false,"history_start":"2023-01-01","history_period":"5y","required_history_start":"2023-01-01","history_rolling_months":60,"history_policy":"ANCHOR_2023_THEN_ROLLING_60M","cache_generation":"V21.13.1_START_2023_ROLLING_60M","interval":"1d","auto_adjust":true,"actions_batch_size":100,"etf_batch_size":50,"threads":true,"retry_count":3,"cache_days":1,"fundamental_refresh_days":7},
   "runtime_optimization": {
-    "status": "ACTIVE_V21_13_3_HORIZON_AWARE",
+    "status": "ACTIVE_V21_13_4_PIPELINE_RUNTIME_OPTIMIZED",
     "governance": "REFRESH_BY_DATA_NEED_AND_HORIZON_WITHOUT_REDUCING_UNIVERSE_OR_CHANGING_DECISION_LOGIC",
     "horizon_data_policy": {
       "enabled": true,
@@ -69,9 +69,21 @@
       "history_append_only_by_instrument_date": true,
       "source_horizon": "ETF_MT_SECTOR_ROTATION"
     },
+    "daily_profile": {
+      "name": "DAILY_TACTICAL",
+      "wave3_local_workers": 2,
+      "reuse_primary_etf_ohlcv_for_etf_mt": true,
+      "intermediate_collection_audit_format": "CSV",
+      "final_collection_audit_excel": true,
+      "master_excel_exports": false,
+      "weekly_full_exports_unchanged": true,
+      "decision_logic_changed": false
+    },
     "telemetry": {
       "source_cache_metrics": true,
       "runtime_seconds": true,
+      "stage_wall_and_cpu_seconds": true,
+      "partial_failure_checkpoint": true,
       "network_refresh_counts": true,
       "cache_hit_counts": true,
       "horizon_demand_counts": true

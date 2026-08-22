@@ -11,6 +11,7 @@ from v182.audit.completeness import completeness
 from v182.state.checkpoint import Checkpoint
 from v182.reporting import waves
 from v182.reporting.collection_audit import write_collection_audit
+from v182.reporting.runtime_telemetry import RuntimeTelemetry
 
 ROOT = Path(__file__).resolve().parents[3]
 INPUTS = ROOT / "inputs"
@@ -36,7 +37,33 @@ def _write_failures(name: str, failures: list[dict]) -> None:
 
 
 def _audit(actions: pd.DataFrame, etfs: pd.DataFrame, wave_id: str, *, failures: list[dict] | None = None, source_context: str = "") -> None:
-    write_collection_audit(actions, etfs, wave_id, DATA_AUDIT, failures=failures, source_context=source_context)
+    daily_profile=os.environ.get("PEA_RUN_PROFILE","").strip().upper()=="DAILY_TACTICAL"
+    write_collection_audit(
+        actions,
+        etfs,
+        wave_id,
+        DATA_AUDIT,
+        failures=failures,
+        source_context=source_context,
+        write_excel=not daily_profile or wave_id=="WAVE_99_FINAL",
+    )
+
+
+def _export_excel_reports(
+    actions: pd.DataFrame,
+    etfs: pd.DataFrame,
+    before: dict,
+    after: dict,
+    quality_checks: list[dict],
+    run_profile: str,
+) -> bool:
+    if run_profile=="DAILY_TACTICAL":
+        return False
+    from v182.reporting.exports import export_master_excel, export_run_report
+    export_master_excel(actions,OUTPUTS/"V18.2_PEA_ACTIONS_ACTUALISE.xlsx","V21.3 Actions PEA actualisées — 1829")
+    export_master_excel(etfs,OUTPUTS/"V18.2_PEA_ETF_ACTUALISE.xlsx","V21.3 ETF PEA actualisés")
+    export_run_report(before,after,quality_checks,OUTPUTS/"V18.2_RUN_REPORT.xlsx")
+    return True
 
 
 def _apply_canonical_actions(actions_df: pd.DataFrame, cfg: dict) -> tuple[pd.DataFrame, dict]:
@@ -64,9 +91,9 @@ def _apply_canonical_actions(actions_df: pd.DataFrame, cfg: dict) -> tuple[pd.Da
     return result.included.reset_index(drop=True),audit
 
 
-def run() -> dict:
+def _run_pipeline(run_id: str, run_profile: str, runtime: RuntimeTelemetry) -> dict:
+    runtime.transition("INITIALIZATION", "PROCESSING")
     cfg = _load_cfg()
-    run_id = os.environ.get("V182_RUN_ID") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     checkpoint = Checkpoint(STATE / "V18.2_checkpoint.json", run_id=run_id)
     OUTPUTS.mkdir(parents=True, exist_ok=True)
     (OUTPUTS / "gaps").mkdir(parents=True, exist_ok=True)
@@ -89,6 +116,7 @@ def run() -> dict:
     quarantine_log: list[dict] = []
     wave_metrics: dict[str, dict] = {}
 
+    runtime.transition("WAVE_00_REFERENCE_MAPPING", "COLLECTION")
     if not checkpoint.done("WAVE_00_ETF_TICKERS"):
         map_path = CONFIG / "V18.2_ETF_TICKER_MAP.csv"
         existing_map = pd.read_csv(map_path, sep=";", encoding="utf-8-sig", dtype=str) if map_path.exists() else pd.DataFrame()
@@ -110,6 +138,7 @@ def run() -> dict:
         _audit(actions_df,etf_df,"WAVE_00_ETF_TICKERS",source_context=str(summary.get("source","OpenFIGI/static map")))
         print(f"WAVE_00 — {summary['resolved']}/{summary['requested']} tickers ETF résolus")
 
+    runtime.transition("WAVE_01_ACTION_OHLCV", "COLLECTION")
     if not checkpoint.done("WAVE_01"):
         result = waves.wave_history(actions_df, "ACTION", str(CACHE / "actions"), cfg)
         failures=[{"ticker":t,"source":"yfinance","reason":"OHLCV_UNAVAILABLE"} for t in result.failed]
@@ -120,6 +149,7 @@ def run() -> dict:
     else:
         wave_metrics["WAVE_01"]=checkpoint.wave("WAVE_01")
 
+    runtime.transition("WAVE_02_ETF_OHLCV", "COLLECTION")
     etf_with_tickers, etf_gaps = waves.resolve_etf_tickers(etf_df, CONFIG / "V18.2_ETF_TICKER_MAP.csv")
     if not etf_gaps.empty:
         etf_gaps.to_csv(OUTPUTS / "gaps" / "V18.2_ETF_TICKER_GAPS.csv", sep=";", index=False, encoding="utf-8-sig")
@@ -135,10 +165,12 @@ def run() -> dict:
 
     actions_map = dict(zip(actions_df["yahoo_ticker"], actions_df["isin"]))
     etf_map = dict(zip(etf_with_tickers["yahoo_ticker"], etf_with_tickers["isin"]))
+    runtime.transition("WAVE_03_LOCAL_OHLCV_FEATURES", "PROCESSING")
     if not checkpoint.done("WAVE_03"):
-        obs_actions = waves.wave3_derived_features(str(CACHE / "actions"), actions_map, "ACTION")
-        obs_etf = waves.wave3_derived_features(str(CACHE / "etf"), etf_map, "ETF")
-        obs_beta = waves.wave3_etf_beta3y(str(CACHE / "etf"), etf_map)
+        wave3_workers=int(cfg.get("runtime_optimization",{}).get("daily_profile",{}).get("wave3_local_workers",2))
+        obs_actions,obs_etf,obs_beta=waves.wave3_local_features(
+            str(CACHE/"actions"),actions_map,str(CACHE/"etf"),etf_map,max_workers=wave3_workers,
+        )
         actions_df, q1 = apply_and_track(actions_df, obs_actions)
         etf_df, q2 = apply_and_track(etf_df, obs_etf + obs_beta)
         quarantine_log += q1 + q2
@@ -146,6 +178,7 @@ def run() -> dict:
         _audit(actions_df,etf_df,"WAVE_03_DERIVED_OHLCV",failures=q1+q2,source_context="Calcul interne PIT depuis OHLCV")
         print(f"WAVE_03 — {len(obs_actions)} valeurs Actions + {len(obs_etf)} ETF + {len(obs_beta)} bêta3y")
 
+    runtime.transition("WAVE_04_ACTION_FUNDAMENTALS", "COLLECTION")
     if not checkpoint.done("WAVE_04"):
         obs4, failures4 = waves.wave4_info_actions(actions_df, cfg)
         actions_df, q3 = apply_and_track(actions_df, obs4)
@@ -155,6 +188,7 @@ def run() -> dict:
         _audit(actions_df,etf_df,"WAVE_04_ACTION_FUNDAMENTALS",failures=failures4+q3,source_context="yfinance fondamentaux/metadonnees")
         print(f"WAVE_04 — {len(obs4)} champs fondamentaux/métadonnées Actions, {len(failures4)} échecs")
 
+    runtime.transition("WAVE_05_ACTION_CONSENSUS", "COLLECTION")
     finnhub_key = os.environ.get("FINNHUB_API_KEY")
     if not checkpoint.done("WAVE_05") and finnhub_key:
         obs5, failures5 = waves.wave5_consensus_finnhub(actions_df, finnhub_key)
@@ -168,6 +202,7 @@ def run() -> dict:
         _audit(actions_df,etf_df,"WAVE_05_ACTION_CONSENSUS_KEY_MISSING",failures=[{"source":"Finnhub","reason":"FINNHUB_API_KEY_MISSING"}],source_context="Finnhub indisponible; données restent manquantes")
         print("WAVE_05 — FINNHUB_API_KEY absent : critères concernés restent N/A")
 
+    runtime.transition("WAVE_06_ETF_INFO", "COLLECTION")
     if not checkpoint.done("WAVE_06"):
         obs6, failures6 = waves.wave6_etf_info(etf_with_tickers, cfg)
         etf_df, q6 = apply_and_track(etf_df, obs6)
@@ -177,6 +212,7 @@ def run() -> dict:
         _audit(actions_df,etf_df,"WAVE_06_ETF_INFO",failures=failures6+q6,source_context="yfinance ETF")
         print(f"WAVE_06 — {len(obs6)} champs ETF, {len(failures6)} échecs")
 
+    runtime.transition("WAVE_06B_AUTHORIZED_SNAPSHOTS", "COLLECTION")
     if not checkpoint.done("WAVE_06B_MORNINGSTAR_ACTIONS"):
         from v182.sources.morningstar_actions import load_authorized_snapshot
         ms_cfg=cfg.get("morningstar_actions",{})
@@ -186,6 +222,7 @@ def run() -> dict:
         _audit(actions_df,etf_df,"WAVE_06B_MORNINGSTAR_ACTIONS",failures=fail_ms+qms,source_context="Morningstar stock rating attribuée; aucune imputation")
         print(f"WAVE_06B — Morningstar Actions: {len(obs_ms)} observations attribuées")
 
+    runtime.transition("WAVE_06C_PUBLIC_FALLBACKS", "COLLECTION")
     selectors_path = CONFIG / "V18.2_SCRAPE_SELECTORS.json"
     raw_selectors = json.loads(selectors_path.read_text(encoding="utf-8")) if selectors_path.exists() else {}
     selectors_cfg = {k: v for k, v in raw_selectors.items() if not k.startswith("_")}
@@ -200,6 +237,7 @@ def run() -> dict:
             _audit(actions_df,etf_df,f"{wave_id}_{spec['source_name']}",failures=failures+q,source_context=spec["source_name"])
         checkpoint.mark("WAVE_05_06_SCRAPING_FALLBACK", "DONE")
 
+    runtime.transition("WAVE_07_VALIDATION", "PROCESSING")
     resolved = waves.wave7_official_validation(quarantine_log, CONFIG / "V18.2_MANUAL_OVERRIDES.csv")
     if resolved:
         actions_iso = {o["isin"] for o in resolved} & set(actions_df["isin"])
@@ -211,11 +249,13 @@ def run() -> dict:
     write_worklist(still_open, actions_df, OUTPUTS / "gaps" / "V18.2_WAVE07_WORKLIST.csv")
     _audit(actions_df,etf_df,"WAVE_07_VALIDATION",failures=still_open,source_context="Issuer/AMF/Euronext manual overrides + quarantaine")
 
+    runtime.transition("WAVE_08_SCENARIOS", "PROCESSING")
     shortlist = set(actions_df.loc[actions_df.get("comite_status", "").isin(["COMMITTEE", "WATCH"]), "isin"]) if "comite_status" in actions_df.columns else set()
     obs8 = waves.wave8_scenarios(actions_df, shortlist)
     actions_df, q8 = apply_and_track(actions_df, obs8); quarantine_log += q8
     _audit(actions_df,etf_df,"WAVE_08_SCENARIOS",failures=q8,source_context="Moteur scenarios interne")
 
+    runtime.transition("WAVE_09_TOPDOWN", "COLLECTION")
     topdown_diagnostics={}
     if not checkpoint.done("WAVE_09_TOPDOWN"):
         obs9a, obs9e, topdown_diagnostics = waves.wave9_topdown(actions_df, etf_df, cfg, os.environ.get("FRED_API_KEY"))
@@ -227,6 +267,7 @@ def run() -> dict:
         print(f"WAVE_09 — Top-Down: {len(obs9a)} valeurs Actions + {len(obs9e)} ETF")
     (OUTPUTS / "audit" / "V21_TOPDOWN_DIAGNOSTICS.json").write_text(json.dumps(topdown_diagnostics,ensure_ascii=False,indent=2,default=str),encoding="utf-8")
 
+    runtime.transition("WAVE_10_SECTOR_ROTATION", "PROCESSING")
     if not checkpoint.done("WAVE_10_SECTOR_ROTATION"):
         from v182.features.sector_rotation import build_rotation_observations
         obs10,sectors,rotation_diag=build_rotation_observations(actions_df)
@@ -237,6 +278,7 @@ def run() -> dict:
         _audit(actions_df,etf_df,"WAVE_10_SECTOR_ROTATION",failures=q10,source_context="PIT OHLCV + secteurs; recovery gate anti-falling-knife")
         print(f"WAVE_10 — Rotation sectorielle: {len(sectors)} secteurs évalués")
 
+    runtime.transition("WAVE_11_ACTION_DECISION_FACTORS", "PROCESSING")
     if not checkpoint.done("WAVE_11_ACTION_DECISION_FACTORS"):
         from v182.features.action_decision_enhancements import build_action_enhancement_observations
         obs11=build_action_enhancement_observations(actions_df)
@@ -245,6 +287,7 @@ def run() -> dict:
         _audit(actions_df,etf_df,"WAVE_11_ACTION_DECISION_FACTORS",failures=q11,source_context="Morningstar + objectif de cours + dividende >4% + potentiel rendement total")
         print(f"WAVE_11 — Facteurs décisionnels Actions renforcés: {len(obs11)} observations")
 
+    runtime.transition("PERSIST_ENRICHED_MASTERS", "OUTPUT")
     save_master(actions_df, OUTPUTS / "V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv")
     save_master(etf_df, OUTPUTS / "V18.2_PEA_ETF_MASTER_ENRICHED.csv")
     if quarantine_log:
@@ -257,18 +300,33 @@ def run() -> dict:
     _audit(actions_df,etf_df,"WAVE_99_FINAL",failures=quarantine_log,source_context="Etat final après toutes les collectes et dérivations")
     (OUTPUTS / "audit" / "V18.2_COVERAGE_BEFORE_AFTER.json").write_text(json.dumps({"canonical_universe":canonical_audit,"expected_rows": expected_rows, "before": before, "after": after}, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    runtime.transition("QUALITY_AND_REPORT_EXPORTS", "OUTPUT")
     from v182.audit.quality import run_quality_gates
-    from v182.reporting.exports import export_master_excel, export_run_report
     quality=run_quality_gates(actions_df, etf_df, before, after, cfg, wave_metrics, expected_rows=expected_rows)
     quality_payload={"passed":quality.passed,"canonical_universe":canonical_audit,"expected_rows":expected_rows,"checks":quality.checks}
     (OUTPUTS / "audit" / "V18.2_QUALITY_GATES.json").write_text(json.dumps(quality_payload,ensure_ascii=False,indent=2),encoding="utf-8")
-    export_master_excel(actions_df, OUTPUTS / "V18.2_PEA_ACTIONS_ACTUALISE.xlsx", "V21.3 Actions PEA actualisées — 1829")
-    export_master_excel(etf_df, OUTPUTS / "V18.2_PEA_ETF_ACTUALISE.xlsx", "V21.3 ETF PEA actualisés")
-    export_run_report(before, after, quality.checks, OUTPUTS / "V18.2_RUN_REPORT.xlsx")
+    excel_exports_enabled=_export_excel_reports(actions_df,etf_df,before,after,quality.checks,run_profile)
     if not quality.passed:
         failed=[c["check"] for c in quality.checks if not c["passed"]]
         raise RuntimeError(f"QUALITY_GATE_BLOCK: {failed}")
-    return {"status":"SUCCESS","run_id":run_id,"canonical_universe":canonical_audit,"expected_rows":expected_rows,"before":before,"after":after,"quality":quality_payload,"collection_audit_latest":"outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx"}
+    return {"status":"SUCCESS","run_id":run_id,"run_profile":run_profile,"excel_exports_enabled":excel_exports_enabled,"canonical_universe":canonical_audit,"expected_rows":expected_rows,"before":before,"after":after,"quality":quality_payload,"collection_audit_latest":"outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx"}
+
+
+def run() -> dict:
+    run_id=os.environ.get("V182_RUN_ID") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    run_profile=os.environ.get("PEA_RUN_PROFILE","FULL").strip().upper() or "FULL"
+    runtime=RuntimeTelemetry(OUTPUTS/"audit",run_id=run_id,profile=run_profile)
+    try:
+        result=_run_pipeline(run_id,run_profile,runtime)
+    except Exception as exc:
+        runtime.finalize("FAILED",error_type=type(exc).__name__,error_detail=str(exc)[:500])
+        raise
+    result["runtime_telemetry"]=runtime.finalize(
+        "SUCCESS",
+        excel_exports_enabled=result["excel_exports_enabled"],
+        intermediate_collection_audit_format="CSV" if run_profile=="DAILY_TACTICAL" else "XLSX",
+    )
+    return result
 
 
 def apply_and_track(frame, observations):

@@ -59,13 +59,15 @@ def _format_excel(path: Path) -> None:
 
 def write_collection_audit(
     actions: pd.DataFrame, etfs: pd.DataFrame, wave_id: str, output_root: str | Path,
-    *, failures: list[dict] | None = None, source_context: str = "",
+    *, failures: list[dict] | None = None, source_context: str = "", write_excel: bool = True,
 ) -> str:
-    """Write post-collection Excel with retained-source provenance.
+    """Write a post-collection audit with retained-source provenance.
 
     Actual sources are joined by ``asset_class + field`` so identically named
     Action and ETF fields cannot contaminate each other's lineage. Canonical
-    bookkeeping columns are excluded from data-availability statistics.
+    bookkeeping columns are excluded from data-availability statistics. Daily
+    tactical runs may use compact CSV between waves and still publish the final
+    Excel audit once at WAVE_99.
     """
     root=Path(output_root); root.mkdir(parents=True,exist_ok=True)
     inventory=pd.concat([_field_status(actions,"ACTION",wave_id),_field_status(etfs,"ETF",wave_id)],ignore_index=True)
@@ -83,15 +85,23 @@ def write_collection_audit(
         {"collection":wave_id,"asset_class":"ACTION","universe_rows":len(actions),"missing_fields":int((inventory.query("asset_class=='ACTION' and status=='MISSING'")).shape[0]),"partial_fields":int((inventory.query("asset_class=='ACTION' and status=='PARTIAL'")).shape[0]),"fields_with_actual_source":int(((inventory.asset_class=="ACTION")&(~inventory.source_reelle_absente)).sum()),"source_context":source_context},
         {"collection":wave_id,"asset_class":"ETF","universe_rows":len(etfs),"missing_fields":int((inventory.query("asset_class=='ETF' and status=='MISSING'")).shape[0]),"partial_fields":int((inventory.query("asset_class=='ETF' and status=='PARTIAL'")).shape[0]),"fields_with_actual_source":int(((inventory.asset_class=="ETF")&(~inventory.source_reelle_absente)).sum()),"source_context":source_context},
     ])
-    failures_df=pd.DataFrame(failures or []); safe="".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in wave_id)[:40]; path=root/f"COLLECTION_AUDIT_{safe}.xlsx"
-    with pd.ExcelWriter(path,engine="openpyxl") as writer:
-        summary.to_excel(writer,sheet_name="Synthese",index=False)
-        missing.to_excel(writer,sheet_name="Donnees_non_disponibles",index=False)
-        partial.to_excel(writer,sheet_name="Donnees_partielles",index=False)
-        available.to_excel(writer,sheet_name="Donnees_disponibles",index=False)
-        inventory[["field","asset_class","sources_reelles","source_urls","evidence_levels","last_as_of","source_theorique"]].drop_duplicates().to_excel(writer,sheet_name="Sources_reelles",index=False)
-        provenance.to_excel(writer,sheet_name="Provenance_agregee",index=False)
-        failures_df.to_excel(writer,sheet_name="Echecs_collecte",index=False)
-    _format_excel(path); latest=root/"COLLECTION_DATA_AVAILABILITY_LATEST.xlsx"; shutil.copyfile(path,latest)
+    failures_df=pd.DataFrame(failures or []); safe="".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in wave_id)[:40]
+    if write_excel:
+        path=root/f"COLLECTION_AUDIT_{safe}.xlsx"
+        with pd.ExcelWriter(path,engine="openpyxl") as writer:
+            summary.to_excel(writer,sheet_name="Synthese",index=False)
+            missing.to_excel(writer,sheet_name="Donnees_non_disponibles",index=False)
+            partial.to_excel(writer,sheet_name="Donnees_partielles",index=False)
+            available.to_excel(writer,sheet_name="Donnees_disponibles",index=False)
+            inventory[["field","asset_class","sources_reelles","source_urls","evidence_levels","last_as_of","source_theorique"]].drop_duplicates().to_excel(writer,sheet_name="Sources_reelles",index=False)
+            provenance.to_excel(writer,sheet_name="Provenance_agregee",index=False)
+            failures_df.to_excel(writer,sheet_name="Echecs_collecte",index=False)
+        _format_excel(path); latest=root/"COLLECTION_DATA_AVAILABILITY_LATEST.xlsx"; shutil.copyfile(path,latest)
+    else:
+        path=root/f"COLLECTION_AUDIT_{safe}.csv"
+        compact=inventory.copy(); compact["source_context"]=source_context
+        compact.to_csv(path,sep=";",encoding="utf-8-sig",index=False)
+        if not failures_df.empty:
+            failures_df.to_csv(root/f"COLLECTION_AUDIT_{safe}_FAILURES.csv",sep=";",encoding="utf-8-sig",index=False)
     history_path=root/"COLLECTION_AUDIT_HISTORY.csv"; hist=summary.copy(); hist["generated_at_utc"]=datetime.now(timezone.utc).isoformat(); hist.to_csv(history_path,sep=";",encoding="utf-8-sig",index=False,mode="a",header=not history_path.exists())
     return str(path)

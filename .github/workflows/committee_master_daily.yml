@@ -202,6 +202,7 @@ jobs:
         if: always()
         run: |
           if [ -f outputs/unified/UNIFIED_SUMMARY_LATEST.json ]; then cat outputs/unified/UNIFIED_SUMMARY_LATEST.json; fi
+          if [ -f outputs/audit/UNIFIED_RUNTIME_V21_13_4.json ]; then cat outputs/audit/UNIFIED_RUNTIME_V21_13_4.json; fi
       - name: Show committee summary
         if: always()
         run: |
