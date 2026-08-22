@@ -10,6 +10,9 @@ import time
 from v182.sources.rate_limit import StartRateLimiter
 
 GDELT_DOC = "https://api.gdeltproject.org/api/v2/doc/doc"
+GDELT_MIN_START_INTERVAL_SECONDS = 1.0
+GDELT_RETRY_BACKOFF_SECONDS = (2.0, 5.0)
+_GDELT_GLOBAL_LIMITER = StartRateLimiter(GDELT_MIN_START_INTERVAL_SECONDS)
 
 POSITIVE_TERMS = {
     "beat", "beats", "growth", "upgrade", "upgraded", "record", "profit", "profits",
@@ -47,6 +50,14 @@ def lexical_score(texts: list[str]) -> NewsScore:
     return NewsScore(round(score, 4), len(clean), pos, neg, "GDELT")
 
 
+def _retryable_gdelt_error(exc: Exception) -> bool:
+    text = f"{type(exc).__name__}: {exc}"
+    return (
+        "429" in text
+        or type(exc).__name__ in {"ReadTimeout", "ConnectTimeout", "ConnectionError"}
+    )
+
+
 def fetch_articles(
     query: str,
     *,
@@ -55,30 +66,44 @@ def fetch_articles(
     timeout: int = 20,
     limiter: StartRateLimiter | None = None,
 ) -> tuple[list[dict], str | None]:
-    """Fetch recent GDELT articles; failures remain explicit and never imputed."""
+    """Fetch recent GDELT articles with provider-safe cadence and bounded retries.
+
+    GDELT is a shared public endpoint and can return HTTP 429 when callers start
+    requests too aggressively.  A process-wide limiter enforces a conservative
+    one-request-per-second start cadence even when callers use several workers.
+    Transient 429/time-out/connection failures receive two bounded retries.  All
+    final failures remain explicit and are never imputed.
+    """
     import requests
 
-    try:
-        if limiter is not None:
-            limiter.wait()
-        response = requests.get(
-            GDELT_DOC,
-            params={
-                "query": query,
-                "mode": "ArtList",
-                "format": "json",
-                "maxrecords": max_records,
-                "timespan": timespan,
-                "sort": "HybridRel",
-            },
-            timeout=timeout,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        articles = payload.get("articles", []) if isinstance(payload, dict) else []
-        return articles if isinstance(articles, list) else [], None
-    except Exception as exc:
-        return [], f"{type(exc).__name__}: {str(exc)[:180]}"
+    last_error: str | None = None
+    for attempt in range(len(GDELT_RETRY_BACKOFF_SECONDS) + 1):
+        try:
+            if limiter is not None:
+                limiter.wait()
+            _GDELT_GLOBAL_LIMITER.wait()
+            response = requests.get(
+                GDELT_DOC,
+                params={
+                    "query": query,
+                    "mode": "ArtList",
+                    "format": "json",
+                    "maxrecords": max_records,
+                    "timespan": timespan,
+                    "sort": "HybridRel",
+                },
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            articles = payload.get("articles", []) if isinstance(payload, dict) else []
+            return articles if isinstance(articles, list) else [], None
+        except Exception as exc:
+            last_error = f"{type(exc).__name__}: {str(exc)[:180]}"
+            if attempt >= len(GDELT_RETRY_BACKOFF_SECONDS) or not _retryable_gdelt_error(exc):
+                return [], last_error
+            time.sleep(GDELT_RETRY_BACKOFF_SECONDS[attempt])
+    return [], last_error or "GDELT_UNKNOWN_ERROR"
 
 
 def _score_query_uncached(
