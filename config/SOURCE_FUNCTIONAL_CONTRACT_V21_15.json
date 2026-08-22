@@ -1,5 +1,5 @@
 {
-  "version": "V21.15.0",
+  "version": "V21.15.1",
   "purpose": "Restore and lock previously validated source functions so later runtime optimizations cannot silently remove them.",
   "scope": {
     "selected_only_max_unique_instruments": 40,
@@ -10,18 +10,27 @@
   "boursorama": {
     "required_function": "POST_SELECTION_PRIORITY_ENRICHMENT",
     "priority_for_selected_actions": true,
+    "priority_for_selected_etfs": true,
     "full_universe_daily_scrape_forbidden": true,
     "dynamic_ttl_hours": 8,
     "deep_ttl_hours": 168,
     "refresh_budget": 40,
     "request_start_interval_seconds": 1.0,
     "max_workers": 4,
-    "required_context_families": [
+    "required_action_context_families": [
       "quote_volume_market_cap_sector_pea",
       "consensus_analyst_count_target_upside_revisions",
       "estimated_per_yield_dividend_eps",
       "financials_margin_roe_debt_revenue_net_income",
       "esg_when_publicly_displayed"
+    ],
+    "required_etf_context_families": [
+      "quote_theoretical_open_volume_pea",
+      "aum_management_company",
+      "morningstar_category",
+      "asset_class_geographic_zone_distribution_policy",
+      "replication_management_fee",
+      "volatility_alpha_r2_beta_when_publicly_displayed"
     ],
     "raw_html_persisted": false
   },
