@@ -138,8 +138,8 @@ def _run_pipeline(run_id: str, run_profile: str, runtime: RuntimeTelemetry) -> d
     expected_rows = {"ACTION": len(actions_df), "ETF": len(etf_df)}
 
     before = {
-        "ACTION": completeness(actions_df.to_dict("records"), _fields(actions_df)),
-        "ETF": completeness(etf_df.to_dict("records"), _fields(etf_df)),
+        "ACTION": completeness(actions_df, _fields(actions_df)),
+        "ETF": completeness(etf_df, _fields(etf_df)),
     }
     print(f"Univers canonique V21.3 — Actions: {expected_rows['ACTION']} (exclus legacy: {canonical_audit['excluded_rows']}) | ETF: {expected_rows['ETF']}")
     print(f"Couverture avant run — Actions: {before['ACTION']['coverage_pct']}% | ETF: {before['ETF']['coverage_pct']}%")
@@ -336,8 +336,8 @@ def _run_pipeline(run_id: str, run_profile: str, runtime: RuntimeTelemetry) -> d
         pd.DataFrame(quarantine_log).to_csv(OUTPUTS / "gaps" / "V18.2_QUARANTINE.csv", sep=";", index=False, encoding="utf-8-sig")
 
     after = {
-        "ACTION": completeness(actions_df.to_dict("records"), _fields(actions_df)),
-        "ETF": completeness(etf_df.to_dict("records"), _fields(etf_df)),
+        "ACTION": completeness(actions_df, _fields(actions_df)),
+        "ETF": completeness(etf_df, _fields(etf_df)),
     }
     _audit(actions_df,etf_df,"WAVE_99_FINAL",failures=quarantine_log,source_context="Etat final après toutes les collectes et dérivations")
     (OUTPUTS / "audit" / "V18.2_COVERAGE_BEFORE_AFTER.json").write_text(json.dumps({"canonical_universe":canonical_audit,"expected_rows": expected_rows, "before": before, "after": after}, ensure_ascii=False, indent=2), encoding="utf-8")
