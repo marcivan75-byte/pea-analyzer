@@ -131,8 +131,9 @@ def _safe_investing_url(url: str, *, allow_technical: bool = True) -> bool:
     if parsed.scheme != "https" or parsed.hostname not in {"www.investing.com", "fr.investing.com"}:
         return False
     path = parsed.path.rstrip("/")
-    suffix = r"(?:-technical)?" if allow_technical else ""
-    return bool(re.fullmatch(rf"/(?:equities|etfs)/[A-Za-z0-9._%\-]+{suffix}", path))
+    if not allow_technical and path.endswith("-technical"):
+        return False
+    return bool(re.fullmatch(r"/(?:equities|etfs)/[A-Za-z0-9._%\-]+", path))
 
 
 def _candidate_base_urls(row: object) -> list[str]:
