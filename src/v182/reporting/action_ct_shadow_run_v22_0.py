@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -398,6 +399,23 @@ def _android_summary(frame: pd.DataFrame, validation: dict, generated_at: str) -
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _compute_snapshot_safe(
+    completed: pd.DataFrame,
+    cfg: dict,
+    base: dict,
+    ticker: str,
+) -> tuple[dict, str | None]:
+    try:
+        return compute_action_ct_snapshot(completed, cfg, base), None
+    except Exception as exc:
+        return {
+            "status": "ERROR_SHADOW",
+            "bars": int(len(completed)),
+            "t1_t2_used": False,
+            "intraday_data_used": False,
+        }, f"{ticker}:{type(exc).__name__}:{str(exc)[:160]}"
+
+
 def run(root: Path = ROOT, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     cfg = json.loads((root / "config" / CONFIG).read_text(encoding="utf-8"))
@@ -409,6 +427,10 @@ def run(root: Path = ROOT, now: datetime | None = None) -> dict:
     errors: list[str] = []
     deferred = 0
     histories: dict[str, pd.DataFrame] = {}
+    runtime_cfg = cfg.get("runtime_optimization", {})
+    configured_workers = max(1, int(runtime_cfg.get("parallel_compute_workers", 4)))
+    parallel_min_actions = max(1, int(runtime_cfg.get("parallel_min_actions", 50)))
+    parallel_enabled = False
 
     if actions.empty or "isin" not in actions.columns:
         output = pd.DataFrame()
@@ -427,22 +449,40 @@ def run(root: Path = ROOT, now: datetime | None = None) -> dict:
         baseline = _baseline_ct(actions, root)
         baseline["isin"] = baseline["isin"].astype(str).str.upper()
         baseline = baseline.drop_duplicates("isin", keep="first").set_index("isin", drop=False)
-        rows: list[dict] = []
-        for _, base in work.iterrows():
+        prepared: list[tuple[dict, str, str, pd.DataFrame | None]] = []
+        for base in work.to_dict("records"):
             isin = str(base["isin"]).upper()
             ticker = mapping.get(isin, "")
             history = histories_by_ticker.get(ticker) if ticker else None
             if history is None or history.empty:
+                prepared.append((base, isin, ticker, None))
+                continue
+            completed, was_deferred = _completed_daily_history(history, cfg, now)
+            deferred += int(was_deferred)
+            histories[isin] = completed
+            prepared.append((base, isin, ticker, completed))
+
+        compute_inputs = [
+            (completed, cfg, base, ticker)
+            for base, _, ticker, completed in prepared
+            if completed is not None
+        ]
+        parallel_enabled = configured_workers > 1 and len(compute_inputs) >= parallel_min_actions
+        if parallel_enabled:
+            with ThreadPoolExecutor(max_workers=configured_workers, thread_name_prefix="action-ct-v220") as executor:
+                computed = list(executor.map(lambda args: _compute_snapshot_safe(*args), compute_inputs))
+        else:
+            computed = [_compute_snapshot_safe(*args) for args in compute_inputs]
+        computed_iter = iter(computed)
+
+        rows: list[dict] = []
+        for base, isin, ticker, completed in prepared:
+            if completed is None:
                 snap = {"status": "DATA_INSUFFICIENT", "bars": 0, "t1_t2_used": False, "intraday_data_used": False}
             else:
-                completed, was_deferred = _completed_daily_history(history, cfg, now)
-                deferred += int(was_deferred)
-                histories[isin] = completed
-                try:
-                    snap = compute_action_ct_snapshot(completed, cfg, base.to_dict())
-                except Exception as exc:
-                    errors.append(f"{ticker}:{type(exc).__name__}:{str(exc)[:160]}")
-                    snap = {"status": "ERROR_SHADOW", "bars": int(len(completed)), "t1_t2_used": False, "intraday_data_used": False}
+                snap, error = next(computed_iter)
+                if error:
+                    errors.append(error)
             raw_entry_components = snap.pop("entry_components", {})
             raw_exit_components = snap.pop("exit_components", {})
             entry_components: dict[str, Any] = raw_entry_components if isinstance(raw_entry_components, dict) else {}
@@ -463,7 +503,6 @@ def run(root: Path = ROOT, now: datetime | None = None) -> dict:
                 "stop_loss_influence": 0.0, "real_orders_enabled": False,
             })
         output = pd.DataFrame(rows)
-
     previous_exit = _read_csv(root / EXIT_STATE)
     if not output.empty:
         output = _temporal_exit_confirmation(output, previous_exit)
@@ -503,6 +542,9 @@ def run(root: Path = ROOT, now: datetime | None = None) -> dict:
         "status": "FAIL_CLOSED_FINGERPRINT_MISMATCH" if mismatches else "SUCCESS_SHADOW_WITH_WARNINGS" if errors else "SUCCESS_SHADOW",
         "version": VERSION, "generated_at_utc": generated_at, "rows": int(len(output)),
         "daily_histories_found": int(len(histories)), "current_day_candles_deferred": int(deferred),
+        "parallel_compute_enabled": bool(parallel_enabled),
+        "parallel_compute_workers": int(configured_workers if parallel_enabled else 1),
+        "parallel_min_actions": int(parallel_min_actions),
         "baseline_reference": cfg["governance"]["production_reference"], "baseline_unchanged": True,
         "challenger_decision_influence": 0.0, "challenger_score_influence": 0.0,
         "t1_t2_used": False, "t1_t2_forbidden": True,
@@ -527,4 +569,3 @@ def run(root: Path = ROOT, now: datetime | None = None) -> dict:
 
 if __name__ == "__main__":
     print(json.dumps(run(), ensure_ascii=False, indent=2, default=str))
-

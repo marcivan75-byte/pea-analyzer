@@ -1,13 +1,13 @@
 {
-  "version": "21.13.4",
+  "version": "21.13.5",
   "base": "18.2.0",
-  "theme": "COMPLETENESS_ROTATION_DYNAMIC_WEIGHTS_HISTORY_DEPTH_HORIZON_AWARE_RUNTIME_OPT",
+  "theme": "COMPLETENESS_ROTATION_DYNAMIC_WEIGHTS_HISTORY_DEPTH_HORIZON_AWARE_RUNTIME_BUDGET",
   "primary_bulk_source": "yfinance",
   "no_repeat_api_request_policy": true,
   "api_keys": {"MARKETSTACK_API_KEY":"environment","ALPHA_VANTAGE_API_KEY":"environment","FINNHUB_API_KEY":"environment","FRED_API_KEY":"environment","EIA_API_KEY":"environment"},
   "yfinance": {"enabled":true,"requires_key":false,"history_start":"2023-01-01","history_period":"5y","required_history_start":"2023-01-01","history_rolling_months":60,"history_policy":"ANCHOR_2023_THEN_ROLLING_60M","cache_generation":"V21.13.1_START_2023_ROLLING_60M","interval":"1d","auto_adjust":true,"actions_batch_size":100,"etf_batch_size":50,"threads":true,"retry_count":3,"cache_days":1,"fundamental_refresh_days":7},
   "runtime_optimization": {
-    "status": "ACTIVE_V21_13_4_PIPELINE_RUNTIME_OPTIMIZED",
+    "status": "ACTIVE_V21_13_5_MONTHLY_RUNTIME_BUDGET_OPTIMIZED",
     "governance": "REFRESH_BY_DATA_NEED_AND_HORIZON_WITHOUT_REDUCING_UNIVERSE_OR_CHANGING_DECISION_LOGIC",
     "horizon_data_policy": {
       "enabled": true,
@@ -35,7 +35,9 @@
       "max_workers": 4,
       "local_price_ratio_refresh": true,
       "bootstrap_uncached_all": true,
-      "horizon_policy_family": "ACTION_FUNDAMENTALS"
+      "horizon_policy_family": "ACTION_FUNDAMENTALS",
+      "daily_mode": "CACHE_PREFERRED_WITH_MANDATORY_RECOVERY",
+      "ordinary_live_refresh_cadence": "WEEKLY_FRIDAY"
     },
     "finnhub_consensus": {
       "cache_path": "state/provenance/source_cache/FINNHUB_CONSENSUS_V1.json",
@@ -49,7 +51,9 @@
         "COLD": {"refresh_budget":25,"recommendation_ttl_days":14,"target_refresh_budget":10,"target_ttl_days":28,"max_cache_age_days":42}
       },
       "bootstrap_uncached_all": true,
-      "horizon_policy_family": "ACTION_CONSENSUS"
+      "horizon_policy_family": "ACTION_CONSENSUS",
+      "daily_mode": "CACHE_PREFERRED_WITH_MANDATORY_RECOVERY",
+      "ordinary_live_refresh_cadence": "WEEKLY_FRIDAY"
     },
     "etf_info": {
       "cache_path": "state/provenance/source_cache/YFINANCE_ETF_INFO_V1.json",
@@ -59,7 +63,9 @@
       "negative_cache_days": 14,
       "max_workers": 4,
       "bootstrap_uncached_all": true,
-      "horizon_policy_family": "ETF_INFO"
+      "horizon_policy_family": "ETF_INFO",
+      "daily_mode": "CACHE_PREFERRED_WITH_MANDATORY_RECOVERY",
+      "ordinary_live_refresh_cadence": "WEEKLY_FRIDAY"
     },
     "etf_fund_flows": {
       "max_workers": 8,
@@ -71,12 +77,36 @@
     },
     "daily_profile": {
       "name": "DAILY_TACTICAL",
+      "scheduled_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY"],
+      "friday_tactical_owned_by_weekly": true,
+      "slow_source_mode": "CACHE_PREFERRED",
       "wave3_local_workers": 2,
+      "action_ct_v22_0_parallel_workers": 4,
+      "action_ct_v22_0_parallel_min_actions": 50,
       "reuse_primary_etf_ohlcv_for_etf_mt": true,
       "intermediate_collection_audit_format": "CSV",
       "final_collection_audit_excel": true,
       "master_excel_exports": false,
       "weekly_full_exports_unchanged": true,
+      "decision_logic_changed": false
+    },
+    "monthly_runtime_budget": {
+      "average_weeks_per_month": 4.348,
+      "daily_main_runs_per_average_month": 17.392,
+      "weekly_runs_per_average_month": 4.348,
+      "catalyst_snapshot_runs_per_average_month": 43.48,
+      "catalyst_pit_postprocess_runs_per_average_month": 21.74,
+      "daily_main_expected_minutes": {"low":7,"central":9,"high":11},
+      "weekly_with_friday_tactical_expected_minutes": {"low":28,"central":32,"high":38},
+      "catalyst_snapshot_target_minutes": 2.1,
+      "scheduled_main_central_minutes_per_month": 295.7,
+      "scheduled_main_target_minutes_per_month": 300,
+      "all_scheduled_central_minutes_per_month": 387.0,
+      "all_scheduled_target_minutes_per_month": 390,
+      "all_scheduled_alert_minutes_per_month": 420,
+      "validation_steps_scheduled": false,
+      "preopen_redundant_pit_postprocess_skipped": true,
+      "actual_telemetry_required": true,
       "decision_logic_changed": false
     },
     "telemetry": {

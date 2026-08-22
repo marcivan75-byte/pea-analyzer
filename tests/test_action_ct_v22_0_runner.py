@@ -3,10 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+import time
 
 import numpy as np
 import pandas as pd
 
+from v182.reporting import action_ct_shadow_run_v22_0 as action_ct_runner
 from v182.reporting.action_ct_shadow_run_v22_0 import (
     _append_first_snapshots,
     _label_outcomes,
@@ -22,6 +24,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _cfg() -> dict:
     return json.loads((ROOT / "config" / "ACTION_CT_V22_0_0_SHADOW.json").read_text(encoding="utf-8"))
+
+
+def test_runtime_parallelism_is_processing_only_and_ordered():
+    runtime=_cfg()["runtime_optimization"]
+    assert runtime["parallel_compute_workers"]==4
+    assert runtime["parallel_min_actions"]==50
+    assert runtime["ordered_output_preserved"] is True
+    assert runtime["decision_logic_changed"] is False
 
 
 def _snapshot(**overrides) -> dict:
@@ -231,3 +241,61 @@ def test_full_runner_builds_shadow_outputs_and_first_pit_snapshot(tmp_path: Path
     assert bool(shadow.iloc[0]["real_orders_enabled"]) is False
     assert isinstance(ledger.iloc[0]["snapshot_fingerprint"], str)
     assert len(ledger.iloc[0]["snapshot_fingerprint"]) == 64
+
+
+def test_full_runner_parallel_compute_preserves_master_order(tmp_path: Path, monkeypatch):
+    root=tmp_path
+    (root/"config").mkdir(parents=True)
+    (root/"outputs").mkdir(parents=True)
+    (root/"config"/"ACTION_CT_V22_0_0_SHADOW.json").write_text(
+        json.dumps(_cfg(),ensure_ascii=False,indent=2),encoding="utf-8",
+    )
+    count=60
+    master=pd.DataFrame({
+        "isin":[f"FR{i:010d}" for i in range(count)],
+        "name":[f"Action {i}" for i in range(count)],
+        "yahoo_ticker":[f"T{i}.PA" for i in range(count)],
+        "sequence":range(count),
+    })
+    master.to_csv(
+        root/"outputs"/"V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv",
+        sep=";",index=False,encoding="utf-8-sig",
+    )
+    history=pd.DataFrame(
+        {"Close":np.linspace(100,120,150)},
+        index=pd.bdate_range(end="2026-08-20",periods=150),
+    )
+    monkeypatch.setattr(
+        action_ct_runner,"_extract_histories",
+        lambda cache,wanted:{ticker:history.copy() for ticker in wanted},
+    )
+    monkeypatch.setattr(
+        action_ct_runner,"_baseline_ct",
+        lambda actions,root:pd.DataFrame({
+            "isin":master["isin"],"score":50.0,"coverage_pct":100.0,
+            "status":"OK","decision":"HOLD",
+        }),
+    )
+
+    def fake_compute(completed,cfg,base):
+        time.sleep(0.001)
+        return {
+            "status":"SUCCESS_SHADOW","bars":len(completed),
+            "snapshot_date":"2026-08-20","reference_close":120.0,
+            "entry_score":float(base["sequence"]),"entry_state":"NO_ENTRY_SHADOW",
+            "entry_confirmation_count":0,"exit_risk_score":0.0,
+            "exit_state_raw":"HOLD_SUPPORTIVE_SHADOW",
+            "t1_t2_used":False,"intraday_data_used":False,
+        }
+
+    monkeypatch.setattr(action_ct_runner,"compute_action_ct_snapshot",fake_compute)
+    payload=action_ct_runner.run(
+        root=root,now=datetime(2026,8,21,12,0,tzinfo=timezone.utc),
+    )
+    output=pd.read_csv(
+        root/"outputs"/"daily_tct_ct"/"ACTION_CT_V22_0_0_SHADOW.csv",sep=";",
+    )
+    assert payload["parallel_compute_enabled"] is True
+    assert payload["parallel_compute_workers"]==4
+    assert output["isin"].tolist()==master["isin"].tolist()
+    assert output["entry_score"].tolist()==[float(i) for i in range(count)]

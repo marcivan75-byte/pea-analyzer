@@ -3,6 +3,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 import json
+import os
 import pandas as pd
 import numpy as np
 
@@ -72,6 +73,11 @@ def _source_horizon_policy(cfg: dict, family: str) -> dict:
         "previous_decisions_path":global_policy.get("previous_decisions_path","outputs/committee_master/COMMITTEE_DECISIONS.csv"),
         **family_policy,
     }
+
+
+def _slow_source_refresh_due_enabled() -> bool:
+    """Keep TTL refreshes weekly while preserving mandatory daily recovery."""
+    return os.environ.get("PEA_SLOW_SOURCE_MODE", "LIVE").strip().upper() != "CACHE_PREFERRED"
 
 
 def wave_history(df: pd.DataFrame, universe: str, cache_dir: str, cfg: dict) -> DownloadResult:
@@ -223,7 +229,7 @@ def wave4_info_actions(actions_df: pd.DataFrame, cfg: dict, top_n: int = 300) ->
     tiers,horizon_audit=assign_refresh_tiers(selected,root,asset_class="ACTION",policy=_source_horizon_policy(cfg,family),fallback_warm_n=int(opt.get("warm_top_n",500)))
     if not tiers: tiers=_action_refresh_tiers(selected,warm_n=int(opt.get("warm_top_n",500)))
     cache_path=root/str(opt.get("cache_path","state/provenance/source_cache/YFINANCE_INFO_V1.json"))
-    observations,failures,metrics=collect_info_cached(list(ticker_to_isin),cache_path,priority_tiers=tiers,ttl_days=opt.get("ttl_days",{"HOT":3,"WARM":10,"COLD":21}),refresh_budget=int(opt.get("refresh_budget",320)),hard_max_age_days=float(opt.get("hard_max_age_days",35)),negative_cache_days=float(opt.get("negative_cache_days",7)),delay_seconds=float(cfg["yfinance"].get("info_delay_seconds",0.4)),max_workers=int(opt.get("max_workers",4)))
+    observations,failures,metrics=collect_info_cached(list(ticker_to_isin),cache_path,priority_tiers=tiers,ttl_days=opt.get("ttl_days",{"HOT":3,"WARM":10,"COLD":21}),refresh_budget=int(opt.get("refresh_budget",320)),hard_max_age_days=float(opt.get("hard_max_age_days",35)),negative_cache_days=float(opt.get("negative_cache_days",7)),delay_seconds=float(cfg["yfinance"].get("info_delay_seconds",0.4)),max_workers=int(opt.get("max_workers",4)),refresh_due=_slow_source_refresh_due_enabled())
     metrics["horizon_demand"]=horizon_audit
     audit_path=root/"outputs"/"audit"/"YFINANCE_INFO_CACHE_V1.json"; audit_path.parent.mkdir(parents=True,exist_ok=True); audit_path.write_text(json.dumps(metrics,ensure_ascii=False,indent=2),encoding="utf-8")
     result=[]; fields_by_ticker: dict[str,dict[str,object]]={}
@@ -266,9 +272,9 @@ def wave5_consensus_finnhub(actions_df: pd.DataFrame, api_key: str, top_n: int =
         if not tickers:
             tier_metrics[tier]={"requested":0,"live_refresh_requested":0,"target_live_refresh_requested":0}; continue
         policy=tier_policy.get(tier,{})
-        tier_obs,tier_fail,tier_metric=fetch_consensus_cached(tickers,api_key,cache_path,refresh_budget=int(policy.get("refresh_budget",0)),max_cache_age_days=float(policy.get("max_cache_age_days",42)),negative_cache_days=float(opt.get("negative_cache_days",7)),recommendation_ttl_days=float(policy.get("recommendation_ttl_days",14)),target_ttl_days=float(policy.get("target_ttl_days",28)),target_refresh_budget=int(policy.get("target_refresh_budget",max(0,int(policy.get("refresh_budget",0))//2))),delay_seconds=float(opt.get("delay_seconds",1.1)),max_workers=int(opt.get("max_workers",8)))
+        tier_obs,tier_fail,tier_metric=fetch_consensus_cached(tickers,api_key,cache_path,refresh_budget=int(policy.get("refresh_budget",0)),max_cache_age_days=float(policy.get("max_cache_age_days",42)),negative_cache_days=float(opt.get("negative_cache_days",7)),recommendation_ttl_days=float(policy.get("recommendation_ttl_days",14)),target_ttl_days=float(policy.get("target_ttl_days",28)),target_refresh_budget=int(policy.get("target_refresh_budget",max(0,int(policy.get("refresh_budget",0))//2))),delay_seconds=float(opt.get("delay_seconds",1.1)),max_workers=int(opt.get("max_workers",8)),refresh_due=_slow_source_refresh_due_enabled())
         obs_raw.extend(tier_obs); failures.extend(tier_fail); tier_metrics[tier]=tier_metric
-    metrics={"policy":"HORIZON_AWARE_HOT_WARM_COLD_INDEPENDENT_RECOMMENDATION_TARGET_TTLS","tier_counts":{tier:sum(1 for value in tiers.values() if value==tier) for tier in ("HOT","WARM","COLD")},"tiers":tier_metrics,"requested":len(ticker_to_isin),"live_refresh_requested":sum(int(m.get("live_refresh_requested",0)) for m in tier_metrics.values()),"target_live_refresh_requested":sum(int(m.get("target_live_refresh_requested",0)) for m in tier_metrics.values()),"target_calls_avoided":sum(int(m.get("target_calls_avoided",0)) for m in tier_metrics.values()),"cache_hit_tickers":sum(int(m.get("cache_hit_tickers",0)) for m in tier_metrics.values()),"full_universe_preserved":True,"horizon_demand":horizon_audit}
+    metrics={"policy":"HORIZON_AWARE_HOT_WARM_COLD_INDEPENDENT_RECOMMENDATION_TARGET_TTLS","tier_counts":{tier:sum(1 for value in tiers.values() if value==tier) for tier in ("HOT","WARM","COLD")},"tiers":tier_metrics,"requested":len(ticker_to_isin),"refresh_due_enabled":_slow_source_refresh_due_enabled(),"due_refresh_suppressed":sum(int(m.get("due_refresh_suppressed",0)) for m in tier_metrics.values()),"live_refresh_requested":sum(int(m.get("live_refresh_requested",0)) for m in tier_metrics.values()),"target_live_refresh_requested":sum(int(m.get("target_live_refresh_requested",0)) for m in tier_metrics.values()),"target_calls_avoided":sum(int(m.get("target_calls_avoided",0)) for m in tier_metrics.values()),"cache_hit_tickers":sum(int(m.get("cache_hit_tickers",0)) for m in tier_metrics.values()),"full_universe_preserved":True,"horizon_demand":horizon_audit}
     audit_path=root/"outputs"/"audit"/"FINNHUB_CONSENSUS_CACHE_V1.json"; audit_path.parent.mkdir(parents=True,exist_ok=True); audit_path.write_text(json.dumps(metrics,ensure_ascii=False,indent=2),encoding="utf-8")
     result=[]
     for row in obs_raw:
@@ -305,7 +311,7 @@ def wave6_etf_info(etf_with_tickers: pd.DataFrame, cfg: dict) -> tuple[list[dict
     family=str(opt.get("horizon_policy_family","ETF_INFO"))
     tiers,horizon_audit=assign_refresh_tiers(valid,root,asset_class="ETF",policy=_source_horizon_policy(cfg,family),fallback_warm_n=0)
     cache_path=root/str(opt.get("cache_path","state/provenance/source_cache/YFINANCE_ETF_INFO_V1.json"))
-    obs_raw,failures,metrics=collect_info_cached(list(ticker_to_isin),cache_path,priority_tiers=tiers,ttl_days=opt.get("ttl_days",{"HOT":7,"WARM":14,"COLD":30}),refresh_budget=int(opt.get("refresh_budget",40)),hard_max_age_days=float(opt.get("hard_max_age_days",45)),negative_cache_days=float(opt.get("negative_cache_days",14)),delay_seconds=float(cfg["yfinance"].get("info_delay_seconds",0.4)),max_workers=int(opt.get("max_workers",4)))
+    obs_raw,failures,metrics=collect_info_cached(list(ticker_to_isin),cache_path,priority_tiers=tiers,ttl_days=opt.get("ttl_days",{"HOT":7,"WARM":14,"COLD":30}),refresh_budget=int(opt.get("refresh_budget",40)),hard_max_age_days=float(opt.get("hard_max_age_days",45)),negative_cache_days=float(opt.get("negative_cache_days",14)),delay_seconds=float(cfg["yfinance"].get("info_delay_seconds",0.4)),max_workers=int(opt.get("max_workers",4)),refresh_due=_slow_source_refresh_due_enabled())
     metrics["horizon_demand"]=horizon_audit
     audit_path=root/"outputs"/"audit"/"YFINANCE_ETF_INFO_CACHE_V1.json"; audit_path.parent.mkdir(parents=True,exist_ok=True); audit_path.write_text(json.dumps(metrics,ensure_ascii=False,indent=2),encoding="utf-8")
     result=[]

@@ -114,6 +114,12 @@
     "days_to_earnings",
     "morningstar_action_score"
   ],
+  "runtime_optimization": {
+    "parallel_compute_workers": 4,
+    "parallel_min_actions": 50,
+    "ordered_output_preserved": true,
+    "decision_logic_changed": false
+  },
   "pit_validation": {
     "epoch": "ACTION_CT_V22.0.0_ONLY",
     "snapshot_fingerprint_required": true,
