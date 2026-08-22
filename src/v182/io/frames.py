@@ -3,6 +3,7 @@ from pathlib import Path
 import pandas as pd
 
 MISSING_TOKEN = "NON_OBSERVE"
+MISSING_TOKENS={"", "MISSING", "UNKNOWN", MISSING_TOKEN, "NOT_LOADED", "NAN", "<NA>", "N/A", "NA", "NULL"}
 
 OHLCV_BOOTSTRAP_FIELDS={
     "mm20","mm50","mm100","mm200","rsi14","macd","macd_signal","macd_hist","macd_hist_3d_ago","macd_hist_change_3d",
@@ -43,12 +44,15 @@ def save_master(frame: pd.DataFrame, path: str | Path) -> None:
 
 def is_missing(value) -> bool:
     if value is None: return True
+    # Masters are string-heavy. Strings can never be scalar NaN objects, so avoid
+    # a pandas dispatch on the dominant path while keeping the exact token policy.
+    if isinstance(value,str):
+        return value.strip().upper() in MISSING_TOKENS
     try:
         if pd.isna(value): return True
     except (TypeError, ValueError):
         return False
-    text = str(value).strip().upper()
-    return text in {"", "MISSING", "UNKNOWN", MISSING_TOKEN, "NOT_LOADED", "NAN", "<NA>", "N/A", "NA", "NULL"}
+    return str(value).strip().upper() in MISSING_TOKENS
 
 
 def _cell(frame:pd.DataFrame,isin,field:str):
