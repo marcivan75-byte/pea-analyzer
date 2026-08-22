@@ -159,9 +159,12 @@ jobs:
                   'src/v182/features/ct_math.py',
                   'src/v182/features/sector_rotation.py',
                   'src/v182/reporting/action_ct_shadow_run_v22_1.py',
+                  'src/v182/reporting/action_ct_shadow_bundle_run.py',
                   'tests/test_action_ct_v22_1_runtime_patch.py',
+                  'tests/test_action_ct_shared_history_runtime_v21_13_10.py',
                   'docs/ACTION_CT_REFERENTIEL_V22_1_0_FINAL.md',
                   'docs/ACTION_CT_V22_1_1_RUNTIME_PATCH_2026-08-21.md',
+                  'docs/PIPELINE_RUNTIME_V21_13_10.md',
                   'packages/ACTION_CT_V22_1_0/MANIFEST.json',
               }
               assert required <= names
@@ -169,6 +172,9 @@ jobs:
               assert manifest['package']=='ACTION_CT_V22_1_1_COMPLETE'
               assert manifest['decision_version']=='22.1.0'
               assert manifest['runtime_patch_version']=='22.1.1'
+              assert manifest['pipeline_runtime_optimization_version']=='V21.13.10'
+              assert manifest['hard_guards']['shared_history_deep_copy_per_model'] is True
+              assert manifest['hard_guards']['shared_history_expanding_scope_reloads_union'] is True
           PY
       - name: Upload complete CT package
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
