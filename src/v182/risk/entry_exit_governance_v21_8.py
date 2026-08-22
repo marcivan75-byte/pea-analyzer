@@ -104,6 +104,9 @@ def _persist_temporal_state(governed: pd.DataFrame, path: Path) -> int:
 def _tct_t2_confirmed(row: pd.Series) -> bool:
     if _bool(row.get("t2_confirmed")):
         return True
+    decision = str(row.get("decision", "") or "").upper()
+    if decision == "T2_CONFIRM_75_SHADOW":
+        return True
     setup = str(row.get("tct_setup", row.get("setup", "")) or "").upper()
     return setup in {"T2", "T2_CONFIRMATION", "T2_EXACT_TIMING_CONFIRMATION"}
 
@@ -147,6 +150,8 @@ def classify_entry(row: pd.Series, cfg: dict) -> tuple[str, list[str]]:
     if hz == "TCT" and cfg["entry_gate"].get("tct_requires_exact_t2_confirmation", True):
         if not _tct_t2_confirmed(row):
             return "WAIT", ["TCT_EXACT_T2_CONFIRMATION_REQUIRED"]
+        if cfg["entry_gate"].get("tct_exact_t2_replaces_generic_ct_mt_timing_evidence", True):
+            return "ACTION", ["TCT_EXACT_T2_AND_SOURCE_CONFIRMATION"]
 
     score, _ = _first_num(row, ("score_final", "score", "Score"))
     dist50, _ = _first_num(row, ("dist_sma50", "distance_sma50"))
@@ -225,7 +230,8 @@ def run(root: Path = ROOT) -> dict:
     decisions = pd.read_csv(src, sep=";", encoding="utf-8-sig", low_memory=False); state_path = root/STATE_RELATIVE_PATH; previous_state = _load_temporal_state(state_path); governed = apply_governance(_attach_temporal_state(decisions, previous_state), cfg); state_rows = _persist_temporal_state(governed, state_path)
     outdir = root/"outputs"/"committee_master"; auditdir = root/"outputs"/"audit"; auditdir.mkdir(parents=True, exist_ok=True); governed.to_csv(outdir/"V21_8_ENTRY_EXIT_CHALLENGER.csv", sep=";", index=False, encoding="utf-8-sig")
     source_waits = int(governed.get("v21_8_entry_reasons", pd.Series(dtype=str)).astype(str).str.contains("SOURCE_|INVESTING_|BOURSORAMA_", regex=True).sum())
-    payload = {"status": "SUCCESS", "version": cfg["version"], "mode": cfg["mode"], "rows": int(len(governed)), "entry_states": governed["v21_8_entry_state"].value_counts(dropna=False).to_dict(), "position_states": governed["v21_8_position_state"].value_counts(dropna=False).to_dict(), "source_confirmation_entry_waits": source_waits, "source_confirmation_required_for_tct_ct_mt": True, "fixed_take_profit_enabled": False, "legacy_fixed_stop_engine_enabled": False, "historical_plus_4pct_operational": False, "historical_minus_18pct_etf_operational": False, "new_hard_stop_promoted": False, "desired_loss_risk_ceiling_pct_for_research": cfg["risk"]["desired_loss_risk_ceiling_pct_for_research"], "desired_loss_risk_ceiling_is_blind_stop": False, "tct_requires_exact_t2_confirmation": True, "t1_t2_scope": "ACTION_TCT_ONLY", "exit_requires_temporal_confirmation": True, "temporal_state_persisted": True, "temporal_state_path": str(STATE_RELATIVE_PATH), "temporal_state_rows": state_rows, "weights_unchanged": True, "selection_threshold_unchanged": True, "decision_influence": 0.0, "score_influence": 0.0, "sizing_influence": 0.0, "holdout_opened": False, "real_orders_enabled": False}
+    tct_exact_actions = int(((governed.get("horizon", pd.Series(dtype=str)).astype(str).str.upper() == "TCT") & (governed["v21_8_entry_state"].astype(str) == "ACTION")).sum())
+    payload = {"status": "SUCCESS", "version": cfg["version"], "mode": cfg["mode"], "rows": int(len(governed)), "entry_states": governed["v21_8_entry_state"].value_counts(dropna=False).to_dict(), "position_states": governed["v21_8_position_state"].value_counts(dropna=False).to_dict(), "source_confirmation_entry_waits": source_waits, "source_confirmation_required_for_tct_ct_mt": True, "tct_exact_t2_source_confirmed_actions": tct_exact_actions, "fixed_take_profit_enabled": False, "legacy_fixed_stop_engine_enabled": False, "historical_plus_4pct_operational": False, "historical_minus_18pct_etf_operational": False, "new_hard_stop_promoted": False, "desired_loss_risk_ceiling_pct_for_research": cfg["risk"]["desired_loss_risk_ceiling_pct_for_research"], "desired_loss_risk_ceiling_is_blind_stop": False, "tct_requires_exact_t2_confirmation": True, "tct_exact_t2_replaces_generic_ct_mt_timing_evidence": True, "t1_t2_scope": "ACTION_TCT_ONLY", "exit_requires_temporal_confirmation": True, "temporal_state_persisted": True, "temporal_state_path": str(STATE_RELATIVE_PATH), "temporal_state_rows": state_rows, "weights_unchanged": True, "selection_threshold_unchanged": True, "decision_influence": 0.0, "score_influence": 0.0, "sizing_influence": 0.0, "holdout_opened": False, "real_orders_enabled": False}
     (auditdir/"V21_8_ENTRY_EXIT_GOVERNANCE.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"); print(json.dumps(payload, ensure_ascii=False, indent=2)); return payload
 
 
