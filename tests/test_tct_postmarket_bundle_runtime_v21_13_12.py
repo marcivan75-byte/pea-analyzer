@@ -100,8 +100,9 @@ def test_daily_and_weekly_use_single_postmarket_process_but_preopen_stays_autono
             assert command not in workflow
         assert "POSTMARKET_BUNDLE_RUNTIME_V21_13_12.json" in workflow
 
+    assert 'cron: "40 6 * * 1-5"' in preopen
+    assert "TCT_CATALYST_PHASE: ${{ github.event.inputs.phase }}" in preopen
     assert "python -m v182.reporting.tct_next_session_catalyst_run_v24_4_2" in preopen
-    assert "TCT_CATALYST_PHASE: PREOPEN" in preopen
     assert "python -m v182.reporting.tct_postmarket_bundle_run" not in preopen
 
 
