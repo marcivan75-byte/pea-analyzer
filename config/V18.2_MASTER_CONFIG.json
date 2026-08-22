@@ -11,7 +11,8 @@
     "governance": "REFRESH_BY_DATA_NEED_AND_HORIZON_WITHOUT_REDUCING_UNIVERSE_OR_CHANGING_DECISION_LOGIC",
     "horizon_data_policy": {
       "enabled": true,
-      "previous_decisions_path": "outputs/committee_master/COMMITTEE_DECISIONS.csv",
+      "previous_decisions_path": "state/provenance/HORIZON_REFRESH_PRIORITY_V1.csv",
+      "state_written_after_committee": true,
       "fallback_if_absent": "CURRENT_SCORE_EVENTS_AND_EXISTING_CACHE_POLICY",
       "priority_order": ["TCT", "CT", "MT", "LT", "STRUCTURAL"],
       "source_families": {
