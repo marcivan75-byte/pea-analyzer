@@ -123,10 +123,6 @@ def run(root: Path = ROOT) -> dict:
             "Requires SUCCESS current Committee decisions before publishing Android/PC Committee explainability."
         )
 
-    # V21.8 invalidates the legacy fixed-stop sizing/execution assumptions used by
-    # committee_performance_v21_4. Keep historical state for audit only; do not
-    # create or close virtual positions until a separately validated sizing policy
-    # no longer depends on those fixed stops.
     steps["performance"] = {
         "status": "SKIPPED_GOVERNANCE",
         "reason": "V21.8 disables legacy fixed-stop risk sizing and virtual execution until a separately validated sizing policy exists.",
@@ -148,7 +144,11 @@ def run(root: Path = ROOT) -> dict:
         "decisions": "outputs/committee_master/COMMITTEE_DECISIONS.csv",
         "committee_summary": "outputs/committee_master/SUMMARY.json",
         "ci_android": "outputs/mobile/ANDROID_CI_CONTROL_CENTER.md",
-        "ci_pc": "outputs/committee_master/CI_PC_EXPLAINABILITY.xlsx",
+        "ci_word": "outputs/committee_master/CI_COMITE_INVESTISSEMENT.docx",
+        "ci_weighted_reference": "outputs/committee_master/CI_REFERENTIEL_PONDERE.xlsx",
+        "ci_decision_brief_v3": "outputs/decision_brief/CI_DECISION_BRIEF_V3.docx",
+        "ci_decision_matrix_v3": "outputs/decision_brief/CI_DECISION_MATRIX_V3.csv",
+        "ci_recommendation_basket_risk": "outputs/committee_master/CI_RISQUE_PANIER_RECOMMANDATIONS.docx",
         "ci_explainability_audit": "outputs/audit/CI_EXPLAINABILITY_AUDIT.json",
         "entry_exit_v21_8": "outputs/committee_master/V21_8_ENTRY_EXIT_CHALLENGER.csv",
         "entry_exit_v21_8_audit": "outputs/audit/V21_8_ENTRY_EXIT_GOVERNANCE.json",
@@ -194,7 +194,7 @@ def run(root: Path = ROOT) -> dict:
         "actions_final": "V21.0 frozen-weight reference on current 1829 universe",
         "actions_challenger": "V21.4 enriched shadow challenger",
         "entry_exit": "V21.8 official decision-support baseline; TCT exact T2 gate; HOLD/PROTECT/EXIT temporal state; no fixed TP/legacy fixed stop/new hard stop",
-        "committee_reporting": "CI_EXPLAINABILITY_V1 canonical Android + PC outputs derived from the same Committee decisions; no score/decision mutation",
+        "committee_reporting": "CI_RESTITUTION_V2 + CI_DECISION_BRIEF_V3 + recommendation-basket risk supplement; all derived from canonical Committee decisions with no score/decision mutation",
         "etf_mt_reference": "V20.8.1 exact 38-PIT core",
         "etf_mt_challenger": "V20.8.2 missing-data dynamic shadow",
         "tct": "V24.1.8 baseline + exact V24.1.7 T1/T2 shadow; T1/T2 ACTION TCT only",
@@ -232,7 +232,7 @@ def run(root: Path = ROOT) -> dict:
             "Profit level and profit giveback are context only and never create a standalone exit signal.",
             "No fixed take-profit, legacy fixed stop, or new hard stop is operational in V21.8; the 7% figure is a research risk ceiling only and gaps/slippage can exceed any stop.",
             "Legacy virtual execution/performance is disabled under V21.8 because its sizing and exit logic depend on invalidated fixed-stop assumptions; historical state is audit-only until a separately validated sizing policy exists.",
-            "CI Android and PC explainability are generated from the same canonical Committee decisions and cannot mutate scores, decisions, weights, thresholds or order state.",
+            "CI Android, Word, weighted Excel, V3 decision brief and recommendation-basket risk outputs are generated from canonical Committee decisions and cannot mutate scores, decisions, weights, thresholds or order state.",
             "Sector Rotation V2 is SHADOW_ONLY: it cannot change Action/ETF scores, create BUYs, create SELLs, or emit orders before dedicated PIT/OOS validation.",
             "Sector Rotation V2 is integrated into Committee and unified reporting only as diagnostics: current PIT/OOS status, valuation/correction warnings and frozen evidence are visible with decision influence fixed at zero.",
             "Sector Rotation V2 per-decision context is published in a separate immutable diagnostic file keyed to Committee rows; COMMITTEE_DECISIONS.csv is not modified by that context join.",
