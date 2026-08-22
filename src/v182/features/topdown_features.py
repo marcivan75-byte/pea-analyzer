@@ -1,4 +1,5 @@
 from __future__ import annotations
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import pandas as pd
 
@@ -125,7 +126,7 @@ def _record_news_diagnostics(specs: list[dict], results: dict, diagnostics: list
 
 
 def build_topdown(actions: pd.DataFrame, etfs: pd.DataFrame, *, fred_api_key: str | None, instrument_news_top_n: int = 80) -> TopDownResult:
-    """Build the same Top-Down funnel with exact-query GDELT deduplication."""
+    """Build the same Top-Down funnel while overlapping independent FRED/GDELT I/O."""
     diagnostics=[]; provenance={}; global_scores={}; action_scores={}; etf_scores={}
     combined=pd.concat([actions.assign(__asset="ACTION"),etfs.assign(__asset="ETF")],ignore_index=True,sort=False)
 
@@ -134,17 +135,9 @@ def build_topdown(actions: pd.DataFrame, etfs: pd.DataFrame, *, fred_api_key: st
         global_scores["funnel_market_sentiment_score"]=sentiment
         provenance["funnel_market_sentiment_score"]="INTERNAL_PIT_BREADTH_MOMENTUM"
 
-    macro=global_macro_score(fred_api_key)
-    if macro.score is not None and macro.coverage>=0.50:
-        global_scores["funnel_global_macro_score"]=macro.score
-        provenance["funnel_global_macro_score"]="FRED"
-    else:
-        fallback=_market_regime_score(combined)
-        if fallback is not None:
-            global_scores["funnel_global_macro_score"]=fallback
-            provenance["funnel_global_macro_score"]="MARKET_IMPLIED_MACRO_FALLBACK_C"
-    diagnostics.append({"kind":"global_macro","score":macro.score,"coverage":macro.coverage,"components":macro.components,"errors":macro.errors,"effective_source":provenance.get("funnel_global_macro_score")})
-
+    # Query construction depends only on the already-enriched frames, not on FRED.
+    # Build the exact historical query set first, then overlap the two independent
+    # network providers. GDELT keeps its own global provider-safe start limiter.
     global_query="(markets OR economy OR stocks OR bonds)"
     specs=[_news_spec("global_news","GLOBAL",global_query)]
     contexts={}
@@ -177,10 +170,29 @@ def build_topdown(actions: pd.DataFrame, etfs: pd.DataFrame, *, fred_api_key: st
                 contexts[asset_class]["instrument_queries"][isin]=query
                 specs.append(_news_spec("ACTION_instrument_news",isin,query))
 
-    results=score_queries(
-        [spec["query"] for spec in specs],
-        timespan="2d",max_records=50,delay_seconds=0.12,max_workers=6,
-    )
+    with ThreadPoolExecutor(max_workers=2,thread_name_prefix="topdown-provider") as pool:
+        macro_future=pool.submit(global_macro_score,fred_api_key)
+        news_future=pool.submit(
+            score_queries,
+            [spec["query"] for spec in specs],
+            timespan="2d",
+            max_records=50,
+            delay_seconds=0.12,
+            max_workers=6,
+        )
+        macro=macro_future.result()
+        results=news_future.result()
+
+    if macro.score is not None and macro.coverage>=0.50:
+        global_scores["funnel_global_macro_score"]=macro.score
+        provenance["funnel_global_macro_score"]="FRED"
+    else:
+        fallback=_market_regime_score(combined)
+        if fallback is not None:
+            global_scores["funnel_global_macro_score"]=fallback
+            provenance["funnel_global_macro_score"]="MARKET_IMPLIED_MACRO_FALLBACK_C"
+    diagnostics.append({"kind":"global_macro","score":macro.score,"coverage":macro.coverage,"components":macro.components,"errors":macro.errors,"effective_source":provenance.get("funnel_global_macro_score")})
+
     _record_news_diagnostics(specs,results,diagnostics)
 
     global_score,_=results.get(global_query,(None,"GDELT_RESULT_MISSING"))
