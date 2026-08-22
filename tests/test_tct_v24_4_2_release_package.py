@@ -29,10 +29,13 @@ def test_release_manifest_is_complete_and_excludes_runtime_observations():
         "src/v182/reporting/tct_pit_ohlc_ledger_v24_4_2.py",
         "src/v182/reporting/tct_v24_4_2_pit_lineage.py",
         "src/v182/reporting/tct_v24_4_2_pit_validator.py",
+        "src/v182/reporting/tct_postmarket_bundle_run.py",
         "src/v182/sources/tct_catalyst_news_v24_4_2.py",
         "tests/fixtures/tct_v24_4_2_catalyst_golden_set.json",
+        "tests/test_tct_postmarket_bundle_runtime_v21_13_12.py",
         "docs/TCT_CDC_V24_4_2_FINAL.md",
         "docs/TCT_REFERENTIEL_V24_4_2_FINAL.md",
+        "docs/PIPELINE_RUNTIME_V21_13_12.md",
     }
     assert required <= set(files)
 
@@ -53,6 +56,7 @@ def test_release_zip_is_deterministic_and_sha256_is_published(tmp_path: Path):
         assert "docs/TCT_RELEASE_MANIFEST_V24_4_2.json" in names
         assert "scripts/build_tct_package_v24_4_2.py" in names
         assert "tests/test_tct_v24_4_2_release_package.py" in names
+        assert "src/v182/reporting/tct_postmarket_bundle_run.py" in names
     sidecar = first.with_suffix(".sha256.json")
     payload = json.loads(sidecar.read_text(encoding="utf-8"))
     assert payload["sha256"] == summary1["sha256"]

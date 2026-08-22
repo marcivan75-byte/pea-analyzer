@@ -99,15 +99,17 @@ def test_tactical_bundle_preserves_model_order_and_original_extractors():
 def test_daily_and_weekly_use_one_tactical_bundle_and_keep_downstream_pit_catalyst():
     daily = (ROOT / ".github" / "workflows" / "committee_tct_ct_daily.yml").read_text(encoding="utf-8")
     weekly = (ROOT / ".github" / "workflows" / "committee_master_daily.yml").read_text(encoding="utf-8")
+    postmarket = (ROOT / "src" / "v182" / "reporting" / "tct_postmarket_bundle_run.py").read_text(encoding="utf-8")
 
     for workflow in (daily, weekly):
         assert workflow.count("python -m v182.reporting.tactical_shadow_bundle_run") == 1
+        assert workflow.count("python -m v182.reporting.tct_postmarket_bundle_run") == 1
         assert "python -m v182.reporting.action_ct_shadow_bundle_run" not in workflow
         assert "python -m v182.reporting.tct_daily_trader_shadow_run_v24_3_1" not in workflow
-        assert "python -m v182.reporting.tct_pit_ohlc_ledger_v24_4_2" in workflow
-        assert "python -m v182.reporting.tct_next_session_catalyst_run_v24_4_2" in workflow
-        assert "python -m v182.reporting.tct_v24_4_2_pit_lineage" in workflow
-        assert "python -m v182.reporting.tct_v24_4_2_pit_validator" in workflow
 
+    assert "ohlc_ledger.run(root=root)" in postmarket
+    assert 'catalyst.run(root=root, phase="POSTMARKET")' in postmarket
+    assert "lineage.run(root=root)" in postmarket
+    assert "validator.run(root=root)" in postmarket
     assert "TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json" in daily
     assert "TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json" in weekly

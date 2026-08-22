@@ -58,7 +58,6 @@ def test_daily_runtime_consolidates_decision_state_without_mixing_ohlcv_cache():
     ):
         assert state_path in workflow
 
-    # OHLCV keeps its independent, success-only anti-poisoning cache policy.
     assert "Save persistent OHLCV cache" in workflow
     assert "success() && hashFiles('data/cache/**') != ''" in workflow
     assert "key: ohlcv-v3-${{ github.run_id }}" in workflow
@@ -79,18 +78,17 @@ def test_weekly_runtime_uses_two_state_caches_and_preserves_migration_fallbacks(
     assert "state/sector_rotation_v2/" in workflow
     assert "state/etf_fund_flows/" in workflow
 
-    # No decision, scoring or validation capability is removed by the runtime optimization.
     for required_step in (
         "Run weekly unified Committee pipeline",
         "Friday TCT CT scoring and V21.8",
         "Action CT V22.0 V22.1 + TCT V24.3.1 Friday shared-parquet SHADOW",
-        "Run consolidated Friday POSTMARKET catalyst snapshot V24.4.2",
-        "Validate Friday POSTMARKET V24.4.2 PIT ledger",
+        "Friday POSTMARKET V24.4.2 OHLC + catalyst + lineage + validator single-process",
         "Run ETF Fund Flows V1 SHADOW context",
         "Audit criteria governance",
     ):
         assert required_step in workflow
     assert workflow.count("python -m v182.reporting.tactical_shadow_bundle_run") == 1
+    assert workflow.count("python -m v182.reporting.tct_postmarket_bundle_run") == 1
     assert "state/action_ct/" in workflow
     assert "state/action_ct_v22_1/" in workflow
     assert "state/tct_context/" in workflow

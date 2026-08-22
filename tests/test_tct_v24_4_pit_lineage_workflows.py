@@ -7,10 +7,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_daily_workflow_persists_ohlc_ledger_from_existing_cache_only():
     workflow = (ROOT / ".github" / "workflows" / "committee_tct_ct_daily.yml").read_text(encoding="utf-8")
-    assert "Persist compact daily OHLC for V24.4.2 PIT" in workflow
-    assert "python -m v182.reporting.tct_pit_ohlc_ledger_v24_4_2" in workflow
+    bundle = (ROOT / "src" / "v182" / "reporting" / "tct_postmarket_bundle_run.py").read_text(encoding="utf-8")
+    assert "POSTMARKET V24.4.2 OHLC + catalyst + lineage + validator single-process" in workflow
+    assert "python -m v182.reporting.tct_postmarket_bundle_run" in workflow
     assert "state/tct_context/TCT_DAILY_OHLC_LEDGER.csv" in workflow
-    step = workflow.split("- name: Persist compact daily OHLC for V24.4.2 PIT", 1)[1].split("- name:", 1)[0]
+    assert "ohlc_ledger.run(root=root)" in bundle
+    step = workflow.split("- name: POSTMARKET V24.4.2 OHLC + catalyst + lineage + validator single-process", 1)[1].split("- name:", 1)[0]
     assert "continue-on-error: true" in step
 
 

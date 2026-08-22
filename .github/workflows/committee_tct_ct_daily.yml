@@ -139,23 +139,9 @@ jobs:
         continue-on-error: true
         run: python -m v182.reporting.tactical_shadow_bundle_run
 
-      - name: Persist compact daily OHLC for V24.4.2 PIT
+      - name: POSTMARKET V24.4.2 OHLC + catalyst + lineage + validator single-process
         continue-on-error: true
-        run: python -m v182.reporting.tct_pit_ohlc_ledger_v24_4_2
-
-      - name: Run consolidated POSTMARKET catalyst snapshot V24.4.2
-        continue-on-error: true
-        env:
-          TCT_CATALYST_PHASE: POSTMARKET
-        run: python -m v182.reporting.tct_next_session_catalyst_run_v24_4_2
-
-      - name: Apply POSTMARKET V24.4.2 PIT OHLC lineage
-        continue-on-error: true
-        run: python -m v182.reporting.tct_v24_4_2_pit_lineage
-
-      - name: Validate POSTMARKET V24.4.2 PIT ledger
-        continue-on-error: true
-        run: python -m v182.reporting.tct_v24_4_2_pit_validator
+        run: python -m v182.reporting.tct_postmarket_bundle_run
 
       - name: Publish Android tactical summaries
         if: always()
@@ -191,6 +177,7 @@ jobs:
           if [ -f outputs/audit/ACTION_CT_V22_1_0_AUDIT.json ]; then cat outputs/audit/ACTION_CT_V22_1_0_AUDIT.json; fi
           if [ -f outputs/audit/ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json ]; then cat outputs/audit/ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json; fi
           if [ -f outputs/audit/TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json ]; then cat outputs/audit/TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json; fi
+          if [ -f outputs/audit/POSTMARKET_BUNDLE_RUNTIME_V21_13_12.json ]; then cat outputs/audit/POSTMARKET_BUNDLE_RUNTIME_V21_13_12.json; fi
           if [ -f outputs/audit/ACTION_CT_V22_1_0_CONTEXT.json ]; then cat outputs/audit/ACTION_CT_V22_1_0_CONTEXT.json; fi
           if [ -f outputs/audit/ACTION_CT_V22_1_0_RUNTIME.json ]; then cat outputs/audit/ACTION_CT_V22_1_0_RUNTIME.json; fi
           if [ -f outputs/audit/ACTION_CT_V22_1_0_ERRORS.json ]; then cat outputs/audit/ACTION_CT_V22_1_0_ERRORS.json; fi
@@ -247,6 +234,7 @@ jobs:
             outputs/audit/ACTION_CT_V22_1_0_AUDIT.json
             outputs/audit/ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json
             outputs/audit/TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json
+            outputs/audit/POSTMARKET_BUNDLE_RUNTIME_V21_13_12.json
             outputs/audit/ACTION_CT_V22_1_0_CONTEXT.json
             outputs/audit/ACTION_CT_V22_1_0_RUNTIME.json
             outputs/audit/ACTION_CT_V22_1_0_ERRORS.json
