@@ -1,4 +1,5 @@
 from __future__ import annotations
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from datetime import datetime, timezone
 import json
@@ -89,6 +90,37 @@ def _apply_canonical_actions(actions_df: pd.DataFrame, cfg: dict) -> tuple[pd.Da
     }
     (OUTPUTS/"audit"/"V21_CANONICAL_UNIVERSE.json").write_text(json.dumps(audit,ensure_ascii=False,indent=2),encoding="utf-8")
     return result.included.reset_index(drop=True),audit
+
+
+def _collect_wave5_wave6_parallel(
+    actions_df: pd.DataFrame,
+    etf_with_tickers: pd.DataFrame,
+    cfg: dict,
+    finnhub_key: str | None,
+    *,
+    run_wave5: bool,
+    run_wave6: bool,
+) -> tuple[tuple[list[dict], list[dict]] | None, tuple[list[dict], list[dict]] | None]:
+    """Overlap independent Finnhub Action consensus and Yahoo ETF metadata I/O.
+
+    WAVE_04 remains strictly completed before this helper so current earnings-event
+    flags keep their existing authority over Finnhub HOT/WARM/COLD refresh tiers.
+    Only WAVE_05 (Finnhub Actions) and WAVE_06 (Yahoo ETF info) overlap; they use
+    distinct providers, caches and output audits. No score, criterion, threshold,
+    universe membership or missing-value policy is changed.
+    """
+    do_wave5=bool(run_wave5 and finnhub_key)
+    do_wave6=bool(run_wave6)
+    if not do_wave5 and not do_wave6:
+        return None,None
+    if do_wave5 and do_wave6:
+        with ThreadPoolExecutor(max_workers=2,thread_name_prefix="wave5-wave6") as pool:
+            future5=pool.submit(waves.wave5_consensus_finnhub,actions_df.copy(),str(finnhub_key))
+            future6=pool.submit(waves.wave6_etf_info,etf_with_tickers.copy(),cfg)
+            return future5.result(),future6.result()
+    if do_wave5:
+        return waves.wave5_consensus_finnhub(actions_df,str(finnhub_key)),None
+    return None,waves.wave6_etf_info(etf_with_tickers,cfg)
 
 
 def _run_pipeline(run_id: str, run_profile: str, runtime: RuntimeTelemetry) -> dict:
@@ -188,10 +220,21 @@ def _run_pipeline(run_id: str, run_profile: str, runtime: RuntimeTelemetry) -> d
         _audit(actions_df,etf_df,"WAVE_04_ACTION_FUNDAMENTALS",failures=failures4+q3,source_context="yfinance fondamentaux/metadonnees")
         print(f"WAVE_04 — {len(obs4)} champs fondamentaux/métadonnées Actions, {len(failures4)} échecs")
 
-    runtime.transition("WAVE_05_ACTION_CONSENSUS", "COLLECTION")
     finnhub_key = os.environ.get("FINNHUB_API_KEY")
-    if not checkpoint.done("WAVE_05") and finnhub_key:
-        obs5, failures5 = waves.wave5_consensus_finnhub(actions_df, finnhub_key)
+    run_wave5=not checkpoint.done("WAVE_05") and bool(finnhub_key)
+    run_wave6=not checkpoint.done("WAVE_06")
+    runtime.transition("WAVE_05_06_INDEPENDENT_SOURCES", "COLLECTION")
+    wave5_result,wave6_result=_collect_wave5_wave6_parallel(
+        actions_df,
+        etf_with_tickers,
+        cfg,
+        finnhub_key,
+        run_wave5=run_wave5,
+        run_wave6=run_wave6,
+    )
+
+    if wave5_result is not None:
+        obs5, failures5 = wave5_result
         actions_df, q5 = apply_and_track(actions_df, obs5)
         quarantine_log += q5
         _write_failures("V18.2_WAVE05_FINNHUB", failures5)
@@ -202,9 +245,8 @@ def _run_pipeline(run_id: str, run_profile: str, runtime: RuntimeTelemetry) -> d
         _audit(actions_df,etf_df,"WAVE_05_ACTION_CONSENSUS_KEY_MISSING",failures=[{"source":"Finnhub","reason":"FINNHUB_API_KEY_MISSING"}],source_context="Finnhub indisponible; données restent manquantes")
         print("WAVE_05 — FINNHUB_API_KEY absent : critères concernés restent N/A")
 
-    runtime.transition("WAVE_06_ETF_INFO", "COLLECTION")
-    if not checkpoint.done("WAVE_06"):
-        obs6, failures6 = waves.wave6_etf_info(etf_with_tickers, cfg)
+    if wave6_result is not None:
+        obs6, failures6 = wave6_result
         etf_df, q6 = apply_and_track(etf_df, obs6)
         quarantine_log += q6
         _write_failures("V18.2_WAVE06_ETF_YFINANCE", failures6)
