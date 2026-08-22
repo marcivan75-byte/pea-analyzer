@@ -1,0 +1,214 @@
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from pathlib import Path
+import json
+
+import pandas as pd
+
+from v182.sources.boursorama_selected import collect_selected_action_context_cached
+from v182.sources.investing_technical import collect_technical_context_cached
+
+ROOT = Path(__file__).resolve().parents[3]
+CONTRACT_PATH = Path("config/SOURCE_FUNCTIONAL_CONTRACT_V21_15.json")
+
+
+def _read_contract(root: Path) -> dict:
+    return json.loads((root / CONTRACT_PATH).read_text(encoding="utf-8"))
+
+
+def _score_sort(frame: pd.DataFrame) -> pd.DataFrame:
+    out = frame.copy()
+    out["_source_priority_score"] = pd.to_numeric(out.get("score"), errors="coerce")
+    if "selected_rank" in out:
+        rank = pd.to_numeric(out["selected_rank"], errors="coerce")
+        out["_selected_rank"] = rank
+    else:
+        out["_selected_rank"] = pd.NA
+    return out.sort_values(["_selected_rank", "_source_priority_score"], ascending=[True, False], na_position="last")
+
+
+def select_preselected_rows(
+    rows: pd.DataFrame,
+    *,
+    max_unique_instruments: int = 40,
+    accepted_statuses: tuple[str, ...] = ("BUY_CANDIDATE", "WATCH", "REVIEW", "SHADOW_CANDIDATE"),
+) -> pd.DataFrame:
+    """Select only instruments already retained by upstream models.
+
+    No source data can create its own candidate. This function is intentionally
+    downstream of scoring and preserves all horizon rows for a selected ISIN.
+    """
+    if rows.empty or "isin" not in rows:
+        return pd.DataFrame(columns=rows.columns)
+    frame = rows.copy()
+    if "decision" in frame:
+        selected = frame["decision"].astype(str).str.upper().isin(accepted_statuses)
+    elif "dynamic_decision" in frame:
+        selected = frame["dynamic_decision"].astype(str).str.upper().isin(accepted_statuses)
+    elif "selected_rank" in frame:
+        selected = pd.to_numeric(frame["selected_rank"], errors="coerce").notna()
+    elif "dynamic_selected" in frame:
+        selected = frame["dynamic_selected"].fillna(False).astype(bool)
+    else:
+        selected = pd.Series(False, index=frame.index)
+    frame = frame[selected].copy()
+    if frame.empty:
+        return frame
+    ordered = _score_sort(frame)
+    unique_isins = list(dict.fromkeys(ordered["isin"].astype(str).tolist()))[: max(0, int(max_unique_instruments))]
+    return frame[frame["isin"].astype(str).isin(unique_isins)].copy()
+
+
+def attach_master_identity(selected: pd.DataFrame, actions: pd.DataFrame | None, etfs: pd.DataFrame | None) -> pd.DataFrame:
+    if selected.empty:
+        return selected
+    frames = []
+    for master, asset in ((actions, "ACTION"), (etfs, "ETF")):
+        if master is None or master.empty or "isin" not in master:
+            continue
+        keep = [c for c in ("isin", "name", "yahoo_ticker", "long_name_yf", "investing_url", "investing_technical_url") if c in master]
+        part = master[keep].copy()
+        part["asset_class"] = asset
+        frames.append(part)
+    if not frames:
+        return selected
+    identity = pd.concat(frames, ignore_index=True, sort=False).drop_duplicates(["isin", "asset_class"])
+    result = selected.copy()
+    if "asset_class" not in result:
+        result["asset_class"] = "ACTION"
+    result = result.merge(identity, on=["isin", "asset_class"], how="left", suffixes=("", "_master"))
+    for field in ("name", "yahoo_ticker", "long_name_yf", "investing_url", "investing_technical_url"):
+        master_field = f"{field}_master"
+        if master_field in result:
+            if field not in result:
+                result[field] = result[master_field]
+            else:
+                missing = result[field].isna() | result[field].astype(str).str.strip().isin({"", "nan", "None"})
+                result.loc[missing, field] = result.loc[missing, master_field]
+            result = result.drop(columns=[master_field])
+    return result
+
+
+def _pivot(observations: list[dict]) -> pd.DataFrame:
+    if not observations:
+        return pd.DataFrame()
+    frame = pd.DataFrame(observations)
+    required = {"isin", "horizon", "field", "value"}
+    if not required.issubset(frame.columns):
+        return pd.DataFrame()
+    index = [c for c in ("isin", "asset_class", "horizon") if c in frame]
+    return frame.pivot_table(index=index, columns="field", values="value", aggfunc="last").reset_index()
+
+
+def enrich_selected_rows(
+    rows: pd.DataFrame,
+    root: Path = ROOT,
+    *,
+    profile: str = "SELECTED",
+) -> tuple[pd.DataFrame, dict]:
+    contract = _read_contract(root)
+    scope = contract["scope"]
+    selected = select_preselected_rows(
+        rows,
+        max_unique_instruments=int(scope["selected_only_max_unique_instruments"]),
+        accepted_statuses=tuple(scope["preselection_statuses"]),
+    )
+    if selected.empty:
+        return rows.copy(), {
+            "status": "NO_PRESELECTED_ROWS",
+            "profile": profile,
+            "selected_rows": 0,
+            "decision_influence": False,
+            "score_influence": 0.0,
+        }
+
+    bcfg = contract["boursorama"]
+    icfg = contract["investing"]
+    action_selected = selected[selected["asset_class"].astype(str).str.upper().eq("ACTION")].copy()
+
+    def run_boursorama():
+        if action_selected.empty:
+            return None
+        return collect_selected_action_context_cached(
+            action_selected,
+            root / "state" / "provenance" / "source_cache" / "BOURSORAMA_SELECTED_V1.json",
+            dynamic_ttl_hours=float(bcfg["dynamic_ttl_hours"]),
+            deep_ttl_hours=float(bcfg["deep_ttl_hours"]),
+            refresh_budget=int(bcfg["refresh_budget"]),
+            request_start_interval_seconds=float(bcfg["request_start_interval_seconds"]),
+            max_workers=int(bcfg["max_workers"]),
+        )
+
+    def run_investing():
+        return collect_technical_context_cached(
+            selected,
+            root / "state" / "provenance" / "source_cache" / "INVESTING_TECHNICAL_V1.json",
+            root / "state" / "provenance" / "source_cache" / "INVESTING_URL_MAP_V1.json",
+            refresh_budget=int(icfg["refresh_budget"]),
+            ttl_hours=float(icfg["ttl_hours"]),
+            request_start_interval_seconds=float(icfg["request_start_interval_seconds"]),
+            max_workers=int(icfg["max_workers"]),
+        )
+
+    b_result = None
+    i_result = None
+    branch_errors: list[dict] = []
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="selected-source") as pool:
+        futures = {"boursorama": pool.submit(run_boursorama), "investing": pool.submit(run_investing)}
+        for name, future in futures.items():
+            try:
+                result = future.result()
+                if name == "boursorama":
+                    b_result = result
+                else:
+                    i_result = result
+            except Exception as exc:
+                branch_errors.append({"source": name, "reason": type(exc).__name__, "detail": str(exc)[:240]})
+
+    observations: list[dict] = []
+    failures: list[dict] = list(branch_errors)
+    if b_result is not None:
+        observations.extend(b_result.observations)
+        failures.extend(b_result.failures)
+    if i_result is not None:
+        observations.extend(i_result.observations)
+        failures.extend(i_result.failures)
+
+    context = _pivot(observations)
+    enriched = rows.copy()
+    if not context.empty:
+        keys = [c for c in ("isin", "asset_class", "horizon") if c in enriched and c in context]
+        enriched = enriched.merge(context, on=keys, how="left")
+
+    outdir = root / "outputs" / "source_context"
+    auditdir = root / "outputs" / "audit"
+    outdir.mkdir(parents=True, exist_ok=True)
+    auditdir.mkdir(parents=True, exist_ok=True)
+    safe_profile = "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in profile.upper())
+    selected.to_csv(outdir / f"{safe_profile}_PRESELECTED_INPUT.csv", sep=";", index=False, encoding="utf-8-sig")
+    pd.DataFrame(observations).to_csv(outdir / f"{safe_profile}_SOURCE_OBSERVATIONS.csv", sep=";", index=False, encoding="utf-8-sig")
+    pd.DataFrame(failures).to_csv(outdir / f"{safe_profile}_SOURCE_FAILURES.csv", sep=";", index=False, encoding="utf-8-sig")
+
+    payload = {
+        "status": "SUCCESS_WITH_CONTEXT" if observations else "SUCCESS_NO_SOURCE_DATA",
+        "version": contract["version"],
+        "profile": profile,
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "selected_rows": int(len(selected)),
+        "selected_unique_isins": int(selected["isin"].nunique()),
+        "boursorama": b_result.metrics if b_result is not None else {"status": "NO_ACTION_SELECTED_OR_BRANCH_FAILED"},
+        "investing": i_result.metrics if i_result is not None else {"status": "BRANCH_FAILED"},
+        "failures": int(len(failures)),
+        "weights_unchanged": True,
+        "thresholds_unchanged": True,
+        "decision_influence": False,
+        "score_influence": 0.0,
+        "can_create_buy": False,
+        "functional_contract": "config/SOURCE_FUNCTIONAL_CONTRACT_V21_15.json",
+    }
+    (auditdir / f"{safe_profile}_SELECTED_SOURCE_CONTEXT.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
+    )
+    return enriched, payload
