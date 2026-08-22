@@ -12,9 +12,10 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 PRICE_FIELDS = {"open", "high", "low", "close", "adj close"}
-CACHE_FORMAT_VERSION = 3
+CACHE_FORMAT_VERSION = 4
 DEFAULT_INCREMENTAL_PERIOD = "1mo"
-DEFAULT_BOOTSTRAP_START = "2020-01-01"
+DEFAULT_BOOTSTRAP_START = "2023-01-01"
+DEFAULT_ROLLING_MONTHS = 60
 REBASE_RTOL = 1e-5
 REBASE_ATOL = 1e-8
 
@@ -54,7 +55,7 @@ def _contains_ticker(frame, ticker: str) -> bool:
 
 
 def _clear_history_cache(cache: Path) -> None:
-    """Explicit full-rebuild helper; normal daily runs preserve valid long history."""
+    """Explicit full-rebuild helper; normal daily runs preserve valid rolling history."""
     targets = list(cache.glob("history_*.parquet"))
     manifest = cache / "history_manifest.json"
     if manifest.exists():
@@ -115,6 +116,42 @@ def _merge_history_frames(
     base = base.reindex(index=index, columns=columns)
     fresh = fresh.reindex(index=index, columns=columns)
     return fresh.combine_first(base).sort_index()
+
+
+def _rolling_window_start(
+    anchor_start: str | None,
+    rolling_months: int,
+    *,
+    now: pd.Timestamp | None = None,
+) -> pd.Timestamp | None:
+    """Return max(anchor_start, current_date - rolling_months)."""
+    if not anchor_start:
+        return None
+    if int(rolling_months) <= 0:
+        raise ValueError(f"INVALID_YFINANCE_ROLLING_MONTHS:{rolling_months}")
+    anchor = pd.Timestamp(anchor_start).normalize()
+    reference = pd.Timestamp.now(tz="UTC") if now is None else pd.Timestamp(now)
+    if reference.tzinfo is not None:
+        reference = reference.tz_localize(None)
+    rolling_start = (reference.normalize() - pd.DateOffset(months=int(rolling_months))).normalize()
+    return max(anchor, rolling_start)
+
+
+def _trim_to_rolling_window(
+    frame: pd.DataFrame,
+    window_start: pd.Timestamp | None,
+) -> pd.DataFrame:
+    """Drop observations older than the active rolling-history floor."""
+    if frame is None or frame.empty or window_start is None:
+        return frame
+    if not isinstance(frame.index, pd.DatetimeIndex):
+        return frame
+    cutoff = pd.Timestamp(window_start)
+    if frame.index.tz is not None and cutoff.tzinfo is None:
+        cutoff = cutoff.tz_localize(frame.index.tz)
+    elif frame.index.tz is None and cutoff.tzinfo is not None:
+        cutoff = cutoff.tz_localize(None)
+    return frame.loc[frame.index >= cutoff].sort_index()
 
 
 def _price_columns(frame: pd.DataFrame) -> list:
@@ -181,6 +218,7 @@ def _cache_is_usable(
     auto_adjust: bool,
     actions_requested: bool,
     bootstrap_start: str | None = None,
+    rolling_months: int = DEFAULT_ROLLING_MONTHS,
 ) -> bool:
     manifest = _read_manifest(cache)
     if not manifest or manifest.get("cache_format_version") != CACHE_FORMAT_VERSION:
@@ -196,6 +234,8 @@ def _cache_is_usable(
     if bool(manifest.get("actions_requested")) != bool(actions_requested):
         return False
     if (manifest.get("bootstrap_start") or None) != (bootstrap_start or None):
+        return False
+    if int(manifest.get("rolling_months", -1)) != int(rolling_months):
         return False
     return True
 
@@ -291,24 +331,26 @@ def download_history(
     auto_adjust: bool = True,
     include_actions: bool | None = None,
     start: str | None = DEFAULT_BOOTSTRAP_START,
+    rolling_months: int = DEFAULT_ROLLING_MONTHS,
 ) -> DownloadResult:
-    """Maintain full OHLCV locally and refresh it incrementally without data loss.
+    """Maintain OHLCV from 2023-01-01, then keep only the latest 60 months.
 
-    First use (or an incompatible cache) bootstraps the configured full history.
-    By default V21.13 anchors that bootstrap to 2020-01-01. A caller may pass an
-    explicit start date, or ``start=None`` to opt into the legacy relative-period
-    fallback. Subsequent runs fetch only a recent overlap window, merge it
-    cell-by-cell, and retain the complete long history.
+    The configured start date is an anchor, not a request to rebuild that entire
+    history on every run. While the available post-2023 history is shorter than
+    60 months, the cache begins at the anchor. Once 60 months are available, the
+    retention floor advances with time and observations older than that floor are
+    removed from the local cache.
 
-    The explicit bootstrap start is part of cache compatibility. Changing it, or
-    migrating from a legacy manifest without it, forces a full reconstruction.
+    First use (or an incompatible cache) bootstraps only the active history
+    window. Subsequent runs fetch a recent overlap window, merge it cell-by-cell,
+    prune observations older than the active rolling floor, and preserve the rest.
 
     If adjusted prices in already closed overlap sessions materially change,
-    the affected batch is automatically rebuilt from the same explicit start
-    (or over the configured fallback period when no start is supplied).
+    only the affected batch is rebuilt, and only from the active rolling floor.
 
     Set PEA_YF_FORCE_REFRESH=1 to refresh again on the same UTC day.
-    Set PEA_YF_FORCE_FULL_HISTORY=1 for an explicit complete reconstruction.
+    Set PEA_YF_FORCE_FULL_HISTORY=1 for an explicit reconstruction of the active
+    rolling window. PEA_YF_ROLLING_MONTHS may override the default 60 months.
     """
     import yfinance as yf
 
@@ -322,12 +364,25 @@ def download_history(
         os.environ.get("PEA_YF_INCREMENTAL_PERIOD", DEFAULT_INCREMENTAL_PERIOD).strip()
         or DEFAULT_INCREMENTAL_PERIOD
     )
+    rolling_override = os.environ.get("PEA_YF_ROLLING_MONTHS", "").strip()
+    if rolling_override:
+        try:
+            rolling_months = int(rolling_override)
+        except ValueError as exc:
+            raise ValueError(f"INVALID_YFINANCE_ROLLING_MONTHS:{rolling_override}") from exc
+    rolling_months = int(rolling_months)
+    if rolling_months <= 0:
+        raise ValueError(f"INVALID_YFINANCE_ROLLING_MONTHS:{rolling_months}")
+
     bootstrap_start = str(start).strip() if start else None
     if bootstrap_start:
         try:
             pd.Timestamp(bootstrap_start)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"INVALID_YFINANCE_HISTORY_START:{bootstrap_start}") from exc
+
+    window_start = _rolling_window_start(bootstrap_start, rolling_months)
+    effective_start = window_start.strftime("%Y-%m-%d") if window_start is not None else None
 
     usable = (not force_full) and _cache_is_usable(
         cache,
@@ -337,6 +392,7 @@ def download_history(
         auto_adjust,
         actions_requested,
         bootstrap_start,
+        rolling_months,
     )
     prior_manifest = _read_manifest(cache) if usable else None
 
@@ -372,8 +428,9 @@ def download_history(
             if mode == "INCREMENTAL"
             else pd.DataFrame()
         )
+        existing = _trim_to_rolling_window(existing, window_start)
         request_period = incremental_period if not existing.empty else period
-        request_start = None if not existing.empty else bootstrap_start
+        request_start = None if not existing.empty else effective_start
         fresh = pd.DataFrame()
 
         try:
@@ -388,9 +445,9 @@ def download_history(
                 start=request_start,
             )
             if not existing.empty and _overlap_rebase_detected(existing, fresh):
-                full_window = f"from {bootstrap_start}" if bootstrap_start else period
+                full_window = f"from {effective_start}" if effective_start else period
                 logger.warning(
-                    "OHLCV adjusted-history revision detected in batch %s; rebuilding full %s",
+                    "OHLCV adjusted-history revision detected in batch %s; rebuilding active window %s",
                     batch_start,
                     full_window,
                 )
@@ -402,11 +459,11 @@ def download_history(
                     auto_adjust,
                     actions_requested,
                     threads=True,
-                    start=bootstrap_start,
+                    start=effective_start,
                 )
                 existing = pd.DataFrame()
                 request_period = period
-                request_start = bootstrap_start
+                request_start = effective_start
                 rebased_batches.append(batch_start)
         except Exception as exc:
             logger.warning(
@@ -473,6 +530,7 @@ def download_history(
             time.sleep(0.12)
 
         combined = _merge_history_frames(existing, fresh)
+        combined = _trim_to_rolling_window(combined, window_start)
         if not combined.empty:
             try:
                 combined.to_parquet(output)
@@ -515,6 +573,8 @@ def download_history(
         "batch_size": int(batch_size),
         "auto_adjust": bool(auto_adjust),
         "bootstrap_start": bootstrap_start,
+        "rolling_months": rolling_months,
+        "effective_window_start": effective_start,
         "bootstrap_period_fallback": period,
         "incremental_period": incremental_period,
     }
@@ -532,12 +592,13 @@ def download_history(
         return DownloadResult(len(clean), successful, failed, None)
 
     logger.info(
-        "OHLCV %s: %s/%s refreshed, %s cached, %s rebased batches",
+        "OHLCV %s: %s/%s refreshed, %s cached, %s rebased batches, window_start=%s",
         mode,
         len(successful),
         len(clean),
         len(cached_tickers),
         len(rebased_batches),
+        effective_start,
     )
     return DownloadResult(len(clean), successful, failed, str(manifest))
 
