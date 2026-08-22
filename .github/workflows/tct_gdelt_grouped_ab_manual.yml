@@ -1,0 +1,116 @@
+name: TCT GDELT Grouped A/B V21.13.14 Manual
+
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: "Existing PIT baseline phase"
+        required: true
+        type: choice
+        options:
+          - PREOPEN
+          - POSTMARKET
+        default: PREOPEN
+      group_size:
+        description: "Grouped GDELT company count"
+        required: true
+        type: choice
+        options:
+          - "2"
+          - "3"
+          - "4"
+          - "5"
+          - "6"
+          - "7"
+          - "8"
+        default: "5"
+
+permissions:
+  contents: read
+
+env:
+  PIP_CONSTRAINT: ${{ github.workspace }}/constraints-ci.txt
+  PYTHONPATH: ${{ github.workspace }}/src
+  PYTHONUNBUFFERED: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  gdelt-grouped-ab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Restore existing TCT PIT context read-only
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: state/tct_context/
+          key: tct-context-ab-readonly-${{ github.run_id }}
+          restore-keys: |
+            tct-context-
+            pea-runtime-state-
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements-catalyst.txt
+
+      - name: Install minimal catalyst runtime
+        run: pip install --prefer-binary -r requirements-catalyst.txt
+
+      - name: Verify PIT baseline exists before network
+        env:
+          TCT_GDELT_AB_PHASE: ${{ inputs.phase }}
+        run: |
+          test -s state/tct_context/TCT_V24_4_2_CATALYST_LEDGER.csv
+          python - <<'PY'
+          from pathlib import Path
+          from v182.reporting import tct_gdelt_grouped_ab_run_v21_13_14 as ab
+          from v182.reporting import tct_next_session_catalyst_run as legacy
+          phase = __import__('os').environ['TCT_GDELT_AB_PHASE']
+          ledger = legacy._read_csv(Path('state/tct_context/TCT_V24_4_2_CATALYST_LEDGER.csv'))
+          snapshot = ab._latest_snapshot(ledger, phase)
+          if snapshot.empty:
+              raise SystemExit(f'No V24.4.2 PIT baseline for {phase}')
+          ab._window(snapshot)
+          print(f'PIT baseline qualified: {phase}, rows={len(snapshot)}')
+          PY
+
+      - name: Run grouped GDELT A/B from existing PIT baseline
+        env:
+          TCT_GDELT_AB_PHASE: ${{ inputs.phase }}
+          TCT_GDELT_AB_GROUP_SIZE: ${{ inputs.group_size }}
+        run: python -m v182.reporting.tct_gdelt_grouped_ab_run_v21_13_14
+
+      - name: Publish A/B summary
+        if: always()
+        run: |
+          if [ -f outputs/audit/GDELT_GROUPED_AB_V21_13_14.json ]; then
+            printf '## GDELT grouped A/B V21.13.14\n\n' >> "$GITHUB_STEP_SUMMARY"
+            python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          p = json.loads(Path('outputs/audit/GDELT_GROUPED_AB_V21_13_14.json').read_text(encoding='utf-8'))
+          print(f"- Phase: {p.get('phase')}")
+          print(f"- Candidates: {p.get('candidate_count')}")
+          print(f"- Exact equivalence: {p.get('exact_equivalence_rate')}")
+          print(f"- News presence recall: {p.get('news_presence_recall')}")
+          print(f"- Critical event recall: {p.get('critical_event_recall')}")
+          print(f"- Fallback ISINs: {p.get('fallback_count')}")
+          print(f"- Projected request reduction: {p.get('projected_request_reduction_pct')}%")
+          print(f"- Production activation: {p.get('production_activation')}")
+          PY
+          fi
+
+      - name: Upload A/B evidence only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gdelt-grouped-ab-v21-13-14-${{ github.run_id }}
+          path: |
+            outputs/audit/GDELT_GROUPED_AB_V21_13_14.json
+            outputs/audit/GDELT_GROUPED_AB_V21_13_14_ROWS.csv
+          if-no-files-found: warn
+          compression-level: 1
+          retention-days: 14
