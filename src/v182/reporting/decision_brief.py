@@ -454,7 +454,7 @@ def _markdown(payload: dict) -> str:
         f"- Run : `{payload['run_id']}`",
         f"- Sélections à examiner : **{payload['selected_count']}**",
         f"- Changements depuis S-1 : **{payload['changed_count']}** ; sorties de sélection : **{len(payload['removed_from_selection'])}**",
-        "- Qualité de preuve = couverture/provenance/fraîcheur documentaire ; **ce n’est pas un nouveau score financier**.",
+        "- Qualité de preuve = couverture/provenance/datation documentaire ; **ce n’est pas un nouveau score financier**.",
         "- PREOPEN/POSTMARKET V24.4.2 = contexte SHADOW de dernière minute ; influence score/décision = 0.",
         "- Ordres réels : **DÉSACTIVÉS**.",
         "",
@@ -698,7 +698,7 @@ def run(root: Path = ROOT) -> dict:
         warnings.append("Référentiel pondéré CI indisponible : qualité de preuve et facteurs détaillés non documentés dans ce brief.")
 
     decision_rows = _decision_rows(decisions, reference, root)
-    removed = _removed_rows(root, decision_rows)
+    removed = _removed_rows(root, decision_rows) if decisions else []
     counts = Counter(str(row.get("decision", "MISSING")) for row in decisions)
     if blockers:
         decision_status = "BLOCKED"
