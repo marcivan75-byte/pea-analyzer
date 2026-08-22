@@ -20,7 +20,9 @@ TCT ne force donc plus le rafraîchissement de données fondamentales ou de cons
 
 ## Attribution HOT / WARM / COLD
 
-Quand un résultat de comité précédent est disponible, les meilleurs candidats de chaque horizon sont utilisés uniquement pour ordonner la collecte du run suivant :
+Après chaque Comité, un état compact est écrit dans `state/provenance/HORIZON_REFRESH_PRIORITY_V1.csv`. Ce fichier ne contient que les classements nécessaires à la priorisation réseau (`asset_class`, `horizon`, `isin`, `score`, `status`, `decision`, timestamp). Il est restauré et sauvegardé par le cache GitHub `state/provenance/`, ce qui permet au run suivant d'utiliser réellement le classement du run précédent.
+
+Les meilleurs candidats de chaque horizon sont utilisés uniquement pour ordonner la collecte du run suivant :
 
 - CT prioritaire -> HOT ;
 - MT prioritaire -> WARM ;
@@ -28,7 +30,7 @@ Quand un résultat de comité précédent est disponible, les meilleurs candidat
 
 Un buffer de promotion basé sur le score courant empêche un titre émergent de rester COLD entre deux runs. Les statuts COMMITTEE/WATCH et les publications de résultats proches surclassent toujours la politique d'économie de cache.
 
-Si le fichier de décisions précédent est absent ou invalide, le système revient automatiquement au score courant, aux événements et au cache existant. Il ne bloque pas le run.
+Au tout premier run, ou si l'état précédent est absent/invalide, le système revient automatiquement au score courant, aux événements et au cache existant. Il ne bloque pas le run. Le Comité de fin de run régénère ensuite l'état persistant pour le cycle suivant.
 
 ## TTL et budgets V21.13.3
 
@@ -62,6 +64,16 @@ Un cache dédié est ajouté : `state/provenance/source_cache/YFINANCE_ETF_INFO_
 - bootstrap complet si le cache est absent ;
 - âge dur maximal : 45 jours.
 
+## Persistance inter-runs
+
+Le workflow hebdomadaire restaure `state/provenance/` avant l'enrichissement et le sauvegarde à la fin. Ce répertoire contient désormais :
+
+- les caches sources Yahoo/Finnhub/ETF ;
+- l'état minimal de priorité par horizon du Comité précédent ;
+- la provenance temporelle existante.
+
+La hiérarchie n'est donc pas recalculée artificiellement à partir d'un fichier `outputs/` volatil.
+
 ## Gouvernance
 
 - 1 829 Actions et 102 ETF restent dans les univers canoniques.
@@ -69,6 +81,7 @@ Un cache dédié est ajouté : `state/provenance/source_cache/YFINANCE_ETF_INFO_
 - Une donnée mise en cache conserve son timestamp d'origine.
 - Les données manquantes ne sont jamais inventées ni imputées en neutre.
 - Les indicateurs dépendant du prix peuvent continuer à être recalculés localement depuis OHLCV + dénominateurs fondamentaux.
+- L'état de priorité du run précédent ne modifie jamais le score du run courant : il ne détermine que l'ordre et la fréquence des appels réseau.
 - T1/T2 restent exclusivement Action TCT.
 - ETF Fund Flows reste SHADOW.
 - Les gains de temps réels doivent être mesurés par la télémétrie des prochains runs.
