@@ -1,0 +1,105 @@
+name: Publish Final Package V21.13.16
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "FINAL_PACKAGE_V21_13_16_MANIFEST.json"
+      - ".github/workflows/publish_final_package_v21_13_16.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  publish-final-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+
+      - name: Validate final package manifest
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          p = Path("FINAL_PACKAGE_V21_13_16_MANIFEST.json")
+          payload = json.loads(p.read_text(encoding="utf-8"))
+          assert payload["package_name"] == "PEA_ANALYZER_FINAL_V21_13_16"
+          assert payload["package_version"] == "V21.13.16"
+          assert payload["status"] == "FINAL_VALIDATED_RUNTIME_PACKAGE"
+          assert payload["governance"]["t1_t2_scope"] == "ACTION_TCT_ONLY"
+          assert payload["governance"]["production_gdelt_grouping_enabled"] is False
+          assert payload["governance"]["real_orders_enabled"] is False
+          assert payload["runtime_dependency_contract"]["count"] == 13
+          assert payload["runtime_dependency_contract"]["must_equal_pyproject_project_dependencies"] is True
+          assert all(v == "SUCCESS" for v in payload["final_validation"].values())
+          print("Final package manifest OK")
+          PY
+
+      - name: Validate runtime dependency contract
+        run: |
+          python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          project_deps = [str(x).strip() for x in pyproject["project"]["dependencies"]]
+          runtime_deps = [
+              line.strip()
+              for line in Path("requirements-runtime.txt").read_text(encoding="utf-8").splitlines()
+              if line.strip() and not line.lstrip().startswith("#")
+          ]
+          assert runtime_deps == project_deps, (runtime_deps, project_deps)
+          assert len(runtime_deps) == 13
+          print("Runtime dependency contract OK: 13/13")
+          PY
+
+      - name: Build immutable final archive
+        run: |
+          git archive \
+            --format=zip \
+            --prefix=PEA_ANALYZER_FINAL_V21_13_16/ \
+            --output=PEA_ANALYZER_FINAL_V21_13_16.zip \
+            HEAD
+          sha256sum PEA_ANALYZER_FINAL_V21_13_16.zip > PEA_ANALYZER_FINAL_V21_13_16.sha256
+          git rev-parse HEAD > PEA_ANALYZER_FINAL_V21_13_16.commit.txt
+
+      - name: Validate archive contents
+        run: |
+          python - <<'PY'
+          from zipfile import ZipFile
+
+          archive = "PEA_ANALYZER_FINAL_V21_13_16.zip"
+          required = {
+              "PEA_ANALYZER_FINAL_V21_13_16/FINAL_PACKAGE_V21_13_16_MANIFEST.json",
+              "PEA_ANALYZER_FINAL_V21_13_16/requirements-runtime.txt",
+              "PEA_ANALYZER_FINAL_V21_13_16/pyproject.toml",
+              "PEA_ANALYZER_FINAL_V21_13_16/.github/workflows/committee_tct_ct_daily.yml",
+              "PEA_ANALYZER_FINAL_V21_13_16/.github/workflows/committee_master_daily.yml",
+              "PEA_ANALYZER_FINAL_V21_13_16/.github/workflows/tct_next_session_context.yml",
+              "PEA_ANALYZER_FINAL_V21_13_16/src/v182/reporting/unified_runner.py",
+          }
+          with ZipFile(archive) as zf:
+              names = set(zf.namelist())
+          missing = sorted(required - names)
+          assert not missing, f"Missing final package files: {missing}"
+          print(f"Archive OK: {len(names)} tracked entries")
+          PY
+
+      - name: Upload final package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: PEA_ANALYZER_FINAL_V21_13_16
+          path: |
+            PEA_ANALYZER_FINAL_V21_13_16.zip
+            PEA_ANALYZER_FINAL_V21_13_16.sha256
+            PEA_ANALYZER_FINAL_V21_13_16.commit.txt
+            FINAL_PACKAGE_V21_13_16_MANIFEST.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
