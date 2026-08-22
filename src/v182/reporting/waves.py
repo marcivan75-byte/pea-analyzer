@@ -32,7 +32,17 @@ def wave_history(df: pd.DataFrame, universe: str, cache_dir: str, cfg: dict) -> 
     if universe == "ACTION":
         qualify_action_yahoo_tickers(df)
     valid=df[df["yahoo_ticker"].apply(lambda v:not is_missing(v))]; tickers=valid["yahoo_ticker"].tolist(); batch_key="actions_batch_size" if universe=="ACTION" else "etf_batch_size"
-    return download_history(tickers=tickers,cache_dir=cache_dir,period=cfg["yfinance"]["history_period"],interval=cfg["yfinance"]["interval"],batch_size=cfg["yfinance"][batch_key],auto_adjust=cfg["yfinance"]["auto_adjust"])
+    yf_cfg=cfg["yfinance"]
+    return download_history(
+        tickers=tickers,
+        cache_dir=cache_dir,
+        period=yf_cfg["history_period"],
+        interval=yf_cfg["interval"],
+        batch_size=yf_cfg[batch_key],
+        auto_adjust=yf_cfg["auto_adjust"],
+        start=yf_cfg.get("history_start", "2023-01-01"),
+        rolling_months=int(yf_cfg.get("history_rolling_months", 60)),
+    )
 
 
 def resolve_etf_tickers(etf_df: pd.DataFrame, mapping_path: str | Path) -> tuple[pd.DataFrame, pd.DataFrame]:
