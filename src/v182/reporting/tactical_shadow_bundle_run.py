@@ -89,7 +89,7 @@ def run(root: Path = ROOT) -> dict:
 
     original_read_parquet = pd.read_parquet
     parquet_cache = ParquetReadCache(original_read_parquet)
-    pd.read_parquet = parquet_cache
+    setattr(pd, "read_parquet", parquet_cache)
     try:
         action_ct, action_ct_error = _run_step(
             "ACTION_CT_V22.0_V22.1",
@@ -100,7 +100,7 @@ def run(root: Path = ROOT) -> dict:
             lambda: tct_trader.run(root=root),
         )
     finally:
-        pd.read_parquet = original_read_parquet
+        setattr(pd, "read_parquet", original_read_parquet)
 
     errors = [error for error in (action_ct_error, tct_error) if error is not None]
     payload = {
