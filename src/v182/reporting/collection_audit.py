@@ -108,7 +108,10 @@ def write_collection_audit(
         {"collection":wave_id,"asset_class":"ETF","universe_rows":len(etfs),"missing_fields":int((inventory.query("asset_class=='ETF' and status=='MISSING'")).shape[0]),"partial_fields":int((inventory.query("asset_class=='ETF' and status=='PARTIAL'")).shape[0]),"fields_with_actual_source":int(((inventory.asset_class=="ETF")&(~inventory.source_reelle_absente)).sum()),"source_context":source_context},
     ])
     failures_df=pd.DataFrame(failures or []); safe="".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in wave_id)[:40]
-    effective_write_excel=bool(write_excel) and not _github_compact_intermediate_enabled(wave_id)
+    compact_runtime=_github_compact_intermediate_enabled(wave_id)
+    if compact_runtime:
+        os.environ["PEA_EFFECTIVE_INTERMEDIATE_AUDIT_FORMAT"]="CSV"
+    effective_write_excel=bool(write_excel) and not compact_runtime
     if effective_write_excel:
         path=root/f"COLLECTION_AUDIT_{safe}.xlsx"
         with pd.ExcelWriter(path,engine="openpyxl") as writer:
