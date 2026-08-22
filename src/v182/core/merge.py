@@ -18,6 +18,8 @@ class MergeDecision:
 
 def is_missing_value(value) -> bool:
     if value is None: return True
+    if isinstance(value,str):
+        return value.strip().upper() in MISSING_TOKENS
     try:
         marker=pd.isna(value)
     except (TypeError,ValueError):
@@ -46,7 +48,6 @@ def _normalized_value(value):
 @lru_cache(maxsize=16384)
 def _parse_as_of_text(text: str) -> pd.Timestamp | None:
     """Parse one normalized freshness string with a bounded process-local cache."""
-    # Guard legacy numeric price cells such as "64.14" from pandas epoch parsing.
     try:
         Decimal(text)
     except InvalidOperation:
@@ -56,12 +57,7 @@ def _parse_as_of_text(text: str) -> pd.Timestamp | None:
 
 
 def _as_of_timestamp(value) -> pd.Timestamp | None:
-    """Parse freshness metadata; arbitrary strings/numbers are never dates.
-
-    Source waves commonly stamp thousands of fields with the same handful of
-    timestamps. Cache only the normalized text parse; missing-value semantics and
-    the numeric-price guard remain evaluated exactly as before.
-    """
+    """Parse freshness metadata; arbitrary strings/numbers are never dates."""
     if is_missing_value(value):
         return None
     return _parse_as_of_text(str(value).strip())
