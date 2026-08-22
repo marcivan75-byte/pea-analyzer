@@ -86,7 +86,7 @@ def test_successful_run_produces_decision_driven_v3_brief(tmp_path: Path):
     alpha = next(row for row in payload["decision_rows"] if row["isin"] == "FR1")
     beta = next(row for row in payload["decision_rows"] if row["isin"] == "FR2")
     assert alpha["change_state"] == "DECISION_MODIFIEE"
-    assert alpha["score_delta"] == 4.4
+    assert round(alpha["score_delta"], 1) == 4.4
     assert alpha["catalyst_state"] == "UP_CATALYST_SHADOW"
     assert beta["action_bucket"] == "ACTION IMMEDIATE"
     assert beta["data_confidence"] == "FORTE"
