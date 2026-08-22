@@ -27,13 +27,15 @@ class _RetainedCacheEntry:
     latest: pd.DataFrame | None
     latest_map: dict[tuple[str,str],dict]
     retained_rows_map: dict[tuple[str,str,str],dict]
+    latest_event_map: dict[tuple[str,str],dict]
     sources_by_field: pd.DataFrame | None = None
 
 
 # The on-disk CSV remains the inter-process authority. In-process merges use the
 # retained maps directly and materialize a DataFrame only when an audit actually
-# needs one. This avoids copying/reducing the whole retained state after every
-# observation wave while preserving the exact append-only ledger.
+# needs one. The latest-event view is maintained separately because CI reporting
+# historically shows the most recent provenance event per ISIN+field, including
+# KEEP/QUARANTINE/SKIP events, rather than only the retained-value event.
 _LATEST_RETAINED_CACHE: dict[str, _RetainedCacheEntry] = {}
 _CACHE_LOCK = threading.RLock()
 
@@ -79,6 +81,28 @@ def _latest_mapping(latest: pd.DataFrame) -> dict[tuple[str,str],dict]:
     return out
 
 
+def _latest_event_mapping(ledger: pd.DataFrame) -> dict[tuple[str,str],dict]:
+    """Replicate CI's historical latest-event-by-(ISIN,field) semantics once.
+
+    CI explainability used to reread the whole ledger, parse ``recorded_at_utc``,
+    sort it and keep the last row per ISIN+field. Do exactly that on a cold cache
+    load, then maintain the same append-only view incrementally for the process.
+    """
+    if ledger.empty or not {"isin","field"}.issubset(ledger.columns):
+        return {}
+    frame=ledger.copy()
+    if "recorded_at_utc" in frame.columns:
+        frame["__recorded_at_parsed"]=pd.to_datetime(frame["recorded_at_utc"],errors="coerce",utc=True)
+        frame=frame.sort_values("__recorded_at_parsed").drop_duplicates(["isin","field"],keep="last")
+        frame=frame.drop(columns=["__recorded_at_parsed"])
+    else:
+        frame=frame.drop_duplicates(["isin","field"],keep="last")
+    return {
+        (str(record.get("isin","")),str(record.get("field",""))):record
+        for record in frame.to_dict("records")
+    }
+
+
 def _retained_rows_mapping(latest: pd.DataFrame) -> dict[tuple[str,str,str],dict]:
     """Preserve the full universe+ISIN+field retained state for audit aggregation."""
     if latest.empty or not {"universe","isin","field"}.issubset(latest.columns):
@@ -121,26 +145,28 @@ def _file_signature(path: Path) -> tuple[int,int] | None:
     return int(stat.st_mtime_ns),int(stat.st_size)
 
 
-def _entry_from_latest(signature: tuple[int,int] | None, latest: pd.DataFrame) -> _RetainedCacheEntry:
+def _entry_from_ledger(signature: tuple[int,int] | None, ledger: pd.DataFrame) -> _RetainedCacheEntry:
+    latest=_latest_retained_rows(ledger)
     return _RetainedCacheEntry(
         signature=signature,
         latest=latest,
         latest_map=_latest_mapping(latest),
         retained_rows_map=_retained_rows_mapping(latest),
+        latest_event_map=_latest_event_mapping(ledger),
     )
 
 
 def _latest_entry_for_path(path: Path) -> _RetainedCacheEntry:
-    """Return exact retained state and derived lookup while the file is unchanged."""
+    """Return exact retained and latest-event state while the file is unchanged."""
     key=_cache_key(path); signature=_file_signature(path)
     with _CACHE_LOCK:
         cached=_LATEST_RETAINED_CACHE.get(key)
         if cached is not None and cached.signature == signature:
             return cached
 
-    latest=_latest_retained_rows(_read_ledger(path))
+    ledger=_read_ledger(path)
     signature_after=_file_signature(path)
-    entry=_entry_from_latest(signature_after,latest)
+    entry=_entry_from_ledger(signature_after,ledger)
     with _CACHE_LOCK:
         _LATEST_RETAINED_CACHE[key]=entry
     return entry
@@ -172,14 +198,17 @@ def load_latest(path: str | Path | None = None) -> dict[tuple[str,str],dict]:
 
 
 def load_latest_readonly(path: str | Path | None = None) -> Mapping[tuple[str,str],dict]:
-    """Return a zero-copy read-only outer view for trusted in-process merge code.
-
-    The nested metadata dictionaries must be treated as immutable. Public callers
-    that need mutation isolation must keep using ``load_latest``.
-    """
+    """Return a zero-copy read-only outer view for trusted in-process merge code."""
     p=Path(path) if path is not None else provenance_path(); entry=_latest_entry_for_path(p)
     with _CACHE_LOCK:
         return MappingProxyType(entry.latest_map)
+
+
+def load_latest_events_readonly(path: str | Path | None = None) -> Mapping[tuple[str,str],dict]:
+    """Return CI-compatible latest provenance events without another ledger scan."""
+    p=Path(path) if path is not None else provenance_path(); entry=_latest_entry_for_path(p)
+    with _CACHE_LOCK:
+        return MappingProxyType(entry.latest_event_map)
 
 
 def append_records(records:list[dict],path:str|Path|None=None)->None:
@@ -194,11 +223,15 @@ def append_records(records:list[dict],path:str|Path|None=None)->None:
     rows_df.to_csv(p,sep=";",encoding="utf-8-sig",index=False,mode="a",header=not p.exists())
     signature_after=_file_signature(p)
 
-    # Update retained maps directly. The large retained DataFrame is invalidated
-    # and rebuilt only if a later audit actually requests it; no full concat/sort/
-    # drop_duplicates pass occurs on the critical merge path.
+    # Update both event and retained maps directly. Every appended row is the next
+    # event for its key in this append-only process; only INSERT/REPLACE can alter
+    # the retained-value maps used by the merge authority.
     with _CACHE_LOCK:
         if cached is not None and cached.signature == signature_before:
+            event_map=cached.latest_event_map.copy()
+            for record in rows_df.to_dict("records"):
+                event_map[(str(record.get("isin","")),str(record.get("field","")))]=record
+
             new_retained=_latest_retained_rows(rows_df)
             if new_retained.empty:
                 _LATEST_RETAINED_CACHE[key]=_RetainedCacheEntry(
@@ -206,6 +239,7 @@ def append_records(records:list[dict],path:str|Path|None=None)->None:
                     latest=cached.latest,
                     latest_map=cached.latest_map,
                     retained_rows_map=cached.retained_rows_map,
+                    latest_event_map=event_map,
                     sources_by_field=cached.sources_by_field,
                 )
             else:
@@ -222,6 +256,7 @@ def append_records(records:list[dict],path:str|Path|None=None)->None:
                     latest=None,
                     latest_map=latest_map,
                     retained_rows_map=rows_map,
+                    latest_event_map=event_map,
                     sources_by_field=None,
                 )
         else:
