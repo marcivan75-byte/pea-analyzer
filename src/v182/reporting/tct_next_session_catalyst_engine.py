@@ -188,6 +188,14 @@ def run_engine(
         degraded = int((states == "DATA_DEGRADED_SHADOW").sum())
         conflicts = int((states == "NEWS_CONFLICT_SHADOW").sum())
 
+    scope_counts: dict[str, int] = {}
+    if not candidates.empty and "preselection_horizons" in candidates.columns:
+        scope_counts = {
+            str(key): int(value)
+            for key, value in candidates["preselection_horizons"].astype(str).value_counts().to_dict().items()
+        }
+    scope_cfg = cfg.get("candidate_selection", {}).get("preselection_scope", {})
+
     payload = {
         "status": "SUCCESS_SHADOW" if not errors else "SUCCESS_SHADOW_WITH_WARNINGS",
         "version": version,
@@ -199,6 +207,9 @@ def run_engine(
         "seed_staleness_calendar_days": seed_staleness,
         "seed_rows": int(len(seed)),
         "candidate_rows": int(len(candidates)),
+        "candidate_preselection_enforced": bool(scope_cfg.get("enabled", False)),
+        "candidate_preselection_policy": "TCT_TOP20_UNION_ACTION_CT_TOP20" if scope_cfg.get("enabled", False) else None,
+        "candidate_preselection_scope_counts": scope_counts,
         "output_rows": int(len(output)),
         "high_movement_potential": high_potential,
         "up_catalysts": up,

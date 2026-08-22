@@ -1,5 +1,10 @@
 # V21.16 — ETF Fund Flows V1.1 integrity hardening
 
+> Preuve historique antérieure à V21.13.7. Le runtime actif conserve uniquement
+> ETF PEA et les sentinelles sectorielles non Gold/non Crypto ; les 40 satellites
+> Gold/Crypto, leurs contrôles et leurs sorties ont été retirés. Les règles
+> d'intégrité temporelle décrites ci-dessous restent applicables au périmètre PEA.
+
 Date : 20/08/2026
 
 ## Objet

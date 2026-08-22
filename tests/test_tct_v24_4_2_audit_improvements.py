@@ -69,20 +69,29 @@ def test_candidate_selection_publishes_rank_reason_and_is_bounded():
                 "exit_risk_score": 75 if 20 <= i < 30 else 25,
                 "news_catalyst_score": 80 if 30 <= i < 45 else 10,
                 "days_to_earnings": i % 12,
-                "atr14_pct": 0.06 if 45 <= i < 60 else 0.02,
+                "atr14_pct": 0.06 if 35 <= i < 40 else 0.02,
                 "source_t1_quality": 70 + i % 20,
                 "source_t2_quality": 65 + i % 15,
+                "preopen_scope_eligible": i < 40,
+                "preselection_horizons": "TCT" if i < 20 else "CT" if i < 40 else "",
             }
         )
     selected = feature.select_catalyst_candidates(pd.DataFrame(rows), cfg)
-    assert len(selected) == 60
-    assert selected["candidate_rank"].tolist() == list(range(1, 61))
+    assert len(selected) == 40
+    assert selected["candidate_rank"].tolist() == list(range(1, 41))
+    assert selected["preopen_scope_eligible"].astype(bool).all()
     assert selected["candidate_rank_reason"].notna().all()
     reasons = "|".join(selected["candidate_rank_reason"].astype(str))
     assert "ENTRY_READY_OR_STRONG" in reasons
     assert "EARNINGS_WITHIN_7D" in reasons
     assert "EXISTING_NEWS_HIGH" in reasons
     assert "HIGH_ATR" in reasons
+
+
+def test_candidate_selection_fails_closed_without_preselection_marker():
+    cfg = _cfg()
+    seed = pd.DataFrame([{"isin": "FR0000000001", "entry_score": 90}])
+    assert feature.select_catalyst_candidates(seed, cfg).empty
 
 
 def test_global_risk_on_supports_european_components():

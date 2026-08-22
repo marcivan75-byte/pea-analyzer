@@ -75,7 +75,6 @@
       "SP500_FUTURE": "ES=F",
       "NASDAQ_FUTURE": "NQ=F",
       "OIL": "CL=F",
-      "GOLD": "GC=F",
       "EURUSD": "EURUSD=X"
     },
     "exclude_partial_asia_from_core_score": true,

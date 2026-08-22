@@ -110,7 +110,7 @@ def run(root:Path)->dict:
     signals=_read(state/"signals.csv"); positions=_read(state/"positions.csv"); tx=_read(state/"transactions.csv"); nav=_read(state/"nav.csv"); marks=_read(state/"daily_marks.csv")
     for df in (signals,positions,tx,nav,marks):
         if not df.empty and "book_id" not in df.columns: df["book_id"]="LEGACY_PRE_V21_4"
-    fee=float(cfg["transaction_cost_per_side_pct"])/100.0; allowed={"ACTION","ETF"} if not cfg.get("gold_in_virtual_pea_book",False) else {"ACTION","ETF","GOLD"}
+    fee=float(cfg["transaction_cost_per_side_pct"])/100.0; allowed={"ACTION","ETF"}
     current=decisions[decisions["asset_class"].astype(str).isin(allowed)].copy()
     if positions.empty: positions=pd.DataFrame(columns=["position_id","book_id","model_version","open_date","asset_class","primary_horizon","contributing_horizons","isin","name","sector","entry_price","quantity","entry_score","entry_coverage_pct","stop_pct","status"])
     if signals.empty: signals=pd.DataFrame(columns=["signal_id","book_id","model_version","signal_date","status","asset_class","primary_horizon","contributing_horizons","isin","name","sector","signal_score","signal_coverage_pct","filled_date","filled_price","fill_validation_score","fill_validation_coverage_pct","closed_date","closed_price","realized_return_pct","close_reason"])

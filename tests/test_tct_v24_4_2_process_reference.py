@@ -44,7 +44,7 @@ def test_calibration_is_not_wired_into_any_workflow():
 
 def test_v242_config_has_fail_closed_governance_runtime_budget_and_inactive_secondary_contract():
     cfg = json.loads((ROOT / "config" / "TCT_V24_4_2_CATALYST_CONTEXT_SHADOW.json").read_text(encoding="utf-8"))
-    assert cfg["runtime_budget"]["preopen_seconds"] == 480
+    assert cfg["runtime_budget"]["preopen_seconds"] == 180
     assert cfg["runtime_budget"]["postmarket_seconds"] == 600
     assert cfg["runtime_budget"]["fail_closed_on_budget_exhaustion"] is True
     assert cfg["pit_lineage"]["minimum_snapshot_outcome_coverage"] == 0.80
@@ -53,6 +53,11 @@ def test_v242_config_has_fail_closed_governance_runtime_budget_and_inactive_seco
     assert cfg["governance"]["retuning_allowed"] is False
     assert cfg["governance"]["promotion_authority"] is False
     assert cfg["governance"]["real_orders_enabled"] is False
+    scope = cfg["candidate_selection"]["preselection_scope"]
+    assert scope["enabled"] is True
+    assert scope["tct_top_n"] == 20
+    assert scope["action_ct_top_n"] == 20
+    assert scope["union_max"] == 40
 
 
 def test_external_audit_implementation_matrix_documents_deferred_items():

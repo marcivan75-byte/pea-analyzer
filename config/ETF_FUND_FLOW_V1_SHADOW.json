@@ -1,5 +1,5 @@
 {
-  "version": "ETF_FUND_FLOWS_V1.1_SHADOW_V21.16",
+  "version": "ETF_FUND_FLOWS_V1.1_SHADOW_V21.16_PEA_ONLY",
   "mode": "SHADOW_ONLY",
   "enabled": true,
   "horizons_trading_observations": [
@@ -49,12 +49,6 @@
     "persistence": 0.1,
     "price_confirmation": 0.1
   },
-  "gold_flow_composite_weights": {
-    "us_physical": 0.5,
-    "eu_physical": 0.3,
-    "gold_miners": 0.1,
-    "price_confirmation": 0.1
-  },
   "confidence": {
     "A": 1.0,
     "B": 0.85,
@@ -78,7 +72,6 @@
     "splits_and_discontinuities_quarantine": true,
     "quarantined_data_score_influence": 0.0,
     "mixed_currency_absolute_aggregation_forbidden": true,
-    "coinshares_weekly_control_not_added_to_primary_flows": true,
     "undated_unchanged_aum_fallback_forbidden": true,
     "undated_aum_requires_dated_return": true,
     "undated_shares_outstanding_for_flow_forbidden": true,
@@ -93,8 +86,6 @@
     "decision_influence": 0.0,
     "etf_mt_reference_score_influence": 0.0,
     "sector_rotation_v2_score_influence": 0.0,
-    "gold_v1_1_score_influence": 0.0,
-    "crypto_order_influence": 0.0,
     "can_trigger_orders": false,
     "can_trigger_sales": false,
     "live_orders_enabled": false,

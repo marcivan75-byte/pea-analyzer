@@ -8,7 +8,10 @@ import numpy as np
 import pandas as pd
 
 from v182.features.tct_daily_trader_v24_3_1 import compute_daily_weekly_trader_snapshot
-from v182.reporting.tct_daily_trader_shadow_run_v24_3_1 import _completed_daily_history
+from v182.reporting.tct_daily_trader_shadow_run_v24_3_1 import (
+    _attach_tct_ct_preselection,
+    _completed_daily_history,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +19,32 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _cfg() -> dict:
     return json.loads((ROOT / "config" / "TCT_V24_3_1_DAILY_TRADER_SHADOW.json").read_text(encoding="utf-8"))
+
+
+def _catalyst_cfg() -> dict:
+    return json.loads((ROOT / "config" / "TCT_V24_4_2_CATALYST_CONTEXT_SHADOW.json").read_text(encoding="utf-8"))
+
+
+def test_preopen_seed_is_bounded_union_of_tct_and_action_ct_preselections():
+    output = pd.DataFrame({"isin": [f"FR{i:010d}" for i in range(50)]})
+    rows = []
+    for i in range(25):
+        rows.append({
+            "asset_class": "ACTION", "horizon": "TCT", "isin": f"FR{i:010d}",
+            "tct_baseline_top20": i < 20, "tct_baseline_rank": i + 1,
+            "decision": "NO_T1_T2", "score": None, "status": "SHADOW_NO_SIGNAL",
+        })
+    for i in range(10, 35):
+        rows.append({
+            "asset_class": "ACTION", "horizon": "CT", "isin": f"FR{i:010d}",
+            "decision": "BUY_CANDIDATE" if i < 20 else "WATCH", "score": 100 - i,
+            "status": "SCORABLE",
+        })
+    scoped = _attach_tct_ct_preselection(output, pd.DataFrame(rows), _catalyst_cfg())
+    assert int(scoped["preselection_tct"].sum()) == 20
+    assert int(scoped["preselection_ct"].sum()) == 20
+    assert int(scoped["preopen_scope_eligible"].sum()) == 30
+    assert int((scoped["preselection_horizons"] == "TCT|CT").sum()) == 10
 
 
 def _history(periods: int = 110) -> pd.DataFrame:

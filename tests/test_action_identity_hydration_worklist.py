@@ -45,7 +45,7 @@ def test_identity_only_row_cannot_become_scorable_by_dynamic_renormalization():
     registry=__import__("json").loads((root/"config"/"V21_ACTIONS_REFERENCE_V21_0.json").read_text())
     row={"isin":"ZZ0000000001","canonical_seed_status":"WHITELIST_ONLY_MISSING_METADATA"}
     frame=pd.DataFrame([row])
-    for horizon in ("CT","MT","LT","SHORT","TOP_DOWN"):
+    for horizon in ("CT","MT","SHORT","TOP_DOWN"):
         scored=score_horizon(frame,registry,horizon).iloc[0]
         assert scored["coverage_pct"]==0.0
         assert scored["status"]=="BLOCK_DATA"

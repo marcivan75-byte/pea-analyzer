@@ -57,7 +57,6 @@ jobs:
           a=json.loads(Path("config/V21_ACTIONS_CRITERIA_REGISTRY.json").read_text())
           e=json.loads(Path("config/V20_7_1_ETF_CRITERIA_REGISTRY.json").read_text())
           ed=json.loads(Path("config/V20.8.2_ETF_MT_DYNAMIC.json").read_text())
-          g=json.loads(Path("config/GOLD_V1_1_102_CRITERIA.json").read_text())
           t=json.loads(Path("config/TCT_V24_1_7_SHADOW.json").read_text())
           mm=json.loads(Path("config/COMMITTEE_VIRTUAL_MONEY_MANAGEMENT.json").read_text())
           sr=json.loads(Path("config/SECTOR_ROTATION_V2_SHADOW.json").read_text())
@@ -76,14 +75,14 @@ jobs:
           assert data_contract["universes"]["ETF"]["expected_count"] == 102
           assert data_contract["backtest"]["look_ahead"] == "FAIL_CLOSED"
           assert data_contract["backtest"]["current_master_dynamic_values_for_historical_dates"] == "FORBIDDEN"
-          for h in ("CT","MT","LT","SHORT","TOP_DOWN"):
+          for h in ("CT","MT","SHORT","TOP_DOWN"):
               assert abs(sum(a["weights"][h].values())-1.0) < 1e-6
+          assert "LT" not in a["weights"] and "LT" not in e["weights"]
           assert a["governance"]["positive_unvalidated_overlay_can_create_buy"] is False
           assert a["governance"]["total_return_composite_active_weight"] is False
-          assert all("total_return_potential_score" not in a["weights"][h] for h in ("CT","MT","LT"))
-          assert all("target_upside_gt4_score" in a["weights"][h] for h in ("CT","MT","LT"))
+          assert all("total_return_potential_score" not in a["weights"][h] for h in ("CT","MT"))
+          assert all("target_upside_gt4_score" in a["weights"][h] for h in ("CT","MT"))
           assert a["weights"]["MT"]["morningstar_action_score"] > 0
-          assert a["weights"]["LT"]["dividend_gt4_score"] > 0
           assert "ATTRIBUTED" in ACCEPTED_VALIDATION_STATUSES
           assert e["governance"]["t1_t2_forbidden"] is True
           assert a["governance"]["t1_t2_scope"] == "ACTION_TCT_ONLY"
@@ -98,9 +97,6 @@ jobs:
           assert abs(sum(T2_WEIGHTS.values())-1.0) < 1e-12
           assert ed["missing_policy"] == "AVAILABLE_CRITERIA_RENORMALIZED_TO_100_PERCENT"
           assert ed["historical_performance_attribution"] == "NONE_UNTIL_DEDICATED_PIT_BACKTEST"
-          assert g["governance"]["criteria_count"] == len(g["criteria"]) == 102
-          assert g["governance"]["contribution_blocks"] == 11
-          assert g["governance"]["t1_t2_forbidden"] is True
           assert mm["entry_execution_rule"] == "NEXT_RUN_OBSERVED_PRICE_AFTER_SIGNAL_DATE"
           assert mm["single_position_per_isin"] is True
           assert mm["max_instrument_exposure_pct"] <= mm["max_position_pct"]
@@ -115,7 +111,7 @@ jobs:
           for key in ("RLS","AVCR","RARS_OPPORTUNITY","DQS"):
               assert abs(sum(sr["score_weights"][key].values())-1.0) < 1e-9
           assert sr["valuation_thresholds"]["promising_but_overvalued_avcr_min"] < sr["valuation_thresholds"]["no_chase_avcr_min"]
-          print("V21.8.1 integrity OK: 1829/633 Actions, 102/268 ETF, exact TCT, Gold 102/11, Sector Rotation V2 shadow, PIT-safe master contract")
+          print("V21.8.1 integrity OK: 1829/633 Actions, 102/268 ETF, no LT/Gold/Crypto/IPO runtime, exact TCT, Sector Rotation V2 shadow, PIT-safe master contract")
           PY
       - name: Full pytest suite
         run: pytest -q

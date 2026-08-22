@@ -52,56 +52,6 @@ def _append_observation_history(path: Path, current: pd.DataFrame) -> pd.DataFra
     return history.reset_index(drop=True)
 
 
-def _load_weekly_crypto_control(path: Path) -> dict:
-    base = {
-        "status": "NO_DATA",
-        "source_role": "WEEKLY_EXTERNAL_CONTROL_ONLY",
-        "added_to_primary_flows": False,
-        "decision_influence": 0.0,
-        "live_orders_enabled": False,
-    }
-    if not path.exists() or path.stat().st_size == 0:
-        return base
-    frame = pd.read_csv(path, sep=";", encoding="utf-8-sig", dtype=str)
-    if frame.empty:
-        return base
-    required = {"week_end", "asset", "flow_usd_m", "source", "source_url", "confidence", "as_of"}
-    missing = required - set(frame.columns)
-    if missing:
-        return {**base, "status": "INVALID_INPUT", "reason": f"MISSING_COLUMNS:{','.join(sorted(missing))}"}
-    frame["week_end"] = pd.to_datetime(frame["week_end"], errors="coerce", utc=True)
-    frame["as_of"] = pd.to_datetime(frame["as_of"], errors="coerce", utc=True)
-    frame["flow_usd_m"] = pd.to_numeric(frame["flow_usd_m"], errors="coerce")
-    frame["confidence"] = frame["confidence"].astype(str).str.upper()
-    now = pd.Timestamp.now(tz="UTC")
-    valid = (
-        frame["week_end"].notna()
-        & frame["as_of"].notna()
-        & frame["flow_usd_m"].notna()
-        & frame["week_end"].le(now)
-        & frame["as_of"].le(now)
-        & frame["confidence"].isin(["A", "B", "C"])
-        & frame["source_url"].fillna("").astype(str).str.startswith(("https://", "http://"))
-    )
-    rejected = int((~valid).sum())
-    frame = frame[valid].copy()
-    if frame.empty:
-        return {**base, "status": "NO_VALID_ROWS", "rejected_rows": rejected}
-    latest_week = frame["week_end"].max()
-    latest = frame[frame["week_end"].eq(latest_week)].copy()
-    by_asset = latest.groupby("asset", dropna=False)["flow_usd_m"].sum().round(6).to_dict()
-    return {
-        **base,
-        "status": "SUCCESS",
-        "week_end": latest_week.date().isoformat(),
-        "rows": int(len(latest)),
-        "rejected_rows": rejected,
-        "flow_usd_m_by_asset": {str(key): float(value) for key, value in by_asset.items()},
-        "control_total_usd_m": float(latest["flow_usd_m"].sum()),
-        "sources": sorted(set(latest["source"].astype(str))),
-    }
-
-
 def _write_markdown(instruments: pd.DataFrame, rotations: pd.DataFrame, diagnostics: dict, path: Path) -> None:
     lines = [
         "# ETF Fund Flows V1 — SHADOW",
@@ -136,23 +86,7 @@ def _write_markdown(instruments: pd.DataFrame, rotations: pd.DataFrame, diagnost
             lines.append(f"- {row.get('sector_or_theme')}: SRFS {score_text} — {row.get('flow_price_state', 'n/a')}")
     else:
         lines.append("- Historique insuffisant.")
-    gold_crypto = diagnostics.get("gold_crypto", {})
-    weekly_control = diagnostics.get("crypto_weekly_external_control", {})
-    lines.extend(
-        [
-            "",
-            "## Or & crypto",
-            "",
-            f"```json\n{json.dumps(gold_crypto, ensure_ascii=False, indent=2)}\n```",
-            "",
-            "## Contrôle crypto hebdomadaire externe",
-            "",
-            "Ce contrôle n'est jamais additionné aux flux ETF/ETP primaires.",
-            "",
-            f"```json\n{json.dumps(weekly_control, ensure_ascii=False, indent=2)}\n```",
-            "",
-        ]
-    )
+    lines.append("")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -252,10 +186,6 @@ def run(root: Path = ROOT) -> dict:
         directory.mkdir(parents=True, exist_ok=True)
     (audit_dir/"ETF_FUND_FLOW_COLLECTION_RUNTIME_V21_13_2.json").write_text(json.dumps(collection_metrics,ensure_ascii=False,indent=2),encoding="utf-8")
 
-    weekly_control = _load_weekly_crypto_control(root / "inputs" / "CRYPTO_FUND_FLOW_WEEKLY_CONTROL.csv")
-    weekly_control_path = out_dir / "CRYPTO_WEEKLY_EXTERNAL_CONTROL.json"
-    weekly_control_path.write_text(json.dumps(weekly_control, ensure_ascii=False, indent=2), encoding="utf-8")
-
     history_path = state_dir / "ETF_FUND_FLOW_OBSERVATIONS.csv"
     history = _append_observation_history(history_path, snapshot)
     generated = datetime.now(timezone.utc).isoformat()
@@ -269,7 +199,6 @@ def run(root: Path = ROOT) -> dict:
             "universe_count": int(len(universe)),
             "current_snapshot_rows": 0,
             "collection_runtime": collection_metrics,
-            "crypto_weekly_external_control": weekly_control,
             "decision_influence": 0.0,
             "live_orders_enabled": False,
         }
@@ -281,14 +210,12 @@ def run(root: Path = ROOT) -> dict:
         return payload
 
     result = build_flow_computation(history, cfg)
-    result.diagnostics["crypto_weekly_external_control"] = weekly_control
     result.diagnostics["collection_runtime"] = collection_metrics
     instruments_path = out_dir / "ETF_FLOW_INSTRUMENTS_SHADOW.csv"
     families_path = out_dir / "ETF_FLOW_FAMILIES_SHADOW.csv"
     rotations_path = out_dir / "SECTOR_ROTATION_FLOW_OVERLAY_V1.csv"
     pea_path = out_dir / "TOP_PEA_FLOW_SHADOW.csv"
     outflows_path = out_dir / "TOP_OUTFLOWS_SHADOW.csv"
-    gold_crypto_path = out_dir / "GOLD_CRYPTO_FLOWS_SHADOW.json"
     mobile_path = root / "outputs" / "mobile" / "ETF_FUND_FLOWS_SHADOW.md"
 
     result.instruments.to_csv(instruments_path, sep=";", index=False, encoding="utf-8-sig")
@@ -300,10 +227,6 @@ def run(root: Path = ROOT) -> dict:
     )
     result.instruments.sort_values("efs_shadow", ascending=True, na_position="last").head(25).to_csv(
         outflows_path, sep=";", index=False, encoding="utf-8-sig"
-    )
-    gold_crypto_path.write_text(
-        json.dumps(result.diagnostics.get("gold_crypto", {}), ensure_ascii=False, indent=2, default=str),
-        encoding="utf-8",
     )
     _write_markdown(result.instruments, result.rotations, result.diagnostics, mobile_path)
 
@@ -328,8 +251,6 @@ def run(root: Path = ROOT) -> dict:
             "sector_rotation_overlay_output": str(rotations_path.relative_to(root)),
             "pea_top_output": str(pea_path.relative_to(root)),
             "top_outflows_output": str(outflows_path.relative_to(root)),
-            "gold_crypto_output": str(gold_crypto_path.relative_to(root)),
-            "crypto_weekly_external_control_output": str(weekly_control_path.relative_to(root)),
             "mobile_output": str(mobile_path.relative_to(root)),
             "governance": cfg["governance"],
             "weights_pre_registered_not_promoted": True,
@@ -337,7 +258,6 @@ def run(root: Path = ROOT) -> dict:
             "etf_mt_38_pit_core_unchanged": True,
             "one_day_flow_never_standalone_decision": True,
             "historical_backfill_from_current_snapshot": False,
-            "coinshares_control_added_to_primary_flows": False,
             "decision_influence": 0.0,
             "live_orders_enabled": False,
         }

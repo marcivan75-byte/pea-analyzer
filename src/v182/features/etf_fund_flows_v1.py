@@ -436,38 +436,6 @@ def build_rotation_scores(instruments: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     return rotations.sort_values("srfs_shadow", ascending=False, na_position="last").reset_index(drop=True)
 
 
-def build_gold_crypto_summary(instruments: pd.DataFrame, cfg: dict) -> dict:
-    if instruments.empty:
-        return {"gold": {}, "crypto": {}, "crypto_short": {}}
-    gold = instruments[instruments["asset_class"].astype(str).str.upper().isin(["GOLD_ETC", "GOLD_ETF", "GOLD_MINERS_ETF"])].copy()
-    crypto = instruments[instruments["asset_class"].astype(str).str.upper().isin(["CRYPTO_ETP", "CRYPTO_ETF"])].copy()
-    crypto_short = instruments[instruments["asset_class"].astype(str).str.upper().eq("CRYPTO_SHORT_ETF")].copy()
-
-    def mean_score(frame: pd.DataFrame, mask: pd.Series) -> float | None:
-        values = pd.to_numeric(frame.loc[mask, "efs_shadow"], errors="coerce")
-        return float(values.mean()) if values.notna().any() else None
-
-    gold_payload: dict = {}
-    if not gold.empty:
-        us = mean_score(gold, gold["region"].astype(str).str.upper().eq("US"))
-        eu = mean_score(gold, gold["region"].astype(str).str.upper().isin(["EU", "EUROPE"]))
-        miners = mean_score(gold, gold["asset_class"].astype(str).str.upper().eq("GOLD_MINERS_ETF"))
-        price_value = pd.to_numeric(gold["score_flow_price_confirmation"], errors="coerce").mean()
-        price = None if pd.isna(price_value) else float(price_value)
-        weights = cfg["gold_flow_composite_weights"]
-        composite = _weighted_mean([(us, weights["us_physical"]), (eu, weights["eu_physical"]), (miners, weights["gold_miners"]), (price, weights["price_confirmation"])])
-        gold_payload = {"us_physical_score": us, "eu_physical_score": eu, "gold_miners_score": miners, "price_confirmation_score": price, "gold_flow_composite_shadow": round(composite, 4) if composite is not None else None, "decision_influence": 0.0}
-    crypto_payload = {}
-    for family, group in crypto.groupby("economic_family"):
-        value = pd.to_numeric(group["efs_shadow"], errors="coerce").mean()
-        crypto_payload[str(family)] = {"instrument_count": int(group["instrument_id"].nunique()), "flow_score_shadow": None if pd.isna(value) else round(float(value), 4), "decision_influence": 0.0}
-    short_payload: dict = {}
-    if not crypto_short.empty:
-        value = pd.to_numeric(crypto_short["efs_shadow"], errors="coerce").mean()
-        short_payload = {"instrument_count": int(crypto_short["instrument_id"].nunique()), "speculative_short_flow_score_shadow": None if pd.isna(value) else round(float(value), 4), "main_rotation_score_influence": 0.0, "kept_separate_from_long_crypto_flows": True}
-    return {"gold": gold_payload, "crypto": crypto_payload, "crypto_short": short_payload}
-
-
 def build_flow_computation(snapshot_history: pd.DataFrame, cfg: dict) -> FlowComputation:
     daily = compute_daily_flows(snapshot_history)
     rolling = add_rolling_features(daily)
@@ -490,6 +458,6 @@ def build_flow_computation(snapshot_history: pd.DataFrame, cfg: dict) -> FlowCom
         "current_20d_window_incomplete": int(readiness.eq("DATA_INSUFFICIENT_CURRENT_20D_WINDOW").sum()),
         "mature_60d_window_incomplete": int(readiness.eq("PRELIMINARY_GAPPED_60_PLUS").sum()),
         "srfs_scorable_sectors": int(pd.to_numeric(rotations.get("srfs_shadow"), errors="coerce").notna().sum()) if not rotations.empty else 0,
-        "gold_crypto": build_gold_crypto_summary(instruments, cfg), "decision_influence": 0.0, "live_orders_enabled": False,
+        "decision_influence": 0.0, "live_orders_enabled": False,
     }
     return FlowComputation(rolling, instruments, families, rotations, diagnostics)

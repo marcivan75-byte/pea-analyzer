@@ -11,9 +11,9 @@ def test_virtual_book_only_opens_buy_at_or_above_minimum_score(tmp_path: Path):
         "initial_capital_eur":100000.0,"max_total_exposure_pct":80.0,"cash_buffer_min_pct":20.0,
         "max_position_pct":5.0,"max_sector_exposure_pct":20.0,"risk_budget_per_position_pct":0.75,
         "transaction_cost_per_side_pct":0.25,"minimum_buy_score":77.0,
-        "stops_pct":{"TCT":6.0,"CT":8.0,"MT":12.0,"LT":18.0},
+        "stops_pct":{"TCT":6.0,"CT":8.0,"MT":12.0},
         "exit_on_decisions":["REJECT","REVIEW","BLOCK_DATA","FAILED"],
-        "buy_decisions":["BUY_CANDIDATE"],"gold_in_virtual_pea_book":False,
+        "buy_decisions":["BUY_CANDIDATE"],
     }
     (tmp_path/"config"/"COMMITTEE_VIRTUAL_MONEY_MANAGEMENT.json").write_text(json.dumps(cfg),encoding="utf-8")
     decisions=pd.DataFrame([

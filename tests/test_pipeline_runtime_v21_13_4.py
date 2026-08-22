@@ -26,7 +26,7 @@ def test_runtime_telemetry_persists_stage_wall_cpu_and_categories(tmp_path) -> N
 
     payload=json.loads(Path(paths["json"]).read_text(encoding="utf-8"))
     rows=pd.read_csv(paths["csv"],sep=";")
-    assert payload["version"]=="PIPELINE_RUNTIME_V21_13_5"
+    assert payload["version"]=="PIPELINE_RUNTIME_V21_13_7"
     assert payload["status"]=="SUCCESS"
     assert payload["profile"]=="DAILY_TACTICAL"
     assert payload["active_stage"] is None

@@ -12,7 +12,6 @@ from v182.features.etf_fund_flows_v1 import (
     build_flow_computation,
     compute_daily_flows,
 )
-from v182.reporting.etf_fund_flows_shadow_run import _load_weekly_crypto_control
 from v182.sources.etf_fund_flows import (
     _last_market_as_of,
     _merge_same_day_observations,
@@ -152,8 +151,6 @@ def test_shadow_scores_never_gain_decision_influence():
     definitions = [
         ("ISIN:PEA1", "EU", True, "WORLD", "TECHNOLOGY", 1_000_000.0, 5000.0, "USD"),
         ("GLOBAL1", "US", False, "WORLD", "TECHNOLOGY", 2_000_000.0, 10000.0, "USD"),
-        ("GOLD1", "US", False, "GOLD_PHYSICAL", "GOLD", 1_500_000.0, 4000.0, "USD"),
-        ("BTC1", "US", False, "BITCOIN", "CRYPTO_BITCOIN", 1_500_000.0, 6000.0, "USD"),
     ]
     for instrument_id, region, is_pea, family, theme, initial_aum, daily_flow, currency in definitions:
         nav = 100.0
@@ -165,7 +162,7 @@ def test_shadow_scores_never_gain_decision_influence():
             rows.append(_base_row(
                 instrument_id, date.date().isoformat(), universe="PEA_ETF" if is_pea else "EXTERNAL",
                 economic_family=family, region=region, sector_or_theme=theme,
-                asset_class="CRYPTO_ETF" if "BTC" in instrument_id else "GOLD_ETF" if "GOLD" in instrument_id else "ETF",
+                asset_class="ETF",
                 is_pea=is_pea, aum=shares * nav, nav=nav, shares_outstanding=shares, market_price=nav, currency=currency,
             ))
     result = build_flow_computation(pd.DataFrame(rows), _cfg())
@@ -279,31 +276,15 @@ def test_mixed_currency_family_share_is_not_computed():
     assert all(~result.families["absolute_flow_comparable"].astype(bool))
 
 
-def test_weekly_crypto_control_stays_external_and_not_in_primary_flows(tmp_path: Path):
-    path = tmp_path / "control.csv"
-    path.write_text(
-        "week_end;asset;region;flow_usd_m;source;source_url;confidence;as_of;notes\n"
-        "2026-08-14;Bitcoin;Global;120.5;CoinShares;https://example.com/report;B;2026-08-17;weekly control\n",
-        encoding="utf-8",
-    )
-    control = _load_weekly_crypto_control(path)
-    assert control["status"] == "SUCCESS"
-    assert control["flow_usd_m_by_asset"]["Bitcoin"] == pytest.approx(120.5)
-    assert control["added_to_primary_flows"] is False
-    assert control["decision_influence"] == 0.0
-
-
 def test_config_weights_are_pre_registered_and_sum_to_one():
     cfg = _cfg()
     assert sum(cfg["score_weights"].values()) == pytest.approx(1.0)
     assert sum(cfg["sector_rotation_flow_weights"].values()) == pytest.approx(1.0)
-    assert sum(cfg["gold_flow_composite_weights"].values()) == pytest.approx(1.0)
     assert sum(cfg["pea_overlay_weights"]["mature"].values()) == pytest.approx(1.0)
     assert sum(cfg["pea_overlay_weights"]["young_history"].values()) == pytest.approx(1.0)
     assert cfg["preliminary_score_min_observations"] == 20
     assert cfg["mature_score_min_observations"] == 60
     assert cfg["anti_false_signal"]["mixed_currency_absolute_aggregation_forbidden"] is True
-    assert cfg["anti_false_signal"]["coinshares_weekly_control_not_added_to_primary_flows"] is True
     assert cfg["anti_false_signal"]["undated_unchanged_aum_fallback_forbidden"] is True
     assert cfg["anti_false_signal"]["dated_market_return_preferred_over_undated_nav"] is True
     assert cfg["anti_false_signal"]["breadth_missing_values_not_negative"] is True
@@ -313,3 +294,13 @@ def test_config_weights_are_pre_registered_and_sum_to_one():
     assert cfg["governance"]["weights_changed_v21_16"] is False
     assert cfg["governance"]["thresholds_changed_v21_16"] is False
     assert cfg["governance"]["holdout_opened_v21_16"] is False
+
+
+def test_external_flow_universe_contains_only_generic_etfs():
+    universe = pd.read_csv(
+        ROOT / "config" / "ETF_FUND_FLOW_EXTERNAL_UNIVERSE_V1.csv",
+        sep=";",
+        encoding="utf-8-sig",
+    )
+    assert len(universe) == 24
+    assert set(universe["asset_class"].astype(str)) == {"ETF"}

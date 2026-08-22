@@ -5,7 +5,7 @@ import json
 import pandas as pd
 import numpy as np
 
-HORIZONS = ("CT", "MT", "LT", "SHORT", "TOP_DOWN")
+HORIZONS = ("CT", "MT", "SHORT", "TOP_DOWN")
 
 # Canonical V21 names may differ from the historical V18.2 storage schema.
 # Only semantically equivalent aliases are allowed. Aliases never change a
@@ -247,8 +247,6 @@ def _decision(score: pd.Series, status: pd.Series, cfg: dict, horizon: str) -> p
 
 
 def classify_sector(row: pd.Series, asset_class: str) -> str:
-    if asset_class == "GOLD":
-        return "METAUX PRECIEUX"
     fields = (
         "sector_v21","sector_yf","sector","sector_yahoo","industry_yf","industry",
         "morningstar_category","category","geo_exposure","official_benchmark","name",
@@ -320,16 +318,6 @@ def tct_adapter(tct_shadow: pd.DataFrame | None = None) -> pd.DataFrame:
     if tct_shadow is not None and not tct_shadow.empty:
         return tct_shadow.copy()
     return pd.DataFrame([{"asset_class":"ACTION","horizon":"TCT","isin":"","name":"ACTION TCT / T1-T2 MODULE","sector":"TRANSVERSAL","score":np.nan,"coverage_pct":0.0,"status":"SHADOW_BASELINE_REQUIRED","decision":"SHADOW_BASELINE_REQUIRED","active_criteria":0,"available_criteria":0,"score_source":"V24.1.7_T1_T2_V2","backtest_attribution":"V24.1.7 V2 timing overlay not yet promoted; prior T1/T2 OOS failed promotion gates.","notes":"T1/T2 ACTION TCT only; timing overlay; 0 influence on base score; no ETF/non-TCT use; live execution forbidden."}])
-
-
-def gold_adapter(gold_registry_path: str | Path) -> pd.DataFrame:
-    p=Path(gold_registry_path)
-    if not p.exists():
-        return pd.DataFrame([{"asset_class":"GOLD","horizon":h,"isin":"","name":"OR","sector":"METAUX PRECIEUX","score":np.nan,"coverage_pct":0.0,"status":"BLOCKED_REFERENCE","decision":"ABSTAIN_BLOCKED_REFERENCE","active_criteria":102,"available_criteria":0,"score_source":"GOLD_V1_CONTRACT","backtest_attribution":"","notes":"Exact 102-criterion PIT registry not present. Historical block architecture is documented, but no missing V1 weight/score is fabricated."} for h in ("TACTICAL_2_12W","STRATEGIC_6_24M")])
-    cfg=json.loads(p.read_text(encoding="utf-8")); rows=[]
-    for h,spec in cfg.get("current_scores",{}).items():
-        rows.append({"asset_class":"GOLD","horizon":h,"isin":"","name":"OR","sector":"METAUX PRECIEUX","score":spec.get("score"),"coverage_pct":spec.get("coverage_pct",0),"status":spec.get("status","SCORABLE"),"decision":spec.get("decision","REVIEW"),"active_criteria":len(cfg.get("criteria",[])),"available_criteria":spec.get("available_criteria",0),"score_source":cfg.get("version","GOLD_V1"),"backtest_attribution":"","notes":"Exact GOLD registry supplied."})
-    return pd.DataFrame(rows)
 
 
 def sector_ranking(decisions: pd.DataFrame) -> pd.DataFrame:

@@ -10,7 +10,6 @@ def _registry():
         "horizons":{
             "CT":{"buy_threshold":77,"watch_threshold":70,"review_threshold":60},
             "MT":{"selection_threshold":82,"watch_threshold":70,"review_threshold":60},
-            "LT":{"buy_threshold":77,"watch_threshold":70,"review_threshold":60},
             "SHORT":{"short_candidate_threshold":77,"watch_threshold":70},
         },
         "bonus_malus":{
@@ -52,9 +51,9 @@ def test_gitok_morningstar_rule_4star_bonus_3star_smaller_others_neutral():
 
 def test_audited_sri_rule_only_6_or_7_get_minus_3():
     decisions=pd.DataFrame([
-        {"asset_class":"ETF","horizon":"LT","isin":"E5","score":79.0,"decision":"BUY_CANDIDATE","status":"SCORABLE","notes":""},
-        {"asset_class":"ETF","horizon":"LT","isin":"E6","score":79.0,"decision":"BUY_CANDIDATE","status":"SCORABLE","notes":""},
-        {"asset_class":"ETF","horizon":"LT","isin":"E7","score":79.0,"decision":"BUY_CANDIDATE","status":"SCORABLE","notes":""},
+        {"asset_class":"ETF","horizon":"CT","isin":"E5","score":79.0,"decision":"BUY_CANDIDATE","status":"SCORABLE","notes":""},
+        {"asset_class":"ETF","horizon":"CT","isin":"E6","score":79.0,"decision":"BUY_CANDIDATE","status":"SCORABLE","notes":""},
+        {"asset_class":"ETF","horizon":"CT","isin":"E7","score":79.0,"decision":"BUY_CANDIDATE","status":"SCORABLE","notes":""},
     ])
     master=pd.DataFrame([
         {"isin":"E5","morningstar_rating":2,"risk_indicator":5},

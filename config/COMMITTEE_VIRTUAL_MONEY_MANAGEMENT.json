@@ -15,7 +15,7 @@
   "minimum_signal_coverage_pct": 70.0,
   "entry_execution_rule": "NEXT_RUN_OBSERVED_PRICE_AFTER_SIGNAL_DATE",
   "single_position_per_isin": true,
-  "stops_pct": {"TCT": 6.0, "CT": 8.0, "MT": 12.0, "LT": 18.0},
+  "stops_pct": {"TCT": 6.0, "CT": 8.0, "MT": 12.0},
   "exit_on_decisions": ["REJECT", "REVIEW", "NO_SHORT_RISK", "BLOCK_DATA", "FAILED"],
   "hold_decisions": ["BUY_CANDIDATE", "WATCH", "SHADOW_BUY_TACTICAL"],
   "buy_decisions": ["BUY_CANDIDATE", "SHADOW_BUY_TACTICAL"],
@@ -28,6 +28,5 @@
     "level_3_drawdown_pct": 15.0,
     "level_3_new_position_multiplier": 0.0
   },
-  "gold_in_virtual_pea_book": false,
   "policy": "Virtual research only. Signals are entered no earlier than the next observed run after signal date. One consolidated position per ISIN. Model cohorts are versioned. Sizing and stops are governance assumptions, not backtest-proven performance claims."
 }

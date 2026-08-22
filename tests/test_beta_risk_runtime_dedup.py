@@ -17,7 +17,7 @@ def test_economic_overlap_reuses_duplicate_horizon_work(monkeypatch):
             {"isin": "A", "horizon": "CT", "decision": "BUY_CANDIDATE", "risk_engine_tags": "TECH|AI"},
             {"isin": "A", "horizon": "MT", "decision": "WATCH", "risk_engine_tags": "TECH|AI"},
             {"isin": "B", "horizon": "CT", "decision": "HOLD", "risk_engine_tags": "TECH|AI"},
-            {"isin": "B", "horizon": "LT", "decision": "WATCH", "risk_engine_tags": "TECH|AI"},
+            {"isin": "B", "horizon": "MT", "decision": "WATCH", "risk_engine_tags": "TECH|AI"},
             {"isin": "C", "horizon": "MT", "decision": "WATCH", "risk_engine_tags": "BANK"},
         ]
     )

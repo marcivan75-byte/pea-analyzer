@@ -49,7 +49,7 @@ def apply_action_52w_overlay(decisions: pd.DataFrame, actions: pd.DataFrame, reg
     for col in ("distance_high_52w_pct","sector_rotation_score","action_catchup_score","market_high_regime_score"):
         if col not in out.columns: out[col]=np.nan
     for idx,row in out.iterrows():
-        if str(row.get("asset_class"))!="ACTION" or str(row.get("horizon")) not in {"CT","MT","LT"}: continue
+        if str(row.get("asset_class"))!="ACTION" or str(row.get("horizon")) not in {"CT","MT"}: continue
         isin=str(row.get("isin","") or "")
         if isin not in master.index: continue
         pre=pd.to_numeric(pd.Series([row.get("score")]),errors="coerce").iloc[0]

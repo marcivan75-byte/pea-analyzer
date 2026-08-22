@@ -1,5 +1,9 @@
 # Pipeline runtime V21.13.5
 
+> Version historique remplacée par V21.13.7. Le budget ci-dessous mesure le
+> temps mur et conserve l'ancien périmètre. Voir
+> `docs/PIPELINE_RUNTIME_V21_13_7.md` pour le périmètre et le budget actifs.
+
 ## Objectif
 
 V21.13.5 fixe un budget explicite aux workflows planifiés sans modifier les

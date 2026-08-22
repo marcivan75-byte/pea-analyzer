@@ -51,18 +51,15 @@ jobs:
         if: ${{ inputs.run_validation }}
         run: pip install -e ".[test]"
 
-      - name: Validate Fund Flow V21.16 and ETP Satellite engines
+      - name: Validate Fund Flow V21.16 engine
         if: ${{ inputs.run_validation }}
         run: |
-          python -m compileall -q src/v182/features/etf_fund_flows_v1.py src/v182/sources/etf_fund_flows.py src/v182/reporting/etf_fund_flows_shadow_run.py src/v182/features/etp_satellite_v1.py src/v182/reporting/etp_satellite_shadow_run.py
-          ruff check src/v182/features/etf_fund_flows_v1.py src/v182/sources/etf_fund_flows.py src/v182/reporting/etf_fund_flows_shadow_run.py tests/test_etf_fund_flows_v1.py tests/test_etf_fund_flows_v21_16_window_readiness.py tests/test_etf_fund_flows_v21_16_temporal_integrity.py tests/test_etf_fund_flows_v21_16_blackrock_dates.py tests/test_etp_satellite_v1.py
-          pytest -q tests/test_etf_fund_flows_v1.py tests/test_etf_fund_flows_v21_16_window_readiness.py tests/test_etf_fund_flows_v21_16_temporal_integrity.py tests/test_etf_fund_flows_v21_16_blackrock_dates.py tests/test_etp_satellite_v1.py
+          python -m compileall -q src/v182/features/etf_fund_flows_v1.py src/v182/sources/etf_fund_flows.py src/v182/reporting/etf_fund_flows_shadow_run.py
+          ruff check src/v182/features/etf_fund_flows_v1.py src/v182/sources/etf_fund_flows.py src/v182/reporting/etf_fund_flows_shadow_run.py tests/test_etf_fund_flows_v1.py tests/test_etf_fund_flows_v21_16_window_readiness.py tests/test_etf_fund_flows_v21_16_temporal_integrity.py tests/test_etf_fund_flows_v21_16_blackrock_dates.py
+          pytest -q tests/test_etf_fund_flows_v1.py tests/test_etf_fund_flows_v21_16_window_readiness.py tests/test_etf_fund_flows_v21_16_temporal_integrity.py tests/test_etf_fund_flows_v21_16_blackrock_dates.py
 
       - name: Collect and compute ETF Fund Flows V21.16 SHADOW
         run: python -m v182.reporting.etf_fund_flows_shadow_run
-
-      - name: Build ETP Satellite V1 Gold Crypto SHADOW context
-        run: python -m v182.reporting.etp_satellite_shadow_run
 
       - name: Verify Fund Flow fail-closed governance
         run: |
@@ -73,7 +70,7 @@ jobs:
           path=Path('outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json')
           assert path.exists() and path.stat().st_size>0
           payload=json.loads(path.read_text(encoding='utf-8'))
-          assert payload['version']=='ETF_FUND_FLOWS_V1.1_SHADOW_V21.16'
+          assert payload['version']=='ETF_FUND_FLOWS_V1.1_SHADOW_V21.16_PEA_ONLY'
           assert payload['status']=='SUCCESS'
           assert payload['decision_influence']==0.0
           assert payload['live_orders_enabled'] is False
@@ -132,19 +129,10 @@ jobs:
           if [ -f outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json ]; then cat outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json; fi
           if [ -f outputs/audit/ETF_FUND_FLOW_STATE_AUDIT.json ]; then cat outputs/audit/ETF_FUND_FLOW_STATE_AUDIT.json; fi
 
-      - name: Show ETP Satellite governance audit
-        if: always()
-        run: |
-          if [ -f outputs/audit/ETP_SATELLITE_V1_SHADOW.json ]; then cat outputs/audit/ETP_SATELLITE_V1_SHADOW.json; fi
-
-      - name: Publish mobile Fund Flow and ETP Satellite shadow summaries
+      - name: Publish mobile Fund Flow shadow summary
         if: always()
         run: |
           if [ -f outputs/mobile/ETF_FUND_FLOWS_SHADOW.md ]; then cat outputs/mobile/ETF_FUND_FLOWS_SHADOW.md >> "$GITHUB_STEP_SUMMARY"; fi
-          if [ -f outputs/mobile/ETP_SATELLITES_SHADOW.md ]; then
-            printf '\n\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
-            cat outputs/mobile/ETP_SATELLITES_SHADOW.md >> "$GITHUB_STEP_SUMMARY"
-          fi
 
       - name: Save ETF fund flow PIT history only after successful validation
         if: ${{ success() && hashFiles('state/etf_fund_flows/**') != '' }}
@@ -153,19 +141,16 @@ jobs:
           path: state/etf_fund_flows/
           key: etf-fund-flow-v1-${{ github.run_id }}
 
-      - name: Upload compact Fund Flow, PIT backup and ETP Satellite outputs
+      - name: Upload compact Fund Flow and PIT backup outputs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: etf-fund-flows-v1-${{ github.run_id }}
           path: |
             outputs/etf_fund_flows/
-            outputs/etp_satellite/
             outputs/mobile/ETF_FUND_FLOWS_SHADOW.md
-            outputs/mobile/ETP_SATELLITES_SHADOW.md
             outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json
             outputs/audit/ETF_FUND_FLOW_STATE_AUDIT.json
-            outputs/audit/ETP_SATELLITE_V1_SHADOW.json
             outputs/gaps/ETF_FUND_FLOW_COLLECTION_FAILURES.csv
             state/etf_fund_flows/ETF_FUND_FLOW_OBSERVATIONS.csv
           if-no-files-found: warn
