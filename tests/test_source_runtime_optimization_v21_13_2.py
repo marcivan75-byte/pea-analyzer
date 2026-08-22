@@ -8,6 +8,7 @@ import pandas as pd
 
 from v182.reporting import etf_fund_flows_shadow_run as flow_runner
 from v182.reporting import waves
+from v182.reporting.horizon_cache_policy import assign_refresh_tiers, previous_horizon_candidates
 from v182.sources import finnhub_consensus as finnhub
 from v182.sources import yfinance_info as yahoo_info
 
@@ -78,6 +79,63 @@ def test_action_refresh_tiers_and_local_ratios_do_not_change_scores() -> None:
     assert waves._positive_ratio(100,-5) is None
 
 
+def test_horizon_policy_uses_previous_ct_before_mt_without_using_tct_for_fundamentals(tmp_path) -> None:
+    decisions_dir=tmp_path/"outputs"/"committee_master"
+    decisions_dir.mkdir(parents=True)
+    decisions=pd.DataFrame([
+        {"asset_class":"ACTION","horizon":"TCT","isin":"I1","score":99,"status":"OK"},
+        {"asset_class":"ACTION","horizon":"CT","isin":"I2","score":95,"status":"OK"},
+        {"asset_class":"ACTION","horizon":"MT","isin":"I3","score":90,"status":"OK"},
+        {"asset_class":"ACTION","horizon":"LT","isin":"I4","score":85,"status":"OK"},
+    ])
+    decisions.to_csv(decisions_dir/"COMMITTEE_DECISIONS.csv",sep=";",index=False)
+    frame=pd.DataFrame({"isin":["I1","I2","I3","I4"],"yahoo_ticker":["T1","T2","T3","T4"]})
+    policy={
+        "previous_decisions_path":"outputs/committee_master/COMMITTEE_DECISIONS.csv",
+        "consumer_horizons":["CT","MT","LT"],
+        "hot_horizons":["CT"],
+        "warm_horizons":["MT"],
+        "candidate_limits":{"TCT":10,"CT":10,"MT":10,"LT":10},
+        "promotion_buffer_top_n":0,
+    }
+    tiers,audit=assign_refresh_tiers(frame,tmp_path,asset_class="ACTION",policy=policy,fallback_warm_n=0)
+    assert tiers=={"T1":"COLD","T2":"HOT","T3":"WARM","T4":"COLD"}
+    assert audit["mode"]=="PREVIOUS_HORIZON_RANKING"
+    assert audit["full_universe_preserved"] is True
+    assert audit["decision_logic_changed"] is False
+
+
+def test_horizon_policy_falls_back_safely_when_previous_decisions_are_missing(tmp_path) -> None:
+    frame=pd.DataFrame({
+        "isin":["I1","I2","I3"],
+        "yahoo_ticker":["T1","T2","T3"],
+        "score_brut":[10,90,50],
+        "earnings_within_7d_flag":[0,0,1],
+    })
+    tiers,audit=assign_refresh_tiers(
+        frame,tmp_path,asset_class="ACTION",
+        policy={"consumer_horizons":["CT","MT","LT"],"promotion_buffer_top_n":1},
+        fallback_warm_n=1,
+    )
+    assert tiers["T2"]=="WARM"
+    assert tiers["T3"]=="HOT"
+    assert tiers["T1"]=="COLD"
+    assert audit["mode"]=="FALLBACK_NO_PREVIOUS_DECISIONS"
+
+
+def test_previous_horizon_candidates_respects_per_horizon_limits(tmp_path) -> None:
+    path=tmp_path/"outputs"/"committee_master"; path.mkdir(parents=True)
+    pd.DataFrame([
+        {"asset_class":"ETF","horizon":"CT","isin":"E1","score":90,"status":"OK"},
+        {"asset_class":"ETF","horizon":"CT","isin":"E2","score":80,"status":"OK"},
+        {"asset_class":"ETF","horizon":"MT","isin":"E3","score":70,"status":"OK"},
+    ]).to_csv(path/"COMMITTEE_DECISIONS.csv",sep=";",index=False)
+    candidates,audit=previous_horizon_candidates(tmp_path,"ETF",limits={"CT":1,"MT":1,"LT":2})
+    assert candidates["CT"]=={"E1"}
+    assert candidates["MT"]=={"E3"}
+    assert audit["selected_by_horizon"]["CT"]==1
+
+
 def test_finnhub_recommendation_refresh_can_skip_target_refresh(tmp_path, monkeypatch) -> None:
     calls=[]
 
@@ -143,8 +201,14 @@ def test_parallel_fund_flow_collector_preserves_all_instruments(monkeypatch) -> 
 
 def test_master_config_registers_runtime_optimization_policy() -> None:
     cfg=json.loads(Path("config/V18.2_MASTER_CONFIG.json").read_text(encoding="utf-8"))
-    assert cfg["version"]=="21.13.2"
+    assert cfg["version"]=="21.13.3"
     opt=cfg["runtime_optimization"]
-    assert opt["yfinance_fundamentals"]["ttl_days"]=={"HOT":3,"WARM":7,"COLD":21}
+    assert opt["status"]=="ACTIVE_V21_13_3_HORIZON_AWARE"
+    assert opt["yfinance_fundamentals"]["ttl_days"]=={"HOT":3,"WARM":10,"COLD":21}
     assert opt["finnhub_consensus"]["tiers"]["HOT"]["target_ttl_days"] > opt["finnhub_consensus"]["tiers"]["HOT"]["recommendation_ttl_days"]
+    assert opt["etf_info"]["ttl_days"]=={"HOT":7,"WARM":14,"COLD":30}
+    policy=opt["horizon_data_policy"]
+    assert policy["source_families"]["ACTION_FUNDAMENTALS"]["consumer_horizons"]==["CT","MT","LT"]
+    assert "TCT" not in policy["source_families"]["ACTION_CONSENSUS"]["consumer_horizons"]
+    assert policy["source_families"]["OHLCV"]["cadence"]=="EACH_TRADING_DAY"
     assert 6 <= opt["etf_fund_flows"]["max_workers"] <= 8
