@@ -1,5 +1,5 @@
 {
-  "version": "V21.16.2",
+  "version": "V21.16.3",
   "purpose": "Lock the complete post-selection contract: Boursorama priority fiche plus Investing Strong Buy horizon timing, with one live owner per cadence and no mutation of reference scores or decisions.",
   "scope": {
     "selected_only_max_unique_instruments": 40,
@@ -33,11 +33,11 @@
     "priority_for_selected_etfs": true,
     "full_universe_daily_scrape_forbidden": true,
     "dynamic_ttl_hours": 8,
-    "performance_ttl_hours": 24,
-    "deep_ttl_hours": 168,
+    "performance_ttl_hours": 72,
+    "deep_ttl_hours": 336,
     "ci_dynamic_max_age_hours": 24,
-    "ci_performance_max_age_hours": 72,
-    "ci_deep_max_age_hours": 336,
+    "ci_performance_max_age_hours": 96,
+    "ci_deep_max_age_hours": 360,
     "refresh_budget": 40,
     "request_start_interval_seconds": 1.0,
     "max_provider_inflight": 4,
