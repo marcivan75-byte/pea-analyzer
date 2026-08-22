@@ -251,9 +251,9 @@ def parse_action_consensus_html(html: str) -> dict[str, object]:
                 fields["boursorama_median_note"] = value
 
     visible = _visible_text(html)
-    potential = re.search(r"\bPotentiel\s*:?\s*([+-]?\d+(?:[,.]\d+)?)\s*%", visible, flags=re.IGNORECASE)
-    if potential:
-        value = _number(potential.group(1))
+    potentials = re.findall(r"\bPotentiel\s*:?\s*([+-]?\d+(?:[,.]\d+)?)\s*%", visible, flags=re.IGNORECASE)
+    if potentials:
+        value = _number(potentials[-1])
         if value is not None:
             fields["boursorama_target_upside_pct"] = value
     return fields
