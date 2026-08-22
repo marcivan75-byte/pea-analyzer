@@ -46,13 +46,21 @@ KEY_HTML = """
 """
 
 
-def test_deterministic_codes_do_not_search_unsupported_markets():
+def test_deterministic_codes_cover_verified_european_markets_without_search():
     assert boursorama_code({"yahoo_ticker": "AI.PA"}, "ACTION") == "1rPAI"
     assert boursorama_code({"yahoo_ticker": "ASML.AS"}, "ACTION") == "1rAASML"
     assert boursorama_code({"yahoo_ticker": "EDP.LS"}, "ACTION") == "1rLEDP"
+    assert boursorama_code({"yahoo_ticker": "ABI.BR"}, "ACTION") == "FF11-ABI"
+    assert boursorama_code({"yahoo_ticker": "SAN.MC"}, "ACTION") == "FF55-SAN"
+    assert boursorama_code({"yahoo_ticker": "ENI.MI"}, "ACTION") == "1gENI"
+    assert boursorama_code({"yahoo_ticker": "SIE.DE"}, "ACTION") == "1zSIE"
     assert boursorama_code({"yahoo_ticker": "WPEA.PA"}, "ETF") == "1rTWPEA"
-    assert boursorama_code({"yahoo_ticker": "SAN.MC"}, "ACTION") is None
-    assert boursorama_code({"yahoo_ticker": "ABI.BR"}, "ACTION") is None
+    assert boursorama_code({"yahoo_ticker": "NOVN.SW"}, "ACTION") is None
+    assert boursorama_code({"yahoo_ticker": "VOW3.DE"}, "ETF") is None
+
+
+def test_explicit_validated_override_still_has_priority():
+    assert boursorama_code({"boursorama_code": "STATIC-VERIFIED", "yahoo_ticker": "NOVN.SW"}, "ACTION") == "STATIC-VERIFIED"
 
 
 def test_consensus_parser_reuses_finnhub_weight_semantics_and_keeps_median_target_separate():

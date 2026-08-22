@@ -97,7 +97,15 @@ def boursorama_code(row: object, universe: str = "ACTION") -> str | None:
     if kind == "ETF" and suffix == "PA":
         return f"1rT{base}"
     if kind == "ACTION":
-        prefix = {"PA": "1rP", "AS": "1rA", "LS": "1rL"}.get(suffix)
+        prefix = {
+            "PA": "1rP",
+            "AS": "1rA",
+            "LS": "1rL",
+            "BR": "FF11-",
+            "MC": "FF55-",
+            "MI": "1g",
+            "DE": "1z",
+        }.get(suffix)
         return f"{prefix}{base}" if prefix else None
     return None
 

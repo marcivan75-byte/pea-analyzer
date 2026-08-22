@@ -1,5 +1,5 @@
 {
-  "version": "V21.14.1",
+  "version": "V21.14.2",
   "enabled": true,
   "mode": "SHADOW_ATTRIBUTED_NO_DECISION_INFLUENCE",
   "purpose": "Measure Boursorama public-page coverage and semantic equivalence before source suppression.",
@@ -19,6 +19,10 @@
       "Euronext_Paris_Action": "Yahoo .PA -> Boursorama 1rP{symbol}",
       "Euronext_Amsterdam_Action": "Yahoo .AS -> Boursorama 1rA{symbol}",
       "Euronext_Lisbon_Action": "Yahoo .LS -> Boursorama 1rL{symbol}",
+      "Euronext_Brussels_Action": "Yahoo .BR -> Boursorama FF11-{symbol}",
+      "Bolsa_Madrid_Action": "Yahoo .MC -> Boursorama FF55-{symbol}",
+      "Borsa_Italiana_Action": "Yahoo .MI -> Boursorama 1g{symbol}",
+      "Xetra_Action": "Yahoo .DE -> Boursorama 1z{symbol}",
       "Euronext_Paris_ETF": "Yahoo .PA -> Boursorama 1rT{symbol}"
     },
     "unsupported_markets_policy": "NO_PUBLIC_SEARCH; REQUIRE_VALIDATED_STATIC_OVERRIDE_OR_FALLBACK"
