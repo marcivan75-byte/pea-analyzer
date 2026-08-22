@@ -117,13 +117,33 @@ def _ensure_text_assignable(frame: pd.DataFrame, field: str) -> None:
         frame[field] = frame[field].astype(object)
 
 
+def _materialize_missing_observation_fields(frame: pd.DataFrame, observations: list[dict]) -> pd.DataFrame:
+    """Add new observation columns in one block to avoid DataFrame fragmentation."""
+    present=set(frame.columns); missing=[]
+    for obs in observations:
+        isin=obs.get("isin"); field=obs.get("field")
+        if isin is None or field is None or isin not in frame.index or field in present:
+            continue
+        present.add(field); missing.append(field)
+    if not missing:
+        return frame
+    additions=pd.DataFrame(pd.NA,index=frame.index,columns=missing,dtype=object)
+    return pd.concat([frame,additions],axis=1)
+
+
 def apply_observations(frame: pd.DataFrame, observations: list[dict]) -> tuple[pd.DataFrame, list[dict]]:
     """Merge observations with provenance, freshness and numeric-domain gates."""
+    # Preserve the historical RangeIndex return contract while avoiding a full
+    # provenance-ledger parse when a source legitimately produced no observation.
+    if not observations:
+        return frame.reset_index(drop=True), []
+
     from v182.audit.provenance import append_records, load_latest, retained_meta_matches_value, value_hash
     from v182.core.data_domain import bounds_for_field, validate_numeric_value
     from v182.core.merge import decide
 
     frame = frame.set_index("isin", drop=False)
+    frame = _materialize_missing_observation_fields(frame, observations)
     quarantined: list[dict] = []
     provenance=load_latest()
     provenance_records=[]
@@ -133,7 +153,6 @@ def apply_observations(frame: pd.DataFrame, observations: list[dict]) -> tuple[p
         if isin is None or field is None or isin not in frame.index:
             provenance_records.append({**obs,"merge_action":"SKIP","merge_reason":"ISIN_OR_FIELD_NOT_IN_MASTER"})
             continue
-        if field not in frame.columns: frame[field] = pd.NA
 
         # Fail closed on bounded quantitative fields. The raw observation remains
         # in the quarantine/provenance trail but can never replace a valid master
