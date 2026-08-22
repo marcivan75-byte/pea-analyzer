@@ -5,7 +5,7 @@
   "primary_bulk_source": "yfinance",
   "no_repeat_api_request_policy": true,
   "api_keys": {"MARKETSTACK_API_KEY":"environment","ALPHA_VANTAGE_API_KEY":"environment","FINNHUB_API_KEY":"environment","FRED_API_KEY":"environment","EIA_API_KEY":"environment"},
-  "yfinance": {"enabled":true,"requires_key":false,"history_start":"2023-01-01","history_period":"5y","required_history_start":"2023-01-01","history_rolling_months":60,"history_policy":"ANCHOR_2023_THEN_ROLLING_60M","cache_generation":"V21.13.1_START_2023_ROLLING_60M","interval":"1d","auto_adjust":true,"actions_batch_size":100,"etf_batch_size":50,"threads":true,"retry_count":3,"cache_days":1,"fundamental_refresh_days":7},
+  "yfinance": {"enabled":true,"requires_key":false,"history_start":"2023-01-01","history_period":"5y","required_history_start":"2023-01-01","history_rolling_months":60,"history_policy":"ANCHOR_2023_THEN_ROLLING_60M","cache_generation":"V21.13.1_START_2023_ROLLING_60M","interval":"1d","auto_adjust":true,"actions_batch_size":100,"etf_batch_size":50,"threads":true,"retry_count":3,"cache_days":1,"fundamental_refresh_days":7,"info_delay_seconds":0.4},
   "runtime_optimization": {
     "status": "ACTIVE_V21_13_7_SCOPE_RATIONALIZED_PREOPEN_TARGETED",
     "governance": "RETAINED_TCT_CT_MT_MODULES_KEEP_THEIR_DECISION_LOGIC; LT_GOLD_CRYPTO_ETP_IPO_RUNTIME_REMOVED_BY_USER_ARBITRATION",
@@ -32,7 +32,7 @@
       "hard_max_age_days": 35,
       "negative_cache_days": 7,
       "warm_top_n": 500,
-      "max_workers": 4,
+      "max_workers": 6,
       "local_price_ratio_refresh": true,
       "bootstrap_uncached_all": true,
       "horizon_policy_family": "ACTION_FUNDAMENTALS",
