@@ -1,5 +1,5 @@
 {
-  "version": "V21.8_CHALLENGER_2026_08_16",
+  "version": "V21.8.1_SOURCE_GATED_2026_08_23",
   "mode": "RESEARCH_AND_DECISION_SUPPORT_ONLY_NO_REAL_ORDERS",
   "selection": {
     "etf_mt_source": "V20.8.1_EXACT_38_DYNAMIC_PIT_CORE",
@@ -10,13 +10,16 @@
   "entry_gate": {
     "states": ["ACTION", "WAIT", "TEMPORARY_REJECT"],
     "mandatory_checks": ["OVEREXTENSION", "MOMENTUM_DECELERATION", "VOLATILITY", "TREND_STRUCTURE", "MARKET_REGIME"],
-    "selected_decision_codes": ["BUY", "ACTION", "BUY_CANDIDATE"],
+    "selected_decision_codes": ["BUY", "ACTION", "BUY_CANDIDATE", "T2_CONFIRM_75_SHADOW"],
+    "tct_watch_only_decision_codes": ["T1_STARTER_25_SHADOW", "T1_WATCH_SHADOW"],
     "extreme_score_requires_overextension_review": true,
     "extreme_score_reference": 92.0,
     "extreme_score_is_not_penalty": true,
     "numeric_entry_thresholds_promoted": false,
     "tct_requires_exact_t2_confirmation": true,
-    "tct_t1_alone_never_opens_challenger_position": true
+    "tct_t1_alone_never_opens_challenger_position": true,
+    "tct_exact_t2_replaces_generic_ct_mt_timing_evidence": true,
+    "tct_source_confirmation_required": true
   },
   "position_management": {
     "states": ["HOLD", "PROTECT", "EXIT", "EMERGENCY_EXIT"],
@@ -58,6 +61,7 @@
     "etf_full_referential_criteria_count": 268,
     "historical_90_91_attribution": "V20.8.1_38_DYNAMIC_PIT_SUBBLOCK_ONLY",
     "t1_t2_scope": "ACTION_TCT_ONLY",
+    "t2_exact_is_decision_support_only": true,
     "real_orders_enabled": false
   }
 }
