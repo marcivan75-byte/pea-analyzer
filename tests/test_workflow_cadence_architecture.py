@@ -9,7 +9,7 @@ def _text(name: str) -> str:
 
 def test_daily_workflow_runs_collection_and_only_tactical_decision_runner():
     source = _text("committee_tct_ct_daily.yml")
-    assert 'cron: "15 18 * * 1-4"' in source
+    assert 'cron: "0 21 * * 1-4"' in source
     assert "PEA_RUN_PROFILE: DAILY_TACTICAL" in source
     assert "PEA_SLOW_SOURCE_MODE: CACHE_PREFERRED" in source
     assert "python -m v182.reporting.run" in source
@@ -27,7 +27,7 @@ def test_daily_workflow_runs_collection_and_only_tactical_decision_runner():
 def test_heavy_committee_is_weekly_and_not_push_triggered():
     source = _text("committee_master_daily.yml")
     assert "name: PEA Weekly Heavy Committee V21.8.1" in source
-    assert 'cron: "45 18 * * 5"' in source
+    assert 'cron: "40 20 * * 5"' in source
     assert "PEA_SLOW_SOURCE_MODE: LIVE" in source
     assert "push:" not in source.split("jobs:", 1)[0]
     assert "python -m v182.reporting.unified_runner" in source
@@ -64,7 +64,7 @@ def test_fund_flows_schedule_is_owned_only_by_weekly_committee():
     assert "if: ${{ inputs.run_validation }}" in standalone
 
     weekly = _text("committee_master_daily.yml")
-    assert 'cron: "45 18 * * 5"' in weekly
+    assert 'cron: "40 20 * * 5"' in weekly
     assert "python -m v182.reporting.etf_fund_flows_shadow_run" in weekly
 
 
@@ -73,8 +73,21 @@ def test_scheduled_runtime_validation_is_opt_in_for_catalyst_snapshots():
     assert "run_validation:" in catalyst
     compile_step = catalyst.split("- name: Compile V24.4.2 catalyst runtime", 1)[1].split("- name:", 1)[0]
     assert "if: ${{ inputs.run_validation }}" in compile_step
-    postmarket_only = "if: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '15 21 * * 1-5' }}"
+    manual_only = "if: ${{ github.event_name == 'workflow_dispatch' }}"
     lineage_step = catalyst.split("- name: Apply fail-closed V24.4.2 PIT OHLC lineage", 1)[1].split("- name:", 1)[0]
     validator_step = catalyst.split("- name: Validate accumulated V24.4.2 PIT ledger", 1)[1].split("- name:", 1)[0]
-    assert postmarket_only in lineage_step
-    assert postmarket_only in validator_step
+    assert manual_only in lineage_step
+    assert manual_only in validator_step
+
+
+def test_postmarket_catalyst_is_consolidated_into_existing_main_jobs():
+    catalyst = _text("tct_next_session_context.yml")
+    daily = _text("committee_tct_ct_daily.yml")
+    weekly = _text("committee_master_daily.yml")
+    assert 'cron: "15 21 * * 1-5"' not in catalyst
+    assert catalyst.count("cron:")==1
+    for workflow in (daily,weekly):
+        assert "TCT_CATALYST_PHASE: POSTMARKET" in workflow
+        assert "python -m v182.reporting.tct_next_session_catalyst_run_v24_4_2" in workflow
+        assert "python -m v182.reporting.tct_v24_4_2_pit_lineage" in workflow
+        assert "python -m v182.reporting.tct_v24_4_2_pit_validator" in workflow

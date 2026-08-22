@@ -88,7 +88,7 @@ def test_virtual_signal_selection_consolidates_multiple_horizons_per_isin():
     d=pd.DataFrame([
         {"decision":"BUY_CANDIDATE","score":80,"coverage_pct":90,"isin":"A1","horizon":"CT"},
         {"decision":"BUY_CANDIDATE","score":85,"coverage_pct":80,"isin":"A1","horizon":"MT"},
-        {"decision":"BUY_CANDIDATE","score":82,"coverage_pct":90,"isin":"A2","horizon":"LT"},
+        {"decision":"BUY_CANDIDATE","score":82,"coverage_pct":90,"isin":"A2","horizon":"MT"},
     ])
     out=_eligible_signal_rows(d,cfg); assert len(out)==2
     a1=out[out["isin"]=="A1"].iloc[0]; assert a1["horizon"]=="MT"; assert a1["contributing_horizons"]=="CT|MT"
@@ -130,7 +130,7 @@ def test_performance_step_has_explicit_dependency_skip_status():
 
 def test_v21_4_registry_has_no_active_total_return_composite():
     cfg=json.loads((ROOT/"config"/"V21_ACTIONS_CRITERIA_REGISTRY.json").read_text())
-    for h in ("CT","MT","LT"):
+    for h in ("CT","MT"):
         assert "total_return_potential_score" not in cfg["weights"][h]
         assert "target_upside_gt4_score" in cfg["weights"][h]
 
@@ -139,7 +139,7 @@ def test_action_reference_and_challenger_are_separate_and_normalized():
     ref=json.loads((ROOT/"config"/"V21_ACTIONS_REFERENCE_V21_0.json").read_text())
     challenger=json.loads((ROOT/"config"/"V21_ACTIONS_CRITERIA_REGISTRY.json").read_text())
     integrity=json.loads((ROOT/"config"/"FULL_REFERENTIAL_INTEGRITY.json").read_text())
-    for h in ("CT","MT","LT","SHORT","TOP_DOWN"):
+    for h in ("CT","MT","SHORT","TOP_DOWN"):
         assert abs(sum(ref["weights"][h].values())-1.0)<1e-9
         assert abs(sum(challenger["weights"][h].values())-1.0)<1e-6
     assert integrity["actions"]["reference_weights"]["role"]=="FINAL_REFERENCE_UNTIL_CHALLENGER_VALIDATION"

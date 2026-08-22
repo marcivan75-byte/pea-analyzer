@@ -57,6 +57,6 @@ def test_sector_rotation_requires_recovery_for_high_score():
 
 def test_v21_4_action_weight_sets_sum_to_one_without_total_return_double_count():
     cfg=json.loads((ROOT/"config"/"V21_ACTIONS_CRITERIA_REGISTRY.json").read_text())
-    for horizon in ("CT","MT","LT","SHORT","TOP_DOWN"): assert abs(sum(cfg["weights"][horizon].values())-1.0)<1e-6
-    assert cfg["weights"]["MT"]["morningstar_action_score"]>0; assert cfg["weights"]["LT"]["dividend_gt4_score"]>0; assert cfg["weights"]["LT"]["target_upside_gt4_score"]>0
-    assert all("total_return_potential_score" not in cfg["weights"][h] for h in ("CT","MT","LT"))
+    for horizon in ("CT","MT","SHORT","TOP_DOWN"): assert abs(sum(cfg["weights"][horizon].values())-1.0)<1e-6
+    assert cfg["weights"]["MT"]["morningstar_action_score"]>0
+    assert all("total_return_potential_score" not in cfg["weights"][h] for h in ("CT","MT"))

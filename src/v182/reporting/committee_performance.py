@@ -72,7 +72,7 @@ def run(root: Path) -> dict:
     actions=_read(root/"outputs"/"V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv"); etfs=_read(root/"outputs"/"V18.2_PEA_ETF_MASTER_ENRICHED.csv"); prices=_price_master(actions,etfs)
     state=root/"state"/"committee_performance"; state.mkdir(parents=True,exist_ok=True); outdir=root/"outputs"/"performance"; outdir.mkdir(parents=True,exist_ok=True)
     signals=_read(state/"signals.csv"); marks=_read(state/"daily_marks.csv"); positions=_read(state/"positions.csv"); tx=_read(state/"transactions.csv"); nav=_read(state/"nav.csv"); previous=_read(state/"last_decisions.csv")
-    today=datetime.now(timezone.utc).date().isoformat(); buy_set=set(cfg["buy_decisions"]); min_buy_score=float(cfg.get("minimum_buy_score",77.0)); allowed_assets={"ACTION","ETF"} if not cfg.get("gold_in_virtual_pea_book",False) else {"ACTION","ETF","GOLD"}
+    today=datetime.now(timezone.utc).date().isoformat(); buy_set=set(cfg["buy_decisions"]); min_buy_score=float(cfg.get("minimum_buy_score",77.0)); allowed_assets={"ACTION","ETF"}
     current=decisions[decisions["asset_class"].astype(str).isin(allowed_assets)].copy(); current["key"]=current["asset_class"].astype(str)+"|"+current["horizon"].astype(str)+"|"+current["isin"].astype(str)
     prev_map=dict(zip(previous.get("key",pd.Series(dtype=str)),previous.get("decision",pd.Series(dtype=str)))) if not previous.empty else {}
     new_signals=[]

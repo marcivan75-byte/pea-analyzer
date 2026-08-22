@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 
-DEFAULT_LIMITS = {"TCT": 80, "CT": 250, "MT": 500, "LT": 1000}
+DEFAULT_LIMITS = {"TCT": 80, "CT": 250, "MT": 500}
 PRIORITY_STATE_COLUMNS = ["asset_class", "horizon", "isin", "score", "status", "decision", "generated_at_utc"]
 
 
@@ -45,7 +45,7 @@ def write_horizon_priority_state(
     frame["score"] = pd.to_numeric(frame["score"], errors="coerce")
     frame = frame[
         frame["asset_class"].isin(["ACTION", "ETF"])
-        & frame["horizon"].isin(["TCT", "CT", "MT", "LT"])
+        & frame["horizon"].isin(["TCT", "CT", "MT"])
         & frame["isin"].ne("")
         & frame["isin"].ne("nan")
         & frame["score"].notna()
@@ -147,7 +147,7 @@ def assign_refresh_tiers(
         limits=limits,
     )
     isin_to_ticker = dict(zip(clean[isin_col].astype(str), clean[ticker_col].astype(str)))
-    consumer_horizons = [str(value).upper() for value in policy.get("consumer_horizons", ["CT", "MT", "LT"])]
+    consumer_horizons = [str(value).upper() for value in policy.get("consumer_horizons", ["CT", "MT"])]
     hot_horizons = [str(value).upper() for value in policy.get("hot_horizons", ["CT"])]
     warm_horizons = [str(value).upper() for value in policy.get("warm_horizons", ["MT"])]
 

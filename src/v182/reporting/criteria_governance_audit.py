@@ -10,7 +10,7 @@ from v182.decision.committee_master import criterion_coverage_report, load_regis
 from v182.reporting import calibration_governance_audit
 
 ROOT = Path(__file__).resolve().parents[3]
-HORIZONS = ("CT", "MT", "LT", "SHORT", "TOP_DOWN")
+HORIZONS = ("CT", "MT", "SHORT", "TOP_DOWN")
 
 
 def _read(path: Path) -> pd.DataFrame:

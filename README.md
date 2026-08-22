@@ -4,7 +4,7 @@ Le moteur conserve les collecteurs V18.2 comme socle technique, mais l'univers d
 
 ## Versions opérationnelles et ordre du run
 
-La baseline de décision reste **V21.8.1**. Les modules récents ci-dessous sont des couches gouvernées SHADOW sans autorité de promotion ni ordre réel :
+La baseline de décision reste **V21.8.1**. V21.13.7 conserve uniquement Actions TCT/CT/MT et ETF PEA CT/MT : Actions LT, ETF LT, Gold, Crypto/ETP et IPO sont retirés du runtime actif. Les modules récents ci-dessous sont des couches gouvernées SHADOW sans autorité de promotion ni ordre réel :
 
 | Domaine | Version courante | Workflow principal | Statut |
 |---|---|---|---|
@@ -15,7 +15,7 @@ La baseline de décision reste **V21.8.1**. Les modules récents ci-dessous sont
 
 Ordre recommandé pour un run contrôlé : validation CI complète → collecte quotidienne → TCT/CT quotidien → snapshots catalyst PREOPEN/POSTMARKET → workflow lourd hebdomadaire. Les rapports SHADOW restent séparés des décisions canoniques.
 
-Le profil quotidien `DAILY_TACTICAL` de V21.13.5 s'exécute du lundi au jeudi ; le Comité hebdomadaire produit désormais lui-même les sorties tactiques du vendredi. Yahoo Fundamentals, Finnhub Consensus et Yahoo ETF Info utilisent le cache en priorité sur les runs quotidiens, avec récupération réseau obligatoire des instruments absents ou hors limite, puis refresh ordinaire complet le vendredi. Les validations de compilation restent disponibles en manuel mais ne sont plus refaites sur chaque run planifié. La cible centrale des deux pipelines principaux est de 295,7 minutes par mois moyen. Le détail, le budget GitHub global et les invariants sont décrits dans `docs/PIPELINE_RUNTIME_V21_13_5.md`.
+Le profil `DAILY_TACTICAL` V21.13.7 s'exécute du lundi au jeudi et le Comité hebdomadaire produit les sorties tactiques du vendredi. Yahoo Fundamentals, Finnhub Consensus et Yahoo ETF Info utilisent le cache en priorité en semaine, avec secours obligatoire pour toute absence ou limite dure dépassée. Le snapshot catalyst POSTMARKET est intégré aux jobs quotidien/hebdomadaire ; seul PREOPEN reste autonome. PREOPEN et POSTMARKET sont bornés à l'union dédupliquée des 20 Actions TCT présélectionnées et des 20 meilleures Actions CT, soit 40 titres maximum, avec échec fermé si la présélection manque. La cible centrale devient **347,8 minutes facturables par mois moyen (5 h 48)**. Le détail et les invariants sont décrits dans `docs/PIPELINE_RUNTIME_V21_13_7.md`.
 
 ## Synthèse décisionnelle CI
 

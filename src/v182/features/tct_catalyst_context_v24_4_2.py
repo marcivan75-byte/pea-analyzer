@@ -86,9 +86,28 @@ def _reason(row: pd.Series, cfg: dict) -> str:
 def select_catalyst_candidates(seed: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     if seed is None or seed.empty:
         return pd.DataFrame()
-    work = _priority_axes(seed, cfg)
+    scope = cfg.get("candidate_selection", {}).get("preselection_scope", {})
+    scoped_seed = seed.copy()
+    if bool(scope.get("enabled", False)):
+        marker = str(scope.get("required_seed_marker", "preopen_scope_eligible"))
+        if marker not in scoped_seed.columns:
+            if bool(scope.get("fail_closed_if_marker_missing", True)):
+                return pd.DataFrame()
+        else:
+            eligible = scoped_seed[marker].fillna(False).astype(str).str.strip().str.lower().isin(
+                {"1", "true", "yes", "y"}
+            )
+            scoped_seed = scoped_seed[eligible].copy()
+        deduplicate_by = str(scope.get("deduplicate_by", "isin"))
+        if deduplicate_by in scoped_seed.columns:
+            scoped_seed = scoped_seed.drop_duplicates(deduplicate_by, keep="first")
+    if scoped_seed.empty:
+        return pd.DataFrame()
+    work = _priority_axes(scoped_seed, cfg)
     work["candidate_rank_reason"] = work.apply(lambda row: _reason(row, cfg), axis=1)
     limit = int(cfg["data_policy"].get("candidate_limit", 60))
+    if bool(scope.get("enabled", False)):
+        limit = min(limit, int(scope.get("union_max", limit)))
     quotas = cfg.get("candidate_selection", {}).get("quotas", {})
     selected: list[int] = []
 

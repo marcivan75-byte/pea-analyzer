@@ -4,10 +4,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_v2442_context_workflow_runs_only_two_lightweight_snapshots():
+def test_v2442_standalone_context_workflow_runs_only_preopen_snapshot():
     workflow = (ROOT / ".github" / "workflows" / "tct_next_session_context.yml").read_text(encoding="utf-8")
     assert 'cron: "40 6 * * 1-5"' in workflow
-    assert 'cron: "15 21 * * 1-5"' in workflow
+    assert 'cron: "15 21 * * 1-5"' not in workflow
+    assert workflow.count("cron:")==1
     assert "python -m v182.reporting.tct_next_session_catalyst_run_v24_4_2" in workflow
     assert "python -m v182.reporting.run" not in workflow
     assert "daily_tct_ct_runner" not in workflow
@@ -19,13 +20,16 @@ def test_v2442_context_workflow_runs_only_two_lightweight_snapshots():
     assert "TCT_V24_4_1_CATALYST_LEDGER.csv" not in workflow
 
 
-def test_daily_workflow_persists_context_seed_but_does_not_run_v2442_continuously():
+def test_daily_workflow_persists_context_seed_and_runs_one_consolidated_postmarket_snapshot():
     workflow = (ROOT / ".github" / "workflows" / "committee_tct_ct_daily.yml").read_text(encoding="utf-8")
     assert "Restore next-session catalyst state" in workflow
     assert "Save next-session catalyst state" in workflow
     assert "state/tct_context/" in workflow
     assert "TCT_DAILY_TRADER_LATEST.csv" in workflow
-    assert "tct_next_session_catalyst_run" not in workflow
+    assert "TCT_CATALYST_PHASE: POSTMARKET" in workflow
+    assert workflow.count("tct_next_session_catalyst_run_v24_4_2")==1
+    assert "tct_v24_4_2_pit_lineage" in workflow
+    assert "tct_v24_4_2_pit_validator" in workflow
 
 
 def test_v2441_historical_runner_preserves_no_extended_hours_or_intraday_authority():

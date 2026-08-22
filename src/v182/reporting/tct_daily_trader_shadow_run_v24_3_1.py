@@ -107,6 +107,85 @@ def _attach_context(output: pd.DataFrame, actions: pd.DataFrame) -> pd.DataFrame
     return enriched.merge(context, on="isin", how="left")
 
 
+def _truthy(series: pd.Series) -> pd.Series:
+    return series.astype("string").fillna("").str.strip().str.lower().isin({"1", "true", "yes", "y"})
+
+
+def _attach_tct_ct_preselection(
+    output: pd.DataFrame,
+    daily_decisions: pd.DataFrame,
+    catalyst_cfg: dict,
+) -> pd.DataFrame:
+    """Persist the bounded TCT/Action-CT union consumed by PREOPEN.
+
+    The next morning runs in a fresh GitHub job, so the scope must travel with
+    the cached TCT context seed. Missing or invalid selections fail closed.
+    """
+    out = output.copy()
+    out["preselection_tct"] = False
+    out["preselection_ct"] = False
+    out["preselection_ct_score"] = pd.NA
+    out["preselection_ct_decision"] = ""
+    out["preselection_horizons"] = ""
+    out["preopen_scope_eligible"] = False
+    if out.empty or "isin" not in out.columns or daily_decisions.empty:
+        return out
+
+    policy = catalyst_cfg.get("candidate_selection", {}).get("preselection_scope", {})
+    if not bool(policy.get("enabled", False)):
+        return out
+    required = {"asset_class", "horizon", "isin"}
+    if not required.issubset(daily_decisions.columns):
+        return out
+
+    decisions = daily_decisions.copy()
+    decisions["asset_class"] = decisions["asset_class"].astype(str).str.upper()
+    decisions["horizon"] = decisions["horizon"].astype(str).str.upper()
+    decisions["isin"] = decisions["isin"].astype(str).str.upper().str.strip()
+    actions = decisions[decisions["asset_class"].eq(str(policy.get("asset_class", "ACTION")).upper())]
+
+    tct = actions[actions["horizon"].eq("TCT")].copy()
+    tct_limit = max(0, int(policy.get("tct_top_n", 20)))
+    if "tct_baseline_top20" in tct.columns:
+        tct = tct[_truthy(tct["tct_baseline_top20"])]
+    elif "baseline_eligible_without_t1_t2" in tct.columns:
+        tct = tct[_truthy(tct["baseline_eligible_without_t1_t2"])]
+    elif "tct_baseline_rank" in tct.columns:
+        rank = pd.to_numeric(tct["tct_baseline_rank"], errors="coerce")
+        tct = tct[rank.between(1, tct_limit)]
+    else:
+        tct = tct.iloc[0:0]
+    if "tct_baseline_rank" in tct.columns:
+        tct = tct.assign(_rank=pd.to_numeric(tct["tct_baseline_rank"], errors="coerce")).sort_values("_rank")
+    tct_ids = set(tct.head(tct_limit)["isin"].astype(str))
+
+    ct = actions[actions["horizon"].eq("CT")].copy()
+    allowed = {str(value) for value in policy.get("action_ct_decisions", ["BUY_CANDIDATE", "WATCH", "REVIEW"])}
+    if "decision" not in ct.columns or "score" not in ct.columns:
+        ct = ct.iloc[0:0]
+    else:
+        ct["_score"] = pd.to_numeric(ct["score"], errors="coerce")
+        ct = ct[ct["decision"].astype(str).isin(allowed) & ct["_score"].notna()]
+        if "status" in ct.columns:
+            ct = ct[ct["status"].astype(str).eq("SCORABLE")]
+        ct = ct.sort_values("_score", ascending=False).head(max(0, int(policy.get("action_ct_top_n", 20))))
+    ct_ids = set(ct["isin"].astype(str))
+    ct_scores = dict(zip(ct["isin"].astype(str), ct.get("_score", pd.Series(dtype=float))))
+    ct_decisions = dict(zip(ct["isin"].astype(str), ct.get("decision", pd.Series(dtype=str)).astype(str)))
+
+    out["isin"] = out["isin"].astype(str).str.upper().str.strip()
+    out["preselection_tct"] = out["isin"].isin(tct_ids)
+    out["preselection_ct"] = out["isin"].isin(ct_ids)
+    out["preselection_ct_score"] = out["isin"].map(ct_scores)
+    out["preselection_ct_decision"] = out["isin"].map(ct_decisions).fillna("")
+    out["preselection_horizons"] = [
+        "TCT|CT" if in_tct and in_ct else "TCT" if in_tct else "CT" if in_ct else ""
+        for in_tct, in_ct in zip(out["preselection_tct"], out["preselection_ct"])
+    ]
+    out["preopen_scope_eligible"] = out["preselection_tct"] | out["preselection_ct"]
+    return out
+
+
 def _android_summary(frame: pd.DataFrame, generated_at: str) -> str:
     lines = [
         "# TCT V24.3.1 — Daily/Weekly Trader Tools SHADOW",
@@ -148,6 +227,9 @@ def _android_summary(frame: pd.DataFrame, generated_at: str) -> str:
 
 def run(root: Path = ROOT) -> dict:
     cfg = json.loads((root / "config" / CONFIG).read_text(encoding="utf-8"))
+    catalyst_cfg = json.loads(
+        (root / "config" / "TCT_V24_4_2_CATALYST_CONTEXT_SHADOW.json").read_text(encoding="utf-8")
+    )
     outdir = root / "outputs" / "daily_tct_ct"
     auditdir = root / "outputs" / "audit"
     mobile = root / "outputs" / "mobile"
@@ -225,6 +307,8 @@ def run(root: Path = ROOT) -> dict:
         output = pd.DataFrame(rows)
         output = _attach_context(output, actions)
 
+    daily_decisions = _read_csv(outdir / "DAILY_TCT_CT_DECISIONS.csv")
+    output = _attach_tct_ct_preselection(output, daily_decisions, catalyst_cfg)
     output_path = outdir / "TCT_DAILY_TRADER_V24_3_1_SHADOW.csv"
     _write_csv(output, output_path)
     context_seed_path = root / "state" / "tct_context" / "TCT_DAILY_TRADER_LATEST.csv"
@@ -248,6 +332,13 @@ def run(root: Path = ROOT) -> dict:
         "new_market_data_downloads_required": False,
         "context_seed_persisted": True,
         "context_seed_reference_close_persisted": True,
+        "preopen_scope": {
+            "policy": "TCT_TOP20_UNION_ACTION_CT_TOP20",
+            "eligible_rows": int(output.get("preopen_scope_eligible", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()),
+            "tct_rows": int(output.get("preselection_tct", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()),
+            "ct_rows": int(output.get("preselection_ct", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()),
+            "union_max": int(catalyst_cfg.get("candidate_selection", {}).get("preselection_scope", {}).get("union_max", 40)),
+        },
         "decision_influence": 0.0,
         "score_influence": 0.0,
         "sizing_influence": 0.0,

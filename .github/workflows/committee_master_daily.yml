@@ -9,7 +9,7 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: "45 18 * * 5"
+    - cron: "40 20 * * 5"
 
 concurrency:
   group: committee-weekly-heavy-${{ github.ref }}
@@ -73,20 +73,6 @@ jobs:
           key: action-ct-v221-${{ github.run_id }}
           restore-keys: |
             action-ct-v221-
-      - name: Restore GOLD shadow history
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/GOLD_V1_1_SHADOW_HISTORY.csv
-          key: gold-v11-history-${{ github.run_id }}
-          restore-keys: |
-            gold-v11-history-
-      - name: Restore IPO radar history
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/ipo_radar/
-          key: ipo-radar-v1-${{ github.run_id }}
-          restore-keys: |
-            ipo-radar-v1-
       - name: Restore Sector Rotation V2 shadow history
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
@@ -137,10 +123,8 @@ jobs:
           a=json.loads(Path("config/V21_ACTIONS_CRITERIA_REGISTRY.json").read_text())
           e=json.loads(Path("config/V20_7_1_ETF_CRITERIA_REGISTRY.json").read_text())
           ed=json.loads(Path("config/V20.8.2_ETF_MT_DYNAMIC.json").read_text())
-          g=json.loads(Path("config/GOLD_V1_1_102_CRITERIA.json").read_text())
           integrity=json.loads(Path("config/FULL_REFERENTIAL_INTEGRITY.json").read_text())
           tct=json.loads(Path("config/TCT_V24_1_7_SHADOW.json").read_text())
-          ipo=json.loads(Path("config/IPO_RADAR_V1.json").read_text())
           sr=json.loads(Path("config/SECTOR_ROTATION_V2_SHADOW.json").read_text())
           srp=json.loads(Path("config/SECTOR_ROTATION_V2_PIT_OOS_PROTOCOL.json").read_text())
           risk=json.loads(Path("config/BETA_CORRELATION_RISK_ENGINE.json").read_text())
@@ -154,8 +138,9 @@ jobs:
           materialized=filter_actions(legacy,"config/V21_3_ACTION_UNIVERSE_1829_ISINS.parts")
           assert len(materialized.included)==1829
           assert materialized.included["isin"].nunique()==1829
-          for h in ("CT","MT","LT","SHORT","TOP_DOWN"):
+          for h in ("CT","MT","SHORT","TOP_DOWN"):
               assert abs(sum(a["weights"][h].values())-1.0) < 1e-6
+          assert "LT" not in a["weights"] and "LT" not in e["weights"]
           assert a["governance"]["positive_unvalidated_overlay_can_create_buy"] is False
           assert a["governance"]["total_return_composite_active_weight"] is False
           assert a["governance"]["t1_t2_scope"] == "ACTION_TCT_ONLY"
@@ -168,12 +153,6 @@ jobs:
           assert abs(sum(T2_WEIGHTS.values())-1.0) < 1e-12
           assert ed["missing_policy"] == "AVAILABLE_CRITERIA_RENORMALIZED_TO_100_PERCENT"
           assert ed["historical_performance_attribution"] == "NONE_UNTIL_DEDICATED_PIT_BACKTEST"
-          assert g["governance"]["criteria_count"] == len(g["criteria"]) == 102
-          assert g["governance"]["contribution_blocks"] == 11
-          assert abs(sum(ipo["opportunity_weights"].values())-100.0) < 1e-9
-          assert abs(sum(ipo["risk_weights"].values())-100.0) < 1e-9
-          assert ipo["governance"]["can_create_buy"] is False
-          assert ipo["governance"]["t1_t2_forbidden"] is True
           assert sr["mode"] == "SHADOW_ONLY"
           assert sr["version"] == "SECTOR_ROTATION_V2.0_SHADOW"
           assert sr["governance"]["changes_action_scores"] is False
@@ -213,8 +192,7 @@ jobs:
           assert ff["governance"]["can_trigger_orders"] is False
           assert ff["governance"]["can_trigger_sales"] is False
           assert ff["anti_false_signal"]["mixed_currency_absolute_aggregation_forbidden"] is True
-          assert ff["anti_false_signal"]["coinshares_weekly_control_not_added_to_primary_flows"] is True
-          print(f"V21.8.1 integrity OK: Actions 1829/633 (materialized identity-only={materialized.materialized_missing_count}), ETF 102/268, TCT, Gold, IPO Radar, Sector Rotation V2 PIT/OOS shadow, Fund Flows V1 shadow, RISK V1.1 context-only, Entry/Exit V21.8 baseline")
+          print(f"V21.8.1 integrity OK: Actions 1829/633, ETF 102/268, no LT/Gold/Crypto/IPO runtime, TCT, Sector Rotation V2 PIT/OOS shadow, Fund Flows V1 PEA-only, RISK V1.1 context-only, Entry/Exit V21.8 baseline (identity-only={materialized.materialized_missing_count})")
           PY
       - name: Publish Action identity hydration worklist
         run: python -m v182.audit.identity_hydration
@@ -223,9 +201,6 @@ jobs:
       - name: Replay governed ETF structural state V21.15 for Friday tactical outputs
         continue-on-error: true
         run: python -m v182.reporting.etf_structure_state_replay
-      - name: ETF CT LT V21.14 Friday shadow context
-        continue-on-error: true
-        run: python -m v182.reporting.etf_ct_lt_shadow_run_v21_14
       - name: Friday TCT CT scoring and V21.8
         run: python -m v182.reporting.daily_tct_ct_runner
       - name: Action CT V22.0 Friday parent SHADOW
@@ -240,6 +215,17 @@ jobs:
       - name: Persist Friday compact OHLC for V24.4.2 PIT
         continue-on-error: true
         run: python -m v182.reporting.tct_pit_ohlc_ledger_v24_4_2
+      - name: Run consolidated Friday POSTMARKET catalyst snapshot V24.4.2
+        continue-on-error: true
+        env:
+          TCT_CATALYST_PHASE: POSTMARKET
+        run: python -m v182.reporting.tct_next_session_catalyst_run_v24_4_2
+      - name: Apply Friday POSTMARKET V24.4.2 PIT OHLC lineage
+        continue-on-error: true
+        run: python -m v182.reporting.tct_v24_4_2_pit_lineage
+      - name: Validate Friday POSTMARKET V24.4.2 PIT ledger
+        continue-on-error: true
+        run: python -m v182.reporting.tct_v24_4_2_pit_validator
       - name: Build synthetic decision brief
         if: always()
         run: python -m v182.reporting.decision_brief
@@ -252,7 +238,7 @@ jobs:
         if: always()
         run: |
           if [ -f outputs/unified/UNIFIED_SUMMARY_LATEST.json ]; then cat outputs/unified/UNIFIED_SUMMARY_LATEST.json; fi
-          if [ -f outputs/audit/UNIFIED_RUNTIME_V21_13_5.json ]; then cat outputs/audit/UNIFIED_RUNTIME_V21_13_5.json; fi
+          if [ -f outputs/audit/UNIFIED_RUNTIME_V21_13_7.json ]; then cat outputs/audit/UNIFIED_RUNTIME_V21_13_7.json; fi
       - name: Show committee summary
         if: always()
         run: |
@@ -265,10 +251,6 @@ jobs:
         if: always()
         run: |
           if [ -f outputs/audit/CRITERIA_GOVERNANCE_AUDIT.json ]; then cat outputs/audit/CRITERIA_GOVERNANCE_AUDIT.json; fi
-      - name: Show IPO radar summary
-        if: always()
-        run: |
-          if [ -f outputs/ipo_radar/IPO_SUMMARY.json ]; then cat outputs/ipo_radar/IPO_SUMMARY.json; fi
       - name: Show Sector Rotation V2 shadow summary
         if: always()
         run: |
@@ -303,6 +285,10 @@ jobs:
             printf '\n\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
             cat outputs/mobile/ETF_FUND_FLOWS_SHADOW.md >> "$GITHUB_STEP_SUMMARY"
           fi
+          if [ -f outputs/mobile/ANDROID_TCT_NEXT_SESSION_CATALYST_V24_4_2.md ]; then
+            printf '\n\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+            cat outputs/mobile/ANDROID_TCT_NEXT_SESSION_CATALYST_V24_4_2.md >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Save persistent OHLCV cache
         if: ${{ success() && hashFiles('data/cache/**') != '' }}
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
@@ -333,18 +319,6 @@ jobs:
         with:
           path: state/action_ct_v22_1/
           key: action-ct-v221-${{ github.run_id }}
-      - name: Save GOLD history
-        if: ${{ always() && hashFiles('state/GOLD_V1_1_SHADOW_HISTORY.csv') != '' }}
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/GOLD_V1_1_SHADOW_HISTORY.csv
-          key: gold-v11-history-${{ github.run_id }}
-      - name: Save IPO radar history
-        if: ${{ always() && hashFiles('state/ipo_radar/**') != '' }}
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/ipo_radar/
-          key: ipo-radar-v1-${{ github.run_id }}
       - name: Save Sector Rotation V2 shadow history
         if: ${{ always() && hashFiles('state/sector_rotation_v2/**') != '' }}
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
@@ -374,8 +348,6 @@ jobs:
             outputs/committee_master/
             outputs/etf_mt_v2081/
             outputs/etf_fund_flows/
-            outputs/gold_v1_1/
-            outputs/ipo_radar/
             outputs/sector_rotation/
             outputs/risk/
             outputs/mobile/
@@ -391,8 +363,6 @@ jobs:
             state/tct_context/
             state/action_ct/
             state/action_ct_v22_1/
-            state/GOLD_V1_1_SHADOW_HISTORY.csv
-            state/ipo_radar/
             state/sector_rotation_v2/
             state/etf_fund_flows/
             state/provenance/

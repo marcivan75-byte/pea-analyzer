@@ -123,8 +123,8 @@ def test_horizon_priority_state_persists_only_valid_action_etf_rankings(tmp_path
         {"asset_class":"ACTION","horizon":"TCT","isin":"I1","score":99,"status":"OK","decision":"WATCH"},
         {"asset_class":"ACTION","horizon":"CT","isin":"I2","score":95,"status":"OK","decision":"BUY"},
         {"asset_class":"ETF","horizon":"MT","isin":"E1","score":90,"status":"OK","decision":"WATCH"},
-        {"asset_class":"GOLD","horizon":"LT","isin":"G1","score":88,"status":"OK","decision":"WATCH"},
-        {"asset_class":"ACTION","horizon":"LT","isin":"I3","score":85,"status":"FAILED","decision":"FAILED"},
+        {"asset_class":"BOND","horizon":"MT","isin":"B1","score":88,"status":"OK","decision":"WATCH"},
+        {"asset_class":"ACTION","horizon":"YEARLY","isin":"I3","score":85,"status":"OK","decision":"WATCH"},
     ])
     audit=write_horizon_priority_state(decisions,state_path,generated_at_utc="2026-08-22T08:00:00+00:00")
     state=pd.read_csv(state_path,sep=";",dtype=str)
@@ -141,20 +141,19 @@ def test_horizon_policy_uses_previous_ct_before_mt_without_using_tct_for_fundame
         {"asset_class":"ACTION","horizon":"TCT","isin":"I1","score":99,"status":"OK","decision":"WATCH"},
         {"asset_class":"ACTION","horizon":"CT","isin":"I2","score":95,"status":"OK","decision":"WATCH"},
         {"asset_class":"ACTION","horizon":"MT","isin":"I3","score":90,"status":"OK","decision":"WATCH"},
-        {"asset_class":"ACTION","horizon":"LT","isin":"I4","score":85,"status":"OK","decision":"WATCH"},
     ])
     write_horizon_priority_state(decisions,state_path)
-    frame=pd.DataFrame({"isin":["I1","I2","I3","I4"],"yahoo_ticker":["T1","T2","T3","T4"]})
+    frame=pd.DataFrame({"isin":["I1","I2","I3"],"yahoo_ticker":["T1","T2","T3"]})
     policy={
         "previous_decisions_path":"state/provenance/HORIZON_REFRESH_PRIORITY_V1.csv",
-        "consumer_horizons":["CT","MT","LT"],
+        "consumer_horizons":["CT","MT"],
         "hot_horizons":["CT"],
         "warm_horizons":["MT"],
-        "candidate_limits":{"TCT":10,"CT":10,"MT":10,"LT":10},
+        "candidate_limits":{"TCT":10,"CT":10,"MT":10},
         "promotion_buffer_top_n":0,
     }
     tiers,audit=assign_refresh_tiers(frame,tmp_path,asset_class="ACTION",policy=policy,fallback_warm_n=0)
-    assert tiers=={"T1":"COLD","T2":"HOT","T3":"WARM","T4":"COLD"}
+    assert tiers=={"T1":"COLD","T2":"HOT","T3":"WARM"}
     assert audit["mode"]=="PREVIOUS_HORIZON_RANKING"
     assert audit["full_universe_preserved"] is True
     assert audit["decision_logic_changed"] is False
@@ -169,7 +168,7 @@ def test_horizon_policy_falls_back_safely_when_previous_decisions_are_missing(tm
     })
     tiers,audit=assign_refresh_tiers(
         frame,tmp_path,asset_class="ACTION",
-        policy={"consumer_horizons":["CT","MT","LT"],"promotion_buffer_top_n":1},
+        policy={"consumer_horizons":["CT","MT"],"promotion_buffer_top_n":1},
         fallback_warm_n=1,
     )
     assert tiers["T2"]=="WARM"
@@ -185,7 +184,7 @@ def test_previous_horizon_candidates_respects_per_horizon_limits(tmp_path) -> No
         {"asset_class":"ETF","horizon":"CT","isin":"E2","score":80,"status":"OK","decision":"WATCH"},
         {"asset_class":"ETF","horizon":"MT","isin":"E3","score":70,"status":"OK","decision":"WATCH"},
     ]),state_path)
-    candidates,audit=previous_horizon_candidates(tmp_path,"ETF",limits={"CT":1,"MT":1,"LT":2})
+    candidates,audit=previous_horizon_candidates(tmp_path,"ETF",limits={"CT":1,"MT":1})
     assert candidates["CT"]=={"E1"}
     assert candidates["MT"]=={"E3"}
     assert audit["selected_by_horizon"]["CT"]==1
@@ -297,35 +296,45 @@ def test_parallel_fund_flow_collector_preserves_all_instruments(monkeypatch) -> 
 
 def test_master_config_registers_runtime_optimization_policy() -> None:
     cfg=json.loads(Path("config/V18.2_MASTER_CONFIG.json").read_text(encoding="utf-8"))
-    assert cfg["version"]=="21.13.5"
+    assert cfg["version"]=="21.13.7"
     opt=cfg["runtime_optimization"]
-    assert opt["status"]=="ACTIVE_V21_13_5_MONTHLY_RUNTIME_BUDGET_OPTIMIZED"
+    assert opt["status"]=="ACTIVE_V21_13_7_SCOPE_RATIONALIZED_PREOPEN_TARGETED"
     assert opt["yfinance_fundamentals"]["ttl_days"]=={"HOT":3,"WARM":10,"COLD":21}
     assert opt["finnhub_consensus"]["tiers"]["HOT"]["target_ttl_days"] > opt["finnhub_consensus"]["tiers"]["HOT"]["recommendation_ttl_days"]
     assert opt["etf_info"]["ttl_days"]=={"HOT":7,"WARM":14,"COLD":30}
     policy=opt["horizon_data_policy"]
     assert policy["previous_decisions_path"]=="state/provenance/HORIZON_REFRESH_PRIORITY_V1.csv"
     assert policy["state_written_after_committee"] is True
-    assert policy["source_families"]["ACTION_FUNDAMENTALS"]["consumer_horizons"]==["CT","MT","LT"]
+    assert policy["source_families"]["ACTION_FUNDAMENTALS"]["consumer_horizons"]==["CT","MT"]
     assert "TCT" not in policy["source_families"]["ACTION_CONSENSUS"]["consumer_horizons"]
     assert policy["source_families"]["OHLCV"]["cadence"]=="EACH_TRADING_DAY"
     assert 6 <= opt["etf_fund_flows"]["max_workers"] <= 8
     assert opt["daily_profile"]["reuse_primary_etf_ohlcv_for_etf_mt"] is True
     assert opt["daily_profile"]["scheduled_days"]==["MONDAY","TUESDAY","WEDNESDAY","THURSDAY"]
     assert opt["daily_profile"]["friday_tactical_owned_by_weekly"] is True
+    assert opt["daily_profile"]["postmarket_catalyst_embedded"] is True
+    assert opt["daily_profile"]["preopen_candidate_scope"]=="ACTION_TCT_TOP20_UNION_ACTION_CT_TOP20"
+    assert opt["daily_profile"]["preopen_candidate_limit"]==40
     assert opt["daily_profile"]["slow_source_mode"]=="CACHE_PREFERRED"
     assert opt["daily_profile"]["action_ct_v22_0_parallel_workers"]==4
     assert opt["yfinance_fundamentals"]["ordinary_live_refresh_cadence"]=="WEEKLY_FRIDAY"
     budget=opt["monthly_runtime_budget"]
-    calculated_main=(
-        budget["daily_main_runs_per_average_month"]*budget["daily_main_expected_minutes"]["central"]
-        + budget["weekly_runs_per_average_month"]*budget["weekly_with_friday_tactical_expected_minutes"]["central"]
+    calculated_jobs=(
+        budget["daily_consolidated_runs_per_average_month"]
+        + budget["weekly_consolidated_runs_per_average_month"]
+        + budget["standalone_preopen_runs_per_average_month"]
     )
-    calculated_all=calculated_main+budget["catalyst_snapshot_runs_per_average_month"]*budget["catalyst_snapshot_target_minutes"]
-    assert abs(calculated_main-budget["scheduled_main_central_minutes_per_month"]) < 0.1
-    assert abs(calculated_all-budget["all_scheduled_central_minutes_per_month"]) < 0.1
-    assert budget["scheduled_main_central_minutes_per_month"] <= budget["scheduled_main_target_minutes_per_month"]
-    assert budget["all_scheduled_central_minutes_per_month"] <= budget["all_scheduled_target_minutes_per_month"]
-    assert budget["all_scheduled_target_minutes_per_month"] < budget["all_scheduled_alert_minutes_per_month"] == 420
+    calculated_billable=(
+        budget["daily_consolidated_runs_per_average_month"]*budget["daily_consolidated_billable_target_minutes"]
+        + budget["weekly_consolidated_runs_per_average_month"]*budget["weekly_consolidated_billable_target_minutes"]
+        + budget["standalone_preopen_runs_per_average_month"]*budget["standalone_preopen_billable_budget_minutes"]
+    )
+    assert abs(calculated_jobs-budget["scheduled_jobs_per_average_month"]) < 0.01
+    assert abs(calculated_billable-budget["all_scheduled_billable_central_minutes_per_month"]) < 0.1
+    assert budget["all_scheduled_billable_central_minutes_per_month"] <= budget["all_scheduled_billable_target_minutes_per_month"]
+    assert budget["all_scheduled_billable_target_minutes_per_month"] < budget["all_scheduled_billable_alert_minutes_per_month"] == 380
+    assert budget["standalone_preopen_billable_budget_minutes"]==2
+    assert budget["active_scope_removed"]==["ACTION_LT","ETF_LT","GOLD","CRYPTO_ETP","IPO"]
+    assert budget["standalone_postmarket_jobs_eliminated_per_average_month"]==21.74
     assert budget["validation_steps_scheduled"] is False
     assert opt["daily_profile"]["decision_logic_changed"] is False

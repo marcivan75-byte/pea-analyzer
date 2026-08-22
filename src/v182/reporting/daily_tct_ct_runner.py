@@ -37,7 +37,7 @@ def _android_summary(governed: pd.DataFrame, generated_at: str) -> str:
         "# Comité tactique quotidien — TCT / CT",
         "",
         f"Généré UTC : {generated_at}",
-        "Périmètre : ACTION TCT + ACTION CT + ETF CT. Les horizons MT/LT et modules lourds restent hebdomadaires.",
+        "Périmètre : ACTION TCT + ACTION CT + ETF CT. L'horizon MT et les modules lourds restent hebdomadaires.",
         "Aucun ordre réel. V21.8 est une aide à la décision uniquement.",
         "",
     ]

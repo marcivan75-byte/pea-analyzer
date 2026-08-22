@@ -1,5 +1,9 @@
 # V21.17 — preuves officielles de cotation Actions à historique court
 
+> Depuis V21.13.7, cette preuve est un référentiel statique d'identité Actions.
+> Le collecteur Euronext, le workflow temporaire et l'ensemble du processus IPO
+> ont été supprimés ; aucune actualisation réseau ou évaluation IPO n'est active.
+
 ## Objet
 
 V21.17 qualifie exclusivement les 157 Actions du run réel V21.13 (`32379163874`) qui étaient encore `START_AFTER_ANCHOR_UNRESOLVED`. La première observation Yahoo n'est jamais utilisée comme preuve de date de cotation.

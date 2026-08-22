@@ -143,7 +143,7 @@ def apply_etf_structural_overlay(decisions: pd.DataFrame, etf_master: pd.DataFra
         cfg=registry.get("horizons",{}).get(horizon,{})
         if horizon=="SHORT":
             final_decision=_short_decision(committee,cfg)
-        elif horizon in {"CT","LT"}:
+        elif horizon == "CT":
             normalized=_normalize_long_base(base_decision,base,cfg)
             candidate=_long_decision(committee,cfg)
             # Positive quality bonus cannot promote; negative risk can downgrade.

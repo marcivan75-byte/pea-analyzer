@@ -34,4 +34,4 @@ GLP1;PHARMA;GLP-1 adoption supports drug revenue/pipeline;0.90;0;365;RESEARCH_BA
 GLP1;MEDTECH;GLP-1 can create mixed second-order effects on procedures;0.20;180;1095;HYPOTHESIS_ONLY;direction must be learned, not assumed
 LUXURY;TRAVEL;tourism recovery can co-move with luxury demand;0.40;0;180;HYPOTHESIS_ONLY;common-driver relationship rather than causal default
 COPPER;MATERIALS;copper cycle influences mining/materials earnings;0.65;0;180;RESEARCH_BASELINE;company cost curve required
-GOLD;MATERIALS;gold regime can affect producers/royalties differently;0.45;0;180;RESEARCH_BASELINE;consume dedicated Gold module where available
+GOLD;MATERIALS;gold regime can affect ordinary listed producers/royalties differently;0.45;0;180;RESEARCH_BASELINE;Actions sector context only, no dedicated Gold asset process

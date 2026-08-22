@@ -17,7 +17,6 @@ on:
         default: false
   schedule:
     - cron: "40 6 * * 1-5"
-    - cron: "15 21 * * 1-5"
 
 concurrency:
   group: pea-tct-next-session-context
@@ -73,11 +72,11 @@ jobs:
         run: python -m v182.reporting.tct_next_session_catalyst_run_v24_4_2
 
       - name: Apply fail-closed V24.4.2 PIT OHLC lineage
-        if: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '15 21 * * 1-5' }}
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         run: python -m v182.reporting.tct_v24_4_2_pit_lineage
 
       - name: Validate accumulated V24.4.2 PIT ledger
-        if: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '15 21 * * 1-5' }}
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         run: python -m v182.reporting.tct_v24_4_2_pit_validator
 
       - name: Publish catalyst summary

@@ -1,5 +1,5 @@
 {
-  "version": "V21.4_COMMITTEE_MASTER_AUDIT_HARDENED_2026_08_12",
+  "version": "V21.4_COMMITTEE_MASTER_SCOPE_RATIONALIZED_2026_08_22",
   "status": "SHADOW_REFERENCE_SCORING",
   "live_orders_enabled": false,
   "principle": "Complete referential -> 1829 Actions -> source collection + persistent field provenance -> dynamic available-criterion weights to 100% with coverage gates -> horizon reference score -> isolated shadow challengers/bonus-malus -> Committee -> bias-safe versioned virtual performance",
@@ -8,10 +8,10 @@
       "registry": "config/V21_ACTIONS_CRITERIA_REGISTRY.json",
       "canonical_universe": "V21.3_1829_EXACT_ISIN_WHITELIST",
       "canonical_universe_path": "config/V21_3_ACTION_UNIVERSE_1829_ISINS.parts",
-      "horizons": ["CT", "MT", "LT", "SHORT", "TOP_DOWN"],
+      "horizons": ["CT", "MT", "SHORT", "TOP_DOWN"],
       "dynamic_weighting": {"enabled": true, "available_active_criteria_sum_pct": 100, "minimum_coverage_gates_preserved": true, "neutral_imputation_forbidden": true},
       "rotation_catchup": {"enabled": true, "status":"SHADOW_CHALLENGER_NOT_PIT_BACKTESTED", "market_high_regime_is_computed_not_hardcoded": true, "sector_rotation": true, "action_catchup": true, "recovery_gate_required_for_full_catchup_bonus": true},
-      "high_52w_overlay": {"enabled": true, "status":"SHADOW_CHALLENGER_NOT_PIT_BACKTESTED", "far_from_high_bonus_requires_recovery": true, "near_high_malus": true, "positive_bonus_cannot_create_buy":true, "negative_malus_can_downgrade":true, "horizons": ["CT", "MT", "LT"]},
+      "high_52w_overlay": {"enabled": true, "status":"SHADOW_CHALLENGER_NOT_PIT_BACKTESTED", "far_from_high_bonus_requires_recovery": true, "near_high_malus": true, "positive_bonus_cannot_create_buy":true, "negative_malus_can_downgrade":true, "horizons": ["CT", "MT"]},
       "morningstar_stock_rating": {"enabled": true, "positive_weight": true, "attributed_data_only": true, "merge_status":"ATTRIBUTED_ACCEPTED_WITH_PROVENANCE", "missing_policy": "DYNAMIC_REWEIGHT_NO_IMPUTATION"},
       "growth_income": {"target_upside_raw_weighted":true,"target_upside_gt4_explicit_factor":true,"dividend_yield_raw_weighted_where_relevant":true,"dividend_gt4_explicit_factor":true,"combined_total_return_factor_active_weight":false,"reason":"Avoid hidden target/dividend double counting while retaining explicit >4% reinforcement."},
       "tct": {
@@ -37,27 +37,13 @@
     },
     "ETF": {
       "registry": "config/V20_7_1_ETF_CRITERIA_REGISTRY.json",
-      "horizons": ["CT", "MT", "LT", "SHORT", "TOP_DOWN"],
+      "horizons": ["CT", "MT", "SHORT", "TOP_DOWN"],
       "generic_horizon_dynamic_weighting": "AVAILABLE_ACTIVE_CRITERIA_RENORMALIZED_TO_100",
       "mt_runner": "v182.reporting.etf_mt_v2081_run",
       "mt_historical_attribution": "90.91% OOS 2021-2023 applies only to exact V20.8.1 38 PIT core",
       "mt_dynamic_challenger": "V20.8.2_ACTIVE_SHADOW_AT_COMMITTEE_NO_HISTORICAL_ATTRIBUTION",
       "structural_overlay": {"layer":"COMMITTEE_AFTER_BASE_SCORE","morningstar_bonus_active":true,"risk_malus_active":true,"positive_bonus_cannot_create_buy":true,"risk_malus_can_downgrade":true,"mt_core_selection_unchanged":true},
       "t1_t2_forbidden": true
-    },
-    "GOLD": {
-      "status": "SHADOW_RESEARCH_ONLY",
-      "required_registry": "config/GOLD_V1_1_102_CRITERIA.json",
-      "runner": "v182.decision.gold_v1_1",
-      "outside_pea": true,
-      "t1_t2_forbidden": true,
-      "live_orders_enabled": false,
-      "criteria_count": 102,
-      "contribution_blocks": 11,
-      "minimum_coverage": 0.7,
-      "primary_price": "XAU_EUR",
-      "secondary_price": "XAU_USD",
-      "policy": "Source-backed top-level family weights preserved. Missing observations remain MISSING. Intra-block V1.1 weights remain provisional until dedicated PIT backtest."
     }
   },
   "collection_audit": {
@@ -100,7 +86,6 @@
     "provenance_csv":"state/provenance/OBSERVATION_PROVENANCE.csv",
     "performance_xlsx":"outputs/performance/COMMITTEE_BUY_PERFORMANCE.xlsx",
     "python_static_audit":"outputs/audit/PYTHON_STATIC_AUDIT.json",
-    "gold_decision_json":"outputs/gold_v1_1/GOLD_V1_1_DECISION.json",
     "summary_json":"SUMMARY.json",
     "unified_summary":"outputs/unified/UNIFIED_SUMMARY_LATEST.json"
   }

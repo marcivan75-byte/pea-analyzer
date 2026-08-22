@@ -1,26 +1,10 @@
 instrument_id;isin;ticker;name;universe;asset_class;economic_family;region;sector_or_theme;benchmark;provider;is_pea;pea_status;pea_status_confidence;is_synthetic;is_inverse_or_leveraged;official_adapter;official_url
-ISIN:IE00B4ND3602;IE00B4ND3602;SGLN.L;iShares Physical Gold ETC;EXTERNAL;GOLD_ETC;GOLD_PHYSICAL;EU;GOLD;LBMA Gold Price;iShares;false;;;false;false;BLACKROCK_HTML;https://www.ishares.com/uk/professionals/en/products/258441/ishares-physical-gold-etc
-ISIN:JE00B1VS3770;JE00B1VS3770;PHAU.L;WisdomTree Physical Gold;EXTERNAL;GOLD_ETC;GOLD_PHYSICAL;EU;GOLD;London Gold Spot Price;WisdomTree;false;;;false;false;;https://www.wisdomtree.eu/
-US_TICKER:GLD;;GLD;SPDR Gold Shares;EXTERNAL;GOLD_ETF;GOLD_PHYSICAL;US;GOLD;LBMA Gold Price;State Street;false;;;false;false;;https://www.ssga.com/
-US_TICKER:IAU;;IAU;iShares Gold Trust;EXTERNAL;GOLD_ETF;GOLD_PHYSICAL;US;GOLD;LBMA Gold Price;iShares;false;;;false;false;;https://www.ishares.com/
-US_TICKER:GLDM;;GLDM;SPDR Gold MiniShares Trust;EXTERNAL;GOLD_ETF;GOLD_PHYSICAL;US;GOLD;LBMA Gold Price;State Street;false;;;false;false;;https://www.ssga.com/
-US_TICKER:GDX;;GDX;VanEck Gold Miners ETF;EXTERNAL;GOLD_MINERS_ETF;GOLD_MINERS;US;GOLD_MINERS;NYSE Arca Gold Miners Index;VanEck;false;;;false;false;;https://www.vaneck.com/
 US_TICKER:URTH;;URTH;iShares MSCI World ETF;EXTERNAL;ETF;WORLD;GLOBAL;;MSCI World Index;iShares;false;;;false;false;BLACKROCK_HTML;https://www.ishares.com/us/products/239696/ishares-msci-world-etf/
 US_TICKER:ACWI;;ACWI;iShares MSCI ACWI ETF;EXTERNAL;ETF;ACWI;GLOBAL;;MSCI All Country World Index;iShares;false;;;false;false;BLACKROCK_HTML;https://www.ishares.com/us/products/239600/ishares-msci-acwi-etf
 US_TICKER:SPY;;SPY;SPDR S&P 500 ETF Trust;EXTERNAL;ETF;SP500;US;;S&P 500;State Street;false;;;false;false;;https://www.ssga.com/
 US_TICKER:QQQ;;QQQ;Invesco QQQ Trust;EXTERNAL;ETF;NASDAQ100;US;;NASDAQ-100;Invesco;false;;;false;false;;https://www.invesco.com/
 US_TICKER:IEUR;;IEUR;iShares Core MSCI Europe ETF;EXTERNAL;ETF;MSCI_EUROPE;EU;;MSCI Europe IMI Index;iShares;false;;;false;false;BLACKROCK_HTML;https://www.ishares.com/us/products/264617/IEUR
 US_TICKER:FEZ;;FEZ;SPDR EURO STOXX 50 ETF;EXTERNAL;ETF;EURO_STOXX_50;EU;;EURO STOXX 50;State Street;false;;;false;false;;https://www.ssga.com/
-ISIN:XS2940466316;XS2940466316;IB1T.PA;iShares Bitcoin ETP;EXTERNAL;CRYPTO_ETP;BITCOIN;EU;CRYPTO_BITCOIN;CME CF Bitcoin Reference Rate;iShares;false;;;false;false;BLACKROCK_HTML;https://www.ishares.com/uk/professionals/en/products/337088/ishares-bitcoin-etp
-ISIN:GB00BJYDH287;GB00BJYDH287;BTCW.PA;WisdomTree Physical Bitcoin;EXTERNAL;CRYPTO_ETP;BITCOIN;EU;CRYPTO_BITCOIN;CoinDesk Bitcoin Benchmark;WisdomTree;false;;;false;false;;https://www.wisdomtree.eu/
-ISIN:GB00BJYDH394;GB00BJYDH394;WETH.PA;WisdomTree Physical Ethereum;EXTERNAL;CRYPTO_ETP;ETHEREUM;EU;CRYPTO_ETHEREUM;CoinDesk Ethereum Benchmark;WisdomTree;false;;;false;false;;https://www.wisdomtree.eu/
-ISIN:GB00BNGJ9G01;GB00BNGJ9G01;DSOL.PA;WisdomTree Physical Solana;EXTERNAL;CRYPTO_ETP;SOLANA;EU;CRYPTO_ALT;CoinDesk Solana Benchmark;WisdomTree;false;;;false;false;;https://www.wisdomtree.eu/
-ISIN:GB00BN6NHH92;GB00BN6NHH92;LSTE.PA;WisdomTree Physical Lido Staked Ether;EXTERNAL;CRYPTO_ETP;ETHEREUM_STAKING;EU;CRYPTO_STAKING;CoinDesk Lido Staked Ether Benchmark;WisdomTree;false;;;false;false;;https://www.wisdomtree.eu/
-US_TICKER:IBIT;;IBIT;iShares Bitcoin Trust ETF;EXTERNAL;CRYPTO_ETF;BITCOIN;US;CRYPTO_BITCOIN;CME CF Bitcoin Reference Rate;iShares;false;;;false;false;;https://www.ishares.com/
-US_TICKER:FBTC;;FBTC;Fidelity Wise Origin Bitcoin Fund;EXTERNAL;CRYPTO_ETF;BITCOIN;US;CRYPTO_BITCOIN;Bitcoin;Fidelity;false;;;false;false;;https://www.fidelity.com/
-US_TICKER:ETHA;;ETHA;iShares Ethereum Trust ETF;EXTERNAL;CRYPTO_ETF;ETHEREUM;US;CRYPTO_ETHEREUM;CME CF Ether-Dollar Reference Rate;iShares;false;;;false;false;;https://www.ishares.com/
-US_TICKER:FETH;;FETH;Fidelity Ethereum Fund;EXTERNAL;CRYPTO_ETF;ETHEREUM;US;CRYPTO_ETHEREUM;Ether;Fidelity;false;;;false;false;;https://www.fidelity.com/
-US_TICKER:BITI;;BITI;ProShares Short Bitcoin ETF;EXTERNAL;CRYPTO_SHORT_ETF;BITCOIN_SHORT;US;CRYPTO_SHORT;Short Bitcoin Strategy;ProShares;false;;;false;true;;https://www.proshares.com/
 US_TICKER:XLK;;XLK;Technology Select Sector SPDR Fund;EXTERNAL;ETF;US_TECHNOLOGY;US;TECHNOLOGY;Technology Select Sector Index;State Street;false;;;false;false;;
 US_TICKER:SOXX;;SOXX;iShares Semiconductor ETF;EXTERNAL;ETF;SEMICONDUCTORS;US;SEMICONDUCTORS;NYSE Semiconductor Index;iShares;false;;;false;false;;
 US_TICKER:SMH;;SMH;VanEck Semiconductor ETF;EXTERNAL;ETF;SEMICONDUCTORS;US;SEMICONDUCTORS;MVIS US Listed Semiconductor 25 Index;VanEck;false;;;false;false;;

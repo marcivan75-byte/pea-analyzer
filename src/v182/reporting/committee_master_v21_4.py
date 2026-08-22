@@ -5,12 +5,12 @@ import json
 import pandas as pd
 
 from v182.decision.committee_master import load_registry, decisions_from_scores, sector_ranking
-from v182.reporting import committee_master_gold_v1_1
+from v182.reporting import committee_master_run
 from v182.reporting.sector_rotation_v2_committee_bridge import build_committee_sector_rotation_v2_status
 from v182.risk import entry_exit_governance_v21_8
 
 ROOT=Path(__file__).resolve().parents[3]
-HORIZONS=["CT","MT","LT","SHORT","TOP_DOWN"]
+HORIZONS=["CT","MT","SHORT","TOP_DOWN"]
 
 
 def _read(path:Path)->pd.DataFrame:
@@ -24,12 +24,12 @@ def _key(frame:pd.DataFrame)->pd.Series:
 def run(root:Path=ROOT)->dict:
     """Dual-track Action Committee plus V21.8 entry/exit decision support.
 
-    Final Action CT/MT/LT/SHORT/TOP_DOWN selection remains the frozen V21.0-weight
+    Final Action CT/MT/SHORT/TOP_DOWN selection remains the frozen V21.0-weight
     reference. V21.8 consumes those final Committee decisions in a separate file;
     it never mutates score/decision, never emits an order and never promotes a
     fixed take-profit or fixed hard stop.
     """
-    summary=committee_master_gold_v1_1.run(root)
+    summary=committee_master_run.run(root)
     outdir=root/"outputs"/"committee_master"; decisions_path=outdir/"COMMITTEE_DECISIONS.csv"
     actions_path=root/"outputs"/"V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv"
     if not decisions_path.exists() or not actions_path.exists():

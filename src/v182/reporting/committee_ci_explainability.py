@@ -290,8 +290,8 @@ def run(root: Path = ROOT) -> dict:
     action_registry = load_registry(root / "config" / "V21_ACTIONS_REFERENCE_V21_0.json")
     etf_registry = load_registry(root / "config" / "V20_7_1_ETF_CRITERIA_REGISTRY.json")
     parts = [
-        _generic_details(action_source, selected, action_registry, "ACTION", ["CT", "MT", "LT", "SHORT", "TOP_DOWN"]),
-        _generic_details(etf_source, selected, etf_registry, "ETF", ["CT", "LT", "SHORT", "TOP_DOWN"]),
+        _generic_details(action_source, selected, action_registry, "ACTION", ["CT", "MT", "SHORT", "TOP_DOWN"]),
+        _generic_details(etf_source, selected, etf_registry, "ETF", ["CT", "SHORT", "TOP_DOWN"]),
         _etf_mt_details(root, selected),
     ]
     detail = pd.concat([p for p in parts if not p.empty], ignore_index=True) if any(not p.empty for p in parts) else pd.DataFrame()

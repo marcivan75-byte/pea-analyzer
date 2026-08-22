@@ -9,7 +9,7 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: "15 18 * * 1-4"
+    - cron: "0 21 * * 1-4"
 
 concurrency:
   group: pea-daily-tct-ct
@@ -113,10 +113,6 @@ jobs:
         continue-on-error: true
         run: python -m v182.reporting.etf_structure_state_replay
 
-      - name: ETF CT LT V21.14 shadow context
-        continue-on-error: true
-        run: python -m v182.reporting.etf_ct_lt_shadow_run_v21_14
-
       - name: Daily TCT CT scoring and V21.8
         run: python -m v182.reporting.daily_tct_ct_runner
 
@@ -136,6 +132,20 @@ jobs:
         continue-on-error: true
         run: python -m v182.reporting.tct_pit_ohlc_ledger_v24_4_2
 
+      - name: Run consolidated POSTMARKET catalyst snapshot V24.4.2
+        continue-on-error: true
+        env:
+          TCT_CATALYST_PHASE: POSTMARKET
+        run: python -m v182.reporting.tct_next_session_catalyst_run_v24_4_2
+
+      - name: Apply POSTMARKET V24.4.2 PIT OHLC lineage
+        continue-on-error: true
+        run: python -m v182.reporting.tct_v24_4_2_pit_lineage
+
+      - name: Validate POSTMARKET V24.4.2 PIT ledger
+        continue-on-error: true
+        run: python -m v182.reporting.tct_v24_4_2_pit_validator
+
       - name: Publish Android tactical summaries
         if: always()
         run: |
@@ -153,13 +163,13 @@ jobs:
             printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
             cat outputs/mobile/ANDROID_ACTION_CT_V22_PIT_VALIDATION.md >> "$GITHUB_STEP_SUMMARY"
           fi
-          if [ -f outputs/mobile/ETF_CT_LT_SHADOW.md ]; then
-            printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
-            cat outputs/mobile/ETF_CT_LT_SHADOW.md >> "$GITHUB_STEP_SUMMARY"
-          fi
           if [ -f outputs/mobile/ANDROID_TCT_DAILY_TRADER_SHADOW.md ]; then
             printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
             cat outputs/mobile/ANDROID_TCT_DAILY_TRADER_SHADOW.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f outputs/mobile/ANDROID_TCT_NEXT_SESSION_CATALYST_V24_4_2.md ]; then
+            printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+            cat outputs/mobile/ANDROID_TCT_NEXT_SESSION_CATALYST_V24_4_2.md >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Show daily audit
@@ -173,11 +183,13 @@ jobs:
           if [ -f outputs/audit/ACTION_CT_V22_1_0_ERRORS.json ]; then cat outputs/audit/ACTION_CT_V22_1_0_ERRORS.json; fi
           if [ -f outputs/audit/ACTION_CT_V22_1_0_PIT_VALIDATION.json ]; then cat outputs/audit/ACTION_CT_V22_1_0_PIT_VALIDATION.json; fi
           if [ -f outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json ]; then cat outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json; fi
-          if [ -f outputs/audit/ETF_CT_LT_V21_14_SHADOW.json ]; then cat outputs/audit/ETF_CT_LT_V21_14_SHADOW.json; fi
           if [ -f outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json ]; then cat outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json; fi
           if [ -f outputs/audit/TCT_V24_4_2_PIT_OHLC_LEDGER_AUDIT.json ]; then cat outputs/audit/TCT_V24_4_2_PIT_OHLC_LEDGER_AUDIT.json; fi
+          if [ -f outputs/audit/TCT_NEXT_SESSION_CATALYST_V24_4_2_AUDIT.json ]; then cat outputs/audit/TCT_NEXT_SESSION_CATALYST_V24_4_2_AUDIT.json; fi
+          if [ -f outputs/audit/TCT_V24_4_2_PIT_LINEAGE_AUDIT.json ]; then cat outputs/audit/TCT_V24_4_2_PIT_LINEAGE_AUDIT.json; fi
+          if [ -f outputs/audit/TCT_V24_4_2_PIT_VALIDATION.json ]; then cat outputs/audit/TCT_V24_4_2_PIT_VALIDATION.json; fi
           if [ -f outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json ]; then cat outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json; fi
-          if [ -f outputs/audit/PIPELINE_RUNTIME_V21_13_5.json ]; then cat outputs/audit/PIPELINE_RUNTIME_V21_13_5.json; fi
+          if [ -f outputs/audit/PIPELINE_RUNTIME_V21_13_7.json ]; then cat outputs/audit/PIPELINE_RUNTIME_V21_13_7.json; fi
           if [ -f data/cache/actions/history_manifest.json ]; then cat data/cache/actions/history_manifest.json; fi
 
       - name: Save persistent OHLCV cache
@@ -229,13 +241,16 @@ jobs:
           name: pea-daily-tct-ct-${{ github.run_id }}
           path: |
             outputs/daily_tct_ct/
-            outputs/etf_ct_lt_shadow/
             outputs/mobile/ANDROID_DAILY_TCT_CT.md
             outputs/mobile/ANDROID_ACTION_CT_V22_1_SHADOW.md
             outputs/mobile/ANDROID_ACTION_CT_V22_SHADOW.md
             outputs/mobile/ANDROID_ACTION_CT_V22_PIT_VALIDATION.md
-            outputs/mobile/ETF_CT_LT_SHADOW.md
             outputs/mobile/ANDROID_TCT_DAILY_TRADER_SHADOW.md
+            outputs/mobile/ANDROID_TCT_NEXT_SESSION_CATALYST_V24_4_2.md
+            outputs/mobile/ANDROID_TCT_V24_4_2_PIT_VALIDATION.md
+            outputs/daily_tct_ct/TCT_NEXT_SESSION_CATALYST_V24_4_2.csv
+            outputs/daily_tct_ct/TCT_V24_4_2_PIT_SLICES.csv
+            outputs/daily_tct_ct/TCT_V24_4_2_PREOPEN_POSTMARKET_CHANGES.csv
             outputs/audit/DAILY_TCT_CT_AUDIT.json
             outputs/audit/ACTION_CT_V22_0_0_AUDIT.json
             outputs/audit/ACTION_CT_V22_0_0_PIT_VALIDATION.json
@@ -246,18 +261,22 @@ jobs:
             outputs/audit/ACTION_CT_V22_1_0_DIVERGENCES.csv
             outputs/audit/ACTION_CT_V22_1_0_PIT_VALIDATION.json
             outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json
-            outputs/audit/ETF_CT_LT_V21_14_SHADOW.json
             outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json
             outputs/audit/TCT_V24_4_2_PIT_OHLC_LEDGER_AUDIT.json
+            outputs/audit/TCT_NEXT_SESSION_CATALYST_V24_4_2_AUDIT.json
+            outputs/audit/TCT_V24_4_2_PIT_LINEAGE_AUDIT.json
+            outputs/audit/TCT_V24_4_2_PIT_VALIDATION.json
             outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json
-            outputs/audit/PIPELINE_RUNTIME_V21_13_5.json
-            outputs/audit/PIPELINE_RUNTIME_V21_13_5.csv
+            outputs/audit/PIPELINE_RUNTIME_V21_13_7.json
+            outputs/audit/PIPELINE_RUNTIME_V21_13_7.csv
             outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx
             state/action_ct/
             state/action_ct_v22_1/
             state/provenance/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv
             state/tct_context/TCT_DAILY_TRADER_LATEST.csv
             state/tct_context/TCT_DAILY_OHLC_LEDGER.csv
+            state/tct_context/TCT_V24_4_2_CATALYST_LEDGER.csv
+            state/tct_context/TCT_V24_4_2_NEWS_CACHE.json
             data/cache/actions/history_manifest.json
             data/cache/etf/history_manifest.json
           if-no-files-found: warn

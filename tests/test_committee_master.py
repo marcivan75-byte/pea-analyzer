@@ -6,7 +6,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/"src"))
 
 from v182.decision.committee_master import (
-    load_registry, score_horizon, tct_adapter, gold_adapter, sector_ranking,
+    load_registry, score_horizon, tct_adapter, sector_ranking,
     resolve_field, criterion_coverage_report,
 )
 from v182.audit.quality import run_quality_gates
@@ -19,6 +19,7 @@ def test_registry_integrity_and_t1_t2_scope():
     assert e["criteria_count"] == 268
     assert e["governance"]["t1_t2_forbidden"] is True
     assert a["governance"]["t1_t2_scope"] == "ACTION_TCT_ONLY"
+    assert "LT" not in a["horizons"] and "LT" not in e["horizons"]
 
 def test_zero_weight_criteria_are_preserved_by_policy():
     a=load_registry(ROOT/"config"/"V21_ACTIONS_CRITERIA_REGISTRY.json")
@@ -85,12 +86,6 @@ def test_tct_is_shadow_only_and_requires_baseline_before_t1_t2():
     assert t["horizon"]=="TCT"
     assert t["status"]=="SHADOW_BASELINE_REQUIRED"
     assert "T1/T2 ACTION TCT only" in t["notes"]
-
-def test_gold_missing_reference_blocks(tmp_path):
-    g=gold_adapter(tmp_path/"missing_gold.json")
-    assert len(g)==2
-    assert set(g["status"])=={"BLOCKED_REFERENCE"}
-    assert set(g["decision"])=={"ABSTAIN_BLOCKED_REFERENCE"}
 
 def test_sector_ranking_is_within_sector_and_horizon():
     d=pd.DataFrame([{"sector":"FINANCE","asset_class":"ACTION","horizon":"MT","name":"A","isin":"1","score":80,"decision":"BUY","coverage_pct":100},{"sector":"FINANCE","asset_class":"ACTION","horizon":"MT","name":"B","isin":"2","score":90,"decision":"BUY","coverage_pct":100},{"sector":"SANTE","asset_class":"ACTION","horizon":"MT","name":"C","isin":"3","score":85,"decision":"BUY","coverage_pct":100}])

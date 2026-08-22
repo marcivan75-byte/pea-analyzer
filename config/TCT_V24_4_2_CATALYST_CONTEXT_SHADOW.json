@@ -20,20 +20,32 @@
     "preopen_target_minute": 40,
     "postmarket_target_hour": 23,
     "postmarket_target_minute": 15,
-    "candidate_limit": 60,
-    "news_query_limit": 60,
+    "candidate_limit": 40,
+    "news_query_limit": 40,
     "news_max_records_per_candidate": 25,
     "max_preopen_seed_staleness_calendar_days": 7,
     "global_snapshot_interval": "1d",
     "global_snapshot_period": "5d"
   },
   "runtime_budget": {
-    "preopen_seconds": 480,
+    "preopen_seconds": 180,
     "postmarket_seconds": 600,
     "news_budget_fraction": 0.80,
     "fail_closed_on_budget_exhaustion": true
   },
   "candidate_selection": {
+    "preselection_scope": {
+      "enabled": true,
+      "applies_to_phases": ["PREOPEN", "POSTMARKET"],
+      "required_seed_marker": "preopen_scope_eligible",
+      "fail_closed_if_marker_missing": true,
+      "asset_class": "ACTION",
+      "tct_top_n": 20,
+      "action_ct_top_n": 20,
+      "action_ct_decisions": ["BUY_CANDIDATE", "WATCH", "REVIEW"],
+      "union_max": 40,
+      "deduplicate_by": "isin"
+    },
     "priority_weights": {
       "entry": 0.25,
       "exit_risk": 0.20,
@@ -164,7 +176,6 @@
       "SP500_FUTURE": "ES=F",
       "NASDAQ_FUTURE": "NQ=F",
       "OIL": "CL=F",
-      "GOLD": "GC=F",
       "EURUSD": "EURUSD=X"
     },
     "exclude_partial_asia_from_core_score": true,

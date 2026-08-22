@@ -1,5 +1,9 @@
 # PEA Analyzer — Process de référence final V21.8.1
 
+> Mise à jour de périmètre V21.13.7 : Actions LT, ETF LT, Gold, Crypto/ETP et
+> IPO sont retirés du runtime actif. Les passages historiques chiffrés restent
+> des traces d'audit et ne décrivent pas une fonction encore exécutée.
+
 Date de référence : 19/08/2026
 
 ## 1. Statut de gouvernance
@@ -50,7 +54,7 @@ Mesure issue de l’artefact réel `main` #32064095330 :
 
 - Actions CT : ~52,98 % de couverture pondérée ;
 - Actions MT : ~44,71 % ;
-- Actions LT : ~48,49 % ;
+- Actions LT : ~48,49 % lors de l'audit historique ; horizon désormais retiré ;
 - Actions SHORT : ~58,32 % ;
 - Actions TOP_DOWN : ~45,36 %.
 
@@ -221,7 +225,7 @@ Workflow : `committee_master_daily.yml`, workflow lourd hebdomadaire.
 
 Cadence : vendredi.
 
-Rôle : MT/LT, ETF MT, Gold, IPO, Sector/Theme, Comité complet, Risk/Bêta, explicabilité Android/PC et audit de gouvernance des critères.
+Rôle : Actions MT, ETF MT, Sector/Theme, Comité du périmètre actif, Risk/Bêta, explicabilité Android/PC et audit de gouvernance des critères.
 
 ### 4.3 ETF MT diagnostic
 
@@ -307,7 +311,7 @@ Le taux de réussite seul ne suffit pas. Aucun score, poids ou seuil V24.3.0 n'e
 ### Chaque vendredi
 
 1. Exécuter `PEA Weekly Heavy Committee V21.8.1`.
-2. Vérifier quality gates, Comité, ETF MT, Gold, IPO, Sector/Theme, Risk, Entry/Exit V21.8, audit des critères.
+2. Vérifier quality gates, Comité, ETF MT, Sector/Theme, Risk, Entry/Exit V21.8 et audit des critères.
 3. Publier Android Comité complet et restitution PC explicative.
 
 ### Release / audit

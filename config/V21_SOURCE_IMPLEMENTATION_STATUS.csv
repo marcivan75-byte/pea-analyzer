@@ -1,5 +1,5 @@
 Source;Declared_role;Implementation_status;Active_code_path;Operational_scope;Governance_note
-Yahoo Finance / yfinance;OHLCV fundamentals ETF structure estimates;ACTIVE_AUTOMATED;src/v182/sources/yfinance_bulk.py | src/v182/sources/yfinance_info.py | src/v182/sources/yfinance_funds.py;Actions+ETF+Gold market proxies;Primary bulk source for market data, ETF totalAssets stays raw and quote currency never defines asset currency
+Yahoo Finance / yfinance;OHLCV fundamentals ETF structure estimates;ACTIVE_AUTOMATED;src/v182/sources/yfinance_bulk.py | src/v182/sources/yfinance_info.py | src/v182/sources/yfinance_funds.py;Actions+ETF;Primary bulk source for market data, ETF totalAssets stays raw and quote currency never defines asset currency
 Marketstack;OHLCV fallback validation;DECLARED_NOT_WIRED;;None in current runtime;Secret may exist but no collector is versioned
 Alpha Vantage;OHLCV and fundamentals fallback;DECLARED_NOT_WIRED;;None in current runtime;Secret may exist but no collector is versioned
 Boursorama Bulk;Consensus Morningstar market and ETF tables;DECLARED_NOT_AUTOMATED;;Manual/reference only;Scrape selector file contains only a disabled _example entry
@@ -9,8 +9,8 @@ Issuer / KID / Factsheet;Official ETF TER fund assets structure and fundamentals
 justETF exact-ISIN profile;ETF TER and explicit EUR fund-size fallback;ACTIVE_AUTOMATED_FALLBACK;src/v182/sources/etf_structural_data.py | src/v182/reporting/etf_structure_refresh.py;ETF;Evidence B only after issuer adapter, exact ISIN mandatory, cannot overwrite stronger evidence
 AMF / Euronext;Regulatory events and identity;DECLARED_NOT_GENERIC_AUTOMATED;;Manual validation/reference;No generic AMF/Euronext collector is versioned for current Action refresh
 Finnhub;Consensus recommendations revisions price targets;ACTIVE_AUTOMATED;src/v182/sources/finnhub_consensus.py;Actions;Fail-fast after auth or entitlement denial, secrets redacted from diagnostics
-FRED;Macro regime;ACTIVE_AUTOMATED;src/v182/sources/fred_macro.py | src/v182/decision/gold_v1_1.py;Top-down+Gold;Official API wired
+FRED;Macro regime;ACTIVE_AUTOMATED;src/v182/sources/fred_macro.py;Top-down;Official API wired
 EIA;Energy transmission;DECLARED_NOT_WIRED;;None in current runtime;EIA_API_KEY environment declaration is not equivalent to an implemented collector
-GDELT;News discovery and sentiment inputs;ACTIVE_AUTOMATED;src/v182/sources/gdelt_news.py | src/v182/decision/gold_v1_1.py;Top-down+Gold;Public API wired
+GDELT;News discovery and sentiment inputs;ACTIVE_AUTOMATED;src/v182/sources/gdelt_news.py;Top-down;Public API wired
 OpenFIGI;ISIN to ticker/exchange mapping;ACTIVE_AUTOMATED;src/v182/mapping/etf_isin_resolver.py;ETF mapping;Active for ETF ticker resolution only, must not invent Action tickers
 Morningstar authorized/attributed snapshot;Action stock rating snapshot;ACTIVE_MANUAL_SNAPSHOT_LOADER;src/v182/sources/morningstar_actions.py;Actions;Loader is active but data acquisition remains an authorized attributed snapshot, not automated scraping
