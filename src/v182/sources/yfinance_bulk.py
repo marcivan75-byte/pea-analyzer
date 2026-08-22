@@ -434,8 +434,12 @@ def _migrate_cache_ticker_universe(
             try:
                 if temp.exists():
                     temp.unlink()
-            except OSError:
-                pass
+            except OSError as cleanup_exc:
+                logger.debug(
+                    "OHLCV migration temp cleanup failed for %s: %s",
+                    temp,
+                    cleanup_exc,
+                )
         logger.warning("OHLCV universe migration failed: %s: %s", type(exc).__name__, exc)
         return False
 
