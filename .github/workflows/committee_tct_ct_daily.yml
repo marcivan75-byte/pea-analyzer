@@ -135,13 +135,9 @@ jobs:
       - name: Daily TCT CT scoring and V21.8
         run: python -m v182.reporting.daily_tct_ct_runner
 
-      - name: Action CT V22.0 + V22.1 shared-history SHADOW
+      - name: Action CT V22.0 V22.1 + TCT V24.3.1 shared-parquet SHADOW
         continue-on-error: true
-        run: python -m v182.reporting.action_ct_shadow_bundle_run
-
-      - name: TCT V24.3.1 robust daily weekly trader-tools shadow
-        continue-on-error: true
-        run: python -m v182.reporting.tct_daily_trader_shadow_run_v24_3_1
+        run: python -m v182.reporting.tactical_shadow_bundle_run
 
       - name: Persist compact daily OHLC for V24.4.2 PIT
         continue-on-error: true
@@ -194,6 +190,7 @@ jobs:
           if [ -f outputs/audit/ACTION_CT_V22_0_0_AUDIT.json ]; then cat outputs/audit/ACTION_CT_V22_0_0_AUDIT.json; fi
           if [ -f outputs/audit/ACTION_CT_V22_1_0_AUDIT.json ]; then cat outputs/audit/ACTION_CT_V22_1_0_AUDIT.json; fi
           if [ -f outputs/audit/ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json ]; then cat outputs/audit/ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json; fi
+          if [ -f outputs/audit/TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json ]; then cat outputs/audit/TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json; fi
           if [ -f outputs/audit/ACTION_CT_V22_1_0_CONTEXT.json ]; then cat outputs/audit/ACTION_CT_V22_1_0_CONTEXT.json; fi
           if [ -f outputs/audit/ACTION_CT_V22_1_0_RUNTIME.json ]; then cat outputs/audit/ACTION_CT_V22_1_0_RUNTIME.json; fi
           if [ -f outputs/audit/ACTION_CT_V22_1_0_ERRORS.json ]; then cat outputs/audit/ACTION_CT_V22_1_0_ERRORS.json; fi
@@ -249,6 +246,7 @@ jobs:
             outputs/audit/ACTION_CT_V22_0_0_PIT_VALIDATION.json
             outputs/audit/ACTION_CT_V22_1_0_AUDIT.json
             outputs/audit/ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json
+            outputs/audit/TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json
             outputs/audit/ACTION_CT_V22_1_0_CONTEXT.json
             outputs/audit/ACTION_CT_V22_1_0_RUNTIME.json
             outputs/audit/ACTION_CT_V22_1_0_ERRORS.json

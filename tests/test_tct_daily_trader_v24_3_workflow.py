@@ -20,10 +20,12 @@ def test_v2431_runner_requires_no_new_market_download():
     assert "_completed_daily_history" in source
 
 
-def test_daily_workflow_runs_v2431_and_purges_old_cache():
+def test_daily_workflow_runs_v2431_via_tactical_bundle_and_purges_old_cache():
     workflow = (ROOT / ".github" / "workflows" / "committee_tct_ct_daily.yml").read_text(encoding="utf-8")
-    assert "TCT V24.3.1 robust daily weekly trader-tools shadow" in workflow
-    assert "python -m v182.reporting.tct_daily_trader_shadow_run_v24_3_1" in workflow
+    bundle = (ROOT / "src" / "v182" / "reporting" / "tactical_shadow_bundle_run.py").read_text(encoding="utf-8")
+    assert "Action CT V22.0 V22.1 + TCT V24.3.1 shared-parquet SHADOW" in workflow
+    assert "python -m v182.reporting.tactical_shadow_bundle_run" in workflow
+    assert "tct_trader.run(root=root)" in bundle
     assert "ANDROID_TCT_DAILY_TRADER_SHADOW.md" in workflow
     assert "TCT_DAILY_TRADER_V24_3_1_AUDIT.json" in workflow
     assert "rm -rf data/cache/actions_intraday_5m" in workflow

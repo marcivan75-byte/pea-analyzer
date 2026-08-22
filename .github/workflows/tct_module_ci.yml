@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "src/v182/**tct**"
+      - "src/v182/reporting/tactical_shadow_bundle_run.py"
       - "src/v182/features/ohlcv_features.py"
       - "src/v182/sources/yfinance_bulk.py"
       - "config/TCT_*.json"
@@ -11,12 +12,16 @@ on:
       - "scripts/build_tct_package_v24_4_2.py"
       - "docs/TCT_*.md"
       - "docs/TCT_*.json"
+      - "docs/PIPELINE_RUNTIME_V21_13_11.md"
       - "constraints-ci.txt"
       - ".github/workflows/tct_module_ci.yml"
+      - ".github/workflows/committee_tct_ct_daily.yml"
+      - ".github/workflows/committee_master_daily.yml"
   push:
     branches: [main]
     paths:
       - "src/v182/**tct**"
+      - "src/v182/reporting/tactical_shadow_bundle_run.py"
       - "src/v182/features/ohlcv_features.py"
       - "src/v182/sources/yfinance_bulk.py"
       - "config/TCT_*.json"
@@ -24,8 +29,11 @@ on:
       - "scripts/build_tct_package_v24_4_2.py"
       - "docs/TCT_*.md"
       - "docs/TCT_*.json"
+      - "docs/PIPELINE_RUNTIME_V21_13_11.md"
       - "constraints-ci.txt"
       - ".github/workflows/tct_module_ci.yml"
+      - ".github/workflows/committee_tct_ct_daily.yml"
+      - ".github/workflows/committee_master_daily.yml"
   workflow_dispatch:
 
 permissions:
@@ -58,6 +66,7 @@ jobs:
             src/v182/reporting/tct_pit_ohlc_ledger_v24_4_2.py \
             src/v182/reporting/tct_v24_4_2_pit_lineage.py \
             src/v182/reporting/tct_v24_4_2_pit_validator.py \
+            src/v182/reporting/tactical_shadow_bundle_run.py \
             src/v182/sources/tct_catalyst_news_v24_4_2.py \
             src/v182/decision/tct_timing_exact_v24_1_7.py \
             src/v182/decision/tct_v24_1_7.py \

@@ -83,14 +83,15 @@ def test_weekly_runtime_uses_two_state_caches_and_preserves_migration_fallbacks(
     for required_step in (
         "Run weekly unified Committee pipeline",
         "Friday TCT CT scoring and V21.8",
-        "Action CT V22.0 + V22.1 Friday shared-history SHADOW",
+        "Action CT V22.0 V22.1 + TCT V24.3.1 Friday shared-parquet SHADOW",
         "Run consolidated Friday POSTMARKET catalyst snapshot V24.4.2",
         "Validate Friday POSTMARKET V24.4.2 PIT ledger",
         "Run ETF Fund Flows V1 SHADOW context",
         "Audit criteria governance",
     ):
         assert required_step in workflow
-    assert workflow.count("python -m v182.reporting.action_ct_shadow_bundle_run") == 1
+    assert workflow.count("python -m v182.reporting.tactical_shadow_bundle_run") == 1
     assert "state/action_ct/" in workflow
     assert "state/action_ct_v22_1/" in workflow
+    assert "state/tct_context/" in workflow
     assert "compression-level: 1" in workflow
