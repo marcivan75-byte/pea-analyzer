@@ -9,6 +9,7 @@ from v182.reporting.committee_ci_explainability_v21_16 import (
     _report_context,
     _source_validation,
     _tct_exact_details,
+    _tct_reference_integrity,
 )
 
 
@@ -78,6 +79,62 @@ def test_tct_exact_components_renormalize_missing_weight_like_engine():
     assert len(active) == 5
     assert abs(active["effective_weight_pct"].sum() - 100.0) < 1e-9
     assert abs(pd.to_numeric(active["weighted_contribution_points"]).sum() - 80.0) < 1e-9
+
+
+def _integrity_selected() -> pd.DataFrame:
+    return pd.DataFrame([
+        {
+            "asset_class": "ACTION",
+            "horizon": "TCT",
+            "isin": "FR-T2",
+            "decision": "T2_CONFIRM_75_SHADOW",
+            "score": 80.0,
+        }
+    ])
+
+
+def _integrity_detail(*, include_baseline: bool = True, active_weight_pct: float = 100.0) -> pd.DataFrame:
+    rows = []
+    remaining = active_weight_pct
+    for idx, weight in enumerate((25.0, 20.0, 20.0, 15.0, 10.0, 10.0)):
+        active = remaining > 0
+        used = min(weight, remaining) if active else 0.0
+        remaining -= used
+        rows.append({
+            "asset_class": "ACTION",
+            "horizon": "TCT",
+            "isin": "FR-T2",
+            "source": "TCT_V24_1_7_EXACT_COMPONENTS",
+            "criterion_status": "ACTIVE" if used == weight else "MISSING",
+            "theoretical_weight_pct": weight,
+        })
+    if include_baseline:
+        rows.append({
+            "asset_class": "ACTION",
+            "horizon": "TCT",
+            "isin": "FR-T2",
+            "source": "TCT_BASELINE_V24_1_8",
+            "criterion_status": "CONTEXT_GATE",
+            "theoretical_weight_pct": 100.0,
+        })
+    return pd.DataFrame(rows)
+
+
+def test_tct_reference_integrity_requires_exact_and_baseline_families():
+    complete = _tct_reference_integrity(_integrity_selected(), _integrity_detail())
+    assert complete["complete"] is True
+    assert complete["missing_exact_keys"] == []
+    assert complete["missing_baseline_keys"] == []
+
+    no_baseline = _tct_reference_integrity(_integrity_selected(), _integrity_detail(include_baseline=False))
+    assert no_baseline["complete"] is False
+    assert no_baseline["missing_baseline_keys"] == [["ACTION", "TCT", "FR-T2"]]
+
+
+def test_tct_reference_integrity_blocks_exact_component_weight_below_80pct():
+    result = _tct_reference_integrity(_integrity_selected(), _integrity_detail(active_weight_pct=70.0))
+    assert result["complete"] is False
+    assert result["undercovered_exact_keys"] == [["ACTION", "TCT", "FR-T2"]]
 
 
 def test_tct_source_validation_distinguishes_t1_t2_and_never_promotes_t2_to_buy(tmp_path: Path):
