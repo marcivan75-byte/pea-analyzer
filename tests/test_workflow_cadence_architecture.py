@@ -14,6 +14,7 @@ def test_daily_workflow_runs_collection_and_only_tactical_decision_runner():
     assert "PEA_SLOW_SOURCE_MODE: CACHE_PREFERRED" in source
     assert "python -m v182.reporting.run" in source
     assert "python -m v182.reporting.daily_tct_ct_runner" in source
+    assert "python -m v182.reporting.action_ct_shadow_bundle_run" in source
     assert "v182.reporting.unified_runner" not in source
     assert "etf_mt_v2081_run" not in source
     assert "sector_rotation" not in source.lower()
@@ -33,8 +34,9 @@ def test_heavy_committee_is_weekly_and_not_push_triggered():
     assert "python -m v182.reporting.unified_runner" in source
     assert "python -m v182.reporting.criteria_governance_audit" in source
     assert "python -m v182.reporting.daily_tct_ct_runner" in source
-    assert "python -m v182.reporting.action_ct_shadow_run_v22_0" in source
-    assert "python -m v182.reporting.action_ct_shadow_run_v22_1" in source
+    assert source.count("python -m v182.reporting.action_ct_shadow_bundle_run") == 1
+    assert "python -m v182.reporting.action_ct_shadow_run_v22_0" not in source
+    assert "python -m v182.reporting.action_ct_shadow_run_v22_1" not in source
     assert "python -m v182.reporting.tct_daily_trader_shadow_run_v24_3_1" in source
     assert "python -m v182.reporting.tct_pit_ohlc_ledger_v24_4_2" in source
     assert "state/tct_context/" in source
