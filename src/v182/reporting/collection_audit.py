@@ -7,7 +7,7 @@ import shutil
 import pandas as pd
 
 from v182.audit.provenance import actual_sources_by_field
-from v182.io.frames import MISSING_TOKEN, is_missing
+from v182.io.frames import MISSING_TOKEN
 
 SOURCE_HINTS = [
     (("morningstar",), "Morningstar / source autorisee ou snapshot attribue"),
