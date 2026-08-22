@@ -5,7 +5,7 @@ import threading
 import pandas as pd
 
 from v182.features import topdown_features
-from v182.sources import fred_macro
+from v182.sources import fred_macro, gdelt_news
 from v182.sources.fred_macro import MacroScore
 from v182.sources.gdelt_news import NewsScore
 
@@ -32,7 +32,7 @@ def test_fred_global_series_start_concurrently_but_results_remain_governed_order
     assert result.errors == {}
 
 
-def test_topdown_overlaps_fred_and_gdelt_without_changing_gdelt_policy(monkeypatch) -> None:
+def test_topdown_overlaps_fred_and_gdelt_without_changing_gdelt_data_policy(monkeypatch) -> None:
     barrier=threading.Barrier(2)
     captured={}
 
@@ -96,7 +96,8 @@ def test_topdown_overlaps_fred_and_gdelt_without_changing_gdelt_policy(monkeypat
     assert captured["timespan"] == "2d"
     assert captured["max_records"] == 50
     assert captured["delay_seconds"] == 0.12
-    assert captured["max_workers"] == 6
+    assert captured["max_workers"] == topdown_features.TOPDOWN_GDELT_MAX_WORKERS == 12
+    assert gdelt_news.GDELT_MIN_START_INTERVAL_SECONDS == 1.0
     assert "(markets OR economy OR stocks OR bonds)" in captured["queries"]
     assert '"Action Test"' in captured["queries"]
     assert any('"France"' in query for query in captured["queries"])
