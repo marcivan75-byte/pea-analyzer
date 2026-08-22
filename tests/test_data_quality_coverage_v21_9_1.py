@@ -72,10 +72,10 @@ def test_yahoo_etf_assets_conversion_requires_dedicated_asset_currency():
 def test_yahoo_quote_currency_does_not_promote_total_assets_to_eur_aum(monkeypatch):
     frame=pd.DataFrame([{"isin":"FR0010000001","name":"ETF","yahoo_ticker":"ETF.PA"}])
     raw=[
-        {"ticker":"ETF.PA","field":"total_assets_yf","value":832_159_936,"source":"yfinance"},
-        {"ticker":"ETF.PA","field":"currency_yf","value":"EUR","source":"yfinance"},
+        {"ticker":"ETF.PA","field":"total_assets_yf","value":832_159_936,"source":"yfinance","cache_state":"LIVE_REFRESH"},
+        {"ticker":"ETF.PA","field":"currency_yf","value":"EUR","source":"yfinance","cache_state":"LIVE_REFRESH"},
     ]
-    monkeypatch.setattr(waves,"collect_info",lambda *args,**kwargs:(raw,[]))
+    monkeypatch.setattr(waves,"collect_info_cached",lambda *args,**kwargs:(raw,[],{}))
     observations,failures=waves.wave6_etf_info(frame,{"yfinance":{"info_delay_seconds":0}})
     assert failures == []
     fields={row["field"] for row in observations}
