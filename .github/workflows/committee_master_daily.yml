@@ -37,6 +37,7 @@ jobs:
       EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
       - name: Restore persistent OHLCV cache
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
@@ -44,7 +45,23 @@ jobs:
           key: ohlcv-v3-${{ github.run_id }}
           restore-keys: |
             ohlcv-v3-
-      - name: Restore TCT state
+
+      - name: Restore consolidated tactical decision state
+        id: decision-state
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            state/TCT_V24_1_7_T1_STATE.json
+            state/tct_context/
+            state/action_ct/
+            state/action_ct_v22_1/
+            state/provenance/
+          key: decision-state-v1-${{ github.run_id }}
+          restore-keys: |
+            decision-state-v1-
+
+      - name: Restore legacy TCT state during cache migration
+        if: steps.decision-state.outputs.cache-matched-key == ''
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: state/TCT_V24_1_7_T1_STATE.json
@@ -52,42 +69,36 @@ jobs:
           restore-keys: |
             daily-tct-state-
             tct-v2417-state-
-      - name: Restore next-session catalyst state
+
+      - name: Restore legacy next-session catalyst state during cache migration
+        if: steps.decision-state.outputs.cache-matched-key == ''
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: state/tct_context/
           key: tct-context-${{ github.run_id }}
           restore-keys: |
             tct-context-
-      - name: Restore Action CT V22.0 parent state
+
+      - name: Restore legacy Action CT V22.0 state during cache migration
+        if: steps.decision-state.outputs.cache-matched-key == ''
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: state/action_ct/
           key: action-ct-v22-${{ github.run_id }}
           restore-keys: |
             action-ct-v22-
-      - name: Restore Action CT V22.1 enriched state
+
+      - name: Restore legacy Action CT V22.1 state during cache migration
+        if: steps.decision-state.outputs.cache-matched-key == ''
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: state/action_ct_v22_1/
           key: action-ct-v221-${{ github.run_id }}
           restore-keys: |
             action-ct-v221-
-      - name: Restore Sector Rotation V2 shadow history
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/sector_rotation_v2/
-          key: sector-rotation-v2-${{ github.run_id }}
-          restore-keys: |
-            sector-rotation-v2-
-      - name: Restore ETF Fund Flow V1 PIT history
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/etf_fund_flows/
-          key: etf-fund-flow-v1-${{ github.run_id }}
-          restore-keys: |
-            etf-fund-flow-v1-
-      - name: Restore field provenance and V21.8 temporal state
+
+      - name: Restore legacy provenance state during cache migration
+        if: steps.decision-state.outputs.cache-matched-key == ''
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: state/provenance/
@@ -98,18 +109,51 @@ jobs:
             provenance-v216-
             provenance-v215-
             provenance-v214-
+
+      - name: Restore consolidated weekly research state
+        id: weekly-research-state
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            state/sector_rotation_v2/
+            state/etf_fund_flows/
+          key: weekly-research-state-v1-${{ github.run_id }}
+          restore-keys: |
+            weekly-research-state-v1-
+
+      - name: Restore legacy Sector Rotation V2 state during cache migration
+        if: steps.weekly-research-state.outputs.cache-matched-key == ''
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: state/sector_rotation_v2/
+          key: sector-rotation-v2-${{ github.run_id }}
+          restore-keys: |
+            sector-rotation-v2-
+
+      - name: Restore legacy ETF Fund Flow V1 state during cache migration
+        if: steps.weekly-research-state.outputs.cache-matched-key == ''
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: state/etf_fund_flows/
+          key: etf-fund-flow-v1-${{ github.run_id }}
+          restore-keys: |
+            etf-fund-flow-v1-
+
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
           cache: "pip"
           cache-dependency-path: pyproject.toml
+
       - name: Install project
         run: pip install -e .
+
       - name: Full Python compile and static safety gate
         if: ${{ inputs.run_validation }}
         run: |
           python -m compileall -q src
           python -m v182.audit.static_code_audit --root . --output outputs/audit/PYTHON_STATIC_AUDIT.json --fail-high
+
       - name: Validate exhaustive referentials and real Action input
         if: ${{ inputs.run_validation }}
         run: |
@@ -194,85 +238,109 @@ jobs:
           assert ff["anti_false_signal"]["mixed_currency_absolute_aggregation_forbidden"] is True
           print(f"V21.8.1 integrity OK: Actions 1829/633, ETF 102/268, no LT/Gold/Crypto/IPO runtime, TCT, Sector Rotation V2 PIT/OOS shadow, Fund Flows V1 PEA-only, RISK V1.1 context-only, Entry/Exit V21.8 baseline (identity-only={materialized.materialized_missing_count})")
           PY
+
       - name: Publish Action identity hydration worklist
         run: python -m v182.audit.identity_hydration
+
       - name: Run weekly unified Committee pipeline
         run: python -m v182.reporting.unified_runner
+
       - name: Replay governed ETF structural state V21.15 for Friday tactical outputs
         continue-on-error: true
         run: python -m v182.reporting.etf_structure_state_replay
+
       - name: Friday TCT CT scoring and V21.8
         run: python -m v182.reporting.daily_tct_ct_runner
+
       - name: Action CT V22.0 Friday parent SHADOW
         continue-on-error: true
         run: python -m v182.reporting.action_ct_shadow_run_v22_0
+
       - name: Action CT V22.1.1 Friday enriched SHADOW
         continue-on-error: true
         run: python -m v182.reporting.action_ct_shadow_run_v22_1
+
       - name: TCT V24.3.1 Friday trader-tools shadow
         continue-on-error: true
         run: python -m v182.reporting.tct_daily_trader_shadow_run_v24_3_1
+
       - name: Persist Friday compact OHLC for V24.4.2 PIT
         continue-on-error: true
         run: python -m v182.reporting.tct_pit_ohlc_ledger_v24_4_2
+
       - name: Run consolidated Friday POSTMARKET catalyst snapshot V24.4.2
         continue-on-error: true
         env:
           TCT_CATALYST_PHASE: POSTMARKET
         run: python -m v182.reporting.tct_next_session_catalyst_run_v24_4_2
+
       - name: Apply Friday POSTMARKET V24.4.2 PIT OHLC lineage
         continue-on-error: true
         run: python -m v182.reporting.tct_v24_4_2_pit_lineage
+
       - name: Validate Friday POSTMARKET V24.4.2 PIT ledger
         continue-on-error: true
         run: python -m v182.reporting.tct_v24_4_2_pit_validator
+
       - name: Build synthetic decision brief
         if: always()
         run: python -m v182.reporting.decision_brief
+
       - name: Run ETF Fund Flows V1 SHADOW context
         continue-on-error: true
         run: python -m v182.reporting.etf_fund_flows_shadow_run
+
       - name: Audit criteria governance
         run: python -m v182.reporting.criteria_governance_audit
+
       - name: Show unified summary
         if: always()
         run: |
           if [ -f outputs/unified/UNIFIED_SUMMARY_LATEST.json ]; then cat outputs/unified/UNIFIED_SUMMARY_LATEST.json; fi
           if [ -f outputs/audit/UNIFIED_RUNTIME_V21_13_7.json ]; then cat outputs/audit/UNIFIED_RUNTIME_V21_13_7.json; fi
+
       - name: Show committee summary
         if: always()
         run: |
           if [ -f outputs/committee_master/SUMMARY.json ]; then cat outputs/committee_master/SUMMARY.json; fi
+
       - name: Show V21.8 Entry/Exit governance
         if: always()
         run: |
           if [ -f outputs/audit/V21_8_ENTRY_EXIT_GOVERNANCE.json ]; then cat outputs/audit/V21_8_ENTRY_EXIT_GOVERNANCE.json; fi
+
       - name: Show criteria governance audit
         if: always()
         run: |
           if [ -f outputs/audit/CRITERIA_GOVERNANCE_AUDIT.json ]; then cat outputs/audit/CRITERIA_GOVERNANCE_AUDIT.json; fi
+
       - name: Show Sector Rotation V2 shadow summary
         if: always()
         run: |
           if [ -f outputs/audit/V2_SECTOR_ROTATION_SHADOW.json ]; then cat outputs/audit/V2_SECTOR_ROTATION_SHADOW.json; fi
+
       - name: Show Sector Rotation V2 PIT OOS status
         if: always()
         run: |
           if [ -f outputs/audit/V2_SECTOR_ROTATION_PIT_OOS_STATUS.json ]; then cat outputs/audit/V2_SECTOR_ROTATION_PIT_OOS_STATUS.json; fi
+
       - name: Show ETF Fund Flows V1 shadow audit
         if: always()
         run: |
           if [ -f outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json ]; then cat outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json; fi
+
       - name: Show RISK V1.1 audit
         if: always()
         run: |
           if [ -f outputs/audit/BETA_CORRELATION_RISK_ENGINE.json ]; then cat outputs/audit/BETA_CORRELATION_RISK_ENGINE.json; fi
+
       - name: Publish synthetic decision brief
         if: always()
         run: |
           if [ -f outputs/decision_brief/DECISION_BRIEF.md ]; then
             cat outputs/decision_brief/DECISION_BRIEF.md >> "$GITHUB_STEP_SUMMARY"
           fi
+
       - name: Publish full Committee Android summary
         if: always()
         run: |
@@ -289,54 +357,35 @@ jobs:
             printf '\n\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
             cat outputs/mobile/ANDROID_TCT_NEXT_SESSION_CATALYST_V24_4_2.md >> "$GITHUB_STEP_SUMMARY"
           fi
+
       - name: Save persistent OHLCV cache
         if: ${{ success() && hashFiles('data/cache/**') != '' }}
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: data/cache/
           key: ohlcv-v3-${{ github.run_id }}
-      - name: Save TCT state
-        if: ${{ always() && hashFiles('state/TCT_V24_1_7_T1_STATE.json') != '' }}
+
+      - name: Save consolidated tactical decision state
+        if: ${{ always() && (hashFiles('state/TCT_V24_1_7_T1_STATE.json', 'state/tct_context/**', 'state/action_ct/**', 'state/action_ct_v22_1/**', 'state/provenance/**') != '') }}
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
-          path: state/TCT_V24_1_7_T1_STATE.json
-          key: tct-v2417-state-${{ github.run_id }}
-      - name: Save next-session catalyst state
-        if: ${{ always() && hashFiles('state/tct_context/**') != '' }}
+          path: |
+            state/TCT_V24_1_7_T1_STATE.json
+            state/tct_context/
+            state/action_ct/
+            state/action_ct_v22_1/
+            state/provenance/
+          key: decision-state-v1-${{ github.run_id }}
+
+      - name: Save consolidated weekly research state
+        if: ${{ always() && (hashFiles('state/sector_rotation_v2/**', 'state/etf_fund_flows/**') != '') }}
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
-          path: state/tct_context/
-          key: tct-context-${{ github.run_id }}
-      - name: Save Action CT V22.0 parent state
-        if: ${{ always() && hashFiles('state/action_ct/**') != '' }}
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/action_ct/
-          key: action-ct-v22-${{ github.run_id }}
-      - name: Save Action CT V22.1 enriched state
-        if: ${{ always() && hashFiles('state/action_ct_v22_1/**') != '' }}
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/action_ct_v22_1/
-          key: action-ct-v221-${{ github.run_id }}
-      - name: Save Sector Rotation V2 shadow history
-        if: ${{ always() && hashFiles('state/sector_rotation_v2/**') != '' }}
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/sector_rotation_v2/
-          key: sector-rotation-v2-${{ github.run_id }}
-      - name: Save ETF Fund Flow V1 PIT history
-        if: ${{ always() && hashFiles('state/etf_fund_flows/**') != '' }}
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/etf_fund_flows/
-          key: etf-fund-flow-v1-${{ github.run_id }}
-      - name: Save field provenance and V21.8 temporal state
-        if: ${{ always() && hashFiles('state/provenance/**') != '' }}
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/provenance/
-          key: provenance-v2181-${{ github.run_id }}
+          path: |
+            state/sector_rotation_v2/
+            state/etf_fund_flows/
+          key: weekly-research-state-v1-${{ github.run_id }}
+
       - name: Upload complete weekly Committee V21.8.1 results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -367,4 +416,5 @@ jobs:
             state/etf_fund_flows/
             state/provenance/
           if-no-files-found: warn
+          compression-level: 1
           retention-days: 14
