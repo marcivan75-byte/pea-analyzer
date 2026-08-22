@@ -23,11 +23,8 @@ VERSION = "V21.13.14_GDELT_GROUPED_AB_FROM_PIT_BASELINE"
 def _text(value: object) -> str:
     if value is None:
         return ""
-    try:
-        if bool(pd.isna(value)):
-            return ""
-    except (TypeError, ValueError):
-        pass
+    if pd.api.types.is_scalar(value) and bool(pd.isna(value)):
+        return ""
     return str(value).strip()
 
 
