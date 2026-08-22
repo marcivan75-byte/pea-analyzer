@@ -41,7 +41,7 @@ def test_readonly_latest_view_is_zero_copy_outer_mapping_but_public_load_is_isol
     assert provenance.load_latest(ledger)[key]["source"] == "SOURCE_A"
 
 
-def test_retained_dataframe_is_invalidated_lazily_after_replace(tmp_path) -> None:
+def test_retained_dataframe_stays_lazy_after_incremental_source_refresh(tmp_path) -> None:
     ledger=tmp_path/"provenance.csv"
     provenance.append_records([_record(value="1")],path=ledger)
     provenance.actual_sources_by_field(ledger)
@@ -58,7 +58,9 @@ def test_retained_dataframe_is_invalidated_lazily_after_replace(tmp_path) -> Non
 
     sources=provenance.actual_sources_by_field(ledger)
     assert sources.loc[0,"sources_reelles"] == "SOURCE_B"
-    assert provenance._LATEST_RETAINED_CACHE[key].latest is not None
+    # V21.13.33 keeps the retained frame lazy because the exact source aggregate
+    # was refreshed only for the impacted field during append_records().
+    assert provenance._LATEST_RETAINED_CACHE[key].latest is None
 
 
 def test_apply_observations_uses_local_overlay_for_repeated_key_without_copying_public_map(tmp_path,monkeypatch) -> None:
