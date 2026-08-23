@@ -98,7 +98,7 @@ def _run_step(name: str, runner: Callable[[], dict]) -> tuple[dict, dict | None]
 
 def _run_action_ct_with_worker_cap(root: Path, worker_cap: int = ACTION_CT_V22_1_WORKER_CAP) -> dict:
     """Cap only V22.1's inner executor while TCT occupies the second model branch."""
-    original_executor = action_ct_bundle.v221.ThreadPoolExecutor
+    original_executor = getattr(action_ct_bundle.v221, "ThreadPoolExecutor")
     cap = max(1, int(worker_cap))
 
     def capped_executor(*args: Any, **kwargs: Any):
@@ -110,11 +110,11 @@ def _run_action_ct_with_worker_cap(root: Path, worker_cap: int = ACTION_CT_V22_1
             kwargs["max_workers"] = min(requested, cap)
         return original_executor(*args, **kwargs)
 
-    action_ct_bundle.v221.ThreadPoolExecutor = capped_executor
+    setattr(action_ct_bundle.v221, "ThreadPoolExecutor", capped_executor)
     try:
         return action_ct_bundle.run(root=root)
     finally:
-        action_ct_bundle.v221.ThreadPoolExecutor = original_executor
+        setattr(action_ct_bundle.v221, "ThreadPoolExecutor", original_executor)
 
 
 def run(
@@ -134,7 +134,7 @@ def run(
     auditdir.mkdir(parents=True, exist_ok=True)
 
     original_read_parquet = pd.read_parquet
-    original_v221_executor = action_ct_bundle.v221.ThreadPoolExecutor
+    original_v221_executor = getattr(action_ct_bundle.v221, "ThreadPoolExecutor")
     parquet_cache = ParquetReadCache(original_read_parquet)
     callback_error: dict | None = None
     setattr(pd, "read_parquet", parquet_cache)
@@ -168,7 +168,7 @@ def run(
             action_ct, action_ct_error = action_future.result()
     finally:
         setattr(pd, "read_parquet", original_read_parquet)
-        action_ct_bundle.v221.ThreadPoolExecutor = original_v221_executor
+        setattr(action_ct_bundle.v221, "ThreadPoolExecutor", original_v221_executor)
 
     errors = [error for error in (action_ct_error, tct_error, callback_error) if error is not None]
     payload = {
@@ -181,7 +181,7 @@ def run(
         "tct_completion_callback_used": tct_complete_callback is not None,
         "shared_parquet_physical_reads_preserved": True,
         "original_pandas_reader_restored": pd.read_parquet is original_read_parquet,
-        "original_v22_1_executor_restored": action_ct_bundle.v221.ThreadPoolExecutor is original_v221_executor,
+        "original_v22_1_executor_restored": getattr(action_ct_bundle.v221, "ThreadPoolExecutor") is original_v221_executor,
         "action_ct_v22_1_worker_cap": ACTION_CT_V22_1_WORKER_CAP,
         "nested_cpu_oversubscription_reduced": True,
         "decision_logic_changed": False,
@@ -207,7 +207,6 @@ def run(
         "errors": errors,
         "total_seconds": round(float(perf_counter() - started), 6),
     }
-    # Historical filename retained for workflow/downstream compatibility.
     audit_path = auditdir / "TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json"
     audit_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
