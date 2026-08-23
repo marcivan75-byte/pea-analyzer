@@ -10,7 +10,7 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[3]
-VERSION = "WEEKLY_TAIL_PARALLEL_V21_16_1"
+VERSION = "WEEKLY_TAIL_PARALLEL_V21_16_2_IDENTITY_OVERLAP"
 
 
 def _run_module(root: Path, module: str) -> dict:
@@ -55,14 +55,16 @@ def run(root: Path = ROOT) -> dict:
     audit_dir.mkdir(parents=True, exist_ok=True)
 
     # Tactical/Postmarket share TCT state and remain serial in their own isolated
-    # subprocess lane. The other modules write disjoint state/output trees and can
-    # safely overlap both this lane and one another.
-    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="weekly-tail") as pool:
+    # subprocess lane. Identity hydration is diagnostic only: the governed identity
+    # overlay was already applied by WAVE01 itself, so publishing its worklist here
+    # preserves the artifact while removing it from the weekly pre-bundle critical path.
+    with ThreadPoolExecutor(max_workers=5, thread_name_prefix="weekly-tail") as pool:
         futures = {
             "tct_lane": pool.submit(_tct_lane, root),
             "decision_brief": pool.submit(_run_module, root, "v182.reporting.decision_brief_v21_16"),
             "etf_fund_flows": pool.submit(_run_module, root, "v182.reporting.etf_fund_flows_shadow_run"),
             "criteria_governance": pool.submit(_run_module, root, "v182.reporting.criteria_governance_audit"),
+            "identity_hydration": pool.submit(_run_module, root, "v182.audit.identity_hydration"),
         }
         results = {name: future.result() for name, future in futures.items()}
 
@@ -76,21 +78,26 @@ def run(root: Path = ROOT) -> dict:
     for name, item in tct.get("steps", {}).items():
         if int(item.get("returncode", 1)) != 0:
             nonblocking_failures.append(name)
-    if int(results["etf_fund_flows"].get("returncode", 1)) != 0:
-        nonblocking_failures.append("etf_fund_flows")
+    for name in ("etf_fund_flows", "identity_hydration"):
+        if int(results[name].get("returncode", 1)) != 0:
+            nonblocking_failures.append(name)
 
     payload = {
         "status": "SUCCESS" if not essential_failures else "FAILED_ESSENTIAL_WEEKLY_TAIL",
         "version": VERSION,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "wall_seconds": round(time.perf_counter() - started, 6),
-        "parallel_workers": 4,
+        "parallel_workers": 5,
         "parallel_lanes": [
             "TCT_TACTICAL_THEN_POSTMARKET_SERIAL_LANE",
             "DECISION_BRIEF",
             "ETF_FUND_FLOWS",
             "CRITERIA_GOVERNANCE",
+            "IDENTITY_HYDRATION_DIAGNOSTIC",
         ],
+        "identity_hydration_removed_from_pre_bundle_critical_path": True,
+        "identity_overlay_application_still_owned_by_wave01": True,
+        "identity_hydration_decision_influence": False,
         "tct_state_writers_parallelized": False,
         "subprocess_isolation": True,
         "decision_logic_changed": False,
