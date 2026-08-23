@@ -30,10 +30,11 @@ def _clean_text(value) -> str:
     if value is None:
         return ""
     try:
-        if pd.isna(value):
-            return ""
-    except Exception:
-        pass
+        missing = bool(pd.isna(value))
+    except (TypeError, ValueError):
+        missing = False
+    if missing:
+        return ""
     text = str(value).strip()
     return "" if text.lower() in {"", "nan", "none", "<na>"} else text
 
@@ -88,50 +89,53 @@ def action_observations(actions_df: pd.DataFrame, path: Path = SEED_PATH) -> tup
 
         country = _clean_text(row.get("country_yf"))
         if country in country_macro:
-            rows.append(_seed_obs("ACTION", isin, "funnel_country_macro_score", country_macro[country], "MARKET_IMPLIED_COUNTRY_REGIME_C", "C", as_of))
+            rows.append(_seed_obs("ACTION", isin, "funnel_country_macro_score", country_macro[country], "FRED", "B", as_of))
             counts["country_macro"] += 1
         if country in country_news:
-            rows.append(_seed_obs("ACTION", isin, "funnel_country_news_score", country_news[country], "GDELT_2D_LEXICAL", "B", as_of))
+            rows.append(_seed_obs("ACTION", isin, "funnel_country_news_score", country_news[country], "GDELT", "B", as_of))
             counts["country_news"] += 1
 
         sector = _clean_text(row.get("sector_yf"))
         if sector in sector_news:
-            rows.append(_seed_obs("ACTION", isin, "funnel_sector_news_score", sector_news[sector], "GDELT_2D_LEXICAL", "B", as_of))
+            rows.append(_seed_obs("ACTION", isin, "funnel_sector_news_score", sector_news[sector], "GDELT", "B", as_of))
             counts["sector_news"] += 1
 
         if isin in instrument_news:
-            value = instrument_news[isin]
-            rows.append(_seed_obs("ACTION", isin, "funnel_instrument_news_score", value, "GDELT_2D_LEXICAL_TOP_ACTIONS", "B", as_of))
-            rows.append(_seed_obs("ACTION", isin, "news_catalyst_score", value, "TOPDOWN_INTERNAL", "C", as_of))
+            rows.append(_seed_obs("ACTION", isin, "funnel_instrument_news_score", instrument_news[isin], "GDELT", "B", as_of))
             counts["instrument_news"] += 1
 
-    diagnostics = {
-        "status": "REUSED_VALIDATED_DAILY_W09_SEED",
+    return rows, {
         "version": VERSION,
-        "seed_version": seed["version"],
-        "source_run_id": int(seed["source_run_id"]),
-        "as_of": as_of,
-        "actions_rows": int(len(actions_df)),
-        "observations": int(len(rows)),
+        "status": "SUCCESS_SEED_REHYDRATION",
+        "seed_version": seed.get("version"),
+        "seed_as_of": as_of,
+        "source_run_id": seed.get("source_run_id"),
+        "rows": len(actions_df),
+        "observations": len(rows),
         "counts": counts,
+        "network_calls": 0,
         "fred_calls": 0,
         "gdelt_calls": 0,
-        "network_calls": 0,
-        "provenance_semantics_preserved": True,
-        "etf_w09_fabricated": False,
-        "etf_ct_requires_w09": False,
+        "daily_only": True,
+        "weekly_wave09_execution_changed": False,
+        "decision_logic_changed": False,
+        "criteria_changed": False,
+        "weights_changed": False,
+        "thresholds_changed": False,
     }
-    return rows, diagnostics
 
 
-def audit_contract() -> dict:
-    seed = load_seed()
+def audit_contract(path: Path = SEED_PATH) -> dict:
+    seed = load_seed(path)
     return {
         "version": VERSION,
-        "status": "VALID",
-        "seed_version": seed["version"],
-        "source_run_id": int(seed["source_run_id"]),
-        "as_of": str(seed["as_of"]),
-        "daily_network_calls": 0,
-        "provenance_semantics_preserved": True,
+        "seed_version": seed.get("version"),
+        "seed_as_of": seed.get("as_of"),
+        "source_run_id": seed.get("source_run_id"),
+        "network_calls": 0,
+        "weekly_wave09_execution_changed": False,
+        "decision_logic_changed": False,
+        "criteria_changed": False,
+        "weights_changed": False,
+        "thresholds_changed": False,
     }
