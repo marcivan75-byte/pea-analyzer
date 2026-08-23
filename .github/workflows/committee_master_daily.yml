@@ -261,8 +261,11 @@ jobs:
         continue-on-error: true
         run: python -m v182.reporting.tct_postmarket_bundle_run
 
-      - name: Build decision brief + Fund Flows + criteria governance
+      - name: Build synthetic decision brief
         if: always()
+        run: python -m v182.reporting.decision_brief
+
+      - name: Run Fund Flows + criteria governance bundle
         run: python -m v182.reporting.weekly_post_decision_bundle_run
 
       - name: Show unified summary
