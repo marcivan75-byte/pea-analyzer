@@ -65,10 +65,13 @@ def run(root: Path = ROOT) -> dict:
     auditdir = root / "outputs" / "audit"
     auditdir.mkdir(parents=True, exist_ok=True)
 
+    # Governance dependency: PIT lineage must be materialized before Catalyst
+    # consumes the postmarket state. Keep Validator last. This is the historical
+    # governed order and changes no scoring/threshold/fingerprint semantics.
     specifications: list[tuple[str, Callable[[], dict]]] = [
         ("PIT_OHLC_V24.4.2", lambda: ohlc_ledger.run(root=root)),
-        ("POSTMARKET_CATALYST_V24.4.2", lambda: catalyst.run(root=root, phase="POSTMARKET")),
         ("PIT_LINEAGE_V24.4.2", lambda: _run_lineage_dtype_safe(root)),
+        ("POSTMARKET_CATALYST_V24.4.2", lambda: catalyst.run(root=root, phase="POSTMARKET")),
         ("PIT_VALIDATOR_V24.4.2", lambda: validator.run(root=root)),
     ]
 
