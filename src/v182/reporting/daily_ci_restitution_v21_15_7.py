@@ -37,7 +37,9 @@ def _tct_details(root: Path, selected: pd.DataFrame) -> pd.DataFrame:
     if chosen.empty or baseline.empty or "isin" not in baseline.columns:
         return pd.DataFrame()
 
-    baseline = baseline.drop_duplicates("isin", keep="last").set_index(baseline["isin"].astype(str))
+    baseline = baseline.copy()
+    baseline["isin"] = baseline["isin"].astype(str)
+    baseline = baseline.drop_duplicates("isin", keep="last").set_index("isin")
     active_weights = {name: float(weight) for name, weight in WEIGHTS_V24_1_2.items() if name != SETUP_COMPONENT}
     rows: list[dict] = []
     for _, decision in chosen.iterrows():
@@ -109,13 +111,12 @@ def _tct_details(root: Path, selected: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _preserve_internal_tct_provenance(detail: pd.DataFrame) -> pd.DataFrame:
+def _preserve_internal_tct_provenance(root: Path, detail: pd.DataFrame) -> pd.DataFrame:
     if detail.empty:
         return detail
-    attached = ci._attach_provenance(ROOT, detail)
-    tct = attached["horizon"].astype(str).str.upper().eq("TCT")
+    attached = ci._attach_provenance(root, detail).reset_index(drop=True)
     original = detail.reset_index(drop=True)
-    attached = attached.reset_index(drop=True)
+    tct = attached["horizon"].astype(str).str.upper().eq("TCT")
     for column in ("source", "as_of", "evidence_level", "validation_status"):
         missing = attached[column].isna() | attached[column].astype(str).str.strip().isin({"", "nan", "None"})
         attached.loc[tct & missing, column] = original.loc[tct & missing, column]
@@ -155,7 +156,7 @@ def run(root: Path = ROOT) -> dict:
         _tct_details(root, selected),
     ]
     detail = pd.concat([part for part in parts if not part.empty], ignore_index=True, sort=False) if any(not part.empty for part in parts) else pd.DataFrame()
-    detail = _preserve_internal_tct_provenance(detail)
+    detail = _preserve_internal_tct_provenance(root, detail)
     context = ci._join_context(root, selected)
 
     selected_keys = ci._selection_keys(selected)
