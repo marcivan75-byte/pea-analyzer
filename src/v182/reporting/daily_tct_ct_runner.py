@@ -15,7 +15,7 @@ from v182.reporting.selected_source_enrichment import _read_contract, attach_mas
 from v182.risk.entry_exit_governance_v21_8 import STATE_RELATIVE_PATH, _attach_temporal_state, _load_temporal_state, _persist_temporal_state, apply_governance
 
 ROOT = Path(__file__).resolve().parents[3]
-VERSION = "DAILY_TCT_CT_V1_SOURCE_CONTRACT_V21_16_2"
+VERSION = "DAILY_TCT_CT_V1_SOURCE_CONTRACT_V21_16_3_FAST_TOP20_EXACT"
 TACTICAL_DISPLAY_CODES = {
     "BUY_CANDIDATE",
     "WATCH",
@@ -38,6 +38,24 @@ def _read(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise RuntimeError(f"DAILY_TACTICAL_INPUT_MISSING:{path.relative_to(ROOT) if path.is_relative_to(ROOT) else path}")
     return pd.read_csv(path, sep=";", encoding="utf-8-sig", low_memory=False)
+
+
+def _daily_exact_scope(actions_with_tct: pd.DataFrame, tct_cfg: dict) -> pd.DataFrame:
+    """Apply the existing baseline gate before the expensive exact T1/T2 calculation.
+
+    The TCT contract already forbids T1/T2 outside the baseline Top-N with minimum
+    baseline coverage. Weekly research keeps the exhaustive evaluator unchanged;
+    the daily tactical runner computes exact indicators only for rows that can
+    actually become T1/T2 candidates under the governed rules.
+    """
+    if actions_with_tct.empty:
+        return actions_with_tct.copy()
+    rank = pd.to_numeric(actions_with_tct.get("tct_baseline_rank"), errors="coerce")
+    coverage = pd.to_numeric(actions_with_tct.get("tct_baseline_coverage"), errors="coerce")
+    top_n = int(tct_cfg.get("scope", {}).get("baseline_top_n", 20))
+    min_coverage = float(tct_cfg.get("scope", {}).get("baseline_min_coverage", 0.60))
+    eligible = rank.notna() & rank.le(top_n) & coverage.notna() & coverage.ge(min_coverage)
+    return actions_with_tct.loc[eligible].copy().reset_index(drop=True)
 
 
 def _android_summary(governed: pd.DataFrame, generated_at: str) -> str:
@@ -123,8 +141,9 @@ def run(root: Path = ROOT) -> dict:
     ]
     actions_with_tct, baseline = build_tct_baseline(actions, tct_cfg)
     actions_with_tct.to_csv(outdir / "TCT_BASELINE_V24_1_8.csv", sep=";", index=False, encoding="utf-8-sig")
+    exact_scope = _daily_exact_scope(actions_with_tct, tct_cfg)
     tct_state_path = root / str(tct_cfg.get("state", {}).get("path", "state/TCT_V24_1_7_T1_STATE.json"))
-    tct_shadow, exact = build_exact_timing_snapshot(actions_with_tct, root / "data" / "cache" / "actions", tct_state_path, tct_cfg)
+    tct_shadow, exact = build_exact_timing_snapshot(exact_scope, root / "data" / "cache" / "actions", tct_state_path, tct_cfg)
     tct_shadow.to_csv(outdir / "TCT_SHADOW_V24_1_7.csv", sep=";", index=False, encoding="utf-8-sig")
     parts.append(tct_adapter(tct_shadow))
     decisions = pd.concat([part for part in parts if part is not None and not part.empty], ignore_index=True, sort=False)
@@ -165,6 +184,9 @@ def run(root: Path = ROOT) -> dict:
             "normalization_policy": NORMALIZATION_POLICY,
         },
         "tct_exact": {
+            "daily_exact_scope_rows": int(len(exact_scope)),
+            "daily_exact_scope_policy": "BASELINE_TOP_N_AND_MIN_COVERAGE_PRE_GATE",
+            "weekly_exhaustive_research_unchanged": True,
             "histories_found": exact.histories_found,
             "histories_usable": exact.histories_usable,
             "t1_detected_raw": exact.t1_detected_raw,
