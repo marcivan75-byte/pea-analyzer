@@ -8,6 +8,7 @@ import traceback
 from v182.reporting import daily_fast_collection_run as collection
 from v182.reporting import daily_tactical_super_runner_v21_15_4 as tactical
 from v182.reporting import etf_structure_state_replay as etf_replay
+from v182.reporting import wave3_cpu_budget_v21_15_4 as wave3_cpu
 from v182.reporting.earnings_clock_v21_15_4 import refresh_frame as refresh_earnings_clock
 
 
@@ -28,28 +29,33 @@ def _safe_nonblocking(name: str, runner) -> tuple[dict, dict | None, float]:
         }, perf_counter() - started
 
 
-def _run_collection_with_current_earnings_clock() -> tuple[dict, dict]:
-    """Refresh relative earnings fields only when a validated fast state is loaded."""
+def _run_collection_optimized_locals() -> tuple[dict, dict]:
+    """Apply daily-only local optimizations around the fail-closed collection runner."""
     original_loader = collection._load_fast_state
+    original_wave3 = collection.waves.wave3_local_features
     diagnostics: dict = {
-        "status": "NOT_APPLIED_NO_FAST_STATE",
-        "network_calls": 0,
-        "source_timestamp_changed": False,
+        "earnings_clock": {
+            "status": "NOT_APPLIED_NO_FAST_STATE",
+            "network_calls": 0,
+            "source_timestamp_changed": False,
+        },
+        "wave3_cpu_budget": wave3_cpu.audit_contract(),
     }
 
     def current_loader():
-        nonlocal diagnostics
         actions, etf, manifest, mode = original_loader()
         if mode in {"DELTA_ONLY", "RECONCILE_CACHE"} and not actions.empty:
-            actions, diagnostics = refresh_earnings_clock(actions)
-            diagnostics = {**diagnostics, "status": "APPLIED", "fast_mode": mode}
+            actions, clock = refresh_earnings_clock(actions)
+            diagnostics["earnings_clock"] = {**clock, "status": "APPLIED", "fast_mode": mode}
         return actions, etf, manifest, mode
 
     collection._load_fast_state = current_loader
+    collection.waves.wave3_local_features = wave3_cpu.wave3_local_features
     try:
         return collection.run(), diagnostics
     finally:
         collection._load_fast_state = original_loader
+        collection.waves.wave3_local_features = original_wave3
 
 
 def run(root: Path = ROOT) -> dict:
@@ -65,7 +71,7 @@ def run(root: Path = ROOT) -> dict:
     auditdir.mkdir(parents=True, exist_ok=True)
 
     collection_started = perf_counter()
-    collection_payload, earnings_clock = _run_collection_with_current_earnings_clock()
+    collection_payload, local_optimizations = _run_collection_optimized_locals()
     collection_seconds = perf_counter() - collection_started
 
     replay_payload, replay_error, replay_seconds = _safe_nonblocking(
@@ -90,7 +96,7 @@ def run(root: Path = ROOT) -> dict:
             "daily_tactical_core_and_selected_context": "BLOCKING",
             "tactical_shadow_and_postmarket": "FAIL_SOFT_RECORDED",
         },
-        "earnings_clock": earnings_clock,
+        "local_optimizations": local_optimizations,
         "decision_logic_changed": False,
         "criteria_changed": False,
         "weights_changed": False,
