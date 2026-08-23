@@ -1,0 +1,19 @@
+name: Save PEA runtime cache
+description: Persist the consolidated V21.16 runtime state in one cache archive.
+
+runs:
+  using: composite
+  steps:
+    - name: Save consolidated runtime state
+      uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      with:
+        path: |
+          data/cache/
+          state/TCT_V24_1_7_T1_STATE.json
+          state/tct_context/
+          state/action_ct/
+          state/action_ct_v22_1/
+          state/provenance/
+          state/sector_rotation_v2/
+          state/etf_fund_flows/
+        key: runtime-state-v21-16-${{ github.run_id }}
