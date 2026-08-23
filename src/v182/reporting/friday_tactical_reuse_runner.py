@@ -67,10 +67,11 @@ def _attach_existing_governance(decisions: pd.DataFrame, governed: pd.DataFrame)
     gov["asset_class"] = gov["asset_class"].astype(str).str.upper()
     gov["horizon"] = gov["horizon"].astype(str).str.upper()
     gov["isin"] = gov["isin"].astype(str).str.upper().str.strip()
-    gov = gov[
-        gov["asset_class"].eq("ACTION") & gov["horizon"].isin(["TCT", "CT"])
+    gov_mask = (
+        (gov["asset_class"].eq("ACTION") & gov["horizon"].isin(["TCT", "CT"]))
         | (gov["asset_class"].eq("ETF") & gov["horizon"].eq("CT"))
-    ].copy()
+    )
+    gov = gov.loc[gov_mask].copy()
     if gov.duplicated(KEYS).any():
         raise RuntimeError("FRIDAY_TACTICAL_REUSE_DUPLICATE_GOVERNANCE_KEYS")
 
