@@ -148,6 +148,76 @@ def test_corrupt_technical_url_stored_as_base_is_re_resolved_not_doubled(tmp_pat
     assert mapped["base_url"] == "https://www.investing.com/equities/alpha-test"
 
 
+def test_technical_failure_is_not_retried_inside_two_hour_cooldown(tmp_path: Path):
+    cache = tmp_path / "technical.json"
+    mapping = tmp_path / "mapping.json"
+    mapping.write_text(json.dumps({
+        "version": "INVESTING_URL_MAP_V1",
+        "entries": {"FR0000000001": {
+            "status": "RESOLVED",
+            "base_url": "https://www.investing.com/equities/alpha-test",
+            "validated_isin": "FR0000000001",
+        }},
+    }), encoding="utf-8")
+    now = datetime(2026, 8, 23, 0, 0, tzinfo=timezone.utc)
+    calls: list[str] = []
+
+    def technical_failure(url, timeout):
+        calls.append(url)
+        return FakeResponse("technical page without recommendation states", url)
+
+    first = collect_technical_context_cached(
+        _row(), cache, mapping, refresh_budget=1, request_start_interval_seconds=0,
+        technical_failure_retry_ttl_hours=2, fetcher=technical_failure, now=now,
+    )
+    assert first.metrics["live_refresh_requested"] == 1
+    assert first.metrics["live_refresh_success"] == 0
+    assert len(calls) == 1
+    mapped = json.loads(mapping.read_text(encoding="utf-8"))["entries"]["FR0000000001"]
+    assert mapped["technical_failure_reason"] == "NO_TECHNICAL_SUMMARY"
+
+    def must_not_call(url, timeout):
+        raise AssertionError(f"technical retry forbidden inside cooldown: {url}")
+
+    second = collect_technical_context_cached(
+        _row(), cache, mapping, refresh_budget=1, request_start_interval_seconds=0,
+        technical_failure_retry_ttl_hours=2, fetcher=must_not_call, now=now + timedelta(hours=1),
+    )
+    assert second.metrics["live_refresh_requested"] == 0
+    assert second.metrics["technical_failure_cooldown_skipped"] == 1
+
+
+def test_technical_failure_retries_after_cooldown_and_clears_failure_state(tmp_path: Path):
+    cache = tmp_path / "technical.json"
+    mapping = tmp_path / "mapping.json"
+    now = datetime(2026, 8, 23, 3, 0, tzinfo=timezone.utc)
+    mapping.write_text(json.dumps({
+        "version": "INVESTING_URL_MAP_V1",
+        "entries": {"FR0000000001": {
+            "status": "RESOLVED",
+            "base_url": "https://www.investing.com/equities/alpha-test",
+            "validated_isin": "FR0000000001",
+            "technical_last_failed_at_utc": (now - timedelta(hours=3)).isoformat(),
+            "technical_failure_reason": "NO_TECHNICAL_SUMMARY",
+            "technical_failure_count": 1,
+        }},
+    }), encoding="utf-8")
+
+    def success(url, timeout):
+        return FakeResponse("Daily Strong Buy Weekly Buy Monthly Strong Buy", url)
+
+    result = collect_technical_context_cached(
+        _row(), cache, mapping, refresh_budget=1, request_start_interval_seconds=0,
+        technical_failure_retry_ttl_hours=2, fetcher=success, now=now,
+    )
+    assert result.metrics["live_refresh_requested"] == 1
+    assert result.metrics["live_refresh_success"] == 1
+    mapped = json.loads(mapping.read_text(encoding="utf-8"))["entries"]["FR0000000001"]
+    assert "technical_last_failed_at_utc" not in mapped
+    assert "technical_failure_reason" not in mapped
+    assert "technical_failure_count" not in mapped
+
+
 def test_unsafe_redirect_never_populates_technical_cache(tmp_path: Path):
     cache = tmp_path / "technical.json"
     mapping = tmp_path / "mapping.json"
