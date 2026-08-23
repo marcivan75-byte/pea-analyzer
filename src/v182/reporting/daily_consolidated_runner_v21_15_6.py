@@ -9,6 +9,7 @@ from v182.reporting import daily_tactical_super_runner_v21_15_6 as tactical
 
 ROOT = Path(__file__).resolve().parents[3]
 VERSION = "DAILY_CONSOLIDATED_RUNTIME_V21_15_6"
+_ORIGINAL_COMPAT_LOADER = base._load_fast_state_compatible
 
 
 def _require_valid_daily_seed(actions, etf, manifest, mode):
@@ -22,7 +23,7 @@ def _require_valid_daily_seed(actions, etf, manifest, mode):
 
 
 def _guarded_loader():
-    return _require_valid_daily_seed(*base._load_fast_state_compatible())
+    return _require_valid_daily_seed(*_ORIGINAL_COMPAT_LOADER())
 
 
 def _patch_audit(root: Path, payload: dict) -> None:
