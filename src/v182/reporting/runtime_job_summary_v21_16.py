@@ -10,7 +10,7 @@ import time
 from v182.reporting.runtime_telemetry import _budget_result
 
 ROOT = Path(__file__).resolve().parents[3]
-VERSION = "GITHUB_JOB_RUNTIME_V21_16_1"
+VERSION = "GITHUB_JOB_RUNTIME_V21_16_3"
 START_FILE = ".runtime_job_start_epoch"
 
 
@@ -23,6 +23,7 @@ def run(root: Path = ROOT, *, profile: str) -> dict:
     except (OSError, ValueError) as exc:
         raise RuntimeError("GITHUB_JOB_RUNTIME_START_MARKER_INVALID") from exc
     wall_seconds = max(0.0, time.time() - start_epoch)
+    contract = _budget_result(profile, wall_seconds)
     payload = {
         "status": "SUCCESS",
         "version": VERSION,
@@ -32,7 +33,8 @@ def run(root: Path = ROOT, *, profile: str) -> dict:
         "excluded_from_measurement": ["INITIAL_CHECKOUT_STEP", "RUNNER_QUEUE_TIME"],
         "wall_seconds": round(wall_seconds, 3),
         "wall_minutes": round(wall_seconds / 60.0, 4),
-        "duration_contract": _budget_result(profile, wall_seconds),
+        "duration_contract": contract,
+        "duration_contract_present": bool(contract),
         "decision_logic_changed": False,
     }
     out = root / "outputs" / "audit" / "GITHUB_JOB_RUNTIME_V21_16.json"
@@ -41,11 +43,13 @@ def run(root: Path = ROOT, *, profile: str) -> dict:
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with Path(summary).open("a", encoding="utf-8") as handle:
-            handle.write("\n## Runtime V21.16.1\n\n")
+            handle.write("\n## Runtime V21.16.3\n\n")
             handle.write(f"- Profil : `{profile}`\n")
             handle.write(f"- Temps job mesuré après checkout : **{payload['wall_minutes']:.2f} min**\n")
-            status = payload["duration_contract"].get("measurement_comparison_status", "N/A")
+            status = contract.get("measurement_comparison_status", "CONTRACT_MISSING")
             handle.write(f"- Contrat : **{status}**\n")
+            if contract.get("expected_wall_range_minutes"):
+                handle.write(f"- Plage statique cible : `{contract['expected_wall_range_minutes']}` min\n")
     return payload
 
 
