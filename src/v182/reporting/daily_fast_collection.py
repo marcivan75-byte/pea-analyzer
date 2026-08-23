@@ -16,7 +16,7 @@ from v182.reporting import waves
 from v182.reporting.daily_context_baseline import load_context_baseline, publish_context_baseline
 
 ROOT = Path(__file__).resolve().parents[3]
-VERSION = "DAILY_FAST_COLLECTION_V21_16_3"
+VERSION = "DAILY_FAST_COLLECTION_V21_16_4_IN_MEMORY_HANDOFF"
 
 
 def _load_cfg(root: Path) -> dict:
@@ -41,7 +41,7 @@ def _coverage(frame: pd.DataFrame, field: str) -> int:
     return int((values.notna() & ~values.astype(str).str.strip().str.lower().isin({"", "nan", "none", "na", "n/a"})).sum())
 
 
-def _bootstrap_full(root: Path, reason: str) -> dict:
+def _bootstrap_full(root: Path, reason: str, *, return_frames: bool = False):
     """Fail safe: force the historical complete LIVE collector once, then seed the fast baseline."""
     if root.resolve() != ROOT.resolve():
         raise RuntimeError("DAILY_FAST_FULL_FALLBACK_REQUIRES_REPOSITORY_ROOT")
@@ -81,23 +81,40 @@ def _bootstrap_full(root: Path, reason: str) -> dict:
         "forced_full_profile": True,
         "forced_slow_sources_live": True,
         "forced_yfinance_incremental_period": "1mo",
+        "masters_persisted": True,
+        "daily_baseline_rewritten": True,
         "decision_logic_changed": False,
         "score_logic_changed": False,
     }
     audit = root / "outputs" / "audit" / "DAILY_FAST_COLLECTION.json"
     audit.parent.mkdir(parents=True, exist_ok=True)
     audit.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    if return_frames:
+        return payload, actions, etfs
     return payload
 
 
-def run(root: Path = ROOT) -> dict:
+def run(
+    root: Path = ROOT,
+    *,
+    persist_masters: bool = True,
+    persist_daily_baseline: bool = True,
+    persist_auxiliary_outputs: bool = True,
+    return_frames: bool = False,
+):
+    """Refresh the full daily market state while reusing the passed weekly slow context.
+
+    Standalone callers keep historical file persistence by default. The scheduled
+    V21.16 bundle disables redundant master/baseline/auxiliary writes and hands the
+    fully enriched DataFrames directly to the tactical runner in the same process.
+    """
     wall_start = time.perf_counter()
     cfg = _load_cfg(root)
     max_age = float(os.environ.get("PEA_DAILY_BASELINE_MAX_AGE_DAYS", "8"))
     try:
         actions, etfs, baseline_meta = load_context_baseline(root, max_full_age_days=max_age)
     except RuntimeError as exc:
-        return _bootstrap_full(root, str(exc))
+        return _bootstrap_full(root, str(exc), return_frames=return_frames)
 
     raw_actions = load_master(root / "inputs" / "V18.2_PEA_ACTIONS_MASTER.csv")
     action_spec = cfg.get("canonical_universe", {})
@@ -119,7 +136,7 @@ def run(root: Path = ROOT) -> dict:
 
     t0 = time.perf_counter()
     etf_with_tickers, etf_gaps = waves.resolve_etf_tickers(etfs, root / "config" / "V18.2_ETF_TICKER_MAP.csv")
-    if not etf_gaps.empty:
+    if not etf_gaps.empty and persist_auxiliary_outputs:
         gaps = root / "outputs" / "gaps"
         gaps.mkdir(parents=True, exist_ok=True)
         etf_gaps.to_csv(gaps / "V18.2_ETF_TICKER_GAPS.csv", sep=";", index=False, encoding="utf-8-sig")
@@ -145,17 +162,19 @@ def run(root: Path = ROOT) -> dict:
         raise RuntimeError("DAILY_FAST_LOCAL_FEATURE_ROW_MUTATION")
     timings["local_features_seconds"] = round(time.perf_counter() - t0, 6)
 
+    output_dir = root / "outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    audit_dir = output_dir / "audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+
     t0 = time.perf_counter()
     rotation_obs, sectors, rotation_diag = build_rotation_observations(actions)
     actions, rotation_quarantine = apply_observations(actions, rotation_obs)
-    output_dir = root / "outputs"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    sectors.to_csv(output_dir / "V21_3_SECTOR_ROTATION.csv", sep=";", index=False, encoding="utf-8-sig")
-    audit_dir = output_dir / "audit"
-    audit_dir.mkdir(parents=True, exist_ok=True)
-    (audit_dir / "V21_3_SECTOR_ROTATION.json").write_text(
-        json.dumps(rotation_diag, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
-    )
+    if persist_auxiliary_outputs:
+        sectors.to_csv(output_dir / "V21_3_SECTOR_ROTATION.csv", sep=";", index=False, encoding="utf-8-sig")
+        (audit_dir / "V21_3_SECTOR_ROTATION.json").write_text(
+            json.dumps(rotation_diag, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
+        )
     timings["sector_rotation_local_seconds"] = round(time.perf_counter() - t0, 6)
 
     t0 = time.perf_counter()
@@ -177,18 +196,22 @@ def run(root: Path = ROOT) -> dict:
             f"etf={initial_etf_close_coverage}->{final_etf_close_coverage}"
         )
 
-    save_master(actions, output_dir / "V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv")
-    save_master(etfs, output_dir / "V18.2_PEA_ETF_MASTER_ENRICHED.csv")
+    if persist_masters:
+        save_master(actions, output_dir / "V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv")
+        save_master(etfs, output_dir / "V18.2_PEA_ETF_MASTER_ENRICHED.csv")
 
     now = datetime.now(timezone.utc).isoformat()
-    baseline = publish_context_baseline(
-        actions,
-        etfs,
-        root,
-        full_refresh=False,
-        profile="DAILY_TACTICAL_FAST",
-        run_id=now,
-    )
+    baseline_after = None
+    if persist_daily_baseline:
+        baseline_after = publish_context_baseline(
+            actions,
+            etfs,
+            root,
+            full_refresh=False,
+            profile="DAILY_TACTICAL_FAST",
+            run_id=now,
+        )
+
     quarantine = (
         action_quarantine
         + etf_quarantine
@@ -196,7 +219,7 @@ def run(root: Path = ROOT) -> dict:
         + scenario_quarantine
         + enhancement_quarantine
     )
-    if quarantine:
+    if quarantine and persist_auxiliary_outputs:
         gaps = output_dir / "gaps"
         gaps.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(quarantine).to_csv(gaps / "DAILY_FAST_QUARANTINE.csv", sep=";", index=False, encoding="utf-8-sig")
@@ -207,7 +230,12 @@ def run(root: Path = ROOT) -> dict:
         "generated_at_utc": now,
         "normal_daily_fast_path_used": True,
         "baseline": baseline_meta,
-        "baseline_after_daily_refresh": baseline,
+        "baseline_after_daily_refresh": baseline_after,
+        "weekly_baseline_kept_immutable_in_scheduled_bundle": not persist_daily_baseline,
+        "masters_persisted": bool(persist_masters),
+        "daily_baseline_rewritten": bool(persist_daily_baseline),
+        "auxiliary_outputs_persisted": bool(persist_auxiliary_outputs),
+        "in_memory_handoff_available": bool(return_frames),
         "actions_rows": int(len(actions)),
         "etf_rows": int(len(etfs)),
         "action_ohlcv_usable": int(len(action_history.successful)),
@@ -248,6 +276,8 @@ def run(root: Path = ROOT) -> dict:
     }
     audit = audit_dir / "DAILY_FAST_COLLECTION.json"
     audit.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    if return_frames:
+        return payload, actions, etfs
     return payload
 
 
