@@ -10,12 +10,13 @@ import pandas as pd
 
 from v182.audit.canonical_universe import filter_actions
 from v182.features.action_decision_enhancements import build_action_enhancement_observations
+from v182.features.sector_rotation import build_rotation_observations
 from v182.io.frames import apply_observations, load_master, save_master
 from v182.reporting import waves
 from v182.reporting.daily_context_baseline import load_context_baseline, publish_context_baseline
 
 ROOT = Path(__file__).resolve().parents[3]
-VERSION = "DAILY_FAST_COLLECTION_V21_16_2"
+VERSION = "DAILY_FAST_COLLECTION_V21_16_3"
 
 
 def _load_cfg(root: Path) -> dict:
@@ -145,6 +146,19 @@ def run(root: Path = ROOT) -> dict:
     timings["local_features_seconds"] = round(time.perf_counter() - t0, 6)
 
     t0 = time.perf_counter()
+    rotation_obs, sectors, rotation_diag = build_rotation_observations(actions)
+    actions, rotation_quarantine = apply_observations(actions, rotation_obs)
+    output_dir = root / "outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    sectors.to_csv(output_dir / "V21_3_SECTOR_ROTATION.csv", sep=";", index=False, encoding="utf-8-sig")
+    audit_dir = output_dir / "audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    (audit_dir / "V21_3_SECTOR_ROTATION.json").write_text(
+        json.dumps(rotation_diag, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
+    )
+    timings["sector_rotation_local_seconds"] = round(time.perf_counter() - t0, 6)
+
+    t0 = time.perf_counter()
     shortlist = set(
         actions.loc[actions["comite_status"].astype(str).isin(["COMMITTEE", "WATCH"]), "isin"]
     ) if "comite_status" in actions else set()
@@ -163,10 +177,8 @@ def run(root: Path = ROOT) -> dict:
             f"etf={initial_etf_close_coverage}->{final_etf_close_coverage}"
         )
 
-    outputs = root / "outputs"
-    outputs.mkdir(parents=True, exist_ok=True)
-    save_master(actions, outputs / "V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv")
-    save_master(etfs, outputs / "V18.2_PEA_ETF_MASTER_ENRICHED.csv")
+    save_master(actions, output_dir / "V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv")
+    save_master(etfs, output_dir / "V18.2_PEA_ETF_MASTER_ENRICHED.csv")
 
     now = datetime.now(timezone.utc).isoformat()
     baseline = publish_context_baseline(
@@ -177,9 +189,15 @@ def run(root: Path = ROOT) -> dict:
         profile="DAILY_TACTICAL_FAST",
         run_id=now,
     )
-    quarantine = action_quarantine + etf_quarantine + scenario_quarantine + enhancement_quarantine
+    quarantine = (
+        action_quarantine
+        + etf_quarantine
+        + rotation_quarantine
+        + scenario_quarantine
+        + enhancement_quarantine
+    )
     if quarantine:
-        gaps = outputs / "gaps"
+        gaps = output_dir / "gaps"
         gaps.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(quarantine).to_csv(gaps / "DAILY_FAST_QUARANTINE.csv", sep=";", index=False, encoding="utf-8-sig")
 
@@ -199,6 +217,8 @@ def run(root: Path = ROOT) -> dict:
         "action_last_close_coverage": final_action_close_coverage,
         "etf_last_close_coverage": final_etf_close_coverage,
         "market_observations": int(len(obs_actions) + len(obs_etfs) + len(obs_beta)),
+        "sector_rotation_observations": int(len(rotation_obs)),
+        "sector_rotation_sectors": int(len(sectors)),
         "scenario_observations": int(len(scenario_obs)),
         "action_enhancement_observations": int(len(enhancement_obs)),
         "quarantine_rows": int(len(quarantine)),
@@ -209,7 +229,14 @@ def run(root: Path = ROOT) -> dict:
             "WAVE_06B_MORNINGSTAR_ACTIONS",
             "WAVE_06C_PUBLIC_FALLBACKS",
             "WAVE_09_TOPDOWN_EXTERNAL_REFRESH",
-            "WAVE_10_SECTOR_ROTATION_REBUILD",
+        ],
+        "fast_market_sensitive_modules_retained": [
+            "WAVE_01_ACTION_OHLCV",
+            "WAVE_02_ETF_OHLCV",
+            "WAVE_03_LOCAL_OHLCV_FEATURES",
+            "WAVE_08_SCENARIOS",
+            "WAVE_10_SECTOR_ROTATION_LOCAL",
+            "WAVE_11_ACTION_DECISION_FACTORS_LOCAL",
         ],
         "slow_context_preserved_from_last_full_baseline": True,
         "slow_source_freshness_extended_by_daily_write": False,
@@ -219,8 +246,7 @@ def run(root: Path = ROOT) -> dict:
         "timings": timings,
         "wall_seconds": round(time.perf_counter() - wall_start, 6),
     }
-    audit = outputs / "audit" / "DAILY_FAST_COLLECTION.json"
-    audit.parent.mkdir(parents=True, exist_ok=True)
+    audit = audit_dir / "DAILY_FAST_COLLECTION.json"
     audit.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     return payload
 
