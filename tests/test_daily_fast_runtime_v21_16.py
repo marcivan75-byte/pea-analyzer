@@ -97,9 +97,31 @@ def test_weekly_publication_requires_passed_full_quality_gate(tmp_path: Path):
     assert result["etf_rows"] == 102
 
 
-def test_daily_workflow_uses_single_process_fast_path_and_full_screening_contract():
+def test_consolidated_runtime_cache_carries_all_cross_day_state():
+    restore = Path(".github/actions/runtime-cache-restore/action.yml").read_text(encoding="utf-8")
+    save = Path(".github/actions/runtime-cache-save/action.yml").read_text(encoding="utf-8")
+    for text in (restore, save):
+        assert "runtime-state-v21-16-${{ github.run_id }}" in text
+        assert "data/cache/" in text
+        assert "state/TCT_V24_1_7_T1_STATE.json" in text
+        assert "state/tct_context/" in text
+        assert "state/action_ct/" in text
+        assert "state/action_ct_v22_1/" in text
+        assert "state/provenance/" in text
+        assert "state/sector_rotation_v2/" in text
+        assert "state/etf_fund_flows/" in text
+    assert "ohlcv-v3-" in restore
+    assert "decision-state-v1-" in restore
+    assert "weekly-research-state-v1-" in restore
+
+
+def test_daily_workflow_uses_single_process_single_cache_fast_path():
     workflow = Path(".github/workflows/committee_tct_ct_daily.yml").read_text(encoding="utf-8")
     assert "python -m v182.reporting.daily_fast_bundle_v21_16" in workflow
+    assert "uses: ./.github/actions/runtime-cache-restore" in workflow
+    assert "uses: ./.github/actions/runtime-cache-save" in workflow
+    assert "key: ohlcv-v3-" not in workflow
+    assert "key: decision-state-v1-" not in workflow
     assert "python -m v182.reporting.daily_fast_collection\n" not in workflow
     assert "python -m v182.reporting.daily_tct_ct_runner" not in workflow
     assert "python -m v182.reporting.tct_postmarket_bundle_run" not in workflow
@@ -108,8 +130,8 @@ def test_daily_workflow_uses_single_process_fast_path_and_full_screening_contrac
     assert "python -m v182.reporting.etf_structure_state_replay" not in workflow
     assert 'PEA_YF_INCREMENTAL_PERIOD: "5d"' in workflow
     assert 'PEA_DAILY_BASELINE_MAX_AGE_DAYS: "8"' in workflow
-    assert "state/action_ct/" in workflow
-    assert "state/action_ct_v22_1/" in workflow
+    assert "runtime_job_summary_v21_16 --profile DAILY_TACTICAL" in workflow
+    assert "continue-on-error: true" in workflow
 
 
 def test_daily_bundle_preserves_order_and_nonblocking_postmarket():
@@ -171,9 +193,14 @@ def test_weekly_committee_keeps_exhaustive_tct_exact_research():
     assert "_daily_exact_scope" not in source
 
 
-def test_weekly_workflow_uses_one_parent_bundle_and_no_duplicate_subcommands():
+def test_weekly_workflow_uses_one_parent_one_cache_and_no_duplicate_subcommands():
     workflow = Path(".github/workflows/committee_master_daily.yml").read_text(encoding="utf-8")
     assert "python -m v182.reporting.weekly_full_bundle_v21_16" in workflow
+    assert "uses: ./.github/actions/runtime-cache-restore" in workflow
+    assert "uses: ./.github/actions/runtime-cache-save" in workflow
+    assert "key: ohlcv-v3-" not in workflow
+    assert "key: decision-state-v1-" not in workflow
+    assert "key: weekly-research-state-v1-" not in workflow
     assert "python -m v182.reporting.weekly_unified_fast_v21_16" not in workflow
     assert "python -m v182.reporting.friday_tactical_reuse_v21_16" not in workflow
     assert "python -m v182.reporting.weekly_tail_parallel_v21_16" not in workflow
@@ -184,6 +211,8 @@ def test_weekly_workflow_uses_one_parent_bundle_and_no_duplicate_subcommands():
     assert "python -m v182.reporting.decision_brief_v21_16" not in workflow
     assert "python -m v182.reporting.etf_fund_flows_shadow_run" not in workflow
     assert "python -m v182.reporting.criteria_governance_audit" not in workflow
+    assert "runtime_job_summary_v21_16 --profile WEEKLY_FULL_COMMITTEE" in workflow
+    assert "continue-on-error: true" in workflow
 
 
 def test_weekly_full_bundle_preserves_parent_order_and_duration_budget():
@@ -231,12 +260,16 @@ def test_weekly_lean_enrichment_drops_only_unused_xlsx_serialization():
     assert '"committee_ci_outputs_affected": False' in source
 
 
-def test_duration_contract_is_static_and_preserves_model_integrity():
+def test_duration_contract_is_static_and_has_authoritative_job_measurement():
     contract = json.loads(Path("config/RUNTIME_DURATION_CONTRACT_V21_16.json").read_text(encoding="utf-8"))
     assert contract["status"] == "STATIC_ARCHITECTURE_VALIDATED_MEASUREMENT_PENDING_USER_AUTHORIZED_RUN"
     assert contract["v21_16_1_static_design_budget"]["targets_are_not_observed_runtime"] is True
     assert contract["v21_16_1_static_design_budget"]["daily_billable_budget_minutes"] == 7
     assert contract["v21_16_1_static_design_budget"]["weekly_billable_budget_minutes"] == 20
+    measurement = contract["measurement_contract"]
+    assert measurement["core_bundle_runtime_is_authoritative"] is False
+    assert measurement["authoritative_runtime_source"] == "outputs/audit/GITHUB_JOB_RUNTIME_V21_16.json_AND_GITHUB_STEP_SUMMARY"
+    assert measurement["end_to_end_json_is_generated_after_artifact_upload"] is True
     invariants = contract["non_regression_invariants"]
     assert invariants["actions_universe_count"] == 1829
     assert invariants["action_criteria_count"] == 633
