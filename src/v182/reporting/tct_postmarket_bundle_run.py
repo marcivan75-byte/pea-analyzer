@@ -6,8 +6,6 @@ from typing import Callable
 import json
 import traceback
 
-import pandas as pd
-
 from v182.reporting import tct_next_session_catalyst_run_v24_4_2 as catalyst
 from v182.reporting import tct_pit_ohlc_ledger_v24_4_2 as ohlc_ledger
 from v182.reporting import tct_v24_4_2_pit_lineage as lineage
