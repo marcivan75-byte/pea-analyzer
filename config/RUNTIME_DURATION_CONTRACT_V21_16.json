@@ -119,11 +119,20 @@
     },
     "friday_tactical_strategy": "REUSE_CURRENT_WEEKLY_COMMITTEE_AND_V21_8_OUTPUTS_NO_RESCORING",
     "separate_etf_replay_after_unified_removed": true,
+    "identity_hydration_strategy": {
+      "role": "DIAGNOSTIC_WORKLIST_ONLY",
+      "governed_identity_overlay_application_owner": "WAVE01_ACTION_YAHOO_QUALIFICATION",
+      "pre_bundle_sequential_step_removed": true,
+      "moved_to_nonblocking_weekly_tail": true,
+      "decision_influence": false,
+      "scoring_influence": false
+    },
     "weekly_tail_parallel_lanes": [
       "TCT_TACTICAL_THEN_FULL_POSTMARKET_SERIAL_STATE_LANE",
       "DECISION_BRIEF",
       "ETF_FUND_FLOWS",
-      "CRITERIA_GOVERNANCE"
+      "CRITERIA_GOVERNANCE",
+      "IDENTITY_HYDRATION_DIAGNOSTIC"
     ],
     "tct_state_writer_order_preserved": true,
     "weekly_full_postmarket_lineage_validator_retained": true,
