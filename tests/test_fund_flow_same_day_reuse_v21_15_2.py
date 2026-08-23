@@ -154,6 +154,15 @@ def test_fund_flow_runner_and_config_wire_same_day_reuse() -> None:
     assert 'runtime_opt.get("reuse_previous_snapshot", False)' in source
 
 
+def test_reuse_marker_is_committed_before_downstream_flow_computation() -> None:
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "src" / "v182" / "reporting" / "etf_fund_flows_shadow_run.py").read_text(encoding="utf-8")
+    marker_write = source.index("write_same_day_reuse_marker(", source.index("def run("))
+    downstream_compute = source.index("result = build_flow_computation(history, cfg)")
+    assert marker_write < downstream_compute
+    assert '"same_day_reuse_marker_written": marker_written' in source
+
+
 def test_reuse_marker_declares_no_decision_logic_change(tmp_path: Path) -> None:
     marker = write_same_day_reuse_marker(
         tmp_path / "marker.json",
