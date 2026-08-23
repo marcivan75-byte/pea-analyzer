@@ -1,4 +1,4 @@
-name: PEA Weekly Heavy Committee V21.8.1
+name: PEA Weekly Heavy Committee V21.16.0
 
 on:
   workflow_dispatch:
@@ -246,33 +246,15 @@ jobs:
       - name: Run weekly unified Committee pipeline
         run: python -m v182.reporting.unified_runner
 
-      - name: Replay governed ETF structural state V21.15 for Friday tactical outputs
-        continue-on-error: true
-        run: python -m v182.reporting.etf_structure_state_replay
-
-      - name: Friday TCT CT scoring and V21.8
-        run: python -m v182.reporting.daily_tct_ct_runner
-
-      - name: Action CT V22.0 V22.1 + TCT V24.3.1 Friday shared-parquet SHADOW
-        continue-on-error: true
-        run: python -m v182.reporting.tactical_shadow_bundle_run
-
-      - name: Friday POSTMARKET V24.4.2 OHLC + catalyst + lineage + validator single-process
-        continue-on-error: true
-        run: python -m v182.reporting.tct_postmarket_bundle_run
-
-      - name: Build synthetic decision brief
-        if: always()
-        run: python -m v182.reporting.decision_brief
-
-      - name: Run Fund Flows + criteria governance bundle
-        run: python -m v182.reporting.weekly_post_decision_bundle_run
+      - name: Run optimized Friday tactical, Postmarket and weekly finalization DAG V21.16.0
+        run: python -m v182.reporting.weekly_tail_super_runner_v21_16_0
 
       - name: Show unified summary
         if: always()
         run: |
           if [ -f outputs/unified/UNIFIED_SUMMARY_LATEST.json ]; then cat outputs/unified/UNIFIED_SUMMARY_LATEST.json; fi
           if [ -f outputs/audit/UNIFIED_RUNTIME_V21_13_7.json ]; then cat outputs/audit/UNIFIED_RUNTIME_V21_13_7.json; fi
+          if [ -f outputs/audit/WEEKLY_TAIL_SUPER_RUNTIME_V21_16_0.json ]; then cat outputs/audit/WEEKLY_TAIL_SUPER_RUNTIME_V21_16_0.json; fi
           if [ -f outputs/audit/ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json ]; then cat outputs/audit/ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json; fi
           if [ -f outputs/audit/TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json ]; then cat outputs/audit/TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json; fi
           if [ -f outputs/audit/POSTMARKET_BUNDLE_RUNTIME_V21_13_12.json ]; then cat outputs/audit/POSTMARKET_BUNDLE_RUNTIME_V21_13_12.json; fi
@@ -376,11 +358,11 @@ jobs:
             state/etf_fund_flows/
           key: weekly-research-state-v1-${{ github.run_id }}
 
-      - name: Upload complete weekly Committee V21.8.1 results
+      - name: Upload complete weekly Committee V21.16.0 results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: committee-weekly-v21-8-1-${{ github.run_id }}
+          name: committee-weekly-v21-16-0-${{ github.run_id }}
           path: |
             outputs/unified/
             outputs/decision_brief/
