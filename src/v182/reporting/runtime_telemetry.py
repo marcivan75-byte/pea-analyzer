@@ -9,7 +9,7 @@ import time
 from typing import Any
 
 
-RUNTIME_VERSION = "PIPELINE_RUNTIME_V21_13_7"
+RUNTIME_VERSION = "PIPELINE_RUNTIME_V21_16_3"
 DURATION_CONTRACT = Path(__file__).resolve().parents[3] / "config" / "RUNTIME_DURATION_CONTRACT_V21_16.json"
 
 
@@ -38,9 +38,31 @@ def _load_duration_contract() -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
+def _design_budget(contract: dict) -> dict:
+    """Return the newest versioned static budget while remaining backward compatible."""
+    preferred = (
+        "v21_16_3_static_design_budget",
+        "v21_16_2_static_design_budget",
+        "v21_16_1_static_design_budget",
+    )
+    for key in preferred:
+        value = contract.get(key)
+        if isinstance(value, dict):
+            return value
+    # Future minor versions may change only the suffix. Choose the lexically
+    # latest governed V21.16 static design block rather than silently returning
+    # an empty contract.
+    candidates = sorted(
+        key
+        for key, value in contract.items()
+        if key.startswith("v21_16_") and key.endswith("_static_design_budget") and isinstance(value, dict)
+    )
+    return contract[candidates[-1]] if candidates else {}
+
+
 def _budget_for_profile(profile: str) -> dict:
     contract = _load_duration_contract()
-    budget = contract.get("v21_16_1_static_design_budget") if isinstance(contract.get("v21_16_1_static_design_budget"), dict) else {}
+    budget = _design_budget(contract)
     normalized = str(profile or "").strip().upper()
     if normalized == "DAILY_TACTICAL":
         expected = budget.get("daily_expected_wall_range_minutes")
@@ -60,7 +82,8 @@ def _budget_for_profile(profile: str) -> dict:
         "expected_wall_range_minutes": expected,
         "billable_budget_minutes": billable,
         "alert_wall_minutes": alert,
-        "targets_are_not_observed_runtime": True,
+        "targets_are_not_observed_runtime": bool(budget.get("targets_are_not_observed_runtime", True)),
+        "measurement_status": budget.get("measurement_status"),
     }
 
 
@@ -96,12 +119,7 @@ def _budget_result(profile: str, wall_seconds: float) -> dict:
 
 
 class RuntimeTelemetry:
-    """Persist wall/CPU stage timings without changing pipeline decisions.
-
-    ``transition`` closes the preceding stage and immediately persists a
-    checkpoint. A failed process therefore retains every completed stage plus
-    the name of the active stage instead of losing all runtime evidence.
-    """
+    """Persist wall/CPU stage timings without changing pipeline decisions."""
 
     def __init__(self, output_dir: str | Path, *, run_id: str, profile: str) -> None:
         self.output_dir = Path(output_dir)
@@ -120,10 +138,7 @@ class RuntimeTelemetry:
 
     @property
     def paths(self) -> dict[str, str]:
-        return {
-            "json": str(self.json_path),
-            "csv": str(self.csv_path),
-        }
+        return {"json": str(self.json_path), "csv": str(self.csv_path)}
 
     def transition(self, name: str, category: str) -> None:
         now_wall = time.perf_counter()
@@ -145,9 +160,9 @@ class RuntimeTelemetry:
         stage_status = "SUCCESS" if normalized == "SUCCESS" else normalized
         self._close_active(time.perf_counter(), time.process_time(), stage_status)
         self._status = normalized
-        effective_audit_format=os.environ.get("PEA_EFFECTIVE_INTERMEDIATE_AUDIT_FORMAT","").strip().upper()
+        effective_audit_format = os.environ.get("PEA_EFFECTIVE_INTERMEDIATE_AUDIT_FORMAT", "").strip().upper()
         if effective_audit_format and "intermediate_collection_audit_format" in extra:
-            extra["intermediate_collection_audit_format"]=effective_audit_format
+            extra["intermediate_collection_audit_format"] = effective_audit_format
         self._extra.update(extra)
         self._write()
         return self.paths
@@ -194,9 +209,7 @@ class RuntimeTelemetry:
             "updated_at_utc": _utc_now(),
             "wall_seconds": wall_seconds,
             "cpu_seconds": _round_seconds(now_cpu - self._cpu_start),
-            "totals_by_category_seconds": {
-                key: _round_seconds(value) for key, value in sorted(totals_by_category.items())
-            },
+            "totals_by_category_seconds": {key: _round_seconds(value) for key, value in sorted(totals_by_category.items())},
             "duration_contract": _budget_result(self.profile, wall_seconds),
             "active_stage": active,
             "stages": self._stages,
@@ -206,20 +219,8 @@ class RuntimeTelemetry:
 
     def _write(self) -> None:
         payload = self._payload()
-        _atomic_text(
-            self.json_path,
-            json.dumps(payload, ensure_ascii=False, indent=2, default=str),
-        )
-        fields = [
-            "sequence",
-            "name",
-            "category",
-            "status",
-            "started_at_utc",
-            "ended_at_utc",
-            "wall_seconds",
-            "cpu_seconds",
-        ]
+        _atomic_text(self.json_path, json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+        fields = ["sequence", "name", "category", "status", "started_at_utc", "ended_at_utc", "wall_seconds", "cpu_seconds"]
         rows = [dict(row) for row in self._stages]
         temporary = self.csv_path.with_name(f".{self.csv_path.name}.{os.getpid()}.tmp")
         temporary.parent.mkdir(parents=True, exist_ok=True)
@@ -242,8 +243,8 @@ def write_step_runtime(
     """Write the unified runner's already-measured step durations."""
     root = Path(output_dir)
     root.mkdir(parents=True, exist_ok=True)
-    json_path = root / "UNIFIED_RUNTIME_V21_13_7.json"
-    csv_path = root / "UNIFIED_RUNTIME_V21_13_7.csv"
+    json_path = root / "UNIFIED_RUNTIME_V21_16_3.json"
+    csv_path = root / "UNIFIED_RUNTIME_V21_16_3.csv"
     rows = []
     for sequence, (name, step) in enumerate(steps.items(), start=1):
         rows.append(
@@ -256,7 +257,7 @@ def write_step_runtime(
             }
         )
     payload = {
-        "version": "UNIFIED_RUNTIME_V21_13_7",
+        "version": "UNIFIED_RUNTIME_V21_16_3",
         "status": "SUCCESS",
         "run_id": run_id,
         "profile": profile,
