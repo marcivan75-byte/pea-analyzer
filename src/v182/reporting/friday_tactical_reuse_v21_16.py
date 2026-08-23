@@ -7,10 +7,11 @@ import shutil
 
 import pandas as pd
 
+from v182.reporting.daily_source_prewarm_v21_16 import persist_seed
 from v182.reporting.daily_tct_ct_runner import _android_summary
 
 ROOT = Path(__file__).resolve().parents[3]
-VERSION = "FRIDAY_TACTICAL_REUSE_V21_16_1"
+VERSION = "FRIDAY_TACTICAL_REUSE_V21_16_2_PREWARM_SEED"
 
 
 def _read(path: Path) -> pd.DataFrame:
@@ -57,6 +58,7 @@ def run(root: Path = ROOT) -> dict:
     governed.to_csv(outdir / "DAILY_TCT_CT_V21_8.csv", sep=";", index=False, encoding="utf-8-sig")
     copied_baseline = _copy_if_present(committee / "TCT_BASELINE_V24_1_8.csv", outdir / "TCT_BASELINE_V24_1_8.csv")
     copied_shadow = _copy_if_present(committee / "TCT_SHADOW_V24_1_7.csv", outdir / "TCT_SHADOW_V24_1_7.csv")
+    prewarm_seed = persist_seed(governed, root)
 
     generated_at = datetime.now(timezone.utc).isoformat()
     (mobile / "ANDROID_DAILY_TCT_CT.md").write_text(_android_summary(governed, generated_at), encoding="utf-8")
@@ -72,6 +74,7 @@ def run(root: Path = ROOT) -> dict:
         "reused_v21_8_governance": True,
         "reused_tct_baseline": copied_baseline,
         "reused_tct_exact_shadow": copied_shadow,
+        "next_daily_source_prewarm_seed": prewarm_seed,
         "network_calls": 0,
         "rescoring_calls": 0,
         "source_gate_calls": 0,
