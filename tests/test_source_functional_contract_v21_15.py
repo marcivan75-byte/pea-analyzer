@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 import json
@@ -8,6 +9,7 @@ import pandas as pd
 
 from v182.reporting import selected_source_enrichment as source_enrichment
 from v182.reporting.selected_source_enrichment import select_preselected_rows
+from v182.sources.rate_limit import StartRateLimiter
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -20,6 +22,7 @@ def test_source_contract_locks_previous_validated_functions():
     assert cfg["boursorama"]["full_universe_daily_scrape_forbidden"] is True
     assert cfg["boursorama"]["asset_branches_overlap_under_shared_limiter"] is True
     assert cfg["boursorama"]["request_start_interval_seconds"] == 1.0
+    assert cfg["boursorama"]["provider_max_inflight"] == 4
     assert "replication_management_fee" in cfg["boursorama"]["required_etf_context_families"]
     assert cfg["investing"]["timeframes"] == ["DAILY", "WEEKLY", "MONTHLY"]
     assert cfg["investing"]["allowed_states"] == ["STRONG_SELL", "SELL", "NEUTRAL", "BUY", "STRONG_BUY"]
@@ -54,6 +57,8 @@ def test_all_active_horizon_runners_keep_source_context_hook():
     assert "collect_selected_etf_context_cached" in orchestrator
     assert "collect_technical_context_cached" in orchestrator
     assert "shared_limiter = StartRateLimiter" in orchestrator
+    assert "BoundedSemaphore" in orchestrator
+    assert "provider_max_inflight" in orchestrator
     assert "fetcher=shared_fetcher" in orchestrator
     assert orchestrator.count("request_start_interval_seconds=0.0") == 2
     assert 'thread_name_prefix="boursorama-assets"' in orchestrator
@@ -75,6 +80,7 @@ def test_action_etf_boursorama_overlap_keeps_one_provider_start_cadence(tmp_path
             "refresh_budget": 40,
             "request_start_interval_seconds": interval,
             "max_workers": 4,
+            "provider_max_inflight": 4,
         },
         "investing": {
             "refresh_budget": 40,
@@ -136,3 +142,34 @@ def test_action_etf_boursorama_overlap_keeps_one_provider_start_cadence(tmp_path
     assert ordered[1] - ordered[0] >= interval * 0.8
     assert payload["boursorama_asset_overlap"] is True
     assert payload["boursorama_shared_start_limiter"] is True
+    assert payload["boursorama_shared_inflight_limit"] == 4
+
+
+def test_shared_boursorama_fetcher_never_exceeds_provider_inflight_cap(monkeypatch):
+    active = 0
+    peak = 0
+    lock = threading.Lock()
+
+    class FakeResponse:
+        text = "ok"
+
+    def fake_get(url, *, headers, timeout):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.02)
+        with lock:
+            active -= 1
+        return FakeResponse()
+
+    import requests
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    fetcher = source_enrichment._shared_boursorama_fetcher(StartRateLimiter(0.0), max_inflight=2)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(fetcher, f"https://example.test/{idx}", timeout=1.0) for idx in range(8)]
+        for future in futures:
+            future.result()
+
+    assert peak == 2
