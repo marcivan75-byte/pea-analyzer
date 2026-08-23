@@ -4,6 +4,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Callable
 import json
+import os
 import traceback
 
 from v182.reporting import tct_next_session_catalyst_run_v24_4_2 as catalyst
@@ -13,7 +14,7 @@ from v182.reporting import tct_v24_4_2_pit_validator as validator
 
 
 ROOT = Path(__file__).resolve().parents[3]
-VERSION = "V21.13.12_TCT_POSTMARKET_SINGLE_PROCESS_RUNTIME"
+VERSION = "V21.16.1_TCT_POSTMARKET_PROFILED_RUNTIME"
 
 
 def _run_step(name: str, runner: Callable[[], dict]) -> tuple[dict, dict | None, float]:
@@ -31,24 +32,33 @@ def _run_step(name: str, runner: Callable[[], dict]) -> tuple[dict, dict | None,
 
 
 def run(root: Path = ROOT) -> dict:
-    """Run the existing POSTMARKET V24.4.2 chain in one Python process.
+    """Run the operational POSTMARKET chain with PIT audit work deferred to Friday.
 
-    The four governed modules remain the owners of their data, PIT logic,
-    fingerprints, scoring and outputs.  This wrapper only removes interpreter
-    startup/import overhead.  Every step is attempted even when a prior step
-    fails, preserving the previous GitHub `continue-on-error` semantics.
+    Mon-Thu DAILY_TACTICAL keeps the two inputs needed for next-session context:
+    the governed OHLC ledger and the selected-candidate catalyst/news snapshot.
+    PIT lineage and the historical validator remain owned by the Friday full run;
+    they have zero score/decision influence and therefore need not consume daily
+    GitHub minutes.
     """
-
     started = perf_counter()
     auditdir = root / "outputs" / "audit"
     auditdir.mkdir(parents=True, exist_ok=True)
+    daily_fast = os.environ.get("PEA_RUN_PROFILE", "").strip().upper() == "DAILY_TACTICAL"
 
     specifications: list[tuple[str, Callable[[], dict]]] = [
         ("PIT_OHLC_V24.4.2", lambda: ohlc_ledger.run(root=root)),
         ("POSTMARKET_CATALYST_V24.4.2", lambda: catalyst.run(root=root, phase="POSTMARKET")),
-        ("PIT_LINEAGE_V24.4.2", lambda: lineage.run(root=root)),
-        ("PIT_VALIDATOR_V24.4.2", lambda: validator.run(root=root)),
     ]
+    deferred: list[str] = []
+    if daily_fast:
+        deferred = ["PIT_LINEAGE_V24.4.2", "PIT_VALIDATOR_V24.4.2"]
+    else:
+        specifications.extend(
+            [
+                ("PIT_LINEAGE_V24.4.2", lambda: lineage.run(root=root)),
+                ("PIT_VALIDATOR_V24.4.2", lambda: validator.run(root=root)),
+            ]
+        )
 
     step_payloads: dict[str, dict] = {}
     step_runtime: dict[str, float] = {}
@@ -61,24 +71,24 @@ def run(root: Path = ROOT) -> dict:
             errors.append(error)
 
     result = {
-        "status": "SUCCESS_POSTMARKET_SINGLE_PROCESS" if not errors else "POSTMARKET_SINGLE_PROCESS_WITH_STEP_ERRORS",
+        "status": "SUCCESS_POSTMARKET_PROFILED" if not errors else "POSTMARKET_PROFILED_WITH_STEP_ERRORS",
         "version": VERSION,
+        "profile": "DAILY_TACTICAL_FAST" if daily_fast else "WEEKLY_FULL_FRIDAY",
         "step_order": [name for name, _ in specifications],
-        "all_steps_attempted": True,
+        "deferred_to_weekly_friday": deferred,
+        "operational_steps_attempted": True,
         "postmarket_phase_explicit": True,
-        "previous_python_processes": 4,
-        "current_python_processes": 1,
-        "interpreter_startups_avoided": 3,
+        "python_processes": 1,
         "decision_logic_changed": False,
         "criteria_changed": False,
         "weights_changed": False,
         "thresholds_changed": False,
         "candidate_scope_changed": False,
         "news_query_policy_changed": False,
-        "pit_logic_changed": False,
-        "fingerprint_logic_changed": False,
+        "pit_score_logic_changed": False,
         "holdout_opened": False,
         "real_orders_enabled": False,
+        "daily_deferred_steps_have_decision_influence": False,
         "step_runtime_seconds": step_runtime,
         "steps": {
             name: {
@@ -95,7 +105,7 @@ def run(root: Path = ROOT) -> dict:
 
     if errors:
         raise RuntimeError(
-            "POSTMARKET V21.13.12 completed with step error(s): "
+            "POSTMARKET V21.16.1 completed with step error(s): "
             + ", ".join(str(error.get("step")) for error in errors)
         )
     return result
