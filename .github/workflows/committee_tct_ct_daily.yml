@@ -24,7 +24,7 @@ env:
 jobs:
   daily-tactical:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 45
     env:
       PYTHONUNBUFFERED: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
@@ -126,23 +126,8 @@ jobs:
         if: ${{ inputs.run_validation }}
         run: python -m compileall -q src
 
-      - name: Daily collection and enrichment
-        run: python -m v182.reporting.run
-
-      - name: Replay governed ETF structural state V21.15
-        continue-on-error: true
-        run: python -m v182.reporting.etf_structure_state_replay
-
-      - name: Daily TCT CT scoring and V21.8
-        run: python -m v182.reporting.daily_tct_ct_runner
-
-      - name: Action CT V22.0 V22.1 + TCT V24.3.1 shared-parquet SHADOW
-        continue-on-error: true
-        run: python -m v182.reporting.tactical_shadow_bundle_run
-
-      - name: POSTMARKET V24.4.2 OHLC + catalyst + lineage + validator single-process
-        continue-on-error: true
-        run: python -m v182.reporting.tct_postmarket_bundle_run
+      - name: Daily consolidated optimized V21.15.4
+        run: python -m v182.reporting.daily_consolidated_runner_v21_15_4
 
       - name: Publish Android tactical summaries
         if: always()
@@ -173,6 +158,9 @@ jobs:
       - name: Show daily audit
         if: always()
         run: |
+          if [ -f outputs/audit/DAILY_CONSOLIDATED_RUNTIME_V21_15_4.json ]; then cat outputs/audit/DAILY_CONSOLIDATED_RUNTIME_V21_15_4.json; fi
+          if [ -f outputs/audit/DAILY_FAST_COLLECTION_V21_15_4.json ]; then cat outputs/audit/DAILY_FAST_COLLECTION_V21_15_4.json; fi
+          if [ -f outputs/audit/DAILY_TACTICAL_DAG_RUNTIME_V21_15_4.json ]; then cat outputs/audit/DAILY_TACTICAL_DAG_RUNTIME_V21_15_4.json; fi
           if [ -f outputs/audit/DAILY_TCT_CT_AUDIT.json ]; then cat outputs/audit/DAILY_TCT_CT_AUDIT.json; fi
           if [ -f outputs/audit/ACTION_CT_V22_0_0_AUDIT.json ]; then cat outputs/audit/ACTION_CT_V22_0_0_AUDIT.json; fi
           if [ -f outputs/audit/ACTION_CT_V22_1_0_AUDIT.json ]; then cat outputs/audit/ACTION_CT_V22_1_0_AUDIT.json; fi
@@ -241,6 +229,9 @@ jobs:
             outputs/daily_tct_ct/TCT_NEXT_SESSION_CATALYST_V24_4_2.csv
             outputs/daily_tct_ct/TCT_V24_4_2_PIT_SLICES.csv
             outputs/daily_tct_ct/TCT_V24_4_2_PREOPEN_POSTMARKET_CHANGES.csv
+            outputs/audit/DAILY_CONSOLIDATED_RUNTIME_V21_15_4.json
+            outputs/audit/DAILY_FAST_COLLECTION_V21_15_4.json
+            outputs/audit/DAILY_TACTICAL_DAG_RUNTIME_V21_15_4.json
             outputs/audit/DAILY_TCT_CT_AUDIT.json
             outputs/audit/ACTION_CT_V22_0_0_AUDIT.json
             outputs/audit/ACTION_CT_V22_0_0_PIT_VALIDATION.json
@@ -265,7 +256,7 @@ jobs:
             outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx
             state/action_ct/
             state/action_ct_v22_1/
-            state/provenance/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv
+            state/provenance/
             state/tct_context/TCT_DAILY_TRADER_LATEST.csv
             state/tct_context/TCT_DAILY_OHLC_LEDGER.csv
             state/tct_context/TCT_V24_4_2_CATALYST_LEDGER.csv
