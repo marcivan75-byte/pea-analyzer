@@ -1,4 +1,4 @@
-name: PEA Weekly Heavy Committee V21.16.0
+name: PEA Weekly Heavy Committee V21.16.1
 
 on:
   workflow_dispatch:
@@ -243,8 +243,8 @@ jobs:
       - name: Publish Action identity hydration worklist
         run: python -m v182.audit.identity_hydration
 
-      - name: Run weekly unified Committee pipeline
-        run: python -m v182.reporting.unified_runner
+      - name: Run optimized weekly unified Committee DAG V21.16.1
+        run: python -m v182.reporting.weekly_unified_super_runner_v21_16_1
 
       - name: Run optimized Friday tactical, Postmarket and weekly finalization DAG V21.16.0
         run: python -m v182.reporting.weekly_tail_super_runner_v21_16_0
@@ -254,6 +254,7 @@ jobs:
         run: |
           if [ -f outputs/unified/UNIFIED_SUMMARY_LATEST.json ]; then cat outputs/unified/UNIFIED_SUMMARY_LATEST.json; fi
           if [ -f outputs/audit/UNIFIED_RUNTIME_V21_13_7.json ]; then cat outputs/audit/UNIFIED_RUNTIME_V21_13_7.json; fi
+          if [ -f outputs/audit/WEEKLY_UNIFIED_SUPER_RUNTIME_V21_16_1.json ]; then cat outputs/audit/WEEKLY_UNIFIED_SUPER_RUNTIME_V21_16_1.json; fi
           if [ -f outputs/audit/WEEKLY_TAIL_SUPER_RUNTIME_V21_16_0.json ]; then cat outputs/audit/WEEKLY_TAIL_SUPER_RUNTIME_V21_16_0.json; fi
           if [ -f outputs/audit/ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json ]; then cat outputs/audit/ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json; fi
           if [ -f outputs/audit/TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json ]; then cat outputs/audit/TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json; fi
@@ -358,11 +359,11 @@ jobs:
             state/etf_fund_flows/
           key: weekly-research-state-v1-${{ github.run_id }}
 
-      - name: Upload complete weekly Committee V21.16.0 results
+      - name: Upload complete weekly Committee V21.16.1 results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: committee-weekly-v21-16-0-${{ github.run_id }}
+          name: committee-weekly-v21-16-1-${{ github.run_id }}
           path: |
             outputs/unified/
             outputs/decision_brief/
