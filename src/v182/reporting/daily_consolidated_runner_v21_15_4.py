@@ -30,9 +30,11 @@ def _safe_nonblocking(name: str, runner) -> tuple[dict, dict | None, float]:
 
 
 def _run_collection_optimized_locals() -> tuple[dict, dict]:
-    """Apply daily-only local optimizations around the fail-closed collection runner."""
+    """Apply only equivalence-safe daily optimizations around collection."""
     original_loader = collection._load_fast_state
     original_wave3 = collection.waves.wave3_local_features
+    original_prefetch = collection.topdown_prefetch.fetch_external
+    original_fixed_window = collection._fixed_window_fetcher
     diagnostics: dict = {
         "earnings_clock": {
             "status": "NOT_APPLIED_NO_FAST_STATE",
@@ -40,6 +42,12 @@ def _run_collection_optimized_locals() -> tuple[dict, dict]:
             "source_timestamp_changed": False,
         },
         "wave3_cpu_budget": wave3_cpu.audit_contract(),
+        "topdown_early_prefetch": {
+            "status": "DISABLED_TO_PRESERVE_WAVE09_CURRENT_WINDOW_FRESHNESS",
+            "reason": "RUN_START_WINDOW_COULD_MISS_ARTICLES_PUBLISHED_BEFORE_WAVE09",
+            "gdelt_request_set_changed": False,
+            "gdelt_rate_limit_changed": False,
+        },
     }
 
     def current_loader():
@@ -49,13 +57,26 @@ def _run_collection_optimized_locals() -> tuple[dict, dict]:
             diagnostics["earnings_clock"] = {**clock, "status": "APPLIED", "fast_mode": mode}
         return actions, etf, manifest, mode
 
+    def disabled_prefetch(prepared, *, fred_api_key):
+        # Return an intentional fingerprint mismatch immediately. The fast WAVE09
+        # wrapper then uses its fail-closed historical `original_wave9` path.
+        return collection.topdown_prefetch.ExternalTopdown(
+            macro=None,
+            news_results={},
+            query_fingerprint="EARLY_PREFETCH_DISABLED_FOR_FRESHNESS",
+        )
+
     collection._load_fast_state = current_loader
     collection.waves.wave3_local_features = wave3_cpu.wave3_local_features
+    collection.topdown_prefetch.fetch_external = disabled_prefetch
+    collection._fixed_window_fetcher = lambda _anchor, original_fetch: original_fetch
     try:
         return collection.run(), diagnostics
     finally:
         collection._load_fast_state = original_loader
         collection.waves.wave3_local_features = original_wave3
+        collection.topdown_prefetch.fetch_external = original_prefetch
+        collection._fixed_window_fetcher = original_fixed_window
 
 
 def run(root: Path = ROOT) -> dict:
