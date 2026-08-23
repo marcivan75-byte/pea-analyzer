@@ -27,18 +27,21 @@ def test_v242_workflow_runs_only_new_catalyst_epoch():
     assert "1m" not in workflow.lower()
 
 
-def test_daily_workflow_persists_ohlc_not_close_only_v241_and_runs_v2431_before_it():
+def test_daily_workflow_persists_ohlc_and_runs_v2431_before_postmarket_via_dag():
     workflow = (ROOT / ".github" / "workflows" / "committee_tct_ct_daily.yml").read_text(encoding="utf-8")
+    daily_tactical = (ROOT / "src" / "v182" / "reporting" / "daily_tactical_super_runner_v21_15_4.py").read_text(encoding="utf-8")
     tactical = (ROOT / "src" / "v182" / "reporting" / "tactical_shadow_bundle_run.py").read_text(encoding="utf-8")
     postmarket = (ROOT / "src" / "v182" / "reporting" / "tct_postmarket_bundle_run.py").read_text(encoding="utf-8")
+
     assert "TCT_DAILY_OHLC_LEDGER.csv" in workflow
     assert "tct_pit_close_ledger_v24_4_1" not in workflow
-    assert "daily_tct_ct_runner" in workflow
-    assert "python -m v182.reporting.tactical_shadow_bundle_run" in workflow
-    assert "python -m v182.reporting.tct_postmarket_bundle_run" in workflow
+    assert "python -m v182.reporting.daily_consolidated_runner_v21_15_4" in workflow
+    assert "tactical_shadow_bundle_run as tactical" in daily_tactical
+    assert "tct_postmarket_bundle_run as postmarket" in daily_tactical
     assert "tct_trader.run(root=root)" in tactical
     assert "ohlc_ledger.run(root=root)" in postmarket
-    assert workflow.index("python -m v182.reporting.tactical_shadow_bundle_run") < workflow.index("python -m v182.reporting.tct_postmarket_bundle_run")
+    assert "tactical.run(root=root, tct_complete_callback=release_postmarket)" in daily_tactical
+    assert "lambda: postmarket.run(root=root)" in daily_tactical
 
 
 def test_calibration_is_not_wired_into_any_workflow():
