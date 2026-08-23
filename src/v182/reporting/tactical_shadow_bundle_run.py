@@ -29,8 +29,9 @@ class ParquetReadCache:
 
     A lock covers cache lookup + the physical read + cache insertion. If both
     independent tactical branches request the same parquet concurrently, only
-    one physical read occurs. Calls with positional/keyword options are passed
-    through unchanged instead of inferring an equivalent cache key.
+    one physical read occurs. The per-consumer deep copy happens after the lock
+    is released so independent model computations are not serialized by copy
+    cost. Calls with positional/keyword options are passed through unchanged.
     """
 
     original_reader: Callable[..., pd.DataFrame]
@@ -62,7 +63,7 @@ class ParquetReadCache:
                 cached = self.frames[key]
             else:
                 self.cache_hits += 1
-            return cached.copy(deep=True)
+        return cached.copy(deep=True)
 
     def audit(self) -> dict:
         with self._lock:
@@ -76,6 +77,7 @@ class ParquetReadCache:
                 "raw_consumer_isolation": "DEEP_COPY_PER_READ",
                 "thread_safe_cache": True,
                 "single_physical_read_per_plain_path": True,
+                "consumer_copy_outside_lock": True,
                 "non_plain_calls_cached": False,
                 "governed_extractors_changed": False,
             }
