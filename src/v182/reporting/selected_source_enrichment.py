@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import BoundedSemaphore
 import json
 
 import pandas as pd
@@ -123,22 +124,25 @@ def _pivot(observations: list[dict]) -> pd.DataFrame:
     return frame.pivot_table(index=index, columns="field", values="value", aggfunc="last").reset_index()
 
 
-def _shared_boursorama_fetcher(limiter: StartRateLimiter):
-    """Return one HTTP fetcher shared by Action/ETF branches.
+def _shared_boursorama_fetcher(limiter: StartRateLimiter, max_inflight: int):
+    """Return one bounded HTTP fetcher shared by Action/ETF branches.
 
-    The collectors keep their own worker pools, but every Boursorama request
-    passes through this single thread-safe start limiter. Network latency can
-    overlap without increasing the provider start cadence.
+    Every request passes through both the provider-wide start limiter and one
+    provider-wide in-flight semaphore. This lets response latency overlap while
+    preserving the pre-existing start cadence and total concurrency ceiling.
     """
+    inflight_gate = BoundedSemaphore(max(1, int(max_inflight)))
+
     def fetch(url: str, *, timeout: float):
         import requests
 
-        limiter.wait()
-        return requests.get(
-            url,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; PEA-Analyzer/21.15; selected-public-context)"},
-            timeout=timeout,
-        )
+        with inflight_gate:
+            limiter.wait()
+            return requests.get(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; PEA-Analyzer/21.15; selected-public-context)"},
+                timeout=timeout,
+            )
 
     return fetch
 
@@ -172,14 +176,15 @@ def enrich_selected_rows(
     etf_selected = selected[asset_upper.eq("ETF")].copy()
 
     def run_boursorama() -> tuple[object | None, object | None]:
-        """Overlap Action/ETF response waits under one provider-wide start cadence."""
+        """Overlap Action/ETF response waits under one provider-wide safety envelope."""
         action_enabled = not action_selected.empty and bool(bcfg.get("priority_for_selected_actions", True))
         etf_enabled = not etf_selected.empty and bool(bcfg.get("priority_for_selected_etfs", False))
         if not action_enabled and not etf_enabled:
             return None, None
 
+        provider_workers = max(1, int(bcfg["max_workers"]))
         shared_limiter = StartRateLimiter(float(bcfg["request_start_interval_seconds"]))
-        shared_fetcher = _shared_boursorama_fetcher(shared_limiter)
+        shared_fetcher = _shared_boursorama_fetcher(shared_limiter, provider_workers)
 
         def collect_actions():
             return collect_selected_action_context_cached(
@@ -189,7 +194,7 @@ def enrich_selected_rows(
                 deep_ttl_hours=float(bcfg["deep_ttl_hours"]),
                 refresh_budget=int(bcfg["refresh_budget"]),
                 request_start_interval_seconds=0.0,
-                max_workers=int(bcfg["max_workers"]),
+                max_workers=provider_workers,
                 fetcher=shared_fetcher,
             )
 
@@ -201,7 +206,7 @@ def enrich_selected_rows(
                 deep_ttl_hours=float(bcfg["deep_ttl_hours"]),
                 refresh_budget=int(bcfg["refresh_budget"]),
                 request_start_interval_seconds=0.0,
-                max_workers=int(bcfg["max_workers"]),
+                max_workers=provider_workers,
                 fetcher=shared_fetcher,
             )
 
@@ -287,6 +292,7 @@ def enrich_selected_rows(
         "functional_contract": "config/SOURCE_FUNCTIONAL_CONTRACT_V21_15.json",
         "boursorama_asset_overlap": True,
         "boursorama_shared_start_limiter": True,
+        "boursorama_shared_inflight_limit": int(bcfg["max_workers"]),
     }
     (auditdir / f"{safe_profile}_SELECTED_SOURCE_CONTEXT.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
