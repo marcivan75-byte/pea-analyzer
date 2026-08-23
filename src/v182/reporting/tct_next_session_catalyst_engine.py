@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -100,6 +101,7 @@ def run_engine(
     candidates = pd.DataFrame()
     output = pd.DataFrame()
     news_metrics: dict = {}
+    independent_news_market_overlap = False
 
     if seed.empty:
         market = GlobalMarketSnapshot(None, None, {}, {}, "NOT_FETCHED_NO_SEED", ())
@@ -122,16 +124,26 @@ def run_engine(
             news_budget = None
             if phase_budget > 0:
                 news_budget = max(1.0, phase_budget * float(budget_cfg.get("news_budget_fraction", 0.80)))
-            news = fetch_news_fn(
-                candidates.to_dict("records"),
-                start_utc=window_start,
-                end_utc=window_end,
-                phase=selected_phase,
-                cfg=cfg,
-                budget_seconds=news_budget,
-            )
+
+            # Candidate news and the one-shot global market snapshot are independent
+            # providers with no shared output state. Overlap their I/O, then preserve
+            # the exact historical scoring order after both immutable results exist.
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="tct-news-market") as pool:
+                news_future = pool.submit(
+                    fetch_news_fn,
+                    candidates.to_dict("records"),
+                    start_utc=window_start,
+                    end_utc=window_end,
+                    phase=selected_phase,
+                    cfg=cfg,
+                    budget_seconds=news_budget,
+                )
+                market_future = pool.submit(market_fn, cfg, phase=selected_phase)
+                news = news_future.result()
+                market = market_future.result()
+            independent_news_market_overlap = True
             news_metrics = dict(getattr(news, "metrics", {}) or {})
-            market = market_fn(cfg, phase=selected_phase)
+
             rows: list[dict] = []
             for _, candidate in candidates.iterrows():
                 isin = str(candidate.get("isin") or "")
@@ -226,6 +238,9 @@ def run_engine(
         "runtime_seconds": round(float(elapsed), 4),
         "runtime_budget_seconds": phase_budget or None,
         "runtime_budget_exceeded": budget_exceeded,
+        "independent_news_market_overlap": independent_news_market_overlap,
+        "news_market_parallel_workers": 2 if independent_news_market_overlap else 0,
+        "provider_start_policy_changed": False,
         "dependency_injection": True,
         "module_global_mutation": False,
         "individual_pea_extended_hours_quotes_used": False,
