@@ -199,6 +199,7 @@ jobs:
           path: |
             outputs/unified/
             outputs/daily_tct_ct/
+            outputs/source_context/
             outputs/decision_brief/
             outputs/committee_master/
             outputs/etf_mt_v2081/
