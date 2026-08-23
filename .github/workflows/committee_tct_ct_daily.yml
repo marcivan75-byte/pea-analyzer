@@ -1,4 +1,4 @@
-name: PEA Daily Collect + TCT CT V21.8.1
+name: PEA Daily Fast TCT CT V21.16
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ on:
     - cron: "0 21 * * 1-4"
 
 concurrency:
-  group: pea-daily-tct-ct
+  group: pea-daily-fast-tct-ct
   cancel-in-progress: true
 
 permissions:
@@ -24,13 +24,15 @@ env:
 jobs:
   daily-tactical:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 60
     env:
       PYTHONUNBUFFERED: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       PYTHONPATH: ${{ github.workspace }}/src
       PEA_RUN_PROFILE: DAILY_TACTICAL
       PEA_SLOW_SOURCE_MODE: CACHE_PREFERRED
+      PEA_YF_INCREMENTAL_PERIOD: "5d"
+      PEA_DAILY_BASELINE_MAX_AGE_DAYS: "8"
       PEA_PROVENANCE_PATH: state/provenance/OBSERVATION_PROVENANCE.csv
       FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
       FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -51,15 +53,13 @@ jobs:
       - name: Purge obsolete intraday cache
         run: rm -rf data/cache/actions_intraday_5m
 
-      - name: Restore consolidated tactical decision state
+      - name: Restore fast tactical decision and source state
         id: decision-state
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             state/TCT_V24_1_7_T1_STATE.json
             state/tct_context/
-            state/action_ct/
-            state/action_ct_v22_1/
             state/provenance/
           key: decision-state-v1-${{ github.run_id }}
           restore-keys: |
@@ -83,24 +83,6 @@ jobs:
           key: tct-context-${{ github.run_id }}
           restore-keys: |
             tct-context-
-
-      - name: Restore legacy Action CT V22.0 state during cache migration
-        if: steps.decision-state.outputs.cache-matched-key == ''
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/action_ct/
-          key: action-ct-v22-${{ github.run_id }}
-          restore-keys: |
-            action-ct-v22-
-
-      - name: Restore legacy Action CT V22.1 state during cache migration
-        if: steps.decision-state.outputs.cache-matched-key == ''
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/action_ct_v22_1/
-          key: action-ct-v221-${{ github.run_id }}
-          restore-keys: |
-            action-ct-v221-
 
       - name: Restore legacy provenance state during cache migration
         if: steps.decision-state.outputs.cache-matched-key == ''
@@ -126,71 +108,34 @@ jobs:
         if: ${{ inputs.run_validation }}
         run: python -m compileall -q src
 
-      - name: Daily collection and enrichment
-        run: python -m v182.reporting.run
-
-      - name: Replay governed ETF structural state V21.15
-        continue-on-error: true
-        run: python -m v182.reporting.etf_structure_state_replay
+      - name: Fast daily market refresh from weekly enriched baseline
+        run: python -m v182.reporting.daily_fast_collection
 
       - name: Daily TCT CT scoring and V21.8
         run: python -m v182.reporting.daily_tct_ct_runner
 
-      - name: Action CT V22.0 V22.1 + TCT V24.3.1 shared-parquet SHADOW
-        continue-on-error: true
-        run: python -m v182.reporting.tactical_shadow_bundle_run
-
-      - name: POSTMARKET V24.4.2 OHLC + catalyst + lineage + validator single-process
+      - name: Selected POSTMARKET V24.4.2 context
         continue-on-error: true
         run: python -m v182.reporting.tct_postmarket_bundle_run
 
-      - name: Publish Android tactical summaries
+      - name: Publish Android tactical summary
         if: always()
         run: |
           if [ -f outputs/mobile/ANDROID_DAILY_TCT_CT.md ]; then
             cat outputs/mobile/ANDROID_DAILY_TCT_CT.md >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if [ -f outputs/mobile/ANDROID_ACTION_CT_V22_1_SHADOW.md ]; then
-            printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
-            cat outputs/mobile/ANDROID_ACTION_CT_V22_1_SHADOW.md >> "$GITHUB_STEP_SUMMARY"
-          elif [ -f outputs/mobile/ANDROID_ACTION_CT_V22_SHADOW.md ]; then
-            printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
-            cat outputs/mobile/ANDROID_ACTION_CT_V22_SHADOW.md >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if [ -f outputs/mobile/ANDROID_ACTION_CT_V22_PIT_VALIDATION.md ]; then
-            printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
-            cat outputs/mobile/ANDROID_ACTION_CT_V22_PIT_VALIDATION.md >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if [ -f outputs/mobile/ANDROID_TCT_DAILY_TRADER_SHADOW.md ]; then
-            printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
-            cat outputs/mobile/ANDROID_TCT_DAILY_TRADER_SHADOW.md >> "$GITHUB_STEP_SUMMARY"
           fi
           if [ -f outputs/mobile/ANDROID_TCT_NEXT_SESSION_CATALYST_V24_4_2.md ]; then
             printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
             cat outputs/mobile/ANDROID_TCT_NEXT_SESSION_CATALYST_V24_4_2.md >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Show daily audit
+      - name: Show fast daily audit
         if: always()
         run: |
+          if [ -f outputs/audit/DAILY_FAST_COLLECTION.json ]; then cat outputs/audit/DAILY_FAST_COLLECTION.json; fi
           if [ -f outputs/audit/DAILY_TCT_CT_AUDIT.json ]; then cat outputs/audit/DAILY_TCT_CT_AUDIT.json; fi
-          if [ -f outputs/audit/ACTION_CT_V22_0_0_AUDIT.json ]; then cat outputs/audit/ACTION_CT_V22_0_0_AUDIT.json; fi
-          if [ -f outputs/audit/ACTION_CT_V22_1_0_AUDIT.json ]; then cat outputs/audit/ACTION_CT_V22_1_0_AUDIT.json; fi
-          if [ -f outputs/audit/ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json ]; then cat outputs/audit/ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json; fi
-          if [ -f outputs/audit/TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json ]; then cat outputs/audit/TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json; fi
           if [ -f outputs/audit/POSTMARKET_BUNDLE_RUNTIME_V21_13_12.json ]; then cat outputs/audit/POSTMARKET_BUNDLE_RUNTIME_V21_13_12.json; fi
-          if [ -f outputs/audit/ACTION_CT_V22_1_0_CONTEXT.json ]; then cat outputs/audit/ACTION_CT_V22_1_0_CONTEXT.json; fi
-          if [ -f outputs/audit/ACTION_CT_V22_1_0_RUNTIME.json ]; then cat outputs/audit/ACTION_CT_V22_1_0_RUNTIME.json; fi
-          if [ -f outputs/audit/ACTION_CT_V22_1_0_ERRORS.json ]; then cat outputs/audit/ACTION_CT_V22_1_0_ERRORS.json; fi
-          if [ -f outputs/audit/ACTION_CT_V22_1_0_PIT_VALIDATION.json ]; then cat outputs/audit/ACTION_CT_V22_1_0_PIT_VALIDATION.json; fi
-          if [ -f outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json ]; then cat outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json; fi
-          if [ -f outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json ]; then cat outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json; fi
-          if [ -f outputs/audit/TCT_V24_4_2_PIT_OHLC_LEDGER_AUDIT.json ]; then cat outputs/audit/TCT_V24_4_2_PIT_OHLC_LEDGER_AUDIT.json; fi
           if [ -f outputs/audit/TCT_NEXT_SESSION_CATALYST_V24_4_2_AUDIT.json ]; then cat outputs/audit/TCT_NEXT_SESSION_CATALYST_V24_4_2_AUDIT.json; fi
-          if [ -f outputs/audit/TCT_V24_4_2_PIT_LINEAGE_AUDIT.json ]; then cat outputs/audit/TCT_V24_4_2_PIT_LINEAGE_AUDIT.json; fi
-          if [ -f outputs/audit/TCT_V24_4_2_PIT_VALIDATION.json ]; then cat outputs/audit/TCT_V24_4_2_PIT_VALIDATION.json; fi
-          if [ -f outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json ]; then cat outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json; fi
-          if [ -f outputs/audit/PIPELINE_RUNTIME_V21_13_7.json ]; then cat outputs/audit/PIPELINE_RUNTIME_V21_13_7.json; fi
           if [ -f data/cache/actions/history_manifest.json ]; then cat data/cache/actions/history_manifest.json; fi
 
       - name: Save persistent OHLCV cache
@@ -200,15 +145,13 @@ jobs:
           path: data/cache/
           key: ohlcv-v3-${{ github.run_id }}
 
-      - name: Save consolidated tactical decision state
-        if: ${{ always() && (hashFiles('state/TCT_V24_1_7_T1_STATE.json', 'state/tct_context/**', 'state/action_ct/**', 'state/action_ct_v22_1/**', 'state/provenance/**') != '') }}
+      - name: Save fast tactical decision and source state
+        if: ${{ always() && (hashFiles('state/TCT_V24_1_7_T1_STATE.json', 'state/tct_context/**', 'state/provenance/**') != '') }}
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             state/TCT_V24_1_7_T1_STATE.json
             state/tct_context/
-            state/action_ct/
-            state/action_ct_v22_1/
             state/provenance/
           key: decision-state-v1-${{ github.run_id }}
 
@@ -216,48 +159,19 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: pea-daily-tct-ct-${{ github.run_id }}
+          name: pea-daily-fast-tct-ct-${{ github.run_id }}
           path: |
             outputs/daily_tct_ct/
+            outputs/source_context/
             outputs/mobile/ANDROID_DAILY_TCT_CT.md
-            outputs/mobile/ANDROID_ACTION_CT_V22_1_SHADOW.md
-            outputs/mobile/ANDROID_ACTION_CT_V22_SHADOW.md
-            outputs/mobile/ANDROID_ACTION_CT_V22_PIT_VALIDATION.md
-            outputs/mobile/ANDROID_TCT_DAILY_TRADER_SHADOW.md
             outputs/mobile/ANDROID_TCT_NEXT_SESSION_CATALYST_V24_4_2.md
-            outputs/mobile/ANDROID_TCT_V24_4_2_PIT_VALIDATION.md
-            outputs/daily_tct_ct/TCT_NEXT_SESSION_CATALYST_V24_4_2.csv
-            outputs/daily_tct_ct/TCT_V24_4_2_PIT_SLICES.csv
-            outputs/daily_tct_ct/TCT_V24_4_2_PREOPEN_POSTMARKET_CHANGES.csv
+            outputs/audit/DAILY_FAST_COLLECTION.json
             outputs/audit/DAILY_TCT_CT_AUDIT.json
-            outputs/audit/ACTION_CT_V22_0_0_AUDIT.json
-            outputs/audit/ACTION_CT_V22_0_0_PIT_VALIDATION.json
-            outputs/audit/ACTION_CT_V22_1_0_AUDIT.json
-            outputs/audit/ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json
-            outputs/audit/TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json
             outputs/audit/POSTMARKET_BUNDLE_RUNTIME_V21_13_12.json
-            outputs/audit/ACTION_CT_V22_1_0_CONTEXT.json
-            outputs/audit/ACTION_CT_V22_1_0_RUNTIME.json
-            outputs/audit/ACTION_CT_V22_1_0_ERRORS.json
-            outputs/audit/ACTION_CT_V22_1_0_DIVERGENCES.csv
-            outputs/audit/ACTION_CT_V22_1_0_PIT_VALIDATION.json
-            outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json
-            outputs/audit/TCT_DAILY_TRADER_V24_3_1_AUDIT.json
-            outputs/audit/TCT_V24_4_2_PIT_OHLC_LEDGER_AUDIT.json
             outputs/audit/TCT_NEXT_SESSION_CATALYST_V24_4_2_AUDIT.json
             outputs/audit/TCT_V24_4_2_PIT_LINEAGE_AUDIT.json
             outputs/audit/TCT_V24_4_2_PIT_VALIDATION.json
-            outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json
-            outputs/audit/PIPELINE_RUNTIME_V21_13_7.json
-            outputs/audit/PIPELINE_RUNTIME_V21_13_7.csv
-            outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx
-            state/action_ct/
-            state/action_ct_v22_1/
-            state/provenance/etf_structure/ETF_STRUCTURE_SNAPSHOT.csv
-            state/tct_context/TCT_DAILY_TRADER_LATEST.csv
-            state/tct_context/TCT_DAILY_OHLC_LEDGER.csv
-            state/tct_context/TCT_V24_4_2_CATALYST_LEDGER.csv
-            state/tct_context/TCT_V24_4_2_NEWS_CACHE.json
+            state/provenance/daily_fast/BASELINE_META.json
             data/cache/actions/history_manifest.json
             data/cache/etf/history_manifest.json
           if-no-files-found: warn
