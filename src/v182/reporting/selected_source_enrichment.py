@@ -4,13 +4,13 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 import json
-import time
 
 import pandas as pd
 
 from v182.sources.boursorama_selected import collect_selected_action_context_cached
 from v182.sources.boursorama_selected_etf import collect_selected_etf_context_cached
 from v182.sources.investing_technical import collect_technical_context_cached
+from v182.sources.rate_limit import StartRateLimiter
 
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACT_PATH = Path("config/SOURCE_FUNCTIONAL_CONTRACT_V21_15.json")
@@ -123,6 +123,26 @@ def _pivot(observations: list[dict]) -> pd.DataFrame:
     return frame.pivot_table(index=index, columns="field", values="value", aggfunc="last").reset_index()
 
 
+def _shared_boursorama_fetcher(limiter: StartRateLimiter):
+    """Return one HTTP fetcher shared by Action/ETF branches.
+
+    The collectors keep their own worker pools, but every Boursorama request
+    passes through this single thread-safe start limiter. Network latency can
+    overlap without increasing the provider start cadence.
+    """
+    def fetch(url: str, *, timeout: float):
+        import requests
+
+        limiter.wait()
+        return requests.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; PEA-Analyzer/21.15; selected-public-context)"},
+            timeout=timeout,
+        )
+
+    return fetch
+
+
 def enrich_selected_rows(
     rows: pd.DataFrame,
     root: Path = ROOT,
@@ -152,32 +172,47 @@ def enrich_selected_rows(
     etf_selected = selected[asset_upper.eq("ETF")].copy()
 
     def run_boursorama() -> tuple[object | None, object | None]:
-        """Serialize Action/ETF Boursorama branches to preserve one provider cadence."""
-        action_result = None
-        etf_result = None
-        if not action_selected.empty and bool(bcfg.get("priority_for_selected_actions", True)):
-            action_result = collect_selected_action_context_cached(
+        """Overlap Action/ETF response waits under one provider-wide start cadence."""
+        action_enabled = not action_selected.empty and bool(bcfg.get("priority_for_selected_actions", True))
+        etf_enabled = not etf_selected.empty and bool(bcfg.get("priority_for_selected_etfs", False))
+        if not action_enabled and not etf_enabled:
+            return None, None
+
+        shared_limiter = StartRateLimiter(float(bcfg["request_start_interval_seconds"]))
+        shared_fetcher = _shared_boursorama_fetcher(shared_limiter)
+
+        def collect_actions():
+            return collect_selected_action_context_cached(
                 action_selected,
                 root / "state" / "provenance" / "source_cache" / "BOURSORAMA_SELECTED_V1.json",
                 dynamic_ttl_hours=float(bcfg["dynamic_ttl_hours"]),
                 deep_ttl_hours=float(bcfg["deep_ttl_hours"]),
                 refresh_budget=int(bcfg["refresh_budget"]),
-                request_start_interval_seconds=float(bcfg["request_start_interval_seconds"]),
+                request_start_interval_seconds=0.0,
                 max_workers=int(bcfg["max_workers"]),
+                fetcher=shared_fetcher,
             )
-        if not etf_selected.empty and bool(bcfg.get("priority_for_selected_etfs", False)):
-            if action_result is not None:
-                time.sleep(float(bcfg["request_start_interval_seconds"]))
-            etf_result = collect_selected_etf_context_cached(
+
+        def collect_etfs():
+            return collect_selected_etf_context_cached(
                 etf_selected,
                 root / "state" / "provenance" / "source_cache" / "BOURSORAMA_SELECTED_ETF_V1.json",
                 dynamic_ttl_hours=float(bcfg["dynamic_ttl_hours"]),
                 deep_ttl_hours=float(bcfg["deep_ttl_hours"]),
                 refresh_budget=int(bcfg["refresh_budget"]),
-                request_start_interval_seconds=float(bcfg["request_start_interval_seconds"]),
+                request_start_interval_seconds=0.0,
                 max_workers=int(bcfg["max_workers"]),
+                fetcher=shared_fetcher,
             )
-        return action_result, etf_result
+
+        if action_enabled and etf_enabled:
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="boursorama-assets") as pool:
+                action_future = pool.submit(collect_actions)
+                etf_future = pool.submit(collect_etfs)
+                return action_future.result(), etf_future.result()
+        if action_enabled:
+            return collect_actions(), None
+        return None, collect_etfs()
 
     def run_investing():
         return collect_technical_context_cached(
@@ -250,6 +285,8 @@ def enrich_selected_rows(
         "score_influence": 0.0,
         "can_create_buy": False,
         "functional_contract": "config/SOURCE_FUNCTIONAL_CONTRACT_V21_15.json",
+        "boursorama_asset_overlap": True,
+        "boursorama_shared_start_limiter": True,
     }
     (auditdir / f"{safe_profile}_SELECTED_SOURCE_CONTEXT.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
