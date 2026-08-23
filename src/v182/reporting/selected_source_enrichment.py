@@ -183,8 +183,9 @@ def enrich_selected_rows(
             return None, None
 
         provider_workers = max(1, int(bcfg["max_workers"]))
+        provider_max_inflight = max(1, int(bcfg.get("provider_max_inflight", provider_workers)))
         shared_limiter = StartRateLimiter(float(bcfg["request_start_interval_seconds"]))
-        shared_fetcher = _shared_boursorama_fetcher(shared_limiter, provider_workers)
+        shared_fetcher = _shared_boursorama_fetcher(shared_limiter, provider_max_inflight)
 
         def collect_actions():
             return collect_selected_action_context_cached(
@@ -292,7 +293,7 @@ def enrich_selected_rows(
         "functional_contract": "config/SOURCE_FUNCTIONAL_CONTRACT_V21_15.json",
         "boursorama_asset_overlap": True,
         "boursorama_shared_start_limiter": True,
-        "boursorama_shared_inflight_limit": int(bcfg["max_workers"]),
+        "boursorama_shared_inflight_limit": int(bcfg.get("provider_max_inflight", bcfg["max_workers"])),
     }
     (auditdir / f"{safe_profile}_SELECTED_SOURCE_CONTEXT.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
