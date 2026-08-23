@@ -11,11 +11,11 @@ import shutil
 
 import pandas as pd
 
+from v182.features import topdown_prefetch_v21_15_4 as topdown_prefetch
 from v182.reporting import run as legacy
 from v182.reporting import waves
 from v182.reporting.runtime_telemetry import RuntimeTelemetry
 from v182.sources import finnhub_consensus, gdelt_news, yfinance_info
-from v182.features import topdown_features
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -38,26 +38,6 @@ _CACHE_FILES = {
     "yfinance_etf": ROOT / "state" / "provenance" / "source_cache" / "YFINANCE_ETF_INFO_V1.json",
 }
 
-_TOPDOWN_FIELDS = (
-    "isin",
-    "name",
-    "market_cap",
-    "perf_1m_pct",
-    "perf_6m_pct",
-    "country_yf",
-    "country",
-    "listing_country",
-    "country_domicile",
-    "geo_exposure",
-    "sector_yf",
-    "sector_v21",
-    "sector",
-    "industry_yf",
-    "industry",
-    "category",
-    "morningstar_category",
-)
-
 _YF_CACHE_FIELDS_REQUIRED_FOR_DAILY_PRICE_RATIOS = {
     "trailing_eps_yf",
     "forward_eps_yf",
@@ -76,7 +56,7 @@ def _sha256_file(path: Path) -> str | None:
 
 
 def _static_contract() -> dict[str, str | None]:
-    """Fingerprint inputs that may make a retained enriched master semantically stale."""
+    """Inputs whose change invalidates retained enriched masters."""
     files = {
         "actions_input": ROOT / "inputs" / _ACTION_INPUT,
         "etf_input": ROOT / "inputs" / _ETF_INPUT,
@@ -115,7 +95,8 @@ def _read_fast_frame(path: Path) -> pd.DataFrame:
 
 def _valid_fast_frame(frame: pd.DataFrame, *, expected_rows: int) -> bool:
     return bool(
-        not frame.empty
+        expected_rows > 0
+        and not frame.empty
         and "isin" in frame.columns
         and len(frame) == int(expected_rows)
         and frame["isin"].astype(str).nunique() == int(expected_rows)
@@ -123,7 +104,7 @@ def _valid_fast_frame(frame: pd.DataFrame, *, expected_rows: int) -> bool:
 
 
 def _load_fast_state() -> tuple[pd.DataFrame, pd.DataFrame, dict, str]:
-    """Return retained masters and mode: DISABLED, DELTA_ONLY or RECONCILE_CACHE."""
+    """Return retained masters and DISABLED, DELTA_ONLY or RECONCILE_CACHE."""
     if os.environ.get("PEA_RUN_PROFILE", "").strip().upper() != "DAILY_TACTICAL":
         return pd.DataFrame(), pd.DataFrame(), {}, "DISABLED"
     manifest = _load_manifest()
@@ -131,9 +112,15 @@ def _load_fast_state() -> tuple[pd.DataFrame, pd.DataFrame, dict, str]:
         return pd.DataFrame(), pd.DataFrame(), manifest, "DISABLED"
     if manifest.get("static_contract") != _static_contract():
         return pd.DataFrame(), pd.DataFrame(), manifest, "DISABLED"
+
     recorded_revision = str(manifest.get("github_sha") or "").strip()
     current_revision = str(os.environ.get("GITHUB_SHA") or "").strip()
     if recorded_revision and current_revision and recorded_revision != current_revision:
+        return pd.DataFrame(), pd.DataFrame(), manifest, "DISABLED"
+
+    if manifest.get("actions_sha256") != _sha256_file(ACTIONS_STATE):
+        return pd.DataFrame(), pd.DataFrame(), manifest, "DISABLED"
+    if manifest.get("etf_sha256") != _sha256_file(ETF_STATE):
         return pd.DataFrame(), pd.DataFrame(), manifest, "DISABLED"
 
     actions = _read_fast_frame(ACTIONS_STATE)
@@ -142,20 +129,21 @@ def _load_fast_state() -> tuple[pd.DataFrame, pd.DataFrame, dict, str]:
         return pd.DataFrame(), pd.DataFrame(), manifest, "DISABLED"
     if not _valid_fast_frame(etf, expected_rows=int(manifest.get("etf_rows", 0) or 0)):
         return pd.DataFrame(), pd.DataFrame(), manifest, "DISABLED"
+
     mode = "DELTA_ONLY" if manifest.get("cache_contract") == _cache_contract() else "RECONCILE_CACHE"
     return actions, etf, manifest, mode
 
 
 def _dedupe_dicts(rows: list[dict]) -> list[dict]:
     seen: set[str] = set()
-    out: list[dict] = []
+    output: list[dict] = []
     for row in rows:
         key = json.dumps(row, ensure_ascii=False, sort_keys=True, default=str)
         if key in seen:
             continue
         seen.add(key)
-        out.append(row)
-    return out
+        output.append(row)
+    return output
 
 
 def _load_quarantine_state() -> list[dict]:
@@ -166,18 +154,6 @@ def _load_quarantine_state() -> list[dict]:
     except Exception:
         return []
     return frame.to_dict("records") if not frame.empty else []
-
-
-def _topdown_fingerprint(actions: pd.DataFrame, etfs: pd.DataFrame) -> str:
-    digest = sha256()
-    for asset, frame in (("ACTION", actions), ("ETF", etfs)):
-        selected = frame.reindex(columns=[field for field in _TOPDOWN_FIELDS if field in frame.columns]).copy()
-        if "isin" in selected.columns:
-            selected = selected.sort_values("isin", kind="mergesort")
-        selected = selected.fillna("").astype(str)
-        digest.update(asset.encode("utf-8"))
-        digest.update(selected.to_csv(index=False, lineterminator="\n").encode("utf-8"))
-    return digest.hexdigest()
 
 
 def _topdown_to_observations(result) -> tuple[list[dict], list[dict], dict]:
@@ -212,8 +188,8 @@ def _topdown_to_observations(result) -> tuple[list[dict], list[dict], dict]:
     return obs_actions, obs_etf, diagnostics
 
 
-def _fixed_window_fetcher(anchor: datetime) -> Callable:
-    """Freeze GDELT's rolling 2d window at run start so early prefetch is PIT-equivalent."""
+def _fixed_window_fetcher(anchor: datetime, original_fetch: Callable) -> Callable:
+    """Freeze Top-Down's 2d GDELT window at run start for safe early prefetch."""
     start = anchor.astimezone(timezone.utc) - timedelta(days=2)
     end = anchor.astimezone(timezone.utc)
     start_text = start.strftime("%Y%m%d%H%M%S")
@@ -227,11 +203,8 @@ def _fixed_window_fetcher(anchor: datetime) -> Callable:
         timeout: int = 20,
         limiter=None,
     ) -> tuple[list[dict], str | None]:
-        # This launcher only patches the full-universe Top-Down process, whose
-        # governed window is 2d. Any unexpected caller/window falls back to the
-        # legacy implementation rather than silently changing its semantics.
         if str(timespan).strip().lower() not in {"2d", "2days"}:
-            return _PATCH.original_gdelt_fetch(
+            return original_fetch(
                 query,
                 timespan=timespan,
                 max_records=max_records,
@@ -239,6 +212,8 @@ def _fixed_window_fetcher(anchor: datetime) -> Callable:
                 limiter=limiter,
             )
         import requests
+        import time
+
         last_error: str | None = None
         for attempt in range(len(gdelt_news.GDELT_RETRY_BACKOFF_SECONDS) + 1):
             try:
@@ -266,26 +241,10 @@ def _fixed_window_fetcher(anchor: datetime) -> Callable:
                 last_error = f"{type(exc).__name__}: {str(exc)[:180]}"
                 if attempt >= len(gdelt_news.GDELT_RETRY_BACKOFF_SECONDS) or not gdelt_news._retryable_gdelt_error(exc):
                     return [], last_error
-                import time
                 time.sleep(gdelt_news.GDELT_RETRY_BACKOFF_SECONDS[attempt])
         return [], last_error or "GDELT_UNKNOWN_ERROR"
 
     return fetch_articles
-
-
-class _PatchState:
-    def __init__(self) -> None:
-        self.original_load_master = legacy.load_master
-        self.original_save_master = legacy.save_master
-        self.original_apply_and_track = legacy.apply_and_track
-        self.original_wave4_shadow = legacy._collect_wave4_boursorama_shadow_parallel
-        self.original_wave9 = waves.wave9_topdown
-        self.original_yf_entry_rows = yfinance_info._entry_rows
-        self.original_finnhub_entry_observations = finnhub_consensus._entry_observations
-        self.original_gdelt_fetch = gdelt_news.fetch_articles
-
-
-_PATCH = _PatchState()
 
 
 class DailyFastRuntime:
@@ -298,14 +257,21 @@ class DailyFastRuntime:
         self.captured: dict[str, pd.DataFrame] = {}
         self.previous_quarantine = _load_quarantine_state() if mode == "DELTA_ONLY" else []
         self.quarantine_injected = False
-        self.wave3_actions: pd.DataFrame | None = None
-        self.wave3_etf: pd.DataFrame | None = None
         self.prefetch_pool: ThreadPoolExecutor | None = None
         self.prefetch_future: Future | None = None
-        self.prefetch_fingerprint: str | None = None
+        self.prepared_topdown = None
         self.prefetch_reused = False
         self.prefetch_fallback = False
         self.shadow_skipped = False
+
+        self.original_load_master = legacy.load_master
+        self.original_save_master = legacy.save_master
+        self.original_apply_and_track = legacy.apply_and_track
+        self.original_wave4_shadow = legacy._collect_wave4_boursorama_shadow_parallel
+        self.original_wave9 = waves.wave9_topdown
+        self.original_yf_entry_rows = yfinance_info._entry_rows
+        self.original_finnhub_entry_observations = finnhub_consensus._entry_observations
+        self.original_gdelt_fetch = gdelt_news.fetch_articles
 
     @property
     def enabled(self) -> bool:
@@ -316,15 +282,15 @@ class DailyFastRuntime:
             return
 
         def fast_load_master(path):
-            p = Path(path)
-            if p.name == _ACTION_INPUT:
+            name = Path(path).name
+            if name == _ACTION_INPUT:
                 return self.actions.copy(deep=True)
-            if p.name == _ETF_INPUT:
+            if name == _ETF_INPUT:
                 return self.etf.copy(deep=True)
-            return _PATCH.original_load_master(path)
+            return self.original_load_master(path)
 
         def capture_save_master(frame, path):
-            _PATCH.original_save_master(frame, path)
+            self.original_save_master(frame, path)
             name = Path(path).name
             if name == _ACTION_OUTPUT:
                 self.captured["ACTION"] = frame.copy(deep=True)
@@ -332,33 +298,22 @@ class DailyFastRuntime:
                 self.captured["ETF"] = frame.copy(deep=True)
 
         def fast_apply(frame, observations):
-            output, quarantined = _PATCH.original_apply_and_track(frame, observations)
+            output, quarantined = self.original_apply_and_track(frame, observations)
             if self.mode == "DELTA_ONLY" and not self.quarantine_injected:
                 quarantined = _dedupe_dicts([*self.previous_quarantine, *quarantined])
                 self.quarantine_injected = True
-            if self.mode == "DELTA_ONLY" and observations:
-                universes = {str(row.get("universe") or "").upper() for row in observations if isinstance(row, dict)}
-                sources = {str(row.get("source") or "").upper() for row in observations if isinstance(row, dict)}
-                is_wave3 = any(source.startswith("INTERNAL_FROM_OHLCV") or source.startswith("INTERNAL_PEA_ETF") for source in sources)
-                if is_wave3 and universes == {"ACTION"}:
-                    self.wave3_actions = output.copy(deep=True)
-                elif is_wave3 and universes == {"ETF"}:
-                    self.wave3_etf = output.copy(deep=True)
-                if self.wave3_actions is not None and self.wave3_etf is not None and self.prefetch_future is None:
-                    self._start_topdown_prefetch()
             return output, quarantined
 
         def fast_yf_entry_rows(entry: dict, ticker: str, cache_state: str, tier: str) -> list[dict]:
-            rows = _PATCH.original_yf_entry_rows(entry, ticker, cache_state, tier)
+            rows = self.original_yf_entry_rows(entry, ticker, cache_state, tier)
             if self.mode != "DELTA_ONLY" or cache_state != "CACHE_HIT":
                 return rows
-            # WAVE04 still needs cached EPS/book values to recompute price-sensitive
-            # PER/PB ratios from today's OHLCV. All other retained cache fields are
-            # already present in the validated fast master.
+            # Cached EPS/book remain available because WAVE04 recomputes today's
+            # price-sensitive PER/PB ratios with the fresh WAVE03 last_close.
             return [row for row in rows if str(row.get("field")) in _YF_CACHE_FIELDS_REQUIRED_FOR_DAILY_PRICE_RATIOS]
 
         def fast_finnhub_entry(entry: dict, ticker: str, *, recommendation_live: bool, target_live: bool) -> list[dict]:
-            rows = _PATCH.original_finnhub_entry_observations(
+            rows = self.original_finnhub_entry_observations(
                 entry,
                 ticker,
                 recommendation_live=recommendation_live,
@@ -369,9 +324,6 @@ class DailyFastRuntime:
             return [row for row in rows if str(row.get("cache_state")) == "LIVE_REFRESH"]
 
         def fast_wave4(actions_df: pd.DataFrame, cfg: dict, run_profile: str):
-            # The public Boursorama shadow has refresh_due=False and
-            # bootstrap_missing=False in DAILY_TACTICAL. Re-running its full cache
-            # equivalence pivot adds CPU/I/O but no fresh evidence or decision data.
             wave4_result = waves.wave4_info_actions(actions_df, cfg)
             self.shadow_skipped = True
             payload = {
@@ -390,16 +342,22 @@ class DailyFastRuntime:
             return wave4_result, payload
 
         def fast_wave9(actions_df: pd.DataFrame, etf_df: pd.DataFrame, cfg: dict, fred_api_key: str | None):
-            if self.prefetch_future is None or self.prefetch_fingerprint is None:
+            if self.prefetch_future is None or self.prepared_topdown is None:
                 self.prefetch_fallback = True
-                return _PATCH.original_wave9(actions_df, etf_df, cfg, fred_api_key)
-            actual = _topdown_fingerprint(actions_df, etf_df)
-            prefetched_fp, prefetched_result = self.prefetch_future.result()
-            if actual != prefetched_fp:
+                return self.original_wave9(actions_df, etf_df, cfg, fred_api_key)
+            external = self.prefetch_future.result()
+            try:
+                result = topdown_prefetch.finalize(
+                    actions_df,
+                    etf_df,
+                    self.prepared_topdown,
+                    external,
+                )
+            except RuntimeError:
                 self.prefetch_fallback = True
-                return _PATCH.original_wave9(actions_df, etf_df, cfg, fred_api_key)
+                return self.original_wave9(actions_df, etf_df, cfg, fred_api_key)
             self.prefetch_reused = True
-            return _topdown_to_observations(prefetched_result)
+            return _topdown_to_observations(result)
 
         legacy.load_master = fast_load_master
         legacy.save_master = capture_save_master
@@ -407,50 +365,47 @@ class DailyFastRuntime:
         legacy._collect_wave4_boursorama_shadow_parallel = fast_wave4
         yfinance_info._entry_rows = fast_yf_entry_rows
         finnhub_consensus._entry_observations = fast_finnhub_entry
-        gdelt_news.fetch_articles = _fixed_window_fetcher(self.anchor)
         waves.wave9_topdown = fast_wave9
 
-    def _start_topdown_prefetch(self) -> None:
-        if self.wave3_actions is None or self.wave3_etf is None or self.prefetch_future is not None:
-            return
-        actions = self.wave3_actions.copy(deep=True)
-        etfs = self.wave3_etf.copy(deep=True)
-        fingerprint = _topdown_fingerprint(actions, etfs)
-        self.prefetch_fingerprint = fingerprint
-        cfg = legacy._load_cfg()
-        top_n = int(cfg.get("topdown", {}).get("instrument_news_top_n", 80))
-        fred_api_key = os.environ.get("FRED_API_KEY")
-        self.prefetch_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="daily-fast-topdown")
-
-        def work():
-            result = topdown_features.build_topdown(
-                actions,
-                etfs,
-                fred_api_key=fred_api_key,
+        if self.mode == "DELTA_ONLY":
+            # Exact STARTDATETIME/ENDDATETIME makes the query window independent
+            # of whether the same requests start now or later at WAVE09.
+            gdelt_news.fetch_articles = _fixed_window_fetcher(self.anchor, self.original_gdelt_fetch)
+            cfg = legacy._load_cfg()
+            top_n = int(cfg.get("topdown", {}).get("instrument_news_top_n", 80))
+            self.prepared_topdown = topdown_prefetch.prepare(
+                self.actions,
+                self.etf,
                 instrument_news_top_n=top_n,
             )
-            return fingerprint, result
-
-        self.prefetch_future = self.prefetch_pool.submit(work)
+            self.prefetch_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="daily-fast-topdown")
+            self.prefetch_future = self.prefetch_pool.submit(
+                topdown_prefetch.fetch_external,
+                self.prepared_topdown,
+                fred_api_key=os.environ.get("FRED_API_KEY"),
+            )
 
     def restore(self) -> None:
-        legacy.load_master = _PATCH.original_load_master
-        legacy.save_master = _PATCH.original_save_master
-        legacy.apply_and_track = _PATCH.original_apply_and_track
-        legacy._collect_wave4_boursorama_shadow_parallel = _PATCH.original_wave4_shadow
-        yfinance_info._entry_rows = _PATCH.original_yf_entry_rows
-        finnhub_consensus._entry_observations = _PATCH.original_finnhub_entry_observations
-        gdelt_news.fetch_articles = _PATCH.original_gdelt_fetch
-        waves.wave9_topdown = _PATCH.original_wave9
+        if not self.enabled:
+            return
+        legacy.load_master = self.original_load_master
+        legacy.save_master = self.original_save_master
+        legacy.apply_and_track = self.original_apply_and_track
+        legacy._collect_wave4_boursorama_shadow_parallel = self.original_wave4_shadow
+        yfinance_info._entry_rows = self.original_yf_entry_rows
+        finnhub_consensus._entry_observations = self.original_finnhub_entry_observations
+        gdelt_news.fetch_articles = self.original_gdelt_fetch
+        waves.wave9_topdown = self.original_wave9
         if self.prefetch_pool is not None:
             self.prefetch_pool.shutdown(wait=True, cancel_futures=False)
 
     def promote(self) -> dict:
-        """Persist a new fast state only after the legacy pipeline quality gates pass."""
+        """Persist fast state only after the legacy pipeline quality gates pass."""
         actions = self.captured.get("ACTION")
         etf = self.captured.get("ETF")
         if actions is None or etf is None:
             return {"promoted": False, "reason": "ENRICHED_MASTER_NOT_CAPTURED"}
+
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         actions_tmp = STATE_DIR / ".actions.parquet.tmp"
         etf_tmp = STATE_DIR / ".etf.parquet.tmp"
@@ -476,6 +431,8 @@ class DailyFastRuntime:
             "etf_rows": int(len(etf)),
             "actions_columns": int(len(actions.columns)),
             "etf_columns": int(len(etf.columns)),
+            "actions_sha256": _sha256_file(ACTIONS_STATE),
+            "etf_sha256": _sha256_file(ETF_STATE),
             "decision_logic_changed": False,
             "criteria_changed": False,
             "weights_changed": False,
@@ -496,10 +453,10 @@ class DailyFastRuntime:
             "cache_reconciliation_required": self.mode == "RECONCILE_CACHE",
             "prior_quarantine_replayed": bool(self.previous_quarantine and self.mode == "DELTA_ONLY"),
             "boursorama_shadow_cache_only_work_skipped": self.shadow_skipped,
-            "topdown_prefetch_started": self.prefetch_future is not None,
+            "topdown_external_prefetch_started_at_pipeline_start": self.prefetch_future is not None,
             "topdown_prefetch_reused": self.prefetch_reused,
             "topdown_prefetch_fail_closed_fallback": self.prefetch_fallback,
-            "gdelt_window_frozen_at_run_start": self.enabled,
+            "gdelt_exact_window_used_for_prefetch": self.mode == "DELTA_ONLY",
             "promotion": promotion,
             "decision_logic_changed": False,
             "criteria_changed": False,
@@ -523,11 +480,7 @@ def run() -> dict:
     try:
         result = legacy._run_pipeline(run_id, run_profile, runtime)
         promotion = fast.promote()
-        result["daily_fast_collection"] = {
-            "version": VERSION,
-            "mode": mode,
-            **promotion,
-        }
+        result["daily_fast_collection"] = {"version": VERSION, "mode": mode, **promotion}
         result["runtime_telemetry"] = runtime.finalize(
             "SUCCESS",
             excel_exports_enabled=result["excel_exports_enabled"],
@@ -537,7 +490,12 @@ def run() -> dict:
         fast.audit(promotion, "SUCCESS")
         return result
     except Exception as exc:
-        runtime.finalize("FAILED", error_type=type(exc).__name__, error_detail=str(exc)[:500], daily_fast_mode=mode)
+        runtime.finalize(
+            "FAILED",
+            error_type=type(exc).__name__,
+            error_detail=str(exc)[:500],
+            daily_fast_mode=mode,
+        )
         fast.audit(promotion, "FAILED")
         raise
     finally:
