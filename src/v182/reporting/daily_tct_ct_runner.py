@@ -16,6 +16,7 @@ from v182.risk.entry_exit_governance_v21_8 import (
     STATE_RELATIVE_PATH,
     _attach_temporal_state,
     _load_temporal_state,
+    _load_temporal_state_observed_at,
     _persist_temporal_state,
     apply_governance,
 )
@@ -169,7 +170,8 @@ def run(root: Path = ROOT) -> dict:
 
     state_path = root / STATE_RELATIVE_PATH
     previous = _load_temporal_state(state_path)
-    with_state = _attach_temporal_state(decisions, previous)
+    previous_observed_at = _load_temporal_state_observed_at(state_path)
+    with_state = _attach_temporal_state(decisions, previous, previous_observed_at)
     governed = apply_governance(with_state, v21_cfg)
     state_rows = _persist_temporal_state(governed, state_path)
     governed.to_csv(outdir / "DAILY_TCT_CT_V21_8.csv", sep=";", index=False, encoding="utf-8-sig")
@@ -201,6 +203,7 @@ def run(root: Path = ROOT) -> dict:
             "position_states": governed["v21_8_position_state"].value_counts(dropna=False).to_dict(),
             "entry_states": governed["v21_8_entry_state"].value_counts(dropna=False).to_dict(),
             "temporal_state_rows": state_rows,
+            "same_day_rerun_can_confirm_exit": False,
         },
         "weights_unchanged": True,
         "selection_thresholds_unchanged": True,
