@@ -1,8 +1,12 @@
 from pathlib import Path
+from types import SimpleNamespace
 import json
+import threading
+import time
 
 import pandas as pd
 
+from v182.reporting import selected_source_enrichment as source_enrichment
 from v182.reporting.selected_source_enrichment import select_preselected_rows
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,3 +57,82 @@ def test_all_active_horizon_runners_keep_source_context_hook():
     assert "fetcher=shared_fetcher" in orchestrator
     assert orchestrator.count("request_start_interval_seconds=0.0") == 2
     assert 'thread_name_prefix="boursorama-assets"' in orchestrator
+
+
+def test_action_etf_boursorama_overlap_keeps_one_provider_start_cadence(tmp_path, monkeypatch):
+    interval = 0.03
+    contract = {
+        "version": "V21.15.2",
+        "scope": {
+            "selected_only_max_unique_instruments": 40,
+            "preselection_statuses": ["BUY_CANDIDATE", "WATCH", "REVIEW", "SHADOW_CANDIDATE"],
+        },
+        "boursorama": {
+            "priority_for_selected_actions": True,
+            "priority_for_selected_etfs": True,
+            "dynamic_ttl_hours": 8,
+            "deep_ttl_hours": 168,
+            "refresh_budget": 40,
+            "request_start_interval_seconds": interval,
+            "max_workers": 4,
+        },
+        "investing": {
+            "refresh_budget": 40,
+            "ttl_hours": 6,
+            "request_start_interval_seconds": 0.0,
+            "max_workers": 1,
+        },
+    }
+    monkeypatch.setattr(source_enrichment, "_read_contract", lambda root: contract)
+
+    starts = []
+    starts_lock = threading.Lock()
+
+    class FakeResponse:
+        text = "ok"
+
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url, *, headers, timeout):
+        with starts_lock:
+            starts.append((url, time.monotonic()))
+        return FakeResponse()
+
+    import requests
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    branch_barrier = threading.Barrier(2)
+    seen_fetchers = []
+
+    def fake_boursorama(rows, cache_path, **kwargs):
+        assert kwargs["request_start_interval_seconds"] == 0.0
+        fetcher = kwargs["fetcher"]
+        seen_fetchers.append(fetcher)
+        branch_barrier.wait(timeout=1.0)
+        fetcher(f"https://example.test/{rows.iloc[0]['asset_class'].lower()}", timeout=1.0)
+        return SimpleNamespace(observations=[], failures=[], metrics={"status": "OK"})
+
+    monkeypatch.setattr(source_enrichment, "collect_selected_action_context_cached", fake_boursorama)
+    monkeypatch.setattr(source_enrichment, "collect_selected_etf_context_cached", fake_boursorama)
+    monkeypatch.setattr(
+        source_enrichment,
+        "collect_technical_context_cached",
+        lambda *args, **kwargs: SimpleNamespace(observations=[], failures=[], metrics={"status": "OK"}),
+    )
+
+    rows = pd.DataFrame(
+        [
+            {"isin": "A", "asset_class": "ACTION", "horizon": "CT", "decision": "WATCH", "score": 90},
+            {"isin": "E", "asset_class": "ETF", "horizon": "MT", "decision": "WATCH", "score": 88},
+        ]
+    )
+    _enriched, payload = source_enrichment.enrich_selected_rows(rows, tmp_path, profile="TEST")
+
+    assert len(seen_fetchers) == 2
+    assert seen_fetchers[0] is seen_fetchers[1]
+    assert len(starts) == 2
+    ordered = sorted(timestamp for _url, timestamp in starts)
+    assert ordered[1] - ordered[0] >= interval * 0.8
+    assert payload["boursorama_asset_overlap"] is True
+    assert payload["boursorama_shared_start_limiter"] is True
