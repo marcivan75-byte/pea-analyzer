@@ -3,8 +3,18 @@ from __future__ import annotations
 from threading import Event
 
 import pandas as pd
+import pytest
 
 from v182.reporting import weekly_unified_super_runner_v21_16_1 as weekly
+
+
+def _price_frame(tickers: list[str]) -> pd.DataFrame:
+    columns = pd.MultiIndex.from_tuples([(ticker, "Close") for ticker in tickers])
+    return pd.DataFrame(
+        [[float(index + 1) for index in range(len(tickers))]],
+        index=pd.DatetimeIndex(["2026-08-21"]),
+        columns=columns,
+    )
 
 
 def test_parallel_safe_horizons_preserves_requested_order(monkeypatch):
@@ -83,6 +93,118 @@ def test_memoized_resolver_never_reuses_across_frames():
     assert stats["frames"] == 2
 
 
+def test_yfinance_partial_batch_retries_missing_symbols_as_group():
+    calls: list[list[str]] = []
+
+    def original_download(
+        _yf,
+        tickers,
+        _period,
+        _interval,
+        _auto_adjust,
+        _actions_requested,
+        *,
+        threads,
+        start=None,
+    ):
+        requested = list(tickers)
+        calls.append(requested)
+        if requested == ["AAA", "BBB"]:
+            return _price_frame(["AAA"])
+        if requested == ["BBB"]:
+            return _price_frame(["BBB"])
+        raise AssertionError(f"unexpected request: {requested}")
+
+    def original_download_one(*args, **kwargs):
+        raise AssertionError("singleton fallback should not be needed")
+
+    wrapped, _, stats = weekly._weekly_yfinance_retry_hardening(
+        original_download, original_download_one
+    )
+    result = wrapped(
+        object(),
+        ["AAA", "BBB"],
+        "1mo",
+        "1d",
+        True,
+        True,
+        threads=True,
+    )
+
+    assert weekly.yfinance_bulk._contains_ticker(result, "AAA")
+    assert weekly.yfinance_bulk._contains_ticker(result, "BBB")
+    assert calls == [["AAA", "BBB"], ["BBB"]]
+    assert stats["partial_batches"] == 1
+    assert stats["grouped_retry_calls"] == 1
+    assert stats["grouped_retry_recovered_tickers"] == 1
+
+
+def test_yfinance_double_batch_failure_fast_skips_only_cached_singletons():
+    batch_calls: list[list[str]] = []
+    singleton_calls: list[tuple[str, str | None]] = []
+
+    def original_download(
+        _yf,
+        tickers,
+        _period,
+        _interval,
+        _auto_adjust,
+        _actions_requested,
+        *,
+        threads,
+        start=None,
+    ):
+        requested = list(tickers)
+        batch_calls.append(requested)
+        raise TimeoutError("provider unavailable")
+
+    def original_download_one(
+        _yf,
+        ticker,
+        _period,
+        _interval,
+        _auto_adjust,
+        _actions_requested,
+        *,
+        start=None,
+    ):
+        singleton_calls.append((ticker, start))
+        return _price_frame([ticker])
+
+    wrapped, wrapped_one, stats = weekly._weekly_yfinance_retry_hardening(
+        original_download, original_download_one
+    )
+
+    with pytest.raises(TimeoutError):
+        wrapped(
+            object(),
+            ["AAA", "BBB"],
+            "1mo",
+            "1d",
+            True,
+            True,
+            threads=True,
+        )
+
+    cached_retry = wrapped_one(
+        object(), "AAA", "1mo", "1d", True, True, start=None
+    )
+    new_ticker_retry = wrapped_one(
+        object(), "NEW", "5y", "1d", True, True, start="2023-01-01"
+    )
+
+    assert cached_retry.empty
+    assert weekly.yfinance_bulk._contains_ticker(new_ticker_retry, "NEW")
+    assert batch_calls == [["AAA", "BBB"], ["AAA", "BBB"]]
+    assert singleton_calls == [("NEW", "2023-01-01")]
+    assert stats["multi_batch_errors"] == 1
+    assert stats["grouped_retry_calls"] == 1
+    assert stats["grouped_retry_errors"] == 1
+    assert stats["circuit_open_events"] == 1
+    assert stats["cached_singleton_fast_skips"] == 1
+    assert stats["singleton_calls"] == 1
+
+
 def test_sector_starts_after_structure_and_before_historical_sector_join(monkeypatch, tmp_path):
     sector_started = Event()
     calls: list[str] = []
@@ -125,6 +247,7 @@ def test_sector_starts_after_structure_and_before_historical_sector_join(monkeyp
     audit = (tmp_path / "outputs/audit/WEEKLY_UNIFIED_SUPER_RUNTIME_V21_16_1.json").read_text()
     assert '"committee_waits_for_sector_rotation": true' in audit
     assert '"criterion_resolution_function_wrapped": true' in audit
+    assert '"yfinance_grouped_retry_before_singleton": true' in audit
     assert '"decision_logic_changed": false' in audit
 
 
