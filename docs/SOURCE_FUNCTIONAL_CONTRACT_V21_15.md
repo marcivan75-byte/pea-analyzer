@@ -4,7 +4,7 @@
 
 Une régression fonctionnelle a été constatée : une version antérieure du processus utilisait Boursorama comme source prioritaire après présélection et Investing.com comme confirmation technique multi-horizon, mais ces fonctions n'étaient plus garanties dans le code courant.
 
-V21.15 restaure ces fonctions et les transforme en invariants testés par CI afin qu'une optimisation future de temps, de cache ou de fournisseurs ne puisse plus les supprimer silencieusement. V21.15.2 optimise ensuite le temps mur de cette couche sans modifier sa cadence fournisseur.
+V21.15 restaure ces fonctions et les transforme en invariants testés par CI afin qu'une optimisation future de temps, de cache ou de fournisseurs ne puisse plus les supprimer silencieusement. V21.15.2 optimise ensuite le temps mur de cette couche sans modifier son enveloppe de charge fournisseur.
 
 ## Architecture verrouillée : score d'abord, enrichissement ensuite
 
@@ -74,7 +74,7 @@ Le résolveur Investing est sélectif. Il privilégie une URL déjà validée/ca
 
 La couche est limitée à 40 instruments uniques au maximum par run.
 
-Boursorama et Investing sont lancés en parallèle car ce sont deux fournisseurs distincts. Depuis V21.15.2, les sous-branches Actions et ETF Boursorama peuvent elles aussi attendre leurs réponses en parallèle, mais **tous leurs départs HTTP passent par un unique `StartRateLimiter` partagé**. La cadence Boursorama reste donc strictement plafonnée à un démarrage par seconde ; seul le temps d'attente réseau est chevauché. Les collecteurs Actions et ETF conservent leurs caches et audits propres. Une défaillance externe produit un `N/A` audité et ne supprime pas la décision interne déjà calculée.
+Boursorama et Investing sont lancés en parallèle car ce sont deux fournisseurs distincts. Depuis V21.15.2, les sous-branches Actions et ETF Boursorama peuvent elles aussi attendre leurs réponses en parallèle, mais **tous leurs départs HTTP passent par un unique `StartRateLimiter` partagé** et **toutes leurs requêtes partagent aussi un `BoundedSemaphore` fournisseur**. La cadence Boursorama reste donc plafonnée à un démarrage par seconde et le nombre total de requêtes simultanément en vol reste plafonné à 4, comme avant le chevauchement des deux classes d'actifs. Seul le temps d'attente réseau exploitable est chevauché. Les collecteurs Actions et ETF conservent leurs caches et audits propres. Une défaillance externe produit un `N/A` audité et ne supprime pas la décision interne déjà calculée.
 
 Cette optimisation ne modifie ni l'univers, ni le budget de rafraîchissement, ni les TTL, ni le nombre de champs, ni les valeurs collectées. Elle vise uniquement le temps mur lorsque des Actions et des ETF présélectionnés doivent être enrichis dans le même run.
 
@@ -86,8 +86,8 @@ La CI vérifie explicitement la présence de `enrich_selected_rows` dans :
 - `action_mt_shadow_run_v1.py` — Action MT ;
 - `etf_mt_v2081_run.py` — ETF MT.
 
-Elle vérifie également que l'orchestrateur conserve les trois collecteurs : Boursorama Actions, Boursorama ETF et Investing technique, ainsi que le limiteur partagé des branches Boursorama.
+Elle vérifie également que l'orchestrateur conserve les trois collecteurs : Boursorama Actions, Boursorama ETF et Investing technique, ainsi que la cadence commune et le plafond in-flight partagé des branches Boursorama.
 
 La configuration de référence est `config/SOURCE_FUNCTIONAL_CONTRACT_V21_15.json`.
 
-Toute suppression silencieuse de ces hooks, de Boursorama post-sélection, de la cadence commune Boursorama ou des cinq états/horizons Investing doit faire échouer les tests.
+Toute suppression silencieuse de ces hooks, de Boursorama post-sélection, de l'enveloppe fournisseur commune ou des cinq états/horizons Investing doit faire échouer les tests.
