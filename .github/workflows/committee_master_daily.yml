@@ -146,9 +146,6 @@ jobs:
           print(f"V21.16.3 integrity OK: Actions 1829/633, ETF 102/268, runtime-only optimization, TCT, Sector Rotation V2, Fund Flows and RISK governance intact (identity-only={materialized.materialized_missing_count})")
           PY
 
-      - name: Publish Action identity hydration worklist
-        run: python -m v182.audit.identity_hydration
-
       - name: Run optimized weekly full bundle
         run: python -m v182.reporting.weekly_full_bundle_v21_16
 
