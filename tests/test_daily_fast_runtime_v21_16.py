@@ -12,6 +12,7 @@ from v182.reporting.daily_context_baseline import (
     publish_context_baseline,
     publish_from_outputs,
 )
+from v182.reporting.daily_tct_ct_runner import _daily_exact_scope
 
 
 def _canonical_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -106,7 +107,6 @@ def test_daily_workflow_uses_fast_path_and_keeps_full_screening_contract():
     assert "python -m v182.reporting.etf_structure_state_replay" not in workflow
     assert 'PEA_YF_INCREMENTAL_PERIOD: "5d"' in workflow
     assert 'PEA_DAILY_BASELINE_MAX_AGE_DAYS: "8"' in workflow
-    # Weekly challenger state is transported but not recomputed Mon-Thu.
     assert "state/action_ct/" in workflow
     assert "state/action_ct_v22_1/" in workflow
 
@@ -134,3 +134,83 @@ def test_daily_postmarket_defers_pit_audit_but_not_operational_context():
     assert '("POSTMARKET_CATALYST_V24.4.2"' in source
     assert 'deferred = ["PIT_LINEAGE_V24.4.2", "PIT_VALIDATOR_V24.4.2"]' in source
     assert '"daily_deferred_steps_have_decision_influence": False' in source
+
+
+def test_daily_exact_t1_t2_scope_is_governed_top20_only():
+    frame = pd.DataFrame(
+        {
+            "isin": [f"FR{i:010d}" for i in range(30)],
+            "tct_baseline_rank": list(range(1, 31)),
+            "tct_baseline_coverage": [0.80] * 18 + [0.59, 0.75] + [0.80] * 10,
+        }
+    )
+    cfg = {"scope": {"baseline_top_n": 20, "baseline_min_coverage": 0.60}}
+    scoped = _daily_exact_scope(frame, cfg)
+    assert len(scoped) == 19
+    assert scoped["tct_baseline_rank"].max() <= 20
+    assert scoped["tct_baseline_coverage"].min() >= 0.60
+
+
+def test_weekly_committee_keeps_exhaustive_tct_exact_research():
+    source = Path("src/v182/reporting/committee_master_run.py").read_text(encoding="utf-8")
+    assert "build_exact_timing_snapshot(actions_with_tct" in source
+    assert "_daily_exact_scope" not in source
+
+
+def test_weekly_workflow_has_no_duplicate_friday_rescoring_or_replay():
+    workflow = Path(".github/workflows/committee_master_daily.yml").read_text(encoding="utf-8")
+    assert "python -m v182.reporting.weekly_unified_fast_v21_16" in workflow
+    assert "python -m v182.reporting.friday_tactical_reuse_v21_16" in workflow
+    assert "python -m v182.reporting.weekly_tail_parallel_v21_16" in workflow
+    assert "python -m v182.reporting.daily_tct_ct_runner" not in workflow
+    assert "python -m v182.reporting.etf_structure_state_replay" not in workflow
+    assert "python -m v182.reporting.tactical_shadow_bundle_run" not in workflow
+    assert "python -m v182.reporting.tct_postmarket_bundle_run" not in workflow
+    assert "python -m v182.reporting.decision_brief_v21_16" not in workflow
+    assert "python -m v182.reporting.etf_fund_flows_shadow_run" not in workflow
+    assert "python -m v182.reporting.criteria_governance_audit" not in workflow
+
+
+def test_weekly_tail_parallelism_preserves_tct_writer_order():
+    source = Path("src/v182/reporting/weekly_tail_parallel_v21_16.py").read_text(encoding="utf-8")
+    tactical_pos = source.index('"v182.reporting.tactical_shadow_bundle_run"')
+    postmarket_pos = source.index('"v182.reporting.tct_postmarket_bundle_run"')
+    assert tactical_pos < postmarket_pos
+    assert "ThreadPoolExecutor(max_workers=4" in source
+    assert '"decision_brief": pool.submit' in source
+    assert '"etf_fund_flows": pool.submit' in source
+    assert '"criteria_governance": pool.submit' in source
+    assert '"tct_state_writers_parallelized": False' in source
+    assert '"subprocess_isolation": True' in source
+
+
+def test_weekly_unified_parallelism_is_dependency_safe():
+    source = Path("src/v182/reporting/unified_runner.py").read_text(encoding="utf-8")
+    assert "ThreadPoolExecutor(max_workers=3, thread_name_prefix=\"weekly-independent\")" in source
+    assert 'pool.submit(_safe_step, "etf_structure"' in source
+    assert "pool.submit(_cached_etf_mt, root)" in source
+    assert 'pool.submit(_safe_step, "sector_rotation_v2"' in source
+    assert "ThreadPoolExecutor(max_workers=workers, thread_name_prefix=\"post-committee\")" in source
+    assert 'pool.submit(_safe_step, "risk_context"' in source
+    assert 'pool.submit(_safe_step, "ci_explainability"' in source
+    assert '"critical_path_parallelism_changed": True' in source
+
+
+def test_weekly_lean_enrichment_drops_only_unused_xlsx_serialization():
+    source = Path("src/v182/reporting/weekly_enrichment_fast_v21_16.py").read_text(encoding="utf-8")
+    assert 'write_excel=wave_id == "WAVE_99_FINAL"' in source
+    assert "V18.2_PEA_ACTIONS_ACTUALISE.xlsx" in source
+    assert "V18.2_PEA_ETF_ACTUALISE.xlsx" in source
+    assert "V18.2_RUN_REPORT.xlsx" in source
+    assert '"network_collection_changed": False' in source
+    assert '"quality_gates_changed": False' in source
+    assert '"committee_ci_outputs_affected": False' in source
+
+
+def test_runtime_optimization_never_reduces_canonical_universe_or_criteria_registry():
+    integrity = json.loads(Path("config/FULL_REFERENTIAL_INTEGRITY.json").read_text(encoding="utf-8"))
+    actions = json.loads(Path("config/V21_ACTIONS_CRITERIA_REGISTRY.json").read_text(encoding="utf-8"))
+    etfs = json.loads(Path("config/V20_7_1_ETF_CRITERIA_REGISTRY.json").read_text(encoding="utf-8"))
+    assert integrity["actions"]["universe_count"] == 1829
+    assert actions["criteria_count"] == 633
+    assert etfs["criteria_count"] == 268
