@@ -126,14 +126,18 @@ jobs:
         if: ${{ inputs.run_validation }}
         run: python -m compileall -q src
 
-      - name: Daily consolidated optimized V21.15.4
+      - name: Daily consolidated optimized V21.15.7
         run: python -m v182.reporting.daily_consolidated_runner_v21_15_4
 
-      - name: Publish Android tactical summaries
+      - name: Publish Android tactical and CI summaries
         if: always()
         run: |
           if [ -f outputs/mobile/ANDROID_DAILY_TCT_CT.md ]; then
             cat outputs/mobile/ANDROID_DAILY_TCT_CT.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f outputs/mobile/ANDROID_CI_CONTROL_CENTER.md ]; then
+            printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+            cat outputs/mobile/ANDROID_CI_CONTROL_CENTER.md >> "$GITHUB_STEP_SUMMARY"
           fi
           if [ -f outputs/mobile/ANDROID_ACTION_CT_V22_1_SHADOW.md ]; then
             printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
@@ -158,8 +162,10 @@ jobs:
       - name: Show daily audit
         if: always()
         run: |
-          if [ -f outputs/audit/DAILY_CONSOLIDATED_RUNTIME_V21_15_4.json ]; then cat outputs/audit/DAILY_CONSOLIDATED_RUNTIME_V21_15_4.json; fi
+          if [ -f outputs/audit/DAILY_CONSOLIDATED_RUNTIME_V21_15_7.json ]; then cat outputs/audit/DAILY_CONSOLIDATED_RUNTIME_V21_15_7.json; fi
+          if [ -f outputs/audit/DAILY_CI_RESTITUTION_V21_15_7.json ]; then cat outputs/audit/DAILY_CI_RESTITUTION_V21_15_7.json; fi
           if [ -f outputs/audit/DAILY_FAST_COLLECTION_V21_15_4.json ]; then cat outputs/audit/DAILY_FAST_COLLECTION_V21_15_4.json; fi
+          if [ -f outputs/audit/DAILY_TACTICAL_DAG_RUNTIME_V21_15_6.json ]; then cat outputs/audit/DAILY_TACTICAL_DAG_RUNTIME_V21_15_6.json; fi
           if [ -f outputs/audit/DAILY_TACTICAL_DAG_RUNTIME_V21_15_4.json ]; then cat outputs/audit/DAILY_TACTICAL_DAG_RUNTIME_V21_15_4.json; fi
           if [ -f outputs/audit/DAILY_TCT_CT_AUDIT.json ]; then cat outputs/audit/DAILY_TCT_CT_AUDIT.json; fi
           if [ -f outputs/audit/ACTION_CT_V22_0_0_AUDIT.json ]; then cat outputs/audit/ACTION_CT_V22_0_0_AUDIT.json; fi
@@ -212,13 +218,18 @@ jobs:
             state/provenance/
           key: decision-state-v1-${{ github.run_id }}
 
-      - name: Upload compact daily tactical artifact
+      - name: Upload compact daily tactical and CI artifact
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: pea-daily-tct-ct-${{ github.run_id }}
           path: |
             outputs/daily_tct_ct/
+            outputs/committee_master/COMMITTEE_DECISIONS.csv
+            outputs/committee_master/CI_DAILY_DECISIONS.csv
+            outputs/committee_master/CI_COMITE_INVESTISSEMENT.docx
+            outputs/committee_master/CI_REFERENTIEL_PONDERE.xlsx
+            outputs/mobile/ANDROID_CI_CONTROL_CENTER.md
             outputs/mobile/ANDROID_DAILY_TCT_CT.md
             outputs/mobile/ANDROID_ACTION_CT_V22_1_SHADOW.md
             outputs/mobile/ANDROID_ACTION_CT_V22_SHADOW.md
@@ -229,8 +240,11 @@ jobs:
             outputs/daily_tct_ct/TCT_NEXT_SESSION_CATALYST_V24_4_2.csv
             outputs/daily_tct_ct/TCT_V24_4_2_PIT_SLICES.csv
             outputs/daily_tct_ct/TCT_V24_4_2_PREOPEN_POSTMARKET_CHANGES.csv
-            outputs/audit/DAILY_CONSOLIDATED_RUNTIME_V21_15_4.json
+            outputs/audit/DAILY_CONSOLIDATED_RUNTIME_V21_15_7.json
+            outputs/audit/DAILY_CI_RESTITUTION_V21_15_7.json
+            outputs/audit/CI_EXPLAINABILITY_AUDIT.json
             outputs/audit/DAILY_FAST_COLLECTION_V21_15_4.json
+            outputs/audit/DAILY_TACTICAL_DAG_RUNTIME_V21_15_6.json
             outputs/audit/DAILY_TACTICAL_DAG_RUNTIME_V21_15_4.json
             outputs/audit/DAILY_TCT_CT_AUDIT.json
             outputs/audit/ACTION_CT_V22_0_0_AUDIT.json
