@@ -14,6 +14,7 @@ import pandas as pd
 from v182.features import topdown_prefetch_v21_15_4 as topdown_prefetch
 from v182.reporting import run as legacy
 from v182.reporting import waves
+from v182.reporting.incremental_collection_audit_v21_15_4 import IncrementalCollectionAuditor
 from v182.reporting.runtime_telemetry import RuntimeTelemetry
 from v182.sources import finnhub_consensus, gdelt_news, yfinance_info
 
@@ -263,10 +264,12 @@ class DailyFastRuntime:
         self.prefetch_reused = False
         self.prefetch_fallback = False
         self.shadow_skipped = False
+        self.incremental_auditor = IncrementalCollectionAuditor(legacy.DATA_AUDIT)
 
         self.original_load_master = legacy.load_master
         self.original_save_master = legacy.save_master
         self.original_apply_and_track = legacy.apply_and_track
+        self.original_audit = legacy._audit
         self.original_wave4_shadow = legacy._collect_wave4_boursorama_shadow_parallel
         self.original_wave9 = waves.wave9_topdown
         self.original_yf_entry_rows = yfinance_info._entry_rows
@@ -298,11 +301,22 @@ class DailyFastRuntime:
                 self.captured["ETF"] = frame.copy(deep=True)
 
         def fast_apply(frame, observations):
+            self.incremental_auditor.note(observations)
             output, quarantined = self.original_apply_and_track(frame, observations)
             if self.mode == "DELTA_ONLY" and not self.quarantine_injected:
                 quarantined = _dedupe_dicts([*self.previous_quarantine, *quarantined])
                 self.quarantine_injected = True
             return output, quarantined
+
+        def fast_audit(actions, etfs, wave_id, *, failures=None, source_context=""):
+            self.incremental_auditor.audit(
+                actions,
+                etfs,
+                wave_id,
+                failures=failures,
+                source_context=source_context,
+                original_audit=self.original_audit,
+            )
 
         def fast_yf_entry_rows(entry: dict, ticker: str, cache_state: str, tier: str) -> list[dict]:
             rows = self.original_yf_entry_rows(entry, ticker, cache_state, tier)
@@ -362,6 +376,7 @@ class DailyFastRuntime:
         legacy.load_master = fast_load_master
         legacy.save_master = capture_save_master
         legacy.apply_and_track = fast_apply
+        legacy._audit = fast_audit
         legacy._collect_wave4_boursorama_shadow_parallel = fast_wave4
         yfinance_info._entry_rows = fast_yf_entry_rows
         finnhub_consensus._entry_observations = fast_finnhub_entry
@@ -391,6 +406,7 @@ class DailyFastRuntime:
         legacy.load_master = self.original_load_master
         legacy.save_master = self.original_save_master
         legacy.apply_and_track = self.original_apply_and_track
+        legacy._audit = self.original_audit
         legacy._collect_wave4_boursorama_shadow_parallel = self.original_wave4_shadow
         yfinance_info._entry_rows = self.original_yf_entry_rows
         finnhub_consensus._entry_observations = self.original_finnhub_entry_observations
@@ -444,6 +460,7 @@ class DailyFastRuntime:
         return {"promoted": True, "manifest": str(MANIFEST.relative_to(ROOT))}
 
     def audit(self, promotion: dict, status: str) -> None:
+        self.incremental_auditor.write_audit()
         payload = {
             "version": VERSION,
             "status": status,
@@ -457,6 +474,7 @@ class DailyFastRuntime:
             "topdown_prefetch_reused": self.prefetch_reused,
             "topdown_prefetch_fail_closed_fallback": self.prefetch_fallback,
             "gdelt_exact_window_used_for_prefetch": self.mode == "DELTA_ONLY",
+            "incremental_collection_audit": self.incremental_auditor.payload(),
             "promotion": promotion,
             "decision_logic_changed": False,
             "criteria_changed": False,
