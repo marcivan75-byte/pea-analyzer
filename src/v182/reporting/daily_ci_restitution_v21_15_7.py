@@ -13,6 +13,17 @@ from v182.reporting import committee_ci_explainability as ci
 
 ROOT = Path(__file__).resolve().parents[3]
 VERSION = "DAILY_CI_RESTITUTION_V21_15_7"
+DAILY_CI_DETAIL_CODES = {"BUY_CANDIDATE", "WATCH"}
+PROVENANCE_USECOLS = [
+    "recorded_at_utc",
+    "isin",
+    "field",
+    "source",
+    "source_url",
+    "evidence_level",
+    "as_of",
+    "validation_status",
+]
 
 
 def _read(path: Path) -> pd.DataFrame:
@@ -111,16 +122,79 @@ def _tct_details(root: Path, selected: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _latest_selected_provenance(root: Path, detail: pd.DataFrame) -> dict[tuple[str, str], dict]:
+    """Read only CI-relevant provenance rows, keeping memory bounded.
+
+    The append-only ledger can exceed several million rows. Loading its complete
+    latest-event map just to explain a small Daily CI selection is unnecessary.
+    This scan preserves the historical latest-event semantics while retaining
+    only matching ISIN+field rows in memory.
+    """
+    path = root / "state" / "provenance" / "OBSERVATION_PROVENANCE.csv"
+    if detail.empty or not path.exists():
+        return {}
+    isins = set(detail["isin"].astype(str))
+    fields = set(detail["source_field"].astype(str))
+    if not isins or not fields:
+        return {}
+
+    matched_parts: list[pd.DataFrame] = []
+    try:
+        chunks = pd.read_csv(
+            path,
+            sep=";",
+            encoding="utf-8-sig",
+            dtype=str,
+            low_memory=False,
+            usecols=PROVENANCE_USECOLS,
+            chunksize=200_000,
+        )
+        for chunk in chunks:
+            matched = chunk[chunk["isin"].isin(isins) & chunk["field"].isin(fields)]
+            if not matched.empty:
+                matched_parts.append(matched)
+    except (OSError, ValueError, pd.errors.ParserError):
+        return {}
+
+    if not matched_parts:
+        return {}
+    frame = pd.concat(matched_parts, ignore_index=True, sort=False)
+    frame["__recorded_at_parsed"] = pd.to_datetime(frame["recorded_at_utc"], errors="coerce", utc=True)
+    frame = frame.sort_values("__recorded_at_parsed").drop_duplicates(["isin", "field"], keep="last")
+    frame = frame.drop(columns=["__recorded_at_parsed"])
+    return {
+        (str(record.get("isin", "")), str(record.get("field", ""))): record
+        for record in frame.to_dict("records")
+    }
+
+
+def _attach_selected_provenance(root: Path, detail: pd.DataFrame) -> pd.DataFrame:
+    if detail.empty:
+        return detail
+    lookup = _latest_selected_provenance(root, detail)
+    out = detail.copy()
+    for column in ["source", "source_url", "evidence_level", "as_of", "validation_status"]:
+        out[column] = [lookup.get((str(r.isin), str(r.source_field)), {}).get(column) for r in out.itertuples()]
+    return out
+
+
 def _preserve_internal_tct_provenance(root: Path, detail: pd.DataFrame) -> pd.DataFrame:
     if detail.empty:
         return detail
-    attached = ci._attach_provenance(root, detail).reset_index(drop=True)
+    attached = _attach_selected_provenance(root, detail).reset_index(drop=True)
     original = detail.reset_index(drop=True)
     tct = attached["horizon"].astype(str).str.upper().eq("TCT")
     for column in ("source", "as_of", "evidence_level", "validation_status"):
         missing = attached[column].isna() | attached[column].astype(str).str.strip().isin({"", "nan", "None"})
         attached.loc[tct & missing, column] = original.loc[tct & missing, column]
     return attached
+
+
+def _daily_ci_selection(decisions: pd.DataFrame) -> pd.DataFrame:
+    """Keep exhaustive decisions on disk, but detail only actionable Daily CI rows."""
+    selected = decisions[decisions["decision"].astype(str).isin(DAILY_CI_DETAIL_CODES)].copy()
+    selected = selected[selected["asset_class"].astype(str).isin({"ACTION", "ETF"})]
+    return selected
 
 
 def run(root: Path = ROOT) -> dict:
@@ -144,8 +218,7 @@ def run(root: Path = ROOT) -> dict:
     decisions.to_csv(committee_dir / "COMMITTEE_DECISIONS.csv", sep=";", index=False, encoding="utf-8-sig")
     decisions.to_csv(committee_dir / "CI_DAILY_DECISIONS.csv", sep=";", index=False, encoding="utf-8-sig")
 
-    selected = decisions[decisions["decision"].astype(str).isin(ci.SELECTED_CODES)].copy()
-    selected = selected[selected["asset_class"].astype(str).isin({"ACTION", "ETF"})]
+    selected = _daily_ci_selection(decisions)
     action_source = _read(root / "outputs" / "V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv")
     etf_source = _read(root / "outputs" / "V18.2_PEA_ETF_MASTER_ENRICHED.csv")
     action_registry = load_registry(root / "config" / "V21_ACTIONS_REFERENCE_V21_0.json")
@@ -188,6 +261,7 @@ def run(root: Path = ROOT) -> dict:
         "scope": ["ACTION_TCT", "ACTION_CT", "ETF_CT"],
         "decision_rows": int(len(decisions)),
         "selected_rows": int(len(selected)),
+        "detail_decision_codes": sorted(DAILY_CI_DETAIL_CODES),
         "criteria_detail_rows": int(len(detail)),
         "reference_complete_for_selected": selected_keys <= detail_keys,
         "word_output": str(word_path.relative_to(root)),
