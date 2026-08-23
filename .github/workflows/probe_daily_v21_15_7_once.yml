@@ -1,0 +1,28 @@
+name: OPS probe Daily V21.15.7 once
+
+on:
+  push:
+    branches:
+      - codex/runtime-boursorama-shared-limiter-v21-15-2
+    paths:
+      - PROBE_DAILY_V21_15_7_NOW.txt
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish latest dispatched Daily metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_BRANCH: codex/runtime-boursorama-shared-limiter-v21-15-2
+        run: |
+          gh run list --repo "${GITHUB_REPOSITORY}" --workflow committee_tct_ct_daily.yml --branch "${TARGET_BRANCH}" --event workflow_dispatch --limit 1 --json databaseId,status,conclusion,createdAt,updatedAt,headSha,url > /tmp/daily-probe.json
+          B64=$(base64 -w0 /tmp/daily-probe.json)
+          gh api --method PUT "repos/${GITHUB_REPOSITORY}/contents/OPS_DAILY_V21_15_7_PROBE.json" \
+            -f message="ops: publish Daily V21.15.7 run probe" \
+            -f content="${B64}" \
+            -f branch="${TARGET_BRANCH}" >/dev/null
