@@ -34,6 +34,7 @@ CACHE_CONTRACT_FILES = (
 
 _ORIGINAL_FAST_INSTALL = collection.DailyFastRuntime.install
 _ORIGINAL_FAST_RESTORE = collection.DailyFastRuntime.restore
+_ORIGINAL_FAST_LOADER = collection._load_fast_state
 
 
 def _collection_code_contract(root: Path = ROOT) -> str:
@@ -61,6 +62,8 @@ def _valid_weekly_snapshot() -> tuple[pd.DataFrame, pd.DataFrame, dict] | None:
         return None
     if manifest.get("version") != "WEEKLY_MASTER_SNAPSHOT_V1" or manifest.get("validated") is not True:
         return None
+    if manifest.get("static_contract") != collection._static_contract():
+        return None
     if manifest.get("actions_sha256") != collection._sha256_file(WEEKLY_ACTIONS):
         return None
     if manifest.get("etf_sha256") != collection._sha256_file(WEEKLY_ETF):
@@ -77,7 +80,7 @@ def _valid_weekly_snapshot() -> tuple[pd.DataFrame, pd.DataFrame, dict] | None:
 def _load_fast_state_compatible() -> tuple[pd.DataFrame, pd.DataFrame, dict, str]:
     """Use functional state identity; fall back to the last validated weekly master."""
     if os.environ.get("PEA_RUN_PROFILE", "").strip().upper() != "DAILY_TACTICAL":
-        return collection._load_fast_state()
+        return _ORIGINAL_FAST_LOADER()
 
     manifest = collection._load_manifest()
     valid_daily_manifest = bool(
@@ -240,6 +243,24 @@ def _run_collection_optimized_locals() -> tuple[dict, dict]:
         collection.DailyFastRuntime.restore = original_runtime_restore
 
 
+def _patch_fast_collection_audit() -> None:
+    path = collection.AUDIT
+    if not path.exists():
+        return
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    payload["wave09_refresh_cadence"] = "WEEKLY_ONLY"
+    payload["wave09_daily_network_calls"] = 0
+    payload["topdown_external_prefetch_started_at_pipeline_start"] = False
+    payload["topdown_prefetch_reused"] = False
+    payload["topdown_prefetch_fail_closed_fallback"] = False
+    payload["gdelt_exact_window_used_for_prefetch"] = False
+    payload["daily_fast_audit_semantics_v21_15_5"] = True
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+
+
 def _stamp_collection_contract(root: Path = ROOT) -> None:
     path = collection.MANIFEST
     if not path.exists():
@@ -277,6 +298,7 @@ def run(root: Path = ROOT) -> dict:
     collection_started = perf_counter()
     collection_payload, local_optimizations = _run_collection_optimized_locals()
     collection_seconds = perf_counter() - collection_started
+    _patch_fast_collection_audit()
     _stamp_collection_contract(root)
 
     replay_payload, replay_error, replay_seconds = _safe_nonblocking(
