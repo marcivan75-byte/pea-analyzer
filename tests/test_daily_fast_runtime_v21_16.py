@@ -97,18 +97,31 @@ def test_weekly_publication_requires_passed_full_quality_gate(tmp_path: Path):
     assert result["etf_rows"] == 102
 
 
-def test_daily_workflow_uses_fast_path_and_keeps_full_screening_contract():
+def test_daily_workflow_uses_single_process_fast_path_and_full_screening_contract():
     workflow = Path(".github/workflows/committee_tct_ct_daily.yml").read_text(encoding="utf-8")
-    assert "python -m v182.reporting.daily_fast_collection" in workflow
+    assert "python -m v182.reporting.daily_fast_bundle_v21_16" in workflow
+    assert "python -m v182.reporting.daily_fast_collection\n" not in workflow
+    assert "python -m v182.reporting.daily_tct_ct_runner" not in workflow
+    assert "python -m v182.reporting.tct_postmarket_bundle_run" not in workflow
     assert "python -m v182.reporting.run\n" not in workflow
-    assert "python -m v182.reporting.daily_tct_ct_runner" in workflow
-    assert "python -m v182.reporting.tct_postmarket_bundle_run" in workflow
     assert "python -m v182.reporting.tactical_shadow_bundle_run" not in workflow
     assert "python -m v182.reporting.etf_structure_state_replay" not in workflow
     assert 'PEA_YF_INCREMENTAL_PERIOD: "5d"' in workflow
     assert 'PEA_DAILY_BASELINE_MAX_AGE_DAYS: "8"' in workflow
     assert "state/action_ct/" in workflow
     assert "state/action_ct_v22_1/" in workflow
+
+
+def test_daily_bundle_preserves_order_and_nonblocking_postmarket():
+    source = Path("src/v182/reporting/daily_fast_bundle_v21_16.py").read_text(encoding="utf-8")
+    assert 'steps["fast_collection"]' in source
+    assert 'steps["tct_ct"]' in source
+    assert 'steps["postmarket"]' in source
+    assert source.index('steps["fast_collection"]') < source.index('steps["tct_ct"]') < source.index('steps["postmarket"]')
+    assert 'lambda: tct_postmarket_bundle_run.run(root), blocking=False' in source
+    assert '"previous_python_processes": 3' in source
+    assert '"current_python_processes": 1' in source
+    assert '"interpreter_startups_avoided": 2' in source
 
 
 def test_daily_fast_source_contains_no_slow_network_wave_calls():
