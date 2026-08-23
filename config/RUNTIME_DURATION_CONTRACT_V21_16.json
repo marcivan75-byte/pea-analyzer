@@ -124,6 +124,8 @@
       "governed_identity_overlay_application_owner": "WAVE01_ACTION_YAHOO_QUALIFICATION",
       "pre_bundle_sequential_step_removed": true,
       "moved_to_nonblocking_weekly_tail": true,
+      "execution_mode": "IN_PROCESS_THREAD",
+      "interpreter_startup_avoided": true,
       "decision_influence": false,
       "scoring_influence": false
     },
