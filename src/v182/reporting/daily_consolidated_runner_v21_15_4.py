@@ -24,7 +24,7 @@ def _bootstrap_safe_fast_install(self) -> None:
 
     The historical fast runtime returned immediately when ``enabled`` was false,
     so a fallback/full bootstrap run could never capture the enriched masters and
-    therefore could never promote a valid state for the next run.  Keep all fast
+    therefore could never promote a valid state for the next run. Keep all fast
     source substitutions disabled in that situation, but always wrap save_master
     so a successful full run can seed the retained state.
     """
@@ -62,9 +62,10 @@ def _safe_nonblocking(name: str, runner) -> tuple[dict, dict | None, float]:
 
 
 def _run_collection_optimized_locals() -> tuple[dict, dict]:
-    """Apply only equivalence-safe daily optimizations around collection."""
+    """Apply Daily-only runtime policy without changing models or weekly refresh."""
     original_loader = collection._load_fast_state
     original_wave3 = collection.waves.wave3_local_features
+    original_wave9 = collection.waves.wave9_topdown
     original_prefetch = collection.topdown_prefetch.fetch_external
     original_fixed_window = collection._fixed_window_fetcher
     original_runtime_install = collection.DailyFastRuntime.install
@@ -82,11 +83,22 @@ def _run_collection_optimized_locals() -> tuple[dict, dict]:
             "decision_logic_changed": False,
             "source_contract_changed": False,
         },
+        "wave09_daily_policy": {
+            "status": "WEEKLY_ONLY",
+            "daily_execution": False,
+            "weekly_execution_unchanged": True,
+            "daily_fred_calls": 0,
+            "daily_gdelt_calls": 0,
+            "daily_observations_applied": 0,
+            "retained_master_values_are_not_cleared": True,
+            "calls_intercepted": 0,
+            "refresh_cadence": "WEEKLY_ONLY",
+        },
         "topdown_early_prefetch": {
-            "status": "DISABLED_TO_PRESERVE_WAVE09_CURRENT_WINDOW_FRESHNESS",
-            "reason": "RUN_START_WINDOW_COULD_MISS_ARTICLES_PUBLISHED_BEFORE_WAVE09",
-            "gdelt_request_set_changed": False,
-            "gdelt_rate_limit_changed": False,
+            "status": "DISABLED_WAVE09_WEEKLY_ONLY",
+            "reason": "WAVE09_EXTERNAL_REFRESH_REMOVED_FROM_DAILY_TACTICAL",
+            "gdelt_request_set_changed_in_daily": True,
+            "weekly_request_set_changed": False,
         },
     }
 
@@ -95,19 +107,36 @@ def _run_collection_optimized_locals() -> tuple[dict, dict]:
         if mode in {"DELTA_ONLY", "RECONCILE_CACHE"} and not actions.empty:
             actions, clock = refresh_earnings_clock(actions)
             diagnostics["earnings_clock"] = {**clock, "status": "APPLIED", "fast_mode": mode}
+        diagnostics["wave09_daily_policy"]["fast_state_mode"] = mode
         return actions, etf, manifest, mode
 
     def disabled_prefetch(prepared, *, fred_api_key):
-        # Return an intentional fingerprint mismatch immediately. The fast WAVE09
-        # wrapper then uses its fail-closed historical `original_wave9` path.
+        # The Daily path never performs W09 external I/O. Return immediately so
+        # even the fast runtime's speculative prefetch cannot issue FRED/GDELT calls.
         return collection.topdown_prefetch.ExternalTopdown(
             macro=None,
             news_results={},
-            query_fingerprint="EARLY_PREFETCH_DISABLED_FOR_FRESHNESS",
+            query_fingerprint="WAVE09_WEEKLY_ONLY_NO_DAILY_PREFETCH",
         )
+
+    def weekly_only_wave9(actions_df, etf_df, cfg, fred_api_key):
+        # Keep any W09 values already present in the retained enriched masters by
+        # applying no observations. The weekly/full runner does not use this local
+        # override and therefore retains the complete historical W09 implementation.
+        policy = diagnostics["wave09_daily_policy"]
+        policy["calls_intercepted"] = int(policy.get("calls_intercepted", 0)) + 1
+        return [], [], {
+            "status": "SKIPPED_DAILY_WEEKLY_ONLY",
+            "refresh_cadence": "WEEKLY_ONLY",
+            "fred_calls": 0,
+            "gdelt_calls": 0,
+            "observations_applied": 0,
+            "retained_master_values_are_not_cleared": True,
+        }
 
     collection._load_fast_state = current_loader
     collection.waves.wave3_local_features = wave3_cpu.wave3_local_features
+    collection.waves.wave9_topdown = weekly_only_wave9
     collection.topdown_prefetch.fetch_external = disabled_prefetch
     collection._fixed_window_fetcher = lambda _anchor, original_fetch: original_fetch
     collection.DailyFastRuntime.install = _bootstrap_safe_fast_install
@@ -117,6 +146,7 @@ def _run_collection_optimized_locals() -> tuple[dict, dict]:
     finally:
         collection._load_fast_state = original_loader
         collection.waves.wave3_local_features = original_wave3
+        collection.waves.wave9_topdown = original_wave9
         collection.topdown_prefetch.fetch_external = original_prefetch
         collection._fixed_window_fetcher = original_fixed_window
         collection.DailyFastRuntime.install = original_runtime_install
@@ -124,12 +154,13 @@ def _run_collection_optimized_locals() -> tuple[dict, dict]:
 
 
 def run(root: Path = ROOT) -> dict:
-    """Daily production entrypoint with historical blocking semantics preserved.
+    """Daily production entrypoint with W09 external refresh delegated to weekly.
 
     Collection remains blocking. ETF structural replay remains fail-soft as in the
     former workflow `continue-on-error` step. The tactical DAG owns its historical
     blocking core/enrichment and fail-soft SHADOW/postmarket branches internally.
-    No model, source contract, score, weight or threshold is changed here.
+    Models, criteria, weights and thresholds are unchanged; only W09 refresh cadence
+    is changed from Daily to weekly by explicit user policy.
     """
     started = perf_counter()
     auditdir = root / "outputs" / "audit"
@@ -162,6 +193,10 @@ def run(root: Path = ROOT) -> dict:
             "tactical_shadow_and_postmarket": "FAIL_SOFT_RECORDED",
         },
         "local_optimizations": local_optimizations,
+        "wave09_refresh_cadence": "WEEKLY_ONLY",
+        "wave09_daily_external_refresh_enabled": False,
+        "wave09_weekly_execution_unchanged": True,
+        "data_refresh_cadence_changed": True,
         "decision_logic_changed": False,
         "criteria_changed": False,
         "weights_changed": False,
@@ -173,6 +208,7 @@ def run(root: Path = ROOT) -> dict:
                 "status": collection_payload.get("status"),
                 "fast_mode": collection_payload.get("daily_fast_collection", {}).get("mode"),
                 "fast_state_promoted": collection_payload.get("daily_fast_collection", {}).get("promoted"),
+                "wave09_refresh": "SKIPPED_DAILY_WEEKLY_ONLY",
             },
             "etf_structure_replay": {
                 "status": replay_payload.get("status"),
