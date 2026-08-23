@@ -234,11 +234,13 @@ def test_weekly_tail_parallelism_preserves_tct_writer_order():
     assert '"decision_brief": pool.submit' in source
     assert '"etf_fund_flows": pool.submit' in source
     assert '"criteria_governance": pool.submit' in source
-    assert '"identity_hydration": pool.submit' in source
+    assert '"identity_hydration": pool.submit(_run_identity_hydration, root)' in source
     assert '"identity_hydration_removed_from_pre_bundle_critical_path": True' in source
     assert '"identity_overlay_application_still_owned_by_wave01": True' in source
+    assert '"identity_hydration_execution_mode": "IN_PROCESS_THREAD"' in source
+    assert '"identity_hydration_interpreter_startup_avoided": True' in source
     assert '"tct_state_writers_parallelized": False' in source
-    assert '"subprocess_isolation": True' in source
+    assert '"legacy_tail_modules_subprocess_isolated": True' in source
 
 
 def test_weekly_unified_parallelism_is_dependency_safe():
@@ -271,6 +273,8 @@ def test_duration_contract_is_static_and_has_authoritative_job_measurement():
     assert budget["targets_are_not_observed_runtime"] is True
     assert budget["daily_billable_budget_minutes"] == 6
     assert budget["weekly_billable_budget_minutes"] == 19
+    assert contract["weekly_architecture"]["identity_hydration_strategy"]["moved_to_nonblocking_weekly_tail"] is True
+    assert "IDENTITY_HYDRATION_DIAGNOSTIC" in contract["weekly_architecture"]["weekly_tail_parallel_lanes"]
     measurement = contract["measurement_contract"]
     assert measurement["core_bundle_runtime_is_authoritative"] is False
     assert measurement["authoritative_runtime_source"] == "outputs/audit/GITHUB_JOB_RUNTIME_V21_16.json_AND_GITHUB_STEP_SUMMARY"
