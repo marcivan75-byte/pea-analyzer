@@ -155,7 +155,7 @@ La fin du job contient cinq lanes :
 4. Criteria Governance ;
 5. Identity Hydration diagnostic.
 
-`identity_hydration` a été retiré du chemin séquentiel avant le bundle. Il ne pilote pas l'identité réellement utilisée par la collecte : l'overlay gouverné est appliqué directement par WAVE01 lors de la qualification Yahoo. Le worklist est donc publié en fin de chaîne, non bloquant, sans influence score/décision.
+`identity_hydration` a été retiré du chemin séquentiel avant le bundle. Il ne pilote pas l'identité réellement utilisée par la collecte : l'overlay gouverné est appliqué directement par WAVE01 lors de la qualification Yahoo. Le worklist est donc publié en fin de chaîne, non bloquant, sans influence score/décision. Cette lane légère s'exécute dans un thread du processus parent : aucun nouvel interpréteur Python n'est démarré pour elle, tandis que les anciens modules de fin de chaîne qui nécessitent l'isolation conservent leurs sous-processus.
 
 ### 7. Sérialisation et installation
 
