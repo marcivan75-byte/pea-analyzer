@@ -10,6 +10,7 @@ from typing import Any
 
 
 RUNTIME_VERSION = "PIPELINE_RUNTIME_V21_13_7"
+DURATION_CONTRACT = Path(__file__).resolve().parents[3] / "config" / "RUNTIME_DURATION_CONTRACT_V21_16.json"
 
 
 def _utc_now() -> str:
@@ -27,11 +28,78 @@ def _atomic_text(path: Path, content: str) -> None:
     temporary.replace(path)
 
 
+def _load_duration_contract() -> dict:
+    if not DURATION_CONTRACT.exists():
+        return {}
+    try:
+        payload = json.loads(DURATION_CONTRACT.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _budget_for_profile(profile: str) -> dict:
+    contract = _load_duration_contract()
+    budget = contract.get("v21_16_1_static_design_budget") if isinstance(contract.get("v21_16_1_static_design_budget"), dict) else {}
+    normalized = str(profile or "").strip().upper()
+    if normalized == "DAILY_TACTICAL":
+        expected = budget.get("daily_expected_wall_range_minutes")
+        alert = budget.get("daily_alert_wall_minutes")
+        billable = budget.get("daily_billable_budget_minutes")
+        scope = "DAILY_TACTICAL_MON_THU"
+    elif normalized == "WEEKLY_FULL_COMMITTEE":
+        expected = budget.get("weekly_expected_wall_range_minutes")
+        alert = budget.get("weekly_alert_wall_minutes")
+        billable = budget.get("weekly_billable_budget_minutes")
+        scope = "WEEKLY_FULL_COMMITTEE_FRIDAY"
+    else:
+        return {}
+    return {
+        "contract_version": contract.get("version"),
+        "scope": scope,
+        "expected_wall_range_minutes": expected,
+        "billable_budget_minutes": billable,
+        "alert_wall_minutes": alert,
+        "targets_are_not_observed_runtime": True,
+    }
+
+
+def _budget_result(profile: str, wall_seconds: float) -> dict:
+    budget = _budget_for_profile(profile)
+    if not budget:
+        return {}
+    wall_minutes = max(0.0, float(wall_seconds)) / 60.0
+    expected = budget.get("expected_wall_range_minutes")
+    alert = budget.get("alert_wall_minutes")
+    upper = None
+    if isinstance(expected, list) and len(expected) >= 2:
+        try:
+            upper = float(expected[1])
+        except (TypeError, ValueError):
+            upper = None
+    try:
+        alert_value = float(alert) if alert is not None else None
+    except (TypeError, ValueError):
+        alert_value = None
+    status = "MEASURED_NO_THRESHOLD"
+    if alert_value is not None and wall_minutes > alert_value:
+        status = "ALERT_EXCEEDED"
+    elif upper is not None and wall_minutes > upper:
+        status = "ABOVE_DESIGN_RANGE_BELOW_ALERT"
+    elif upper is not None:
+        status = "WITHIN_STATIC_DESIGN_RANGE"
+    return {
+        **budget,
+        "measured_wall_minutes": round(wall_minutes, 4),
+        "measurement_comparison_status": status,
+    }
+
+
 class RuntimeTelemetry:
     """Persist wall/CPU stage timings without changing pipeline decisions.
 
     ``transition`` closes the preceding stage and immediately persists a
-    checkpoint.  A failed process therefore retains every completed stage plus
+    checkpoint. A failed process therefore retains every completed stage plus
     the name of the active stage instead of losing all runtime evidence.
     """
 
@@ -104,12 +172,11 @@ class RuntimeTelemetry:
     def _payload(self) -> dict[str, Any]:
         now_wall = time.perf_counter()
         now_cpu = time.process_time()
+        wall_seconds = _round_seconds(now_wall - self._wall_start)
         totals_by_category: dict[str, float] = {}
         for stage in self._stages:
             category = str(stage["category"])
-            totals_by_category[category] = totals_by_category.get(category, 0.0) + float(
-                stage["wall_seconds"]
-            )
+            totals_by_category[category] = totals_by_category.get(category, 0.0) + float(stage["wall_seconds"])
         active = None
         if self._active is not None:
             active = {
@@ -125,11 +192,12 @@ class RuntimeTelemetry:
             "profile": self.profile,
             "started_at_utc": self.started_at_utc,
             "updated_at_utc": _utc_now(),
-            "wall_seconds": _round_seconds(now_wall - self._wall_start),
+            "wall_seconds": wall_seconds,
             "cpu_seconds": _round_seconds(now_cpu - self._cpu_start),
             "totals_by_category_seconds": {
                 key: _round_seconds(value) for key, value in sorted(totals_by_category.items())
             },
+            "duration_contract": _budget_result(self.profile, wall_seconds),
             "active_stage": active,
             "stages": self._stages,
             "decision_logic_changed": False,
@@ -195,6 +263,7 @@ def write_step_runtime(
         "generated_at_utc": _utc_now(),
         "wall_seconds": _round_seconds(wall_seconds),
         "cpu_seconds": _round_seconds(cpu_seconds),
+        "duration_contract": _budget_result(profile, wall_seconds),
         "steps": rows,
         "decision_logic_changed": False,
     }
