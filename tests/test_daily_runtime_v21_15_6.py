@@ -3,12 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
-import pytest
 
 from v182.reporting import daily_consolidated_runner_v21_15_4 as deployed
-from v182.reporting import daily_consolidated_runner_v21_15_6 as consolidated
 from v182.reporting import daily_consolidated_runner_v21_15_7 as final_daily
 from v182.reporting import daily_tactical_super_runner_v21_15_6 as tactical
+from v182.reporting import daily_w09_seed_v21_15_7 as w09_seed
 from v182.reporting import tct_postmarket_bundle_run as postmarket
 
 
@@ -17,16 +16,52 @@ def test_deployed_entrypoint_routes_to_v21_15_7():
     assert deployed.run is final_daily.run
 
 
-def test_v21_15_6_historical_seed_guard_still_fails_closed_without_state():
-    with pytest.raises(RuntimeError, match="DAILY_WEEKLY_BASELINE_MISSING"):
-        consolidated._require_valid_daily_seed(pd.DataFrame(), pd.DataFrame(), {}, "DISABLED")
+def test_validated_daily_w09_seed_is_run8_and_zero_network():
+    contract = w09_seed.audit_contract()
+    assert contract["status"] == "VALID"
+    assert contract["source_run_id"] == 32626511307
+    assert contract["as_of"] == "2026-08-23"
+    assert contract["daily_network_calls"] == 0
 
 
-def test_v21_15_6_historical_seed_guard_accepts_valid_reconcile_state():
-    actions = pd.DataFrame({"isin": ["A"]})
-    etf = pd.DataFrame({"isin": ["E"]})
-    result = consolidated._require_valid_daily_seed(actions, etf, {"source": "WEEKLY_MASTER_SNAPSHOT_V1"}, "RECONCILE_CACHE")
-    assert result[3] == "RECONCILE_CACHE"
+def test_daily_w09_seed_rehydrates_materialized_action_fields_without_network():
+    actions = pd.DataFrame(
+        {
+            "isin": ["FR0010208488", "ZZ0000000000"],
+            "country_yf": ["France", "France"],
+            "sector_yf": ["Energy", "Industrials"],
+        }
+    )
+    observations, diagnostics = w09_seed.action_observations(actions)
+    fields = {row["field"] for row in observations}
+    assert "funnel_global_macro_score" in fields
+    assert "funnel_market_sentiment_score" in fields
+    assert "funnel_country_macro_score" in fields
+    assert "funnel_sector_news_score" in fields
+    assert "funnel_instrument_news_score" in fields
+    assert "news_catalyst_score" in fields
+    assert diagnostics["source_run_id"] == 32626511307
+    assert diagnostics["fred_calls"] == 0
+    assert diagnostics["gdelt_calls"] == 0
+    assert diagnostics["network_calls"] == 0
+    assert diagnostics["etf_w09_fabricated"] is False
+
+
+def test_empty_daily_tct_shadow_keeps_csv_schema():
+    frame = tactical.base._empty_tct_shadow_schema()
+    assert frame.empty
+    required = {
+        "asset_class",
+        "horizon",
+        "isin",
+        "score",
+        "status",
+        "decision",
+        "t1_t2_formula_version",
+        "t1_t2_score_influence",
+        "t1_t2_live_execution_allowed",
+    }
+    assert required.issubset(frame.columns)
 
 
 def test_daily_action_ct_latest_isolated_and_restored(monkeypatch, tmp_path: Path):
@@ -60,7 +95,13 @@ def test_postmarket_lineage_storage_cast_is_restored(monkeypatch, tmp_path: Path
 
     def fake_run(root):
         frame = pd.DataFrame({"pit_label_evaluable": [float("nan")]})
-        output, _ = postmarket.lineage.apply_lineage(frame, pd.DataFrame(), minimum_snapshot_coverage=0.8, labeled_at_utc="x", cfg={})
+        output, _ = postmarket.lineage.apply_lineage(
+            frame,
+            pd.DataFrame(),
+            minimum_snapshot_coverage=0.8,
+            labeled_at_utc="x",
+            cfg={},
+        )
         assert output["pit_label_evaluable"].iloc[0] == False
         return {"status": "SUCCESS"}
 
