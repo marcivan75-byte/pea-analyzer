@@ -261,16 +261,9 @@ jobs:
         continue-on-error: true
         run: python -m v182.reporting.tct_postmarket_bundle_run
 
-      - name: Build synthetic decision brief
+      - name: Build decision brief + Fund Flows + criteria governance
         if: always()
-        run: python -m v182.reporting.decision_brief
-
-      - name: Run ETF Fund Flows V1 SHADOW context
-        continue-on-error: true
-        run: python -m v182.reporting.etf_fund_flows_shadow_run
-
-      - name: Audit criteria governance
-        run: python -m v182.reporting.criteria_governance_audit
+        run: python -m v182.reporting.weekly_post_decision_bundle_run
 
       - name: Show unified summary
         if: always()
