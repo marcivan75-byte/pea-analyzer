@@ -17,6 +17,7 @@
     "refresh_budget": 40,
     "request_start_interval_seconds": 1.0,
     "max_workers": 4,
+    "provider_max_inflight": 4,
     "asset_branches_overlap_under_shared_limiter": true,
     "required_action_context_families": [
       "quote_volume_market_cap_sector_pea",
