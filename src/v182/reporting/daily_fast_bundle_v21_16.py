@@ -12,7 +12,7 @@ from v182.reporting import tct_postmarket_bundle_run
 from v182.reporting.runtime_telemetry import _budget_result
 
 ROOT = Path(__file__).resolve().parents[3]
-VERSION = "DAILY_FAST_BUNDLE_V21_16_2"
+VERSION = "DAILY_FAST_BUNDLE_V21_16_3_IN_MEMORY"
 
 
 def _timed(name: str, func, *, blocking: bool) -> dict:
@@ -39,15 +39,45 @@ def _timed(name: str, func, *, blocking: bool) -> dict:
         return payload
 
 
+def _collect_in_memory(root: Path) -> tuple[dict, object, object]:
+    started = time.perf_counter()
+    try:
+        result, actions, etfs = daily_fast_collection.run(
+            root,
+            persist_masters=False,
+            persist_daily_baseline=False,
+            persist_auxiliary_outputs=False,
+            return_frames=True,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"DAILY_FAST_BUNDLE_FAST_COLLECTION_FAILED:{type(exc).__name__}:{str(exc)[:240]}") from exc
+    step = {
+        "status": "SUCCESS",
+        "blocking": True,
+        "wall_seconds": round(time.perf_counter() - started, 6),
+        "result": result,
+    }
+    return step, actions, etfs
+
+
 def run(root: Path = ROOT) -> dict:
     started = time.perf_counter()
     steps: dict[str, dict] = {}
-    steps["fast_collection"] = _timed(
-        "FAST_COLLECTION", lambda: daily_fast_collection.run(root), blocking=True
-    )
+    collection_step, actions, etfs = _collect_in_memory(root)
+    steps["fast_collection"] = collection_step
     steps["tct_ct"] = _timed(
-        "TCT_CT", lambda: daily_tct_ct_runner.run(root), blocking=True
+        "TCT_CT",
+        lambda: daily_tct_ct_runner.run(
+            root,
+            actions=actions,
+            etfs=etfs,
+            persist_full_baseline=False,
+        ),
+        blocking=True,
     )
+    # Release full master references before the news/postmarket phase. The
+    # downstream catalyst consumes the compact tactical seed, not the masters.
+    del actions, etfs
     steps["postmarket"] = _timed(
         "POSTMARKET", lambda: tct_postmarket_bundle_run.run(root), blocking=False
     )
@@ -62,6 +92,10 @@ def run(root: Path = ROOT) -> dict:
         "previous_python_processes": 3,
         "current_python_processes": 1,
         "interpreter_startups_avoided": 2,
+        "full_master_csv_roundtrip_avoided": True,
+        "weekly_baseline_parquet_rewrite_avoided": True,
+        "daily_auxiliary_sector_files_skipped": True,
+        "compact_tct_baseline_export": True,
         "step_order": ["fast_collection", "tct_ct", "postmarket"],
         "postmarket_failure_is_nonblocking": True,
         "decision_logic_changed": False,
