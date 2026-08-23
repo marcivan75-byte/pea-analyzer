@@ -296,6 +296,7 @@ def enrich_selected_rows(
     bcfg = contract["boursorama"]
     icfg = contract["investing"]
     retry_ttl = float(icfg.get("unmapped_retry_ttl_hours", 24.0))
+    technical_retry_ttl = float(icfg.get("technical_failure_retry_ttl_hours", 2.0))
     action_cache = root / "state" / "provenance" / "source_cache" / "BOURSORAMA_SELECTED_V1.json"
     action_cache_migrated = _migrate_cache_version(
         action_cache,
@@ -365,6 +366,7 @@ def enrich_selected_rows(
             refresh_budget=int(icfg["refresh_budget"]),
             ttl_hours=float(icfg["ttl_hours"]),
             unmapped_retry_ttl_hours=retry_ttl,
+            technical_failure_retry_ttl_hours=technical_retry_ttl,
             request_start_interval_seconds=float(icfg["request_start_interval_seconds"]),
             max_workers=int(icfg["max_workers"]),
             allow_network=allow_network,
@@ -458,6 +460,7 @@ def enrich_selected_rows(
         "investing_unmapped_resolution_deferred": int(deferred_unmapped),
         "investing_unresolved_cooldown_skipped": int(cooldown_skipped),
         "investing_unmapped_retry_ttl_hours": retry_ttl,
+        "investing_technical_failure_retry_ttl_hours": technical_retry_ttl,
         "boursorama_actions": b_action.metrics if b_action is not None else {"status": "NO_ACTION_SELECTED_OR_BRANCH_FAILED"},
         "boursorama_etfs": b_etf.metrics if b_etf is not None else {"status": "NO_ETF_SELECTED_OR_BRANCH_FAILED"},
         "investing": investing.metrics if investing is not None else {"status": "BRANCH_FAILED"},
