@@ -35,6 +35,21 @@ def _daily_tct_scope(actions_with_tct: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     return actions_with_tct.loc[mask].copy()
 
 
+def _empty_tct_shadow_schema() -> pd.DataFrame:
+    """Return a header-only exact TCT shadow consumable by downstream CSV readers."""
+    template = base.exact_timing._snapshot_row(
+        pd.Series(dtype=object),
+        "SKIPPED_DAILY_EMPTY_SCOPE",
+        "NO_T1_T2",
+        None,
+        0.0,
+        {},
+        "NO_DAILY_TCT_ROW_ELIGIBLE",
+        False,
+    )
+    return pd.DataFrame(columns=list(template.keys()))
+
+
 def _build_core_daily(root: Path) -> dict:
     """Build the historical Daily decisions while bounding exact TCT work to Top20."""
     outputs = root / "outputs"
@@ -63,8 +78,10 @@ def _build_core_daily(root: Path) -> dict:
         tct_state_path,
         tct_cfg,
     )
+    if tct_shadow is None or (tct_shadow.empty and len(tct_shadow.columns) == 0):
+        tct_shadow = _empty_tct_shadow_schema()
     base._write(tct_shadow, outdir / "TCT_SHADOW_V24_1_7.csv")
-    if tct_shadow is not None and not tct_shadow.empty:
+    if not tct_shadow.empty:
         parts.append(base.tct_adapter(tct_shadow))
 
     decisions = pd.concat([part for part in parts if part is not None and not part.empty], ignore_index=True, sort=False)
@@ -82,6 +99,7 @@ def _build_core_daily(root: Path) -> dict:
         "version": VERSION,
         "action_universe_rows": int(len(actions_with_tct)),
         "tct_exact_daily_rows": int(len(exact_scope)),
+        "tct_shadow_header_preserved_when_empty": True,
         "tct_exact_weekly_full_universe_preserved": True,
         "daily_exact_policy": "CURRENT_BASELINE_TOP_N_WITH_MINIMUM_COVERAGE_ONLY",
         "baseline_top_n": int(tct_cfg.get("scope", {}).get("baseline_top_n", 20)),
@@ -237,6 +255,7 @@ def _patch_runtime_audits(root: Path, payload: dict) -> None:
     enriched["version"] = VERSION
     enriched["daily_scope_optimization"] = {
         "tct_exact": "BASELINE_TOP_N_ONLY",
+        "tct_empty_shadow_schema_preserved": True,
         "action_ct_shadow": "UPSTREAM_PRESELECTION_TOP_N_ONLY",
         "tct_trader": "TCT_DAILY_TOP_N_INPUT_ONLY",
         "investing": "BOUNDED_DAILY_RETRY_FULL_WEEKLY_REFRESH",
