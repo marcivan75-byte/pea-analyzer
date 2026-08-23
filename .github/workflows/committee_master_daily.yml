@@ -244,19 +244,14 @@ jobs:
       - name: Publish Action identity hydration worklist
         run: python -m v182.audit.identity_hydration
 
-      - name: Run optimized weekly unified Committee pipeline
-        run: python -m v182.reporting.weekly_unified_fast_v21_16
-
-      - name: Reuse current weekly Committee for Friday tactical outputs
-        run: python -m v182.reporting.friday_tactical_reuse_v21_16
-
-      - name: Run optimized weekly tail in parallel lanes
-        run: python -m v182.reporting.weekly_tail_parallel_v21_16
+      - name: Run optimized weekly full bundle
+        run: python -m v182.reporting.weekly_full_bundle_v21_16
 
       - name: Publish weekly summaries and audits
         if: always()
         run: |
           for f in \
+            outputs/audit/WEEKLY_FULL_BUNDLE_V21_16.json \
             outputs/unified/UNIFIED_SUMMARY_LATEST.json \
             outputs/committee_master/SUMMARY.json \
             outputs/audit/V21_8_ENTRY_EXIT_GOVERNANCE.json \
