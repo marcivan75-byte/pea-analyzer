@@ -10,20 +10,14 @@ from v182.features import action_decision_enhancements as action_enhancements
 from v182.features import sector_rotation as sector_rotation
 from v182.reporting import run as legacy
 from v182.reporting import waves
+from v182.reporting.daily_source_prewarm_v21_16 import WEEKLY_SEED_PATH, prewarm
 
 ROOT = Path(__file__).resolve().parents[3]
-VERSION = "WEEKLY_ENRICHMENT_FAST_OUTPUTS_V21_16_2"
+VERSION = "WEEKLY_ENRICHMENT_FAST_OUTPUTS_V21_16_3_PREWARM"
 
 
 def _restamp_internal_observations(observations: list[dict]) -> list[dict]:
-    """Stamp precomputed local observations at their historical application point.
-
-    WAVE10/WAVE11 historically construct their local observations after WAVE09.
-    The optimized collector computes them while WAVE09 waits on FRED/GDELT, but
-    applies them in the original order. Re-stamping here preserves the effective
-    collection/as-of semantics rather than exposing the earlier speculative CPU
-    start time in provenance.
-    """
+    """Stamp precomputed local observations at their historical application point."""
     if not observations:
         return observations
     stamp = datetime.now(timezone.utc).isoformat()
@@ -34,25 +28,45 @@ def _restamp_internal_observations(observations: list[dict]) -> list[dict]:
     return observations
 
 
-def run() -> dict:
-    """Run the complete weekly collector with lean serialization and safe I/O overlap.
+def _safe_weekly_source_prewarm(root: Path) -> dict:
+    try:
+        return prewarm(
+            root,
+            seed_path=WEEKLY_SEED_PATH,
+            max_prewarm=40,
+            max_seed_age_days=8.0,
+            profile="WEEKLY_SOURCE_PREWARM",
+        )
+    except Exception as exc:
+        return {
+            "status": "FAILED_NONBLOCKING",
+            "network_attempted": True,
+            "error": type(exc).__name__,
+            "detail": str(exc)[:400],
+        }
 
-    Network collection, universes, observations, quality gates and enriched CSV
-    masters are unchanged. Redundant XLSX serialization is removed. In addition,
-    WAVE10 sector rotation and WAVE11 Action enhancement CPU work are precomputed
-    from the exact post-WAVE08 snapshot while WAVE09 waits on independent FRED/
-    GDELT network I/O. Their observations are still applied in historical order
-    WAVE09 -> WAVE10 -> WAVE11, with application-time provenance timestamps.
+
+def run() -> dict:
+    """Run the complete weekly collector with lean serialization and safe overlap.
+
+    The prior Committee's selected Boursorama/Investing cache is refreshed on a
+    separate provider lane while the full weekly collector runs. This future is
+    always joined before the collector returns, so the subsequent Committee gate
+    can never race cache writes. WAVE10/WAVE11 local CPU work is also hidden under
+    WAVE09 FRED/GDELT I/O while preserving historical application order.
     """
     original_audit = legacy._audit
     original_exports = legacy._export_excel_reports
     original_wave9 = waves.wave9_topdown
     original_rotation = sector_rotation.build_rotation_observations
     original_enhancements = action_enhancements.build_action_enhancement_observations
-    pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="weekly-local-under-topdown")
+    local_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="weekly-local-under-topdown")
+    source_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="weekly-source-prewarm")
+    source_prewarm_future = source_pool.submit(_safe_weekly_source_prewarm, ROOT)
     pending: dict[str, Future] = {}
     overlap_started = {"rotation": False, "action_enhancements": False}
     overlap_reused = {"rotation": False, "action_enhancements": False}
+    source_prewarm_result: dict = {"status": "NOT_JOINED"}
 
     def lean_audit(
         actions: pd.DataFrame,
@@ -89,12 +103,8 @@ def run() -> dict:
         cfg: dict,
         fred_api_key: str | None,
     ):
-        # WAVE08 has completed at this point. WAVE10 consumes only OHLCV/sector
-        # fields and WAVE11 only Morningstar/target/dividend/consensus fields;
-        # neither consumes any WAVE09 output. Immutable copies therefore retain
-        # the exact relevant input snapshot while local CPU work hides under I/O.
-        pending["rotation"] = pool.submit(original_rotation, actions_df.copy())
-        pending["action_enhancements"] = pool.submit(original_enhancements, actions_df.copy())
+        pending["rotation"] = local_pool.submit(original_rotation, actions_df.copy())
+        pending["action_enhancements"] = local_pool.submit(original_enhancements, actions_df.copy())
         overlap_started["rotation"] = True
         overlap_started["action_enhancements"] = True
         return original_wave9(actions_df, etf_df, cfg, fred_api_key)
@@ -122,13 +132,16 @@ def run() -> dict:
     action_enhancements.build_action_enhancement_observations = reused_enhancements
     try:
         payload = legacy.run()
+        # Mandatory join point before Committee scoring/source gate begins.
+        source_prewarm_result = source_prewarm_future.result()
     finally:
         legacy._audit = original_audit
         legacy._export_excel_reports = original_exports
         waves.wave9_topdown = original_wave9
         sector_rotation.build_rotation_observations = original_rotation
         action_enhancements.build_action_enhancement_observations = original_enhancements
-        pool.shutdown(wait=True, cancel_futures=False)
+        local_pool.shutdown(wait=True, cancel_futures=False)
+        source_pool.shutdown(wait=True, cancel_futures=False)
 
     payload["weekly_output_optimization"] = {
         "version": VERSION,
@@ -147,6 +160,15 @@ def run() -> dict:
             "outputs/V18.2_RUN_REPORT.xlsx",
         ],
         "committee_ci_outputs_affected": False,
+        "weekly_source_prewarm": {
+            "seed_path": str(WEEKLY_SEED_PATH),
+            "max_unique_isins": 40,
+            "parallel_with_full_collection": True,
+            "joined_before_committee_gate": True,
+            "failure_nonblocking": True,
+            "current_gate_still_completes_new_candidates": True,
+            "result": source_prewarm_result,
+        },
         "topdown_overlap": {
             "network_stage": "WAVE_09_TOPDOWN_FRED_GDELT",
             "local_precomputed_stages": ["WAVE_10_SECTOR_ROTATION", "WAVE_11_ACTION_DECISION_FACTORS"],
