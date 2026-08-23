@@ -2,27 +2,31 @@ from __future__ import annotations
 
 import json
 
-from v182.reporting import daily_consolidated_runner_v21_15_5 as impl
+from v182.reporting import daily_consolidated_runner_v21_15_6 as impl
 
 
 # Compatibility entrypoint retained because the deployed workflow historically
-# invokes V21.15.4. All runtime authority now lives in the finalized V21.15.5
-# implementation; aliases below preserve existing tests and downstream imports.
+# invokes V21.15.4. Runtime authority now lives in finalized V21.15.6.
 ROOT = impl.ROOT
 VERSION = impl.VERSION
-collection = impl.collection
-tactical = impl.tactical
-etf_replay = impl.etf_replay
-wave3_cpu = impl.wave3_cpu
-refresh_earnings_clock = impl.refresh_earnings_clock
-
-_bootstrap_safe_fast_install = impl._bootstrap_safe_fast_install
-_bootstrap_safe_fast_restore = impl._bootstrap_safe_fast_restore
-_safe_nonblocking = impl._safe_nonblocking
-_run_collection_optimized_locals = impl._run_collection_optimized_locals
-_collection_code_contract = impl._collection_code_contract
-_load_fast_state_compatible = impl._load_fast_state_compatible
 run = impl.run
+
+# Compatibility aliases retained for tests/downstream imports that used the old
+# V21.15.4 module as a facade.
+base = impl.base
+collection = impl.base.collection
+etf_replay = impl.base.etf_replay
+wave3_cpu = impl.base.wave3_cpu
+refresh_earnings_clock = impl.base.refresh_earnings_clock
+tactical = impl.tactical
+
+_bootstrap_safe_fast_install = impl.base._bootstrap_safe_fast_install
+_bootstrap_safe_fast_restore = impl.base._bootstrap_safe_fast_restore
+_safe_nonblocking = impl.base._safe_nonblocking
+_run_collection_optimized_locals = impl.base._run_collection_optimized_locals
+_collection_code_contract = impl.base._collection_code_contract
+_load_fast_state_compatible = impl.base._load_fast_state_compatible
+_require_valid_daily_seed = impl._require_valid_daily_seed
 
 
 if __name__ == "__main__":
