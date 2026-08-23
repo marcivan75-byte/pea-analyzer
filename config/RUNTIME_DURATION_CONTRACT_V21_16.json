@@ -1,5 +1,5 @@
 {
-  "version": "RUNTIME_DURATION_CONTRACT_V21_16_2",
+  "version": "RUNTIME_DURATION_CONTRACT_V21_16_3",
   "status": "STATIC_ARCHITECTURE_VALIDATED_MEASUREMENT_PENDING_USER_AUTHORIZED_RUN",
   "scope": [
     "DAILY_TACTICAL_MON_THU",
@@ -19,15 +19,16 @@
     "weekly_wall_target_minutes": 25.2,
     "weekly_billable_target_minutes": 26
   },
-  "v21_16_1_static_design_budget": {
-    "daily_expected_wall_range_minutes": [4.8, 6.5],
-    "daily_billable_budget_minutes": 7,
-    "daily_alert_wall_minutes": 8.0,
-    "weekly_expected_wall_range_minutes": [16.5, 19.5],
-    "weekly_billable_budget_minutes": 20,
-    "weekly_alert_wall_minutes": 23.0,
+  "v21_16_3_static_design_budget": {
+    "daily_expected_wall_range_minutes": [3.8, 5.5],
+    "daily_billable_budget_minutes": 6,
+    "daily_alert_wall_minutes": 7.0,
+    "weekly_expected_wall_range_minutes": [15.5, 18.5],
+    "weekly_billable_budget_minutes": 19,
+    "weekly_alert_wall_minutes": 22.0,
     "measurement_status": "NOT_MEASURED_BY_DESIGN_USER_FORBADE_RUN_DURING_OPTIMIZATION",
-    "targets_are_not_observed_runtime": true
+    "targets_are_not_observed_runtime": true,
+    "estimate_policy": "CONSERVATIVE_STATIC_CRITICAL_PATH_ANALYSIS_NO_BENCHMARK_CLAIM"
   },
   "measurement_contract": {
     "authoritative_runtime_source": "outputs/audit/GITHUB_JOB_RUNTIME_V21_16.json_AND_GITHUB_STEP_SUMMARY",
@@ -47,12 +48,22 @@
     "slow_context_strategy": "LAST_PASSED_WEEKLY_FULL_BASELINE_PLUS_DAILY_FAST_MARKET_REFRESH",
     "baseline_max_full_age_days": 8,
     "baseline_requires_full_quality_gate_pass": true,
+    "weekly_baseline_immutable_during_mon_thu_fast_runs": true,
     "ohlcv_incremental_period": "5d",
     "slow_live_full_universe_waves_removed_from_normal_daily": true,
     "local_ohlcv_features_recomputed_daily": true,
     "local_sector_rotation_recomputed_daily": true,
     "selected_boursorama_investing_gate_retained": true,
     "selected_source_max_unique_instruments": 40,
+    "prior_selection_source_prewarm": {
+      "enabled": true,
+      "max_unique_instruments": 20,
+      "seed_age_limit_days": 8,
+      "parallel_with_full_universe_ohlcv": true,
+      "providers_distinct_from_ohlcv_provider": true,
+      "failure_nonblocking": true,
+      "current_gate_always_completes_new_candidates": true
+    },
     "tct_baseline_full_universe_retained": true,
     "t1_t2_exact_daily_scope": "BASELINE_TOP20_AND_MIN_COVERAGE_ONLY",
     "weekly_t1_t2_exhaustive_research_retained": true,
@@ -62,18 +73,34 @@
       "PIT_OHLC",
       "POSTMARKET_CATALYST_NEWS"
     ],
+    "daily_postmarket_news_global_market_overlap": true,
     "daily_postmarket_research_validation_deferred_to_friday": [
       "PIT_LINEAGE",
       "PIT_VALIDATOR"
     ],
     "python_processes_for_core_daily_sequence_before": 3,
     "python_processes_for_core_daily_sequence_after": 1,
+    "in_memory_master_handoff": true,
+    "full_enriched_master_csv_roundtrip_removed_from_scheduled_daily": true,
+    "daily_rewrite_of_weekly_baseline_parquets_removed": true,
+    "daily_tct_baseline_export": "COMPACT_ALL_TCT_BASELINE_RECONSTRUCTION_FIELDS_RETAINED",
+    "daily_dependency_profile": "requirements-daily-fast.txt",
+    "daily_dependency_exclusions": ["pypdf", "playwright", "openpyxl", "python-docx"],
     "fallback_if_baseline_missing_or_stale": "FORCE_FULL_LIVE_REFRESH_WITH_LONG_OHLCV_OVERLAP"
   },
   "weekly_architecture": {
     "full_live_source_refresh_retained": true,
     "full_quality_gates_retained": true,
     "full_committee_and_ci_outputs_retained": true,
+    "prior_committee_source_prewarm": {
+      "enabled": true,
+      "max_unique_instruments": 40,
+      "seed_age_limit_days": 8,
+      "parallel_with_full_collection": true,
+      "joined_before_current_committee_source_gate": true,
+      "failure_nonblocking": true,
+      "current_gate_always_completes_new_candidates": true
+    },
     "post_refresh_parallel_lanes": [
       "ETF_STRUCTURE",
       "ETF_MT_CACHE_REUSE",
@@ -84,6 +111,12 @@
       "CI_EXPLAINABILITY",
       "MON_THU_BASELINE_PERSISTENCE"
     ],
+    "topdown_network_overlap": {
+      "network_stage": "WAVE09_FRED_GDELT",
+      "local_hidden_stages": ["WAVE10_SECTOR_ROTATION", "WAVE11_ACTION_DECISION_FACTORS"],
+      "application_order_preserved": true,
+      "relevant_input_snapshot_preserved": true
+    },
     "friday_tactical_strategy": "REUSE_CURRENT_WEEKLY_COMMITTEE_AND_V21_8_OUTPUTS_NO_RESCORING",
     "separate_etf_replay_after_unified_removed": true,
     "weekly_tail_parallel_lanes": [
@@ -100,7 +133,10 @@
       "V18.2_PEA_ETF_ACTUALISE.xlsx",
       "V18.2_RUN_REPORT.xlsx"
     ],
-    "intermediate_wave_audit_xlsx_replaced_by_existing_csv_json": true
+    "intermediate_wave_audit_xlsx_replaced_by_existing_csv_json": true,
+    "weekly_dependency_profile": "requirements-market-runtime.txt",
+    "weekly_dependency_exclusions": ["pypdf", "playwright"],
+    "weekly_ci_document_dependencies_retained": ["openpyxl", "python-docx"]
   },
   "non_regression_invariants": {
     "actions_universe_count": 1829,
@@ -114,19 +150,21 @@
     "real_orders_enabled": false,
     "no_model_weight_change_for_runtime_optimization": true,
     "no_threshold_change_for_runtime_optimization": true,
-    "no_universe_reduction_for_runtime_optimization": true
+    "no_universe_reduction_for_runtime_optimization": true,
+    "same_provider_parallelism_not_increased": true
   },
   "estimated_monthly_effect_on_daily_plus_weekly_jobs_only": {
     "average_weeks_per_month": 4.348,
     "daily_runs_per_average_month": 17.392,
     "weekly_runs_per_average_month": 4.348,
     "historical_billable_minutes": 304.26,
-    "v21_16_1_billable_budget_minutes": 208.70,
-    "budget_reduction_pct": 31.4,
+    "v21_16_3_billable_budget_minutes": 186.96,
+    "budget_reduction_pct": 38.6,
     "note": "Static budget arithmetic only; excludes preopen and every other job outside this contract."
   },
   "validation_policy": {
     "during_current_optimization": "STATIC_ONLY_NO_WORKFLOW_NO_MARKET_RUN_NO_BACKTEST",
+    "static_validation_means": "ARCHITECTURE_DEPENDENCY_AND_NON_REGRESSION_GUARDS_REVIEWED_WITHOUT_EXECUTION",
     "required_before_claiming_measured_runtime": "ONE_NORMAL_DAILY_RUN_AND_ONE_NORMAL_WEEKLY_RUN_WITH_STEP_TELEMETRY_WHEN_USER_AUTHORIZES",
     "authoritative_acceptance_source": "GITHUB_JOB_RUNTIME_V21_16",
     "if_measured_runtime_exceeds_alert": "REOPEN_RUNTIME_ONLY_AUDIT_WITHOUT_CHANGING_MODEL_LOGIC"
