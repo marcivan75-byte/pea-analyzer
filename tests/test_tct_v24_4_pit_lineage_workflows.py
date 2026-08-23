@@ -7,13 +7,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_daily_workflow_persists_ohlc_ledger_from_existing_cache_only():
     workflow = (ROOT / ".github" / "workflows" / "committee_tct_ct_daily.yml").read_text(encoding="utf-8")
+    daily_tactical = (ROOT / "src" / "v182" / "reporting" / "daily_tactical_super_runner_v21_15_4.py").read_text(encoding="utf-8")
     bundle = (ROOT / "src" / "v182" / "reporting" / "tct_postmarket_bundle_run.py").read_text(encoding="utf-8")
-    assert "POSTMARKET V24.4.2 OHLC + catalyst + lineage + validator single-process" in workflow
-    assert "python -m v182.reporting.tct_postmarket_bundle_run" in workflow
+
+    assert "python -m v182.reporting.daily_consolidated_runner_v21_15_4" in workflow
     assert "state/tct_context/TCT_DAILY_OHLC_LEDGER.csv" in workflow
+    assert "tct_postmarket_bundle_run as postmarket" in daily_tactical
+    assert "lambda: postmarket.run(root=root)" in daily_tactical
     assert "ohlc_ledger.run(root=root)" in bundle
-    step = workflow.split("- name: POSTMARKET V24.4.2 OHLC + catalyst + lineage + validator single-process", 1)[1].split("- name:", 1)[0]
-    assert "continue-on-error: true" in step
+    assert 'catalyst.run(root=root, phase="POSTMARKET")' in bundle
+    assert "_run_lineage_dtype_safe(root)" in bundle
+    assert "validator.run(root=root)" in bundle
 
 
 def test_catalyst_workflow_applies_v2442_lineage_before_validator():
