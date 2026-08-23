@@ -18,13 +18,14 @@ from v182.reporting import (
     sector_rotation_v2_decision_context,
     sector_rotation_v2_shadow_run,
 )
+from v182.reporting.daily_context_baseline import publish_from_outputs
 from v182.risk import beta_correlation_engine
 from v182.reporting.runtime_telemetry import write_step_runtime
 
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[3]
-SOFTWARE_VERSION = "21.16.0"
-PROCESS_VERSION = "UNIFIED_V21_16_SOURCE_GATED_SCOPE_RATIONALIZED_NO_LT_GOLD_CRYPTO_IPO"
+SOFTWARE_VERSION = "21.16.1"
+PROCESS_VERSION = "UNIFIED_V21_16_1_RUNTIME_OPTIMIZED_SOURCE_GATED_NO_LT_GOLD_CRYPTO_IPO"
 
 
 def _safe_step(name: str, func) -> dict:
@@ -58,12 +59,41 @@ def _cached_etf_mt(root: Path) -> dict:
     return _safe_step("etf_mt", lambda: etf_mt_v2081_run.run(root, history_cache_dir=root/"data"/"cache"/"etf", refresh_history=False, refresh_if_reuse_cache_missing=True))
 
 
-def _post_risk_outputs_parallel(root: Path) -> tuple[dict, dict]:
-    """Build independent risk-control and read-only CI documents after risk state is frozen."""
-    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="post-risk-output") as pool:
-        risk_control = pool.submit(_safe_step, "risk_control_center", lambda: android_risk_control_center.run(root))
-        ci = pool.submit(_safe_step, "ci_explainability", lambda: committee_ci_explainability_v21_16.run(root))
-        return risk_control.result(), ci.result()
+def _weekly_independent_after_refresh(root: Path) -> tuple[dict, dict, dict]:
+    """Overlap three independent post-refresh branches.
+
+    ETF structure writes only the ETF structural master/state, ETF MT consumes the
+    already refreshed ETF OHLCV cache, and Sector Rotation V2 consumes the Action
+    master. They use disjoint output/state trees and none changes the other's score.
+    """
+    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="weekly-independent") as pool:
+        structure = pool.submit(_safe_step, "etf_structure", lambda: etf_structure_refresh.run(root))
+        mt = pool.submit(_cached_etf_mt, root)
+        sector = pool.submit(_safe_step, "sector_rotation_v2", lambda: sector_rotation_v2_shadow_run.run(root))
+        return structure.result(), mt.result(), sector.result()
+
+
+def _post_committee_parallel(root: Path, *, publish_daily_baseline: bool) -> tuple[dict, dict, dict]:
+    """Overlap read-only CI, risk calculation and weekly baseline persistence."""
+    workers = 3 if publish_daily_baseline else 2
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="post-committee") as pool:
+        risk_future = pool.submit(_safe_step, "risk_context", lambda: beta_correlation_engine.run(root))
+        ci_future = pool.submit(_safe_step, "ci_explainability", lambda: committee_ci_explainability_v21_16.run(root))
+        baseline_future = (
+            pool.submit(
+                _safe_step,
+                "daily_fast_baseline",
+                lambda: publish_from_outputs(root, profile="WEEKLY_FULL_COMMITTEE"),
+            )
+            if publish_daily_baseline
+            else None
+        )
+        risk = risk_future.result()
+        ci = ci_future.result()
+        baseline = baseline_future.result() if baseline_future is not None else _skip_dependency(
+            "Requires successful full refresh, ETF structure and Committee before publishing Mon-Thu fast baseline."
+        )
+        return risk, ci, baseline
 
 
 def run(root: Path = ROOT) -> dict:
@@ -71,16 +101,16 @@ def run(root: Path = ROOT) -> dict:
     steps["refresh"] = _safe_step("refresh", enrichment_run.run); refresh_ok = steps["refresh"]["status"] == "SUCCESS"; cache_only_etf_mt = refresh_ok and _primary_etf_cache_ready(root)
 
     if cache_only_etf_mt:
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="etf-independent") as pool:
-            structure = pool.submit(_safe_step, "etf_structure", lambda: etf_structure_refresh.run(root)); mt = pool.submit(_cached_etf_mt, root); steps["etf_structure"] = structure.result(); steps["etf_mt"] = mt.result()
+        steps["etf_structure"], steps["etf_mt"], steps["sector_rotation_v2"] = _weekly_independent_after_refresh(root)
     else:
         steps["etf_structure"] = _safe_step("etf_structure", lambda: etf_structure_refresh.run(root))
         steps["etf_mt"] = _cached_etf_mt(root) if refresh_ok else _safe_step("etf_mt", lambda: etf_mt_v2081_run.run(root))
+        steps["sector_rotation_v2"] = _safe_step("sector_rotation_v2", lambda: sector_rotation_v2_shadow_run.run(root)) if refresh_ok else _skip_dependency("Requires SUCCESS current refresh; stale Action masters are forbidden for Sector Rotation V2 shadow scoring.")
 
     if refresh_ok:
-        steps["sector_rotation_v2"] = _safe_step("sector_rotation_v2", lambda: sector_rotation_v2_shadow_run.run(root)); steps["committee"] = _safe_step("committee", lambda: committee_master_v21_4.run(root))
+        steps["committee"] = _safe_step("committee", lambda: committee_master_v21_4.run(root))
     else:
-        steps["sector_rotation_v2"] = _skip_dependency("Requires SUCCESS current refresh; stale Action masters are forbidden for Sector Rotation V2 shadow scoring."); steps["committee"] = _skip_dependency("Requires SUCCESS current refresh; stale or legacy Action masters are forbidden for Committee decisions.")
+        steps["committee"] = _skip_dependency("Requires SUCCESS current refresh; stale or legacy Action masters are forbidden for Committee decisions.")
 
     if steps["sector_rotation_v2"]["status"] == "SUCCESS" and steps["committee"]["status"] == "SUCCESS":
         steps["sector_rotation_v2_decision_context"] = _safe_step("sector_rotation_v2_decision_context", lambda: sector_rotation_v2_decision_context.run(root))
@@ -88,9 +118,21 @@ def run(root: Path = ROOT) -> dict:
         steps["sector_rotation_v2_decision_context"] = _skip_dependency("Requires SUCCESS current Sector Rotation V2 shadow evidence and SUCCESS current Committee decisions.")
 
     if steps["committee"]["status"] == "SUCCESS":
-        steps["risk_context"] = _safe_step("risk_context", lambda: beta_correlation_engine.run(root)); risk_control, ci = _post_risk_outputs_parallel(root); steps["risk_control_center"] = risk_control; steps["ci_explainability"] = ci
+        baseline_ok = refresh_ok and steps["etf_structure"]["status"] == "SUCCESS"
+        risk, ci, baseline = _post_committee_parallel(root, publish_daily_baseline=baseline_ok)
+        steps["risk_context"] = risk
+        steps["ci_explainability"] = ci
+        steps["daily_fast_baseline"] = baseline
+        steps["risk_control_center"] = (
+            _safe_step("risk_control_center", lambda: android_risk_control_center.run(root))
+            if risk["status"] == "SUCCESS"
+            else _skip_dependency("Requires SUCCESS current risk context before publishing the mobile risk panel.")
+        )
     else:
-        steps["risk_context"] = _skip_dependency("Requires SUCCESS current Committee decisions. Risk V1.1 never operates on stale decisions."); steps["risk_control_center"] = _skip_dependency("Requires current Committee/Risk context before publishing the mobile risk panel."); steps["ci_explainability"] = _skip_dependency("Requires SUCCESS current Committee decisions before publishing Android/PC Committee explainability.")
+        steps["risk_context"] = _skip_dependency("Requires SUCCESS current Committee decisions. Risk V1.1 never operates on stale decisions.")
+        steps["risk_control_center"] = _skip_dependency("Requires current Committee/Risk context before publishing the mobile risk panel.")
+        steps["ci_explainability"] = _skip_dependency("Requires SUCCESS current Committee decisions before publishing Android/PC Committee explainability.")
+        steps["daily_fast_baseline"] = _skip_dependency("Requires successful current weekly Committee before publishing Mon-Thu fast baseline.")
 
     steps["performance"] = {"status": "SKIPPED_GOVERNANCE", "reason": "V21.8 disables legacy fixed-stop risk sizing and virtual execution until a separately validated sizing policy exists.", "wall_seconds": 0.0, "cpu_seconds": 0.0}
     runtime_wall = time.perf_counter() - wall_start; runtime_cpu = time.process_time() - cpu_start; runtime_paths = write_step_runtime(root/"outputs"/"audit", run_id=run_id, profile="WEEKLY_FULL_COMMITTEE", wall_seconds=runtime_wall, cpu_seconds=runtime_cpu, steps=steps)
@@ -121,6 +163,7 @@ def run(root: Path = ROOT) -> dict:
         "tct_shadow": "outputs/committee_master/TCT_SHADOW_V24_1_7.csv",
         "collection_audit_latest": "outputs/data_audit/COLLECTION_DATA_AVAILABILITY_LATEST.xlsx",
         "provenance": "state/provenance/OBSERVATION_PROVENANCE.csv",
+        "daily_fast_baseline_meta": "state/provenance/daily_fast/BASELINE_META.json",
         "sector_rotation_v1": "outputs/V21_3_SECTOR_ROTATION.csv",
         "sector_rotation_v2": "outputs/sector_rotation/V2_SECTOR_ROTATION_SHADOW.csv",
         "sector_rotation_v2_audit": "outputs/audit/V2_SECTOR_ROTATION_SHADOW.json",
@@ -159,7 +202,7 @@ def run(root: Path = ROOT) -> dict:
 
     payload = {
         "version": PROCESS_VERSION, "software_version": SOFTWARE_VERSION, "run_id": run_id, "generated_at_utc": datetime.now(timezone.utc).isoformat(), "status": overall, "live_orders_enabled": False, "steps": steps, "persisted_outputs": existing, "decision_tracks": decision_tracks, "sector_rotation_v2_validation": sector_validation,
-        "runtime": {"version": "UNIFIED_RUNTIME_V21_13_7", "wall_seconds": round(runtime_wall, 6), "cpu_seconds": round(runtime_cpu, 6), "paths": runtime_paths, "decision_logic_changed": False, "source_network_ownership_changed": True},
+        "runtime": {"version": "UNIFIED_RUNTIME_V21_16_1", "wall_seconds": round(runtime_wall, 6), "cpu_seconds": round(runtime_cpu, 6), "paths": runtime_paths, "decision_logic_changed": False, "source_network_ownership_changed": False, "critical_path_parallelism_changed": True},
         "governance": [
             "Runtime/software version is distinct from model versions; decision_tracks is the authoritative model-version map.",
             "Missing canonical Action ISINs are materialized as identity-only rows; no ticker/name/market data are invented.",
@@ -171,6 +214,8 @@ def run(root: Path = ROOT) -> dict:
             "Weekly Committee and daily TCT/CT are the only live owners of the selective Boursorama/Investing refresh; internal Action MT and ETF MT consume the cache only.",
             "Boursorama Actions and ETFs share one provider start-rate limiter; the provider remains capped at one request start per second and four total in-flight workers.",
             "CI explainability is read-only and makes zero external collection calls; it reports source freshness/provenance already frozen in canonical Committee decisions.",
+            "Weekly runtime overlaps independent ETF structure, cached ETF MT and Sector Rotation V2 branches after the full refresh.",
+            "After Committee freeze, CI generation, risk calculation and Mon-Thu baseline persistence overlap; risk control waits only for the risk calculation.",
             "V21.8 position context is HOLD -> PROTECT -> EXIT; a first multifactor deterioration produces PROTECT and persistent deterioration on a later run confirms EXIT.",
             "V21.8 temporal state is persisted inside the existing provenance state cache; an explicit emergency flag remains the only direct EMERGENCY_EXIT path.",
             "Profit level and profit giveback are context only and never create a standalone exit signal.",
