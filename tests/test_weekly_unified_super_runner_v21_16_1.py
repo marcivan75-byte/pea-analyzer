@@ -109,8 +109,8 @@ def test_refresh_failure_does_not_start_background_sector(monkeypatch, tmp_path)
     def fake_base_run(root):
         try:
             weekly.base.enrichment_run.run()
-        except RuntimeError:
-            pass
+        except RuntimeError as exc:
+            assert str(exc) == "REFRESH_FAILURE"
         weekly.base.etf_structure_refresh.run(root)
         # Historical unified_runner would skip sector after failed refresh.
         return {"status": "PARTIAL_SUCCESS"}
