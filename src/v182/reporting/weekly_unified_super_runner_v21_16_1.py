@@ -13,6 +13,7 @@ from v182.decision import committee_master as committee_decision
 from v182.reporting import committee_master_run
 from v182.reporting import committee_master_v21_4
 from v182.reporting import unified_runner as base
+from v182.sources import yfinance_bulk
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -142,6 +143,164 @@ def _memoized_resolver(original):
     return wrapped, stats
 
 
+def _weekly_yfinance_retry_hardening(original_download, original_download_one):
+    """Contain Yahoo batch-failure tails without weakening successful refreshes.
+
+    Multi-ticker calls get one grouped recovery attempt. Partial responses retry
+    only the missing symbols as a group before the historical singleton fallback.
+    If a cached-ticker batch fails twice at provider level, subsequent cached
+    singleton retries in that batch fail fast and preserve their existing history.
+    New-ticker bootstraps are never fast-skipped by this circuit breaker.
+    """
+    lock = Lock()
+    circuit = {"cached_refresh_open": False}
+    stats = {
+        "multi_batch_calls": 0,
+        "multi_batch_errors": 0,
+        "partial_batches": 0,
+        "grouped_retry_calls": 0,
+        "grouped_retry_errors": 0,
+        "grouped_retry_recovered_tickers": 0,
+        "cached_singleton_fast_skips": 0,
+        "singleton_calls": 0,
+        "circuit_open_events": 0,
+        "circuit_resets": 0,
+    }
+
+    def _set_circuit(value: bool) -> None:
+        with lock:
+            previous = circuit["cached_refresh_open"]
+            circuit["cached_refresh_open"] = value
+            if value and not previous:
+                stats["circuit_open_events"] += 1
+            elif previous and not value:
+                stats["circuit_resets"] += 1
+
+    def _record(name: str, amount: int = 1) -> None:
+        with lock:
+            stats[name] += amount
+
+    def download_wrapped(
+        yf,
+        tickers,
+        period,
+        interval,
+        auto_adjust,
+        actions_requested,
+        *,
+        threads,
+        start=None,
+    ):
+        requested = list(tickers)
+        if len(requested) <= 1:
+            return original_download(
+                yf,
+                requested,
+                period,
+                interval,
+                auto_adjust,
+                actions_requested,
+                threads=threads,
+                start=start,
+            )
+
+        _record("multi_batch_calls")
+        retried_after_exception = False
+        try:
+            frame = original_download(
+                yf,
+                requested,
+                period,
+                interval,
+                auto_adjust,
+                actions_requested,
+                threads=threads,
+                start=start,
+            )
+        except Exception:
+            _record("multi_batch_errors")
+            _record("grouped_retry_calls")
+            retried_after_exception = True
+            try:
+                frame = original_download(
+                    yf,
+                    requested,
+                    period,
+                    interval,
+                    auto_adjust,
+                    actions_requested,
+                    threads=threads,
+                    start=start,
+                )
+            except Exception:
+                _record("grouped_retry_errors")
+                _set_circuit(True)
+                raise
+
+        _set_circuit(False)
+        missing = [ticker for ticker in requested if not yfinance_bulk._contains_ticker(frame, ticker)]
+        if not missing:
+            return frame
+
+        _record("partial_batches")
+        if retried_after_exception:
+            return frame
+
+        _record("grouped_retry_calls")
+        try:
+            recovery = original_download(
+                yf,
+                missing,
+                period,
+                interval,
+                auto_adjust,
+                actions_requested,
+                threads=threads,
+                start=start,
+            )
+        except Exception:
+            _record("grouped_retry_errors")
+            return frame
+
+        recovered = sum(
+            1 for ticker in missing if yfinance_bulk._contains_ticker(recovery, ticker)
+        )
+        _record("grouped_retry_recovered_tickers", recovered)
+        return yfinance_bulk._merge_history_frames(frame, recovery)
+
+    def download_one_wrapped(
+        yf,
+        ticker,
+        period,
+        interval,
+        auto_adjust,
+        actions_requested,
+        *,
+        start=None,
+    ):
+        # start=None is the incremental cached-ticker path in download_history.
+        # New ticker bootstraps carry effective_start and are always attempted.
+        with lock:
+            skip_cached = circuit["cached_refresh_open"] and start is None
+            if skip_cached:
+                stats["cached_singleton_fast_skips"] += 1
+            else:
+                stats["singleton_calls"] += 1
+        if skip_cached:
+            return pd.DataFrame()
+        return original_download_one(
+            yf,
+            ticker,
+            period,
+            interval,
+            auto_adjust,
+            actions_requested,
+            start=start,
+        )
+
+    return download_wrapped, download_one_wrapped, stats
+
+
 def run(root: Path = ROOT) -> dict:
     """Weekly unified runtime with proven-safe scheduling optimizations only.
 
@@ -155,6 +314,9 @@ def run(root: Path = ROOT) -> dict:
        Rotation V2 before reading its diagnostic status, preserving that dependency.
     4. Canonical criterion resolution is memoized only for the current Weekly run,
        so score/coverage and concurrent horizons reuse identical immutable Series.
+    5. Yahoo OHLCV partial batches receive one grouped missing-symbol retry before
+       singleton fallback; repeated cached-batch provider failures preserve cache
+       without an unbounded singleton network tail.
     """
     started = perf_counter()
     auditdir = root / "outputs" / "audit"
@@ -163,10 +325,15 @@ def run(root: Path = ROOT) -> dict:
     original_safe_horizons = committee_master_run._safe_horizons
     original_reference_decisions = committee_master_v21_4.decisions_from_scores
     original_resolve_field = committee_decision.resolve_field
+    original_yf_download = yfinance_bulk._download
+    original_yf_download_one = yfinance_bulk._download_one
     original_refresh = base.enrichment_run.run
     original_structure = base.etf_structure_refresh.run
     original_sector = base.sector_rotation_v2_shadow_run.run
     cached_resolve_field, resolver_cache_stats = _memoized_resolver(original_resolve_field)
+    hardened_yf_download, hardened_yf_download_one, yfinance_retry_stats = (
+        _weekly_yfinance_retry_hardening(original_yf_download, original_yf_download_one)
+    )
 
     refresh_ok = {"value": False}
     sector_future = {"value": None}
@@ -215,6 +382,8 @@ def run(root: Path = ROOT) -> dict:
         original_reference_decisions
     )
     committee_decision.resolve_field = cached_resolve_field
+    yfinance_bulk._download = hardened_yf_download
+    yfinance_bulk._download_one = hardened_yf_download_one
     base.enrichment_run.run = refresh_wrapped
     base.etf_structure_refresh.run = structure_wrapped
     base.sector_rotation_v2_shadow_run.run = sector_wrapped
@@ -230,6 +399,8 @@ def run(root: Path = ROOT) -> dict:
         committee_master_run._safe_horizons = original_safe_horizons
         committee_master_v21_4.decisions_from_scores = original_reference_decisions
         committee_decision.resolve_field = original_resolve_field
+        yfinance_bulk._download = original_yf_download
+        yfinance_bulk._download_one = original_yf_download_one
         base.enrichment_run.run = original_refresh
         base.etf_structure_refresh.run = original_structure
         base.sector_rotation_v2_shadow_run.run = original_sector
@@ -248,11 +419,16 @@ def run(root: Path = ROOT) -> dict:
             "criterion_resolution_semantics_changed": False,
             "criterion_resolution_cache_scope": "RUN_LOCAL_FRAME_ID_PLUS_FIELD",
             "criterion_resolution_cache": dict(resolver_cache_stats),
+            "yfinance_grouped_retry_before_singleton": True,
+            "yfinance_cached_history_preserved_on_batch_failure": True,
+            "yfinance_new_ticker_bootstrap_fast_skipped": False,
+            "yfinance_retry_hardening": dict(yfinance_retry_stats),
             "sector_rotation_dependency_on_etf_structure_preserved": True,
             "committee_waits_for_sector_rotation": True,
             "sector_rotation_overlaps_remaining_etf_mt_when_possible": True,
             "sector_overlap": sector_metrics,
             "provider_freshness_policy_changed": False,
+            "provider_failure_containment_changed": True,
             "external_provider_concurrency_added_by_sector_overlap": False,
             "decision_logic_changed": False,
             "criteria_changed": False,
