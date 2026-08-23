@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+import os
 
 import pandas as pd
 
@@ -27,6 +28,41 @@ def _read(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise RuntimeError(f"DAILY_TACTICAL_INPUT_MISSING:{path.relative_to(ROOT) if path.is_relative_to(ROOT) else path}")
     return pd.read_csv(path, sep=";", encoding="utf-8-sig", low_memory=False)
+
+
+def _current_committee_reuse_available(root: Path, now: datetime | None = None) -> bool:
+    """Allow Friday reuse only for a complete Committee snapshot from this UTC day.
+
+    The Mon-Thu workflow explicitly sets PEA_RUN_PROFILE=DAILY_TACTICAL and never
+    enters this path. On the weekly workflow the historical entry point remains
+    unchanged, but a fresh same-day Committee output prevents a second CT/TCT and
+    V21.8 pass in the same session. Stale, malformed or partial files fail closed
+    to the historical full tactical calculation.
+    """
+    if os.environ.get("PEA_RUN_PROFILE", "").strip().upper() == "DAILY_TACTICAL":
+        return False
+    current_date = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).date()
+    paths = (
+        root / "outputs" / "committee_master" / "COMMITTEE_DECISIONS.csv",
+        root / "outputs" / "committee_master" / "V21_8_ENTRY_EXIT_CHALLENGER.csv",
+    )
+    for path in paths:
+        if not path.exists() or path.stat().st_size == 0:
+            return False
+        try:
+            stamps = pd.read_csv(
+                path,
+                sep=";",
+                encoding="utf-8-sig",
+                usecols=["generated_at_utc"],
+                low_memory=False,
+            )["generated_at_utc"]
+        except (OSError, ValueError, KeyError, pd.errors.EmptyDataError, pd.errors.ParserError):
+            return False
+        parsed = pd.to_datetime(stamps, errors="coerce", utc=True)
+        if parsed.empty or parsed.isna().any() or set(parsed.dt.date.tolist()) != {current_date}:
+            return False
+    return True
 
 
 def _android_summary(governed: pd.DataFrame, generated_at: str) -> str:
@@ -83,6 +119,13 @@ def _android_summary(governed: pd.DataFrame, generated_at: str) -> str:
 
 
 def run(root: Path = ROOT) -> dict:
+    if _current_committee_reuse_available(root):
+        # Local import avoids a module-import cycle: the Friday reuse runner only
+        # borrows this module's Android formatter and never calls this run() again.
+        from v182.reporting import friday_tactical_reuse_runner
+
+        return friday_tactical_reuse_runner.run(root)
+
     outputs = root / "outputs"
     outdir = outputs / "daily_tct_ct"
     mobile = outputs / "mobile"
