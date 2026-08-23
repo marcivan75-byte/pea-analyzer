@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from v182.reporting.daily_tct_ct_runner import _daily_exact_scope
+from v182.reporting.daily_tct_ct_runner import _compact_tct_baseline, _daily_exact_scope
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,6 +65,31 @@ def test_daily_t1_t2_exact_scope_preserves_full_baseline_gate_and_caps_to_top20(
     assert set(scoped["isin"]) == set(frame.loc[:18, "isin"])
 
 
+def test_compact_daily_tct_baseline_keeps_every_reconstruction_field() -> None:
+    frame = pd.DataFrame(
+        {
+            "isin": ["FR0001"],
+            "name": ["A"],
+            "last_close": [100.0],
+            "market_cap": [1e9],
+            "tct_baseline_score": [81.0],
+            "tct_baseline_rank": [1],
+            "tct_baseline_component_squeeze": [90.0],
+            "tct_baseline_component_squeeze_observed": [True],
+            "tct_baseline_missing_weight_policy": ["RENORM"],
+        }
+    )
+    compact = _compact_tct_baseline(frame)
+    assert "isin" in compact
+    assert "name" in compact
+    assert "tct_baseline_score" in compact
+    assert "tct_baseline_component_squeeze" in compact
+    assert "tct_baseline_component_squeeze_observed" in compact
+    assert "tct_baseline_missing_weight_policy" in compact
+    assert "last_close" not in compact
+    assert "market_cap" not in compact
+
+
 def test_daily_workflow_keeps_full_screening_and_defers_only_research_validation() -> None:
     collector = (ROOT / "src/v182/reporting/daily_fast_collection.py").read_text(encoding="utf-8")
     postmarket = (ROOT / "src/v182/reporting/tct_postmarket_bundle_run.py").read_text(encoding="utf-8")
@@ -75,6 +100,19 @@ def test_daily_workflow_keeps_full_screening_and_defers_only_research_validation
     assert 'daily_deferred_steps_have_decision_influence": False' in postmarket
 
 
+def test_daily_bundle_uses_memory_handoff_and_keeps_weekly_baseline_immutable() -> None:
+    bundle = (ROOT / "src/v182/reporting/daily_fast_bundle_v21_16.py").read_text(encoding="utf-8")
+    collector = (ROOT / "src/v182/reporting/daily_fast_collection.py").read_text(encoding="utf-8")
+    assert "persist_masters=False" in bundle
+    assert "persist_daily_baseline=False" in bundle
+    assert "return_frames=True" in bundle
+    assert "actions=actions" in bundle and "etfs=etfs" in bundle
+    assert "persist_full_baseline=False" in bundle
+    assert '"full_master_csv_roundtrip_avoided": True' in bundle
+    assert '"weekly_baseline_parquet_rewrite_avoided": True' in bundle
+    assert "weekly_baseline_kept_immutable_in_scheduled_bundle" in collector
+
+
 def test_catalyst_overlaps_independent_news_and_global_market_only() -> None:
     source = (ROOT / "src/v182/reporting/tct_next_session_catalyst_engine.py").read_text(encoding="utf-8")
     assert "ThreadPoolExecutor(max_workers=2" in source
@@ -83,13 +121,36 @@ def test_catalyst_overlaps_independent_news_and_global_market_only() -> None:
     assert '"provider_start_policy_changed": False' in source
 
 
+def test_daily_source_prewarm_is_bounded_nonblocking_and_does_not_replace_current_gate() -> None:
+    helper = (ROOT / "src/v182/reporting/daily_source_prewarm_v21_16.py").read_text(encoding="utf-8")
+    bundle = (ROOT / "src/v182/reporting/daily_fast_bundle_v21_16.py").read_text(encoding="utf-8")
+    friday = (ROOT / "src/v182/reporting/friday_tactical_reuse_v21_16.py").read_text(encoding="utf-8")
+    assert "MAX_PREWARM = 20" in helper
+    assert "current_gate_still_completes_new_candidates" in helper
+    assert "prewarm_future = pool.submit" in bundle
+    assert '"prewarm_failure_nonblocking": True' in bundle
+    assert '"current_source_gate_coverage_reduced": False' in bundle
+    assert "persist_seed(governed, root)" in friday
+
+
 def test_weekly_topdown_hides_only_local_nondependent_stages() -> None:
     source = (ROOT / "src/v182/reporting/weekly_enrichment_fast_v21_16.py").read_text(encoding="utf-8")
-    assert 'pending["rotation"] = pool.submit(original_rotation' in source
-    assert 'pending["action_enhancements"] = pool.submit(original_enhancements' in source
+    assert 'pending["rotation"] = local_pool.submit(original_rotation' in source
+    assert 'pending["action_enhancements"] = local_pool.submit(original_enhancements' in source
     assert '"application_order_changed": False' in source
     assert '"relevant_input_fields_changed": False' in source
     assert "provider_start_policy_changed" in source
+
+
+def test_weekly_source_prewarm_is_joined_before_committee_and_seeded_for_next_week() -> None:
+    enrichment = (ROOT / "src/v182/reporting/weekly_enrichment_fast_v21_16.py").read_text(encoding="utf-8")
+    full_bundle = (ROOT / "src/v182/reporting/weekly_full_bundle_v21_16.py").read_text(encoding="utf-8")
+    assert "WEEKLY_SEED_PATH" in enrichment
+    assert "max_prewarm=40" in enrichment
+    assert "source_prewarm_future.result()" in enrichment
+    assert '"joined_before_committee_gate": True' in enrichment
+    assert "seed_path=WEEKLY_SEED_PATH" in full_bundle
+    assert "max_persisted=40" in full_bundle
 
 
 def test_friday_does_not_rescore_daily_tactical_after_weekly_committee() -> None:
@@ -98,5 +159,7 @@ def test_friday_does_not_rescore_daily_tactical_after_weekly_committee() -> None
     reuse = (ROOT / "src/v182/reporting/friday_tactical_reuse_v21_16.py").read_text(encoding="utf-8")
     assert "python -m v182.reporting.daily_tct_ct_runner" not in workflow
     assert "friday_tactical_reuse" in bundle
-    assert '"rescoring_performed": False' in reuse
+    assert '"rescoring_calls": 0' in reuse
+    assert '"source_gate_calls": 0' in reuse
+    assert '"entry_exit_recompute_calls": 0' in reuse
     assert '"network_calls": 0' in reuse
