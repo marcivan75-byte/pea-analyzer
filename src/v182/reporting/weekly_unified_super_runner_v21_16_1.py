@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock
 from time import perf_counter
 import json
 import logging
 
 import pandas as pd
 
+from v182.decision import committee_master as committee_decision
 from v182.reporting import committee_master_run
 from v182.reporting import committee_master_v21_4
 from v182.reporting import unified_runner as base
@@ -85,6 +86,62 @@ def _parallel_decisions_from_scores(original):
     return wrapped
 
 
+def _memoized_resolver(original):
+    """Deduplicate immutable criterion resolution inside one Weekly run.
+
+    The cache is scoped to the lifetime of ``run`` and keyed by the exact
+    DataFrame object plus canonical criterion name. A strong reference to every
+    seen frame prevents CPython object-id reuse while the cache is active.
+    Concurrent requests for the same key share one in-flight resolution; calls
+    for different criteria remain concurrent.
+    """
+    cache = {}
+    inflight = {}
+    frame_refs = {}
+    lock = Lock()
+    stats = {"hits": 0, "misses": 0, "waits": 0, "entries": 0, "frames": 0}
+
+    def wrapped(frame, name):
+        key = (id(frame), str(name))
+        while True:
+            owner = False
+            with lock:
+                frame_refs[id(frame)] = frame
+                stats["frames"] = len(frame_refs)
+                if key in cache:
+                    stats["hits"] += 1
+                    return cache[key]
+                event = inflight.get(key)
+                if event is None:
+                    event = Event()
+                    inflight[key] = event
+                    stats["misses"] += 1
+                    owner = True
+                else:
+                    stats["waits"] += 1
+
+            if not owner:
+                event.wait()
+                continue
+
+            try:
+                result = original(frame, name)
+            except BaseException:
+                with lock:
+                    inflight.pop(key, None)
+                    event.set()
+                raise
+
+            with lock:
+                cache[key] = result
+                stats["entries"] = len(cache)
+                inflight.pop(key, None)
+                event.set()
+            return result
+
+    return wrapped, stats
+
+
 def run(root: Path = ROOT) -> dict:
     """Weekly unified runtime with proven-safe scheduling optimizations only.
 
@@ -96,6 +153,8 @@ def run(root: Path = ROOT) -> dict:
     3. Sector Rotation V2 starts only after ETF structural refresh returns, and may
        overlap the remaining independent ETF MT branch. Committee still waits for
        Rotation V2 before reading its diagnostic status, preserving that dependency.
+    4. Canonical criterion resolution is memoized only for the current Weekly run,
+       so score/coverage and concurrent horizons reuse identical immutable Series.
     """
     started = perf_counter()
     auditdir = root / "outputs" / "audit"
@@ -103,9 +162,11 @@ def run(root: Path = ROOT) -> dict:
 
     original_safe_horizons = committee_master_run._safe_horizons
     original_reference_decisions = committee_master_v21_4.decisions_from_scores
+    original_resolve_field = committee_decision.resolve_field
     original_refresh = base.enrichment_run.run
     original_structure = base.etf_structure_refresh.run
     original_sector = base.sector_rotation_v2_shadow_run.run
+    cached_resolve_field, resolver_cache_stats = _memoized_resolver(original_resolve_field)
 
     refresh_ok = {"value": False}
     sector_future = {"value": None}
@@ -153,6 +214,7 @@ def run(root: Path = ROOT) -> dict:
     committee_master_v21_4.decisions_from_scores = _parallel_decisions_from_scores(
         original_reference_decisions
     )
+    committee_decision.resolve_field = cached_resolve_field
     base.enrichment_run.run = refresh_wrapped
     base.etf_structure_refresh.run = structure_wrapped
     base.sector_rotation_v2_shadow_run.run = sector_wrapped
@@ -167,6 +229,7 @@ def run(root: Path = ROOT) -> dict:
     finally:
         committee_master_run._safe_horizons = original_safe_horizons
         committee_master_v21_4.decisions_from_scores = original_reference_decisions
+        committee_decision.resolve_field = original_resolve_field
         base.enrichment_run.run = original_refresh
         base.etf_structure_refresh.run = original_structure
         base.sector_rotation_v2_shadow_run.run = original_sector
@@ -181,6 +244,10 @@ def run(root: Path = ROOT) -> dict:
             "committee_horizon_output_order_preserved": True,
             "committee_scoring_functions_changed": False,
             "reference_scoring_functions_changed": False,
+            "criterion_resolution_function_wrapped": True,
+            "criterion_resolution_semantics_changed": False,
+            "criterion_resolution_cache_scope": "RUN_LOCAL_FRAME_ID_PLUS_FIELD",
+            "criterion_resolution_cache": dict(resolver_cache_stats),
             "sector_rotation_dependency_on_etf_structure_preserved": True,
             "committee_waits_for_sector_rotation": True,
             "sector_rotation_overlaps_remaining_etf_mt_when_possible": True,
