@@ -5,6 +5,7 @@ from pathlib import Path
 import pandas as pd
 
 from v182.reporting.daily_tct_ct_runner import _compact_tct_baseline, _daily_exact_scope
+from v182.reporting.runtime_telemetry import _budget_for_profile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +20,30 @@ def _requirements(path: str) -> set[str]:
         name = line.split("==", 1)[0].split(">=", 1)[0].split("<=", 1)[0].split("~=", 1)[0].strip().lower()
         rows.add(name)
     return rows
+
+
+def test_runtime_contract_v21_16_3_is_loaded_by_telemetry() -> None:
+    daily = _budget_for_profile("DAILY_TACTICAL")
+    weekly = _budget_for_profile("WEEKLY_FULL_COMMITTEE")
+    assert daily["contract_version"] == "RUNTIME_DURATION_CONTRACT_V21_16_3"
+    assert daily["expected_wall_range_minutes"] == [3.8, 5.5]
+    assert daily["billable_budget_minutes"] == 6
+    assert daily["alert_wall_minutes"] == 7.0
+    assert weekly["expected_wall_range_minutes"] == [15.5, 18.5]
+    assert weekly["billable_budget_minutes"] == 19
+    assert weekly["alert_wall_minutes"] == 22.0
+    assert daily["targets_are_not_observed_runtime"] is True
+    assert weekly["targets_are_not_observed_runtime"] is True
+
+
+def test_legacy_runtime_file_names_remain_compatible() -> None:
+    telemetry = (ROOT / "src/v182/reporting/runtime_telemetry.py").read_text(encoding="utf-8")
+    unified = (ROOT / "src/v182/reporting/unified_runner.py").read_text(encoding="utf-8")
+    assert 'RUNTIME_VERSION = "PIPELINE_RUNTIME_V21_13_7"' in telemetry
+    assert 'root / "UNIFIED_RUNTIME_V21_13_7.json"' in telemetry
+    assert 'root / "UNIFIED_RUNTIME_V21_13_7.csv"' in telemetry
+    assert '"outputs/audit/UNIFIED_RUNTIME_V21_13_7.json"' in unified
+    assert '"outputs/audit/UNIFIED_RUNTIME_V21_13_7.csv"' in unified
 
 
 def test_daily_dependency_profile_is_strict_subset_without_document_browser_stack() -> None:
