@@ -6,6 +6,8 @@ from typing import Callable
 import json
 import traceback
 
+import pandas as pd
+
 from v182.reporting import tct_next_session_catalyst_run_v24_4_2 as catalyst
 from v182.reporting import tct_pit_ohlc_ledger_v24_4_2 as ohlc_ledger
 from v182.reporting import tct_v24_4_2_pit_lineage as lineage
@@ -13,7 +15,7 @@ from v182.reporting import tct_v24_4_2_pit_validator as validator
 
 
 ROOT = Path(__file__).resolve().parents[3]
-VERSION = "V21.13.12_TCT_POSTMARKET_SINGLE_PROCESS_RUNTIME"
+VERSION = "V21.15.6_TCT_POSTMARKET_SINGLE_PROCESS_RUNTIME"
 
 
 def _run_step(name: str, runner: Callable[[], dict]) -> tuple[dict, dict | None, float]:
@@ -30,15 +32,37 @@ def _run_step(name: str, runner: Callable[[], dict]) -> tuple[dict, dict | None,
         }, perf_counter() - started
 
 
+def _run_lineage_dtype_safe(root: Path) -> dict:
+    """Run governed PIT lineage while allowing boolean labels in legacy float columns.
+
+    Some persisted catalyst ledgers infer ``pit_label_evaluable`` as float because
+    all historical values are empty/NaN. Pandas then rejects False/True assignment.
+    Converting that one storage column to object before the governed lineage call
+    changes no fingerprint, label rule, threshold or outcome; it only makes the
+    already-defined boolean domain assignable.
+    """
+    original_apply = lineage.apply_lineage
+
+    def compatible_apply(catalyst_ledger, ohlc_ledger_frame, **kwargs):
+        ledger = catalyst_ledger.copy()
+        if "pit_label_evaluable" in ledger.columns:
+            ledger["pit_label_evaluable"] = ledger["pit_label_evaluable"].astype(object)
+        return original_apply(ledger, ohlc_ledger_frame, **kwargs)
+
+    lineage.apply_lineage = compatible_apply
+    try:
+        return lineage.run(root=root)
+    finally:
+        lineage.apply_lineage = original_apply
+
+
 def run(root: Path = ROOT) -> dict:
     """Run the existing POSTMARKET V24.4.2 chain in one Python process.
 
     The four governed modules remain the owners of their data, PIT logic,
-    fingerprints, scoring and outputs.  This wrapper only removes interpreter
-    startup/import overhead.  Every step is attempted even when a prior step
-    fails, preserving the previous GitHub `continue-on-error` semantics.
+    fingerprints, scoring and outputs. Every step is attempted even when a prior
+    step fails, preserving historical continue-on-error semantics.
     """
-
     started = perf_counter()
     auditdir = root / "outputs" / "audit"
     auditdir.mkdir(parents=True, exist_ok=True)
@@ -46,7 +70,7 @@ def run(root: Path = ROOT) -> dict:
     specifications: list[tuple[str, Callable[[], dict]]] = [
         ("PIT_OHLC_V24.4.2", lambda: ohlc_ledger.run(root=root)),
         ("POSTMARKET_CATALYST_V24.4.2", lambda: catalyst.run(root=root, phase="POSTMARKET")),
-        ("PIT_LINEAGE_V24.4.2", lambda: lineage.run(root=root)),
+        ("PIT_LINEAGE_V24.4.2", lambda: _run_lineage_dtype_safe(root)),
         ("PIT_VALIDATOR_V24.4.2", lambda: validator.run(root=root)),
     ]
 
@@ -69,6 +93,7 @@ def run(root: Path = ROOT) -> dict:
         "previous_python_processes": 4,
         "current_python_processes": 1,
         "interpreter_startups_avoided": 3,
+        "pit_label_storage_dtype_fix": True,
         "decision_logic_changed": False,
         "criteria_changed": False,
         "weights_changed": False,
@@ -95,7 +120,7 @@ def run(root: Path = ROOT) -> dict:
 
     if errors:
         raise RuntimeError(
-            "POSTMARKET V21.13.12 completed with step error(s): "
+            "POSTMARKET V21.15.6 completed with step error(s): "
             + ", ".join(str(error.get("step")) for error in errors)
         )
     return result
