@@ -2,20 +2,25 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 import json
 
 import pandas as pd
 
+from v182.features import topdown_features as topdown_base
+from v182.features import topdown_prefetch_v21_15_4 as topdown_prefetch
 from v182.reporting import daily_fast_collection_run as fast
 from v182.sources import finnhub_consensus, yfinance_info
+from v182.sources.gdelt_news import NewsScore
 
 
-def _frame(prefix: str, rows: int = 3) -> pd.DataFrame:
+def _frame(prefix: str, rows: int = 3, *, equal_caps: bool = False) -> pd.DataFrame:
+    caps = [100] * rows if equal_caps else [100 + i for i in range(rows)]
     return pd.DataFrame(
         {
             "isin": [f"{prefix}{i}" for i in range(rows)],
             "name": [f"Name {i}" for i in range(rows)],
-            "market_cap": [100 + i for i in range(rows)],
+            "market_cap": caps,
             "perf_1m_pct": [1.0 + i for i in range(rows)],
             "perf_6m_pct": [2.0 + i for i in range(rows)],
             "country_yf": ["France"] * rows,
@@ -25,27 +30,71 @@ def _frame(prefix: str, rows: int = 3) -> pd.DataFrame:
     )
 
 
-def test_topdown_fingerprint_tracks_only_functional_inputs() -> None:
+def _fake_external(prepared: topdown_prefetch.PreparedTopdown):
+    macro = SimpleNamespace(score=60.0, coverage=1.0, components={"x": 60.0}, errors=[])
+    results = {
+        spec["query"]: (NewsScore(60.0, 3, 2, 1, "GDELT"), None)
+        for spec in prepared.specs
+    }
+    return macro, results
+
+
+def _install_without_network(runtime: fast.DailyFastRuntime, monkeypatch) -> None:
+    def fake_fetch(prepared, *, fred_api_key):
+        macro, results = _fake_external(prepared)
+        return topdown_prefetch.ExternalTopdown(
+            macro=macro,
+            news_results=results,
+            query_fingerprint=prepared.query_fingerprint,
+        )
+
+    monkeypatch.setattr(topdown_prefetch, "fetch_external", fake_fetch)
+    runtime.install()
+
+
+def test_topdown_query_fingerprint_ignores_local_perf_but_tracks_query_inputs() -> None:
     actions = _frame("FR")
     etfs = _frame("ETF", 2)
-    baseline = fast._topdown_fingerprint(actions, etfs)
+    baseline = topdown_prefetch.prepare(actions, etfs, instrument_news_top_n=2)
 
-    irrelevant = actions.copy()
-    irrelevant["unrelated_field"] = "changed"
-    assert fast._topdown_fingerprint(irrelevant, etfs) == baseline
+    perf_only = actions.copy()
+    perf_only["perf_1m_pct"] = 999.0
+    assert topdown_prefetch.prepare(perf_only, etfs, instrument_news_top_n=2).query_fingerprint == baseline.query_fingerprint
 
-    relevant = actions.copy()
-    relevant.loc[0, "market_cap"] = 999
-    assert fast._topdown_fingerprint(relevant, etfs) != baseline
+    ranking_change = actions.copy()
+    ranking_change.loc[0, "market_cap"] = 9999
+    assert topdown_prefetch.prepare(ranking_change, etfs, instrument_news_top_n=2).query_fingerprint != baseline.query_fingerprint
 
 
-def test_topdown_fingerprint_is_fail_closed_on_row_order_change() -> None:
-    actions = _frame("FR")
+def test_topdown_query_fingerprint_is_order_sensitive_when_topn_tie_can_change_selection() -> None:
+    actions = _frame("FR", 3, equal_caps=True)
     etfs = _frame("ETF", 2)
+    first = topdown_prefetch.prepare(actions, etfs, instrument_news_top_n=2)
     reordered = actions.iloc[::-1].reset_index(drop=True)
-    # build_topdown can use stable input order to resolve a top-N tie, therefore
-    # prefetch reuse must be rejected if the actual row order changed.
-    assert fast._topdown_fingerprint(actions, etfs) != fast._topdown_fingerprint(reordered, etfs)
+    second = topdown_prefetch.prepare(reordered, etfs, instrument_news_top_n=2)
+    assert first.query_fingerprint != second.query_fingerprint
+
+
+def test_prefetched_topdown_finalization_matches_legacy_formula(monkeypatch) -> None:
+    actions = _frame("FR", 3)
+    etfs = _frame("ETF", 2)
+    prepared = topdown_prefetch.prepare(actions, etfs, instrument_news_top_n=2)
+    macro, results = _fake_external(prepared)
+    external = topdown_prefetch.ExternalTopdown(
+        macro=macro,
+        news_results=results,
+        query_fingerprint=prepared.query_fingerprint,
+    )
+
+    monkeypatch.setattr(topdown_base, "global_macro_score", lambda _key: macro)
+    monkeypatch.setattr(topdown_base, "score_queries", lambda *args, **kwargs: results)
+    legacy_result = topdown_base.build_topdown(actions, etfs, fred_api_key=None, instrument_news_top_n=2)
+    fast_result = topdown_prefetch.finalize(actions, etfs, prepared, external)
+
+    assert fast_result.global_scores == legacy_result.global_scores
+    assert fast_result.action_scores == legacy_result.action_scores
+    assert fast_result.etf_scores == legacy_result.etf_scores
+    assert fast_result.provenance == legacy_result.provenance
 
 
 def test_fast_frame_requires_exact_unique_row_count() -> None:
@@ -61,7 +110,7 @@ def test_dedupe_dicts_is_stable() -> None:
     assert fast._dedupe_dicts(rows) == [{"a": 1, "b": 2}, {"a": 2}]
 
 
-def test_delta_mode_keeps_cached_eps_book_for_daily_price_ratios_and_drops_other_yahoo_cache() -> None:
+def test_delta_mode_keeps_cached_eps_book_for_daily_price_ratios_and_drops_other_yahoo_cache(monkeypatch) -> None:
     runtime = fast.DailyFastRuntime(
         _frame("FR"),
         _frame("ETF", 2),
@@ -69,7 +118,7 @@ def test_delta_mode_keeps_cached_eps_book_for_daily_price_ratios_and_drops_other
         "DELTA_ONLY",
         datetime(2026, 8, 23, 8, 0, tzinfo=timezone.utc),
     )
-    runtime.install()
+    _install_without_network(runtime, monkeypatch)
     try:
         entry = {
             "fetched_at_utc": "2026-08-22T20:00:00+00:00",
@@ -87,7 +136,7 @@ def test_delta_mode_keeps_cached_eps_book_for_daily_price_ratios_and_drops_other
         runtime.restore()
 
 
-def test_delta_mode_emits_only_live_finnhub_field_groups() -> None:
+def test_delta_mode_emits_only_live_finnhub_field_groups(monkeypatch) -> None:
     runtime = fast.DailyFastRuntime(
         _frame("FR"),
         _frame("ETF", 2),
@@ -95,7 +144,7 @@ def test_delta_mode_emits_only_live_finnhub_field_groups() -> None:
         "DELTA_ONLY",
         datetime(2026, 8, 23, 8, 0, tzinfo=timezone.utc),
     )
-    runtime.install()
+    _install_without_network(runtime, monkeypatch)
     try:
         entry = {
             "status": "OK",
@@ -168,8 +217,10 @@ def test_source_cache_change_uses_reconciliation_not_stale_delta(tmp_path: Path,
     monkeypatch.setattr(fast, "_static_contract", lambda: {"contract": "SAME"})
     monkeypatch.setattr(fast, "_cache_contract", lambda: {"cache": "NEW"})
 
-    _frame("FR").to_parquet(actions_path, index=False)
-    _frame("ETF", 2).to_parquet(etf_path, index=False)
+    actions = _frame("FR")
+    etfs = _frame("ETF", 2)
+    actions.to_parquet(actions_path, index=False)
+    etfs.to_parquet(etf_path, index=False)
     manifest_path.write_text(
         json.dumps(
             {
@@ -179,6 +230,8 @@ def test_source_cache_change_uses_reconciliation_not_stale_delta(tmp_path: Path,
                 "cache_contract": {"cache": "OLD"},
                 "actions_rows": 3,
                 "etf_rows": 2,
+                "actions_sha256": fast._sha256_file(actions_path),
+                "etf_sha256": fast._sha256_file(etf_path),
             }
         ),
         encoding="utf-8",
