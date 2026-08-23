@@ -16,7 +16,7 @@ from v182.reporting import tct_daily_trader_shadow_run_v24_3_1 as tct_trader
 
 
 ROOT = Path(__file__).resolve().parents[3]
-VERSION = "V21.15.3_TACTICAL_CPU_BUDGET_RUNTIME"
+VERSION = "V21.15.4_TACTICAL_DAG_RUNTIME"
 ACTION_CT_V22_1_WORKER_CAP = 2
 
 
@@ -97,13 +97,7 @@ def _run_step(name: str, runner: Callable[[], dict]) -> tuple[dict, dict | None]
 
 
 def _run_action_ct_with_worker_cap(root: Path, worker_cap: int = ACTION_CT_V22_1_WORKER_CAP) -> dict:
-    """Cap only V22.1's inner executor while TCT occupies the second model branch.
-
-    Private-repository ubuntu-latest runners have a small CPU budget. V22.1
-    historically defaults to four compute workers, and the outer tactical
-    overlap adds the TCT branch on top. This wrapper preserves the Action CT
-    model and its V22.0 -> V22.1 order while bounding the nested executor.
-    """
+    """Cap only V22.1's inner executor while TCT occupies the second model branch."""
     original_executor = action_ct_bundle.v221.ThreadPoolExecutor
     cap = max(1, int(worker_cap))
 
@@ -123,7 +117,18 @@ def _run_action_ct_with_worker_cap(root: Path, worker_cap: int = ACTION_CT_V22_1
         action_ct_bundle.v221.ThreadPoolExecutor = original_executor
 
 
-def run(root: Path = ROOT) -> dict:
+def run(
+    root: Path = ROOT,
+    *,
+    tct_complete_callback: Callable[[dict, dict | None], None] | None = None,
+) -> dict:
+    """Overlap Action CT and TCT; optionally release downstream work at TCT completion.
+
+    The callback is orchestration-only. It receives the completed TCT payload and
+    its captured error (if any), cannot change either model, and is invoked before
+    waiting for the independent Action CT branch. Existing callers omit it and
+    retain the historical behavior/output contract.
+    """
     started = perf_counter()
     auditdir = root / "outputs" / "audit"
     auditdir.mkdir(parents=True, exist_ok=True)
@@ -131,12 +136,9 @@ def run(root: Path = ROOT) -> dict:
     original_read_parquet = pd.read_parquet
     original_v221_executor = action_ct_bundle.v221.ThreadPoolExecutor
     parquet_cache = ParquetReadCache(original_read_parquet)
+    callback_error: dict | None = None
     setattr(pd, "read_parquet", parquet_cache)
     try:
-        # Action CT keeps its mandatory internal order V22.0 -> V22.1. The TCT
-        # branch is independent from those outputs and can overlap computation.
-        # V22.1's nested pool is capped so the 2-vCPU private runner is not
-        # flooded by four inner workers plus the independent TCT branch.
         with ThreadPoolExecutor(max_workers=2, thread_name_prefix="tactical-model") as pool:
             action_future = pool.submit(
                 _run_step,
@@ -148,19 +150,35 @@ def run(root: Path = ROOT) -> dict:
                 "TCT_V24.3.1",
                 lambda: tct_trader.run(root=root),
             )
-            action_ct, action_ct_error = action_future.result()
+
+            # TCT owns the postmarket seed. Resolve it first so a caller can
+            # start network-bound postmarket work while Action CT is still using
+            # the second CPU branch. This changes scheduling only, not models.
             tct, tct_error = tct_future.result()
+            if tct_complete_callback is not None:
+                try:
+                    tct_complete_callback(tct, tct_error)
+                except Exception as exc:
+                    callback_error = {
+                        "step": "TCT_COMPLETE_CALLBACK",
+                        "type": type(exc).__name__,
+                        "message": str(exc)[:500],
+                        "traceback": traceback.format_exc(limit=5),
+                    }
+            action_ct, action_ct_error = action_future.result()
     finally:
         setattr(pd, "read_parquet", original_read_parquet)
         action_ct_bundle.v221.ThreadPoolExecutor = original_v221_executor
 
-    errors = [error for error in (action_ct_error, tct_error) if error is not None]
+    errors = [error for error in (action_ct_error, tct_error, callback_error) if error is not None]
     payload = {
         "status": "SUCCESS_TACTICAL_PARALLEL_SHARED_RUNTIME" if not errors else "TACTICAL_PARALLEL_SHARED_RUNTIME_WITH_STEP_ERRORS",
         "version": VERSION,
         "independent_model_branches_overlapped": True,
         "action_ct_internal_order_preserved": ["ACTION_CT_V22.0", "ACTION_CT_V22.1"],
         "tct_dependency_on_action_ct_outputs": False,
+        "tct_completion_released_before_action_ct_join": True,
+        "tct_completion_callback_used": tct_complete_callback is not None,
         "shared_parquet_physical_reads_preserved": True,
         "original_pandas_reader_restored": pd.read_parquet is original_read_parquet,
         "original_v22_1_executor_restored": action_ct_bundle.v221.ThreadPoolExecutor is original_v221_executor,
@@ -189,8 +207,7 @@ def run(root: Path = ROOT) -> dict:
         "errors": errors,
         "total_seconds": round(float(perf_counter() - started), 6),
     }
-    # Keep the historical filename so workflow summaries and downstream audit
-    # consumers remain backward compatible while the payload carries V21.15.3.
+    # Historical filename retained for workflow/downstream compatibility.
     audit_path = auditdir / "TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json"
     audit_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
