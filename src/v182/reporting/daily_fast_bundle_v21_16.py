@@ -9,9 +9,10 @@ import traceback
 from v182.reporting import daily_fast_collection
 from v182.reporting import daily_tct_ct_runner
 from v182.reporting import tct_postmarket_bundle_run
+from v182.reporting.runtime_telemetry import _budget_result
 
 ROOT = Path(__file__).resolve().parents[3]
-VERSION = "DAILY_FAST_BUNDLE_V21_16_1"
+VERSION = "DAILY_FAST_BUNDLE_V21_16_2"
 
 
 def _timed(name: str, func, *, blocking: bool) -> dict:
@@ -51,11 +52,13 @@ def run(root: Path = ROOT) -> dict:
         "POSTMARKET", lambda: tct_postmarket_bundle_run.run(root), blocking=False
     )
 
+    wall_seconds = round(time.perf_counter() - started, 6)
     payload = {
         "status": "SUCCESS" if steps["postmarket"]["status"] == "SUCCESS" else "SUCCESS_WITH_NONBLOCKING_POSTMARKET_ERROR",
         "version": VERSION,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "wall_seconds": round(time.perf_counter() - started, 6),
+        "wall_seconds": wall_seconds,
+        "duration_contract": _budget_result("DAILY_TACTICAL", wall_seconds),
         "previous_python_processes": 3,
         "current_python_processes": 1,
         "interpreter_startups_avoided": 2,
