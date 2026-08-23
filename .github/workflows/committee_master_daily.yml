@@ -336,8 +336,20 @@ jobs:
             cat outputs/mobile/ANDROID_TCT_NEXT_SESSION_CATALYST_V24_4_2.md >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Validate OHLCV cache checkpoint
+        if: always()
+        shell: bash
+        run: |
+          rm -f state/OHLCV_CACHE_VALIDATED
+          if [ -f outputs/audit/V18.2_QUALITY_GATES.json ] \
+             && grep -Eq '"passed"[[:space:]]*:[[:space:]]*true' outputs/audit/V18.2_QUALITY_GATES.json \
+             && [ -f data/cache/actions/history_manifest.json ] \
+             && [ -f data/cache/etf/history_manifest.json ]; then
+            printf 'validated\n' > state/OHLCV_CACHE_VALIDATED
+          fi
+
       - name: Save persistent OHLCV cache
-        if: ${{ always() && hashFiles('outputs/audit/V18.2_QUALITY_GATES.json') != '' && hashFiles('data/cache/actions/history_manifest.json') != '' && hashFiles('data/cache/etf/history_manifest.json') != '' }}
+        if: ${{ always() && hashFiles('state/OHLCV_CACHE_VALIDATED') != '' }}
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: data/cache/
