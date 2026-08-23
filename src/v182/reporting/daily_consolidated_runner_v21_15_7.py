@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
 import json
+import traceback
 
 from v182.reporting import daily_ci_restitution_v21_15_7 as daily_ci
 from v182.reporting import daily_consolidated_runner_v21_15_5 as base
@@ -27,6 +29,29 @@ def _write_final_audit(root: Path, payload: dict) -> None:
         (auditdir / name).write_text(text, encoding="utf-8")
 
 
+def _write_ci_failure_audit(root: Path, exc: Exception, elapsed_seconds: float) -> None:
+    auditdir = root / "outputs" / "audit"
+    auditdir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "status": "FAILED_CI_RESTITUTION",
+        "version": VERSION,
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "exception_type": type(exc).__name__,
+        "exception_message": str(exc),
+        "ci_elapsed_seconds": round(float(elapsed_seconds), 6),
+        "traceback": traceback.format_exc(),
+        "decision_logic_changed": False,
+        "criteria_changed": False,
+        "weights_changed": False,
+        "thresholds_changed": False,
+        "real_orders_enabled": False,
+    }
+    (auditdir / "DAILY_CI_FAILURE_V21_15_7.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+
+
 def run(root: Path = ROOT) -> dict:
     """Final Daily: zero-network W09, bounded tactical engines and same-run CI restitution."""
     started = perf_counter()
@@ -42,7 +67,11 @@ def run(root: Path = ROOT) -> dict:
 
     base_status = str(payload.get("status") or "")
     ci_started = perf_counter()
-    ci_payload = daily_ci.run(root=root)
+    try:
+        ci_payload = daily_ci.run(root=root)
+    except Exception as exc:
+        _write_ci_failure_audit(root, exc, perf_counter() - ci_started)
+        raise
     ci_seconds = perf_counter() - ci_started
 
     timings = dict(payload.get("timings_seconds") or {})
