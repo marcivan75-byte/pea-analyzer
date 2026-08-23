@@ -9,8 +9,10 @@ import subprocess
 import sys
 import time
 
+from v182.audit import identity_hydration
+
 ROOT = Path(__file__).resolve().parents[3]
-VERSION = "WEEKLY_TAIL_PARALLEL_V21_16_2_IDENTITY_OVERLAP"
+VERSION = "WEEKLY_TAIL_PARALLEL_V21_16_3_IDENTITY_IN_PROCESS"
 
 
 def _run_module(root: Path, module: str) -> dict:
@@ -35,6 +37,31 @@ def _run_module(root: Path, module: str) -> dict:
     }
 
 
+def _run_identity_hydration(root: Path) -> dict:
+    """Publish the diagnostic worklist in-process; it has no decision/state authority."""
+    started = time.perf_counter()
+    try:
+        result = identity_hydration.run(root)
+        return {
+            "module": "v182.audit.identity_hydration",
+            "returncode": 0,
+            "status": "SUCCESS",
+            "wall_seconds": round(time.perf_counter() - started, 6),
+            "execution_mode": "IN_PROCESS_THREAD",
+            "result": result,
+        }
+    except Exception as exc:
+        return {
+            "module": "v182.audit.identity_hydration",
+            "returncode": 1,
+            "status": "FAILED",
+            "wall_seconds": round(time.perf_counter() - started, 6),
+            "execution_mode": "IN_PROCESS_THREAD",
+            "error": type(exc).__name__,
+            "detail": str(exc)[:500],
+        }
+
+
 def _tct_lane(root: Path) -> dict:
     """Keep TCT state writers ordered while preserving historical fail-soft behavior."""
     started = time.perf_counter()
@@ -56,15 +83,15 @@ def run(root: Path = ROOT) -> dict:
 
     # Tactical/Postmarket share TCT state and remain serial in their own isolated
     # subprocess lane. Identity hydration is diagnostic only: the governed identity
-    # overlay was already applied by WAVE01 itself, so publishing its worklist here
-    # preserves the artifact while removing it from the weekly pre-bundle critical path.
+    # overlay was already applied by WAVE01 itself, so its light worklist publisher
+    # can run in-process without another Python interpreter startup.
     with ThreadPoolExecutor(max_workers=5, thread_name_prefix="weekly-tail") as pool:
         futures = {
             "tct_lane": pool.submit(_tct_lane, root),
             "decision_brief": pool.submit(_run_module, root, "v182.reporting.decision_brief_v21_16"),
             "etf_fund_flows": pool.submit(_run_module, root, "v182.reporting.etf_fund_flows_shadow_run"),
             "criteria_governance": pool.submit(_run_module, root, "v182.reporting.criteria_governance_audit"),
-            "identity_hydration": pool.submit(_run_module, root, "v182.audit.identity_hydration"),
+            "identity_hydration": pool.submit(_run_identity_hydration, root),
         }
         results = {name: future.result() for name, future in futures.items()}
 
@@ -98,8 +125,10 @@ def run(root: Path = ROOT) -> dict:
         "identity_hydration_removed_from_pre_bundle_critical_path": True,
         "identity_overlay_application_still_owned_by_wave01": True,
         "identity_hydration_decision_influence": False,
+        "identity_hydration_execution_mode": "IN_PROCESS_THREAD",
+        "identity_hydration_interpreter_startup_avoided": True,
         "tct_state_writers_parallelized": False,
-        "subprocess_isolation": True,
+        "legacy_tail_modules_subprocess_isolated": True,
         "decision_logic_changed": False,
         "criteria_changed": False,
         "weights_changed": False,
