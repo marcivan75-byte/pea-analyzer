@@ -314,13 +314,18 @@ def _default_fetcher(url: str, *, timeout: float):
     return requests.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; PEA-Analyzer/21.16; selected-public-context)"}, timeout=timeout)
 
 
+def _family_failure_active(entry: dict, family: str, now: datetime, retry_ttl_hours: float) -> bool:
+    return _age_hours(entry.get(f"{family}_last_failed_at_utc"), now) < max(0.0, float(retry_ttl_hours))
+
+
 def collect_selected_action_context_cached(
     rows: pd.DataFrame,
     cache_path: str | Path,
     *,
     dynamic_ttl_hours: float = 8.0,
-    performance_ttl_hours: float = 24.0,
-    deep_ttl_hours: float = 168.0,
+    performance_ttl_hours: float = 72.0,
+    deep_ttl_hours: float = 336.0,
+    failed_refresh_retry_ttl_hours: float = 2.0,
     refresh_budget: int = 40,
     request_start_interval_seconds: float = 1.0,
     timeout_seconds: float = 15.0,
@@ -338,6 +343,7 @@ def collect_selected_action_context_cached(
     rate_limiter = limiter or StartRateLimiter(request_start_interval_seconds)
     failures: list[dict] = []
     unique = rows.drop_duplicates("isin").copy() if "isin" in rows else pd.DataFrame()
+    cooldown = {"dynamic": 0, "performance": 0, "deep": 0}
     work: list[tuple[str, str, bool, bool, bool]] = []
     for _, row in unique.iterrows():
         isin = str(row.get("isin") or "").strip()
@@ -347,14 +353,22 @@ def collect_selected_action_context_cached(
                 failures.append({"isin": isin, "source": "Boursorama", "reason": "NO_DETERMINISTIC_CODE"})
             continue
         entry = entries.get(isin, {})
-        dynamic_due = _age_hours(entry.get("dynamic_fetched_at_utc"), current) >= dynamic_ttl_hours
-        performance_due = _age_hours(entry.get("performance_fetched_at_utc"), current) >= performance_ttl_hours
-        deep_due = _age_hours(entry.get("deep_fetched_at_utc"), current) >= deep_ttl_hours
-        if allow_network and (dynamic_due or performance_due or deep_due):
-            work.append((isin, code, dynamic_due, performance_due, deep_due))
+        stale = {
+            "dynamic": _age_hours(entry.get("dynamic_fetched_at_utc"), current) >= dynamic_ttl_hours,
+            "performance": _age_hours(entry.get("performance_fetched_at_utc"), current) >= performance_ttl_hours,
+            "deep": _age_hours(entry.get("deep_fetched_at_utc"), current) >= deep_ttl_hours,
+        }
+        due: dict[str, bool] = {}
+        for family in ("dynamic", "performance", "deep"):
+            blocked = stale[family] and _family_failure_active(entry, family, current, failed_refresh_retry_ttl_hours)
+            if blocked:
+                cooldown[family] += 1
+            due[family] = bool(allow_network and stale[family] and not blocked)
+        if any(due.values()):
+            work.append((isin, code, due["dynamic"], due["performance"], due["deep"]))
     work = work[: max(0, int(refresh_budget))]
 
-    def worker(item: tuple[str, str, bool, bool, bool]) -> tuple[str, dict, list[dict], bool]:
+    def worker(item: tuple[str, str, bool, bool, bool]) -> tuple[str, dict, list[dict], int, bool]:
         isin, code, dynamic_due, performance_due, deep_due = item
         entry = dict(entries.get(isin, {}))
         urls = action_urls(code)
@@ -363,12 +377,25 @@ def collect_selected_action_context_cached(
         course_url = f"{BOURSORAMA_BASE}/cours/{code}/"
         local_failures: list[dict] = []
         fields = dict(entry.get("fields") or {})
-        changed = False
+        state_changed = False
+        family_successes = 0
 
-        def replace_family(name: str, fresh: dict[str, object], fetched_key: str, url_key: str, url: str, hash_key: str, html: str) -> None:
-            nonlocal changed
-            if not fresh:
-                return
+        def clear_failure(family: str) -> None:
+            nonlocal state_changed
+            for key in (f"{family}_last_failed_at_utc", f"{family}_failure_reason", f"{family}_failure_count"):
+                if key in entry:
+                    entry.pop(key, None)
+                    state_changed = True
+
+        def mark_failure(family: str, reason: str) -> None:
+            nonlocal state_changed
+            entry[f"{family}_last_failed_at_utc"] = current.isoformat()
+            entry[f"{family}_failure_reason"] = reason
+            entry[f"{family}_failure_count"] = min(9999, int(entry.get(f"{family}_failure_count") or 0) + 1)
+            state_changed = True
+
+        def replace_family(name: str, family: str, fresh: dict[str, object], fetched_key: str, url_key: str, url: str, hash_key: str, html: str) -> None:
+            nonlocal state_changed, family_successes
             old = set(entry.get(name) or [])
             for field in old:
                 fields.pop(field, None)
@@ -377,71 +404,107 @@ def collect_selected_action_context_cached(
             entry[fetched_key] = current.isoformat()
             entry[url_key] = url
             entry[hash_key] = sha256(html.encode("utf-8", errors="replace")).hexdigest()
-            changed = True
+            clear_failure(family)
+            state_changed = True
+            family_successes += 1
 
         if dynamic_due:
             try:
-                rate_limiter.wait(); response = fetch(consensus_url, timeout=timeout_seconds)
-                if hasattr(response, "raise_for_status"): response.raise_for_status()
+                rate_limiter.wait()
+                response = fetch(consensus_url, timeout=timeout_seconds)
+                if hasattr(response, "raise_for_status"):
+                    response.raise_for_status()
                 html = str(getattr(response, "text", "") or "")
                 dynamic = parse_action_consensus_html(html)
                 dynamic.update(parse_quote_context_html(html))
                 dynamic.update(parse_forward_forecasts_html(html))
                 dynamic.update(parse_consensus_revision_context_html(html))
                 if dynamic:
-                    replace_family("dynamic_fields", dynamic, "dynamic_fetched_at_utc", "consensus_url", consensus_url, "consensus_sha256", html)
+                    replace_family("dynamic_fields", "dynamic", dynamic, "dynamic_fetched_at_utc", "consensus_url", consensus_url, "consensus_sha256", html)
                 else:
+                    mark_failure("dynamic", "NO_DYNAMIC_FIELDS")
                     local_failures.append({"isin": isin, "source": "Boursorama", "reason": "NO_DYNAMIC_FIELDS", "url": consensus_url})
             except Exception as exc:
-                local_failures.append({"isin": isin, "source": "Boursorama", "reason": type(exc).__name__, "detail": str(exc)[:160], "url": consensus_url})
+                reason = type(exc).__name__
+                mark_failure("dynamic", reason)
+                local_failures.append({"isin": isin, "source": "Boursorama", "reason": reason, "detail": str(exc)[:160], "url": consensus_url})
         if performance_due:
             try:
-                rate_limiter.wait(); response = fetch(course_url, timeout=timeout_seconds)
-                if hasattr(response, "raise_for_status"): response.raise_for_status()
+                rate_limiter.wait()
+                response = fetch(course_url, timeout=timeout_seconds)
+                if hasattr(response, "raise_for_status"):
+                    response.raise_for_status()
                 html = str(getattr(response, "text", "") or "")
                 performance = parse_course_performance_html(html)
                 performance.update(parse_quote_context_html(html))
                 if performance:
-                    replace_family("performance_fields", performance, "performance_fetched_at_utc", "course_url", course_url, "course_sha256", html)
+                    replace_family("performance_fields", "performance", performance, "performance_fetched_at_utc", "course_url", course_url, "course_sha256", html)
                 else:
+                    mark_failure("performance", "NO_PERFORMANCE_FIELDS")
                     local_failures.append({"isin": isin, "source": "Boursorama", "reason": "NO_PERFORMANCE_FIELDS", "url": course_url})
             except Exception as exc:
-                local_failures.append({"isin": isin, "source": "Boursorama", "reason": type(exc).__name__, "detail": str(exc)[:160], "url": course_url})
+                reason = type(exc).__name__
+                mark_failure("performance", reason)
+                local_failures.append({"isin": isin, "source": "Boursorama", "reason": reason, "detail": str(exc)[:160], "url": course_url})
         if deep_due:
             try:
-                rate_limiter.wait(); response = fetch(key_url, timeout=timeout_seconds)
-                if hasattr(response, "raise_for_status"): response.raise_for_status()
+                rate_limiter.wait()
+                response = fetch(key_url, timeout=timeout_seconds)
+                if hasattr(response, "raise_for_status"):
+                    response.raise_for_status()
                 html = str(getattr(response, "text", "") or "")
                 deep = parse_action_key_figures_html(html)
                 if deep:
-                    replace_family("deep_fields", deep, "deep_fetched_at_utc", "key_figures_url", key_url, "key_figures_sha256", html)
+                    replace_family("deep_fields", "deep", deep, "deep_fetched_at_utc", "key_figures_url", key_url, "key_figures_sha256", html)
                 else:
+                    mark_failure("deep", "NO_DEEP_FIELDS")
                     local_failures.append({"isin": isin, "source": "Boursorama", "reason": "NO_DEEP_FIELDS", "url": key_url})
             except Exception as exc:
-                local_failures.append({"isin": isin, "source": "Boursorama", "reason": type(exc).__name__, "detail": str(exc)[:160], "url": key_url})
+                reason = type(exc).__name__
+                mark_failure("deep", reason)
+                local_failures.append({"isin": isin, "source": "Boursorama", "reason": reason, "detail": str(exc)[:160], "url": key_url})
         entry["status"] = "OK" if fields else "EMPTY"
         entry["boursorama_code"] = code
         entry["fields"] = fields
-        return isin, entry, local_failures, changed
+        return isin, entry, local_failures, family_successes, state_changed
 
+    refreshed_instruments = 0
+    refreshed_families = 0
+    changed_any = False
     workers = max(1, min(int(max_workers), len(work))) if work else 0
-    refreshed = 0; changed_any = False
     if workers:
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="boursorama-selected") as pool:
             futures = [pool.submit(worker, item) for item in work]
             for future in as_completed(futures):
-                isin, entry, local_failures, changed = future.result()
-                entries[isin] = entry; failures.extend(local_failures)
-                refreshed += int(changed); changed_any = changed_any or changed
+                isin, entry, local_failures, successes, state_changed = future.result()
+                entries[isin] = entry
+                failures.extend(local_failures)
+                refreshed_instruments += int(successes > 0)
+                refreshed_families += int(successes)
+                changed_any = changed_any or state_changed
     if changed_any:
         payload["updated_at_utc"] = current.isoformat()
-        payload["policy"] = {"selected_only": True, "dynamic_ttl_hours": dynamic_ttl_hours, "performance_ttl_hours": performance_ttl_hours, "deep_ttl_hours": deep_ttl_hours, "refresh_budget": refresh_budget, "request_start_interval_seconds": request_start_interval_seconds, "max_workers": max_workers, "raw_html_persisted": False, "priority_source": True}
+        payload["policy"] = {
+            "selected_only": True,
+            "dynamic_ttl_hours": dynamic_ttl_hours,
+            "performance_ttl_hours": performance_ttl_hours,
+            "deep_ttl_hours": deep_ttl_hours,
+            "failed_refresh_retry_ttl_hours": failed_refresh_retry_ttl_hours,
+            "refresh_budget": refresh_budget,
+            "request_start_interval_seconds": request_start_interval_seconds,
+            "max_workers": max_workers,
+            "raw_html_persisted": False,
+            "priority_source": True,
+        }
         _save(cache_file, payload)
 
-    observations: list[dict] = []; usable = 0
+    observations: list[dict] = []
+    usable = 0
     for _, row in rows.iterrows():
-        isin = str(row.get("isin") or "").strip(); entry = entries.get(isin)
-        if not entry or entry.get("status") != "OK": continue
+        isin = str(row.get("isin") or "").strip()
+        entry = entries.get(isin)
+        if not entry or entry.get("status") != "OK":
+            continue
         usable += 1
         families = [
             (set(entry.get("dynamic_fields") or []), entry.get("dynamic_fetched_at_utc"), entry.get("consensus_url")),
@@ -450,11 +513,14 @@ def collect_selected_action_context_cached(
         ]
         fields = dict(entry.get("fields") or {})
         for field, value in fields.items():
-            if value is None: continue
-            fetched = None; source_url = None
+            if value is None:
+                continue
+            fetched = None
+            source_url = None
             for names, ts, url in families:
                 if field in names:
-                    fetched, source_url = ts, url; break
+                    fetched, source_url = ts, url
+                    break
             observations.append({"isin": isin, "asset_class": "ACTION", "horizon": str(row.get("horizon") or ""), "field": field, "value": value, "source": "Boursorama public priority fiche", "source_url": source_url, "collected_at": fetched, "validation_status": "POST_SELECTION_PRIORITY_CONTEXT"})
         metadata = {
             "boursorama_dynamic_age_hours": _age_hours(entry.get("dynamic_fetched_at_utc"), current),
@@ -464,4 +530,26 @@ def collect_selected_action_context_cached(
         for field, value in metadata.items():
             observations.append({"isin": isin, "asset_class": "ACTION", "horizon": str(row.get("horizon") or ""), "field": field, "value": value, "source": "Boursorama cache metadata", "source_url": entry.get("consensus_url"), "collected_at": current.isoformat(), "validation_status": "SOURCE_FRESHNESS_METADATA"})
 
-    return BoursoramaSelectedResult(observations, failures, {"cache_version": CACHE_VERSION, "requested_rows": int(len(rows)), "unique_instruments": int(len(unique)), "refresh_requested": int(len(work)), "refresh_success": int(refreshed), "usable_rows": int(usable), "observations": int(len(observations)), "selected_only": True, "priority_source": True, "network_allowed": bool(allow_network), "cache_write_performed": bool(changed_any), "raw_html_persisted": False, "decision_influence": False, "score_influence": 0.0})
+    return BoursoramaSelectedResult(
+        observations,
+        failures,
+        {
+            "cache_version": CACHE_VERSION,
+            "requested_rows": int(len(rows)),
+            "unique_instruments": int(len(unique)),
+            "refresh_requested": int(len(work)),
+            "refresh_success": int(refreshed_instruments),
+            "families_refreshed": int(refreshed_families),
+            "failure_cooldown_skipped": {key: int(value) for key, value in cooldown.items()},
+            "failed_refresh_retry_ttl_hours": float(failed_refresh_retry_ttl_hours),
+            "usable_rows": int(usable),
+            "observations": int(len(observations)),
+            "selected_only": True,
+            "priority_source": True,
+            "network_allowed": bool(allow_network),
+            "cache_write_performed": bool(changed_any),
+            "raw_html_persisted": False,
+            "decision_influence": False,
+            "score_influence": 0.0,
+        },
+    )
