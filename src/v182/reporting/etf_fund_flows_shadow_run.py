@@ -237,6 +237,20 @@ def run(root: Path = ROOT) -> dict:
     current_success_entries = successful_snapshot_entries(snapshot, failures)
     reusable_entries = merge_reuse_entries(prior_reuse_entries, current_success_entries)
 
+    # Persist the network checkpoint immediately after the immutable history is
+    # safely written. If downstream computation/reporting fails, a same-day rerun
+    # reuses every successful instrument instead of repeating external collection.
+    marker_written = False
+    if reuse_enabled:
+        write_same_day_reuse_marker(
+            reuse_marker_path,
+            universe,
+            official,
+            reusable_entries,
+            now=run_now,
+        )
+        marker_written = True
+
     if history.empty:
         payload = {
             "status": "NO_DATA",
@@ -248,6 +262,8 @@ def run(root: Path = ROOT) -> dict:
             "same_day_reused_instruments": int(len(reusable_ids)),
             "same_day_reused_snapshot_rows": int(len(prior_reuse_entries)),
             "network_collection_universe_count": int(len(collection_universe)),
+            "same_day_reuse_marker": str(reuse_marker_path.relative_to(root)),
+            "same_day_reuse_marker_written": marker_written,
             "collection_runtime": collection_metrics,
             "decision_influence": 0.0,
             "live_orders_enabled": False,
@@ -286,17 +302,6 @@ def run(root: Path = ROOT) -> dict:
         failures.to_csv(
             gaps_dir / "ETF_FUND_FLOW_COLLECTION_FAILURES.csv", sep=";", index=False, encoding="utf-8-sig"
         )
-
-    marker_written = False
-    if reuse_enabled:
-        write_same_day_reuse_marker(
-            reuse_marker_path,
-            universe,
-            official,
-            reusable_entries,
-            now=run_now,
-        )
-        marker_written = True
 
     payload = dict(result.diagnostics)
     payload.update(
