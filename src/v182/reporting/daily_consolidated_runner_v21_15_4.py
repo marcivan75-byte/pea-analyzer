@@ -15,6 +15,38 @@ from v182.reporting.earnings_clock_v21_15_4 import refresh_frame as refresh_earn
 ROOT = Path(__file__).resolve().parents[3]
 VERSION = "DAILY_CONSOLIDATED_RUNTIME_V21_15_4"
 
+_ORIGINAL_FAST_INSTALL = collection.DailyFastRuntime.install
+_ORIGINAL_FAST_RESTORE = collection.DailyFastRuntime.restore
+
+
+def _bootstrap_safe_fast_install(self) -> None:
+    """Capture enriched masters even when retained fast state is not usable yet.
+
+    The historical fast runtime returned immediately when ``enabled`` was false,
+    so a fallback/full bootstrap run could never capture the enriched masters and
+    therefore could never promote a valid state for the next run.  Keep all fast
+    source substitutions disabled in that situation, but always wrap save_master
+    so a successful full run can seed the retained state.
+    """
+    if self.enabled:
+        return _ORIGINAL_FAST_INSTALL(self)
+
+    def capture_save_master(frame, path):
+        self.original_save_master(frame, path)
+        name = Path(path).name
+        if name == collection._ACTION_OUTPUT:
+            self.captured["ACTION"] = frame.copy(deep=True)
+        elif name == collection._ETF_OUTPUT:
+            self.captured["ETF"] = frame.copy(deep=True)
+
+    collection.legacy.save_master = capture_save_master
+
+
+def _bootstrap_safe_fast_restore(self) -> None:
+    if self.enabled:
+        return _ORIGINAL_FAST_RESTORE(self)
+    collection.legacy.save_master = self.original_save_master
+
 
 def _safe_nonblocking(name: str, runner) -> tuple[dict, dict | None, float]:
     started = perf_counter()
@@ -35,6 +67,8 @@ def _run_collection_optimized_locals() -> tuple[dict, dict]:
     original_wave3 = collection.waves.wave3_local_features
     original_prefetch = collection.topdown_prefetch.fetch_external
     original_fixed_window = collection._fixed_window_fetcher
+    original_runtime_install = collection.DailyFastRuntime.install
+    original_runtime_restore = collection.DailyFastRuntime.restore
     diagnostics: dict = {
         "earnings_clock": {
             "status": "NOT_APPLIED_NO_FAST_STATE",
@@ -42,6 +76,12 @@ def _run_collection_optimized_locals() -> tuple[dict, dict]:
             "source_timestamp_changed": False,
         },
         "wave3_cpu_budget": wave3_cpu.audit_contract(),
+        "fast_state_bootstrap": {
+            "status": "ENABLED",
+            "capture_enriched_masters_on_full_fallback": True,
+            "decision_logic_changed": False,
+            "source_contract_changed": False,
+        },
         "topdown_early_prefetch": {
             "status": "DISABLED_TO_PRESERVE_WAVE09_CURRENT_WINDOW_FRESHNESS",
             "reason": "RUN_START_WINDOW_COULD_MISS_ARTICLES_PUBLISHED_BEFORE_WAVE09",
@@ -70,6 +110,8 @@ def _run_collection_optimized_locals() -> tuple[dict, dict]:
     collection.waves.wave3_local_features = wave3_cpu.wave3_local_features
     collection.topdown_prefetch.fetch_external = disabled_prefetch
     collection._fixed_window_fetcher = lambda _anchor, original_fetch: original_fetch
+    collection.DailyFastRuntime.install = _bootstrap_safe_fast_install
+    collection.DailyFastRuntime.restore = _bootstrap_safe_fast_restore
     try:
         return collection.run(), diagnostics
     finally:
@@ -77,6 +119,8 @@ def _run_collection_optimized_locals() -> tuple[dict, dict]:
         collection.waves.wave3_local_features = original_wave3
         collection.topdown_prefetch.fetch_external = original_prefetch
         collection._fixed_window_fetcher = original_fixed_window
+        collection.DailyFastRuntime.install = original_runtime_install
+        collection.DailyFastRuntime.restore = original_runtime_restore
 
 
 def run(root: Path = ROOT) -> dict:
@@ -128,6 +172,7 @@ def run(root: Path = ROOT) -> dict:
             "collection": {
                 "status": collection_payload.get("status"),
                 "fast_mode": collection_payload.get("daily_fast_collection", {}).get("mode"),
+                "fast_state_promoted": collection_payload.get("daily_fast_collection", {}).get("promoted"),
             },
             "etf_structure_replay": {
                 "status": replay_payload.get("status"),
