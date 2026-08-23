@@ -6,13 +6,16 @@ import json
 import time
 import traceback
 
+import pandas as pd
+
 from v182.reporting import friday_tactical_reuse_v21_16
 from v182.reporting import weekly_tail_parallel_v21_16
 from v182.reporting import weekly_unified_fast_v21_16
+from v182.reporting.daily_source_prewarm_v21_16 import WEEKLY_SEED_PATH, persist_seed
 from v182.reporting.runtime_telemetry import _budget_result
 
 ROOT = Path(__file__).resolve().parents[3]
-VERSION = "WEEKLY_FULL_BUNDLE_V21_16_1"
+VERSION = "WEEKLY_FULL_BUNDLE_V21_16_2_PREWARM_SEED"
 
 
 def _step(name: str, func) -> dict:
@@ -34,6 +37,27 @@ def _step(name: str, func) -> dict:
         }
 
 
+def _persist_weekly_prewarm_seed(root: Path) -> dict:
+    path = root / "outputs" / "committee_master" / "COMMITTEE_DECISIONS.csv"
+    if not path.exists():
+        return {"status": "COMMITTEE_DECISIONS_MISSING", "persisted_rows": 0}
+    try:
+        frame = pd.read_csv(path, sep=";", encoding="utf-8-sig", low_memory=False)
+        return persist_seed(
+            frame,
+            root,
+            seed_path=WEEKLY_SEED_PATH,
+            max_persisted=40,
+        )
+    except Exception as exc:
+        return {
+            "status": "FAILED_NONBLOCKING",
+            "persisted_rows": 0,
+            "error": type(exc).__name__,
+            "detail": str(exc)[:400],
+        }
+
+
 def run(root: Path = ROOT) -> dict:
     started = time.perf_counter()
     steps: dict[str, dict] = {}
@@ -43,6 +67,8 @@ def run(root: Path = ROOT) -> dict:
     if steps["unified"]["status"] != "SUCCESS" or unified_result.get("status") != "SUCCESS":
         error = steps["unified"].get("error") or f"UNIFIED_STATUS_{unified_result.get('status', 'UNKNOWN')}"
         raise RuntimeError(f"WEEKLY_FULL_BUNDLE_UNIFIED_FAILED:{error}")
+
+    weekly_prewarm_seed = _persist_weekly_prewarm_seed(root)
 
     steps["friday_tactical_reuse"] = _step(
         "FRIDAY_TACTICAL_REUSE", lambda: friday_tactical_reuse_v21_16.run(root)
@@ -72,6 +98,8 @@ def run(root: Path = ROOT) -> dict:
         "previous_parent_python_processes": 3,
         "current_parent_python_processes": 1,
         "parent_interpreter_startups_avoided": 2,
+        "next_week_source_prewarm_seed": weekly_prewarm_seed,
+        "weekly_source_prewarm_max_unique_isins": 40,
         "step_order": ["unified", "friday_tactical_reuse", "weekly_tail"],
         "decision_logic_changed": False,
         "criteria_changed": False,
