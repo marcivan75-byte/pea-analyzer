@@ -1,4 +1,4 @@
-name: PEA Daily Fast TCT CT V21.16
+name: PEA Daily Fast TCT CT V21.16.1
 
 on:
   workflow_dispatch:
@@ -24,7 +24,7 @@ env:
 jobs:
   daily-tactical:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     env:
       PYTHONUNBUFFERED: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
@@ -39,6 +39,7 @@ jobs:
       MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
       ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
       EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -110,17 +111,10 @@ jobs:
         if: ${{ inputs.run_validation }}
         run: python -m compileall -q src
 
-      - name: Fast daily market refresh from weekly enriched baseline
-        run: python -m v182.reporting.daily_fast_collection
+      - name: Run daily fast collection TCT CT and postmarket bundle
+        run: python -m v182.reporting.daily_fast_bundle_v21_16
 
-      - name: Daily TCT CT scoring and V21.8
-        run: python -m v182.reporting.daily_tct_ct_runner
-
-      - name: Selected POSTMARKET V24.4.2 context
-        continue-on-error: true
-        run: python -m v182.reporting.tct_postmarket_bundle_run
-
-      - name: Publish Android tactical summary
+      - name: Publish Android tactical summary and audit
         if: always()
         run: |
           if [ -f outputs/mobile/ANDROID_DAILY_TCT_CT.md ]; then
@@ -130,15 +124,18 @@ jobs:
             printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
             cat outputs/mobile/ANDROID_TCT_NEXT_SESSION_CATALYST_V24_4_2.md >> "$GITHUB_STEP_SUMMARY"
           fi
-
-      - name: Show fast daily audit
-        if: always()
-        run: |
-          if [ -f outputs/audit/DAILY_FAST_COLLECTION.json ]; then cat outputs/audit/DAILY_FAST_COLLECTION.json; fi
-          if [ -f outputs/audit/DAILY_TCT_CT_AUDIT.json ]; then cat outputs/audit/DAILY_TCT_CT_AUDIT.json; fi
-          if [ -f outputs/audit/POSTMARKET_BUNDLE_RUNTIME_V21_13_12.json ]; then cat outputs/audit/POSTMARKET_BUNDLE_RUNTIME_V21_13_12.json; fi
-          if [ -f outputs/audit/TCT_NEXT_SESSION_CATALYST_V24_4_2_AUDIT.json ]; then cat outputs/audit/TCT_NEXT_SESSION_CATALYST_V24_4_2_AUDIT.json; fi
-          if [ -f data/cache/actions/history_manifest.json ]; then cat data/cache/actions/history_manifest.json; fi
+          for f in \
+            outputs/audit/DAILY_FAST_BUNDLE_V21_16.json \
+            outputs/audit/DAILY_FAST_COLLECTION.json \
+            outputs/audit/DAILY_TCT_CT_AUDIT.json \
+            outputs/audit/POSTMARKET_BUNDLE_RUNTIME_V21_13_12.json \
+            outputs/audit/TCT_NEXT_SESSION_CATALYST_V24_4_2_AUDIT.json \
+            data/cache/actions/history_manifest.json; do
+            if [ -f "$f" ]; then
+              echo "===== $f ====="
+              cat "$f"
+            fi
+          done
 
       - name: Save persistent OHLCV cache
         if: ${{ success() && hashFiles('data/cache/**') != '' }}
@@ -163,18 +160,17 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: pea-daily-fast-tct-ct-${{ github.run_id }}
+          name: pea-daily-fast-tct-ct-v21-16-1-${{ github.run_id }}
           path: |
             outputs/daily_tct_ct/
             outputs/source_context/
             outputs/mobile/ANDROID_DAILY_TCT_CT.md
             outputs/mobile/ANDROID_TCT_NEXT_SESSION_CATALYST_V24_4_2.md
+            outputs/audit/DAILY_FAST_BUNDLE_V21_16.json
             outputs/audit/DAILY_FAST_COLLECTION.json
             outputs/audit/DAILY_TCT_CT_AUDIT.json
             outputs/audit/POSTMARKET_BUNDLE_RUNTIME_V21_13_12.json
             outputs/audit/TCT_NEXT_SESSION_CATALYST_V24_4_2_AUDIT.json
-            outputs/audit/TCT_V24_4_2_PIT_LINEAGE_AUDIT.json
-            outputs/audit/TCT_V24_4_2_PIT_VALIDATION.json
             state/provenance/daily_fast/BASELINE_META.json
             data/cache/actions/history_manifest.json
             data/cache/etf/history_manifest.json
