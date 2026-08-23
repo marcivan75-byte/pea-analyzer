@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from time import perf_counter
 
 import pandas as pd
 
@@ -54,8 +53,6 @@ def _action_derived_parallel(
     for _ticker, isin, indicators in calculated:
         if not indicators:
             continue
-        # Preserve legacy last-write semantics if an ISIN somehow appears in
-        # several parquet batches, while keeping first-seen deterministic order.
         if isin not in per_ticker_indicators:
             ordered_isins.append(isin)
         per_ticker_indicators[isin] = indicators
