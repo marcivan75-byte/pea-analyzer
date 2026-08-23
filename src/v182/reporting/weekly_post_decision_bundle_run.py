@@ -6,7 +6,6 @@ import json
 import time
 
 from v182.reporting import criteria_governance_audit
-from v182.reporting import decision_brief
 from v182.reporting import etf_fund_flows_shadow_run
 
 
@@ -42,56 +41,28 @@ def _write_audit(root: Path, payload: dict) -> None:
 
 
 def run(root: Path = ROOT) -> dict:
-    """Preserve the weekly tail semantics while hiding local audit time under Fund Flows I/O.
+    """Overlap only the two weekly steps that historically run after Decision Brief.
 
-    Historical workflow contract:
-    - Decision Brief is mandatory. If it fails, the later two steps never start.
-    - ETF Fund Flows is SHADOW and continue-on-error.
-    - Criteria Governance is mandatory.
+    The Decision Brief intentionally remains a separate GitHub step with `if: always()`.
+    This bundle has the default GitHub success gate, exactly like the historical Fund
+    Flows and Criteria Governance steps: if an earlier mandatory step (including the
+    Decision Brief) failed, GitHub does not invoke this module.
 
-    Once the Decision Brief succeeds, Fund Flows and Criteria Governance are independent:
-    the former writes fund-flow state/outputs, the latter reads masters/config and writes audit
-    outputs. They therefore execute concurrently without adding a second external-provider branch.
+    Inside the module, ETF Fund Flows remains SHADOW / continue-on-error while Criteria
+    Governance remains mandatory. The two branches have disjoint writes and only Fund
+    Flows performs external collection, so the overlap adds no provider concurrency.
     """
     started = time.perf_counter()
-    steps: dict[str, dict] = {}
-
-    brief = _measured("DECISION_BRIEF", decision_brief.run, root)
-    steps["decision_brief"] = brief
-    if brief["status"] != "SUCCESS":
-        payload = {
-            "status": "FAILED_DECISION_BRIEF",
-            "runtime_seconds": round(time.perf_counter() - started, 3),
-            "steps": steps,
-            "later_steps_started": False,
-            "decision_brief_required": True,
-            "fund_flows_shadow_continue_on_error": True,
-            "criteria_governance_required": True,
-            "governance_overlaps_fund_flows": False,
-            "external_provider_concurrency_added": False,
-            "previous_python_processes": 3,
-            "current_python_processes": 1,
-            "interpreter_startups_avoided": 2,
-            "decision_logic_changed": False,
-            "criteria_changed": False,
-            "weights_changed": False,
-            "thresholds_changed": False,
-            "pit_logic_changed": False,
-            "holdout_opened": False,
-            "real_orders_enabled": False,
-        }
-        _write_audit(root, payload)
-        raise RuntimeError(f"WEEKLY_POST_DECISION_BUNDLE:DECISION_BRIEF:{brief['error']}")
-
     with ThreadPoolExecutor(max_workers=2, thread_name_prefix="weekly-post-decision") as pool:
         fund_future = pool.submit(_measured, "ETF_FUND_FLOWS_SHADOW", etf_fund_flows_shadow_run.run, root)
         governance_future = pool.submit(_measured, "CRITERIA_GOVERNANCE", criteria_governance_audit.run, root)
         fund = fund_future.result()
         governance = governance_future.result()
 
-    steps["etf_fund_flows_shadow"] = fund
-    steps["criteria_governance"] = governance
-
+    steps = {
+        "etf_fund_flows_shadow": fund,
+        "criteria_governance": governance,
+    }
     if governance["status"] != "SUCCESS":
         status = "FAILED_CRITERIA_GOVERNANCE"
     elif fund["status"] != "SUCCESS":
@@ -103,15 +74,15 @@ def run(root: Path = ROOT) -> dict:
         "status": status,
         "runtime_seconds": round(time.perf_counter() - started, 3),
         "steps": steps,
-        "later_steps_started": True,
-        "decision_brief_required": True,
+        "decision_brief_remains_separate_required_gate": True,
         "fund_flows_shadow_continue_on_error": True,
         "criteria_governance_required": True,
         "governance_overlaps_fund_flows": True,
         "external_provider_concurrency_added": False,
-        "previous_python_processes": 3,
-        "current_python_processes": 1,
-        "interpreter_startups_avoided": 2,
+        "previous_python_processes_after_brief": 2,
+        "current_python_processes_after_brief": 1,
+        "interpreter_startups_avoided": 1,
+        "workflow_failure_semantics_changed": False,
         "decision_logic_changed": False,
         "criteria_changed": False,
         "weights_changed": False,
