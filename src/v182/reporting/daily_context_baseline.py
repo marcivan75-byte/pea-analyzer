@@ -13,6 +13,8 @@ ACTIONS_FILE = "ACTIONS_ENRICHED_BASELINE.parquet"
 ETF_FILE = "ETF_ENRICHED_BASELINE.parquet"
 META_FILE = "BASELINE_META.json"
 VERSION = "DAILY_FAST_BASELINE_V1"
+EXPECTED_ACTIONS = 1829
+EXPECTED_ETFS = 102
 
 
 def _now_utc() -> datetime:
@@ -56,6 +58,13 @@ def _validate_identity(frame: pd.DataFrame, label: str) -> None:
         raise RuntimeError(f"DAILY_FAST_{label}_BASELINE_IDENTITY_INVALID")
 
 
+def _validate_canonical_counts(actions: pd.DataFrame, etfs: pd.DataFrame) -> None:
+    if len(actions) != EXPECTED_ACTIONS or actions["isin"].astype(str).nunique() != EXPECTED_ACTIONS:
+        raise RuntimeError(f"DAILY_FAST_ACTION_CANONICAL_COUNT_REQUIRED:{len(actions)}")
+    if len(etfs) != EXPECTED_ETFS or etfs["isin"].astype(str).nunique() != EXPECTED_ETFS:
+        raise RuntimeError(f"DAILY_FAST_ETF_CANONICAL_COUNT_REQUIRED:{len(etfs)}")
+
+
 def publish_context_baseline(
     actions: pd.DataFrame,
     etfs: pd.DataFrame,
@@ -74,6 +83,7 @@ def publish_context_baseline(
     """
     _validate_identity(actions, "ACTION")
     _validate_identity(etfs, "ETF")
+    _validate_canonical_counts(actions, etfs)
     current = (now or _now_utc()).astimezone(timezone.utc)
     directory = root / BASELINE_DIR
     meta_path = directory / META_FILE
@@ -104,6 +114,7 @@ def publish_context_baseline(
         "etf_rows": int(len(etfs)),
         "etf_unique_isins": int(etfs["isin"].astype(str).nunique()),
         "etf_columns": int(len(etfs.columns)),
+        "canonical_counts_validated": True,
         "slow_source_freshness_extended_by_daily_write": False,
         "score_logic_changed": False,
         "decision_logic_changed": False,
@@ -144,6 +155,7 @@ def load_context_baseline(
         raise RuntimeError(f"DAILY_FAST_BASELINE_READ_FAILED:{type(exc).__name__}") from exc
     _validate_identity(actions, "ACTION")
     _validate_identity(etfs, "ETF")
+    _validate_canonical_counts(actions, etfs)
     if int(meta.get("actions_rows", -1)) != len(actions) or int(meta.get("etf_rows", -1)) != len(etfs):
         raise RuntimeError("DAILY_FAST_BASELINE_ROW_COUNT_MISMATCH")
     result = dict(meta)
@@ -152,14 +164,34 @@ def load_context_baseline(
     return actions, etfs, result
 
 
+def _require_passed_full_quality_gate(root: Path) -> dict:
+    path = root / "outputs" / "audit" / "V18.2_QUALITY_GATES.json"
+    if not path.exists():
+        raise RuntimeError("DAILY_FAST_BASELINE_FULL_QUALITY_GATE_MISSING")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("DAILY_FAST_BASELINE_FULL_QUALITY_GATE_INVALID") from exc
+    if payload.get("passed") is not True:
+        raise RuntimeError("DAILY_FAST_BASELINE_FULL_QUALITY_GATE_NOT_PASSED")
+    expected = payload.get("expected_rows") if isinstance(payload.get("expected_rows"), dict) else {}
+    if int(expected.get("ACTION", -1)) != EXPECTED_ACTIONS or int(expected.get("ETF", -1)) != EXPECTED_ETFS:
+        raise RuntimeError("DAILY_FAST_BASELINE_FULL_QUALITY_GATE_UNIVERSE_MISMATCH")
+    return payload
+
+
 def publish_from_outputs(root: Path = ROOT, *, profile: str = "WEEKLY_FULL_COMMITTEE") -> dict:
+    quality = _require_passed_full_quality_gate(root)
     actions_path = root / "outputs" / "V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv"
     etf_path = root / "outputs" / "V18.2_PEA_ETF_MASTER_ENRICHED.csv"
     if not actions_path.exists() or not etf_path.exists():
         raise RuntimeError("DAILY_FAST_BASELINE_OUTPUT_MASTERS_MISSING")
     actions = pd.read_csv(actions_path, sep=";", encoding="utf-8-sig", low_memory=False)
     etfs = pd.read_csv(etf_path, sep=";", encoding="utf-8-sig", low_memory=False)
-    return publish_context_baseline(actions, etfs, root, full_refresh=True, profile=profile)
+    result = publish_context_baseline(actions, etfs, root, full_refresh=True, profile=profile)
+    result["full_quality_gate_passed"] = True
+    result["full_quality_gate_checks"] = len(quality.get("checks") or [])
+    return result
 
 
 def main() -> None:
