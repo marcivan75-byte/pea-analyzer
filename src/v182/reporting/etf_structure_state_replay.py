@@ -8,7 +8,6 @@ import os
 import pandas as pd
 
 from v182.io.frames import apply_observations, is_missing, save_master
-from v182.reporting.daily_context_baseline import publish_from_outputs
 from v182.state.etf_structure_state import load_replay_observations, load_state_config
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -46,27 +45,6 @@ def _same_github_run_refresh(root: Path) -> dict | None:
     return payload
 
 
-def _publish_weekly_daily_fast_baseline(root: Path, audit: dict) -> None:
-    """Seed the Mon-Thu fast path only from a full weekly context.
-
-    DAILY_TACTICAL executions are explicitly forbidden from advancing the full
-    slow-source timestamp. A publication failure is visible in the replay audit
-    but does not rewrite the underlying ETF structural state result.
-    """
-    if os.environ.get("PEA_RUN_PROFILE", "").strip().upper() == "DAILY_TACTICAL":
-        audit["daily_fast_baseline"] = {"status": "SKIPPED_DAILY_PROFILE"}
-        return
-    try:
-        baseline = publish_from_outputs(root, profile="WEEKLY_FULL_COMMITTEE_POST_ETF_REPLAY")
-        audit["daily_fast_baseline"] = {"status": "PUBLISHED", **baseline}
-    except Exception as exc:
-        audit["daily_fast_baseline"] = {
-            "status": "FAILED_NON_BLOCKING",
-            "error": type(exc).__name__,
-            "detail": str(exc)[:240],
-        }
-
-
 def _write_already_applied_audit(root: Path, config: dict, refresh: dict) -> dict:
     coverage=dict(refresh.get("coverage_pct") or {})
     audit = {
@@ -89,7 +67,6 @@ def _write_already_applied_audit(root: Path, config: dict, refresh: dict) -> dic
         "coverage_after_pct": coverage,
         "governance": config.get("governance", {}),
     }
-    _publish_weekly_daily_fast_baseline(root, audit)
     audit_path = root / str(config["audit_replay_path"])
     audit_path.parent.mkdir(parents=True, exist_ok=True)
     audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
@@ -138,7 +115,6 @@ def run(root: Path = ROOT) -> dict:
         "coverage_after_pct": after,
         "governance": config.get("governance", {}),
     }
-    _publish_weekly_daily_fast_baseline(root, audit)
     audit_path = root / str(config["audit_replay_path"])
     audit_path.parent.mkdir(parents=True, exist_ok=True)
     audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
