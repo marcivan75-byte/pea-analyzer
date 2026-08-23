@@ -43,6 +43,46 @@ def test_parallel_reference_scoring_preserves_horizon_order():
     assert result["horizon"].tolist() == requested
 
 
+def test_memoized_resolver_reuses_same_frame_and_field():
+    frame = pd.DataFrame({"metric": [1.0, 2.0]})
+    calls: list[str] = []
+
+    def original(input_frame, name):
+        calls.append(name)
+        return input_frame[name].astype(float), f"DIRECT:{name}"
+
+    wrapped, stats = weekly._memoized_resolver(original)
+    first_values, first_source = wrapped(frame, "metric")
+    second_values, second_source = wrapped(frame, "metric")
+
+    pd.testing.assert_series_equal(first_values, second_values)
+    assert first_source == second_source == "DIRECT:metric"
+    assert calls == ["metric"]
+    assert stats == {"hits": 1, "misses": 1, "waits": 0, "entries": 1, "frames": 1}
+
+
+def test_memoized_resolver_never_reuses_across_frames():
+    frame_a = pd.DataFrame({"metric": [1.0]})
+    frame_b = pd.DataFrame({"metric": [2.0]})
+    calls: list[float] = []
+
+    def original(input_frame, name):
+        calls.append(float(input_frame[name].iloc[0]))
+        return input_frame[name].astype(float), f"DIRECT:{name}"
+
+    wrapped, stats = weekly._memoized_resolver(original)
+    values_a, _ = wrapped(frame_a, "metric")
+    values_b, _ = wrapped(frame_b, "metric")
+
+    assert values_a.iloc[0] == 1.0
+    assert values_b.iloc[0] == 2.0
+    assert calls == [1.0, 2.0]
+    assert stats["misses"] == 2
+    assert stats["hits"] == 0
+    assert stats["entries"] == 2
+    assert stats["frames"] == 2
+
+
 def test_sector_starts_after_structure_and_before_historical_sector_join(monkeypatch, tmp_path):
     sector_started = Event()
     calls: list[str] = []
@@ -84,6 +124,7 @@ def test_sector_starts_after_structure_and_before_historical_sector_join(monkeyp
     assert calls.index("sector_actual") <= calls.index("etf_mt_remaining")
     audit = (tmp_path / "outputs/audit/WEEKLY_UNIFIED_SUPER_RUNTIME_V21_16_1.json").read_text()
     assert '"committee_waits_for_sector_rotation": true' in audit
+    assert '"criterion_resolution_function_wrapped": true' in audit
     assert '"decision_logic_changed": false' in audit
 
 
