@@ -21,10 +21,21 @@ from v182.sources.boursorama_public import (
     parse_action_consensus_html,
     parse_action_key_figures_html,
 )
+from v182.sources.family_cache import (
+    clear_family_failure,
+    family_failure_active,
+    family_values,
+    field_owner,
+    mark_family_failure,
+    merge_family_values,
+    store_family_values,
+)
 from v182.sources.rate_limit import StartRateLimiter
 
 CACHE_VERSION = "BOURSORAMA_SELECTED_V2"
 BOURSORAMA_BASE = "https://www.boursorama.com"
+FAMILY_PRECEDENCE_LOW_TO_HIGH = ("deep", "performance", "dynamic")
+FAMILY_PRECEDENCE_HIGH_TO_LOW = tuple(reversed(FAMILY_PRECEDENCE_LOW_TO_HIGH))
 
 
 @dataclass(frozen=True)
@@ -82,7 +93,6 @@ def _num(value: object) -> float | None:
 
 
 def _first_num(value: object) -> float | None:
-    """Parse only the primary number from cells such as '6,34 EUR 9%'."""
     text = str(value or "").replace("\u202f", " ").replace("\xa0", " ").strip()
     match = re.search(r"[-+]?\d{1,3}(?: \d{3})+(?:[,.]\d+)?|[-+]?\d+(?:[,.]\d+)?", text)
     return _num(match.group(0)) if match else None
@@ -144,26 +154,18 @@ def _tables(html: str) -> list[pd.DataFrame]:
 
 
 def parse_forward_forecasts_html(html: str) -> dict[str, object]:
-    """Parse FactSet estimate tables without concatenating growth percentages into values."""
     fields: dict[str, object] = {}
     wanted = {
-        "benefice net par action": ("eps", ""),
-        "per": ("per", ""),
-        "dividende par action": ("dividend", ""),
-        "rendement": ("yield", "_pct"),
-        "chiffre d'affaires": ("revenue_m", ""),
-        "ebitda": ("ebitda_m", ""),
-        "ebit": ("ebit_m", ""),
-        "dette financiere nette": ("net_debt_m", ""),
-        "actif net par action": ("book_value_per_share", ""),
-        "cash flow par action": ("cash_flow_per_share", ""),
+        "benefice net par action": ("eps", ""), "per": ("per", ""), "dividende par action": ("dividend", ""),
+        "rendement": ("yield", "_pct"), "chiffre d'affaires": ("revenue_m", ""), "ebitda": ("ebitda_m", ""),
+        "ebit": ("ebit_m", ""), "dette financiere nette": ("net_debt_m", ""),
+        "actif net par action": ("book_value_per_share", ""), "cash flow par action": ("cash_flow_per_share", ""),
     }
     for frame in _tables(html):
         if frame.empty or frame.shape[1] < 2:
             continue
-        headers = [str(col) for col in frame.columns]
         year_columns: dict[int, int] = {}
-        for idx, header in enumerate(headers):
+        for idx, header in enumerate([str(col) for col in frame.columns]):
             match = re.search(r"20\d{2}", header)
             if match:
                 year_columns[int(match.group(0))] = idx
@@ -251,17 +253,7 @@ def parse_consensus_revision_context_html(html: str) -> dict[str, object]:
 
 def parse_course_performance_html(html: str) -> dict[str, object]:
     fields: dict[str, object] = {}
-    mapping = {
-        "1er janvier": "ytd",
-        "1 semaine": "1w",
-        "1 mois": "1m",
-        "3 mois": "3m",
-        "6 mois": "6m",
-        "1 an": "1y",
-        "3 ans": "3y",
-        "5 ans": "5y",
-        "10 ans": "10y",
-    }
+    mapping = {"1er janvier": "ytd", "1 semaine": "1w", "1 mois": "1m", "3 mois": "3m", "6 mois": "6m", "1 an": "1y", "3 ans": "3y", "5 ans": "5y", "10 ans": "10y"}
     for frame in _tables(html):
         if frame.empty or frame.shape[1] < 2:
             continue
@@ -314,8 +306,12 @@ def _default_fetcher(url: str, *, timeout: float):
     return requests.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; PEA-Analyzer/21.16; selected-public-context)"}, timeout=timeout)
 
 
-def _family_failure_active(entry: dict, family: str, now: datetime, retry_ttl_hours: float) -> bool:
-    return _age_hours(entry.get(f"{family}_last_failed_at_utc"), now) < max(0.0, float(retry_ttl_hours))
+def _entry_families(entry: dict) -> dict[str, dict[str, object]]:
+    return {
+        "dynamic": family_values(entry, "dynamic"),
+        "performance": family_values(entry, "performance"),
+        "deep": family_values(entry, "deep"),
+    }
 
 
 def collect_selected_action_context_cached(
@@ -360,7 +356,7 @@ def collect_selected_action_context_cached(
         }
         due: dict[str, bool] = {}
         for family in ("dynamic", "performance", "deep"):
-            blocked = stale[family] and _family_failure_active(entry, family, current, failed_refresh_retry_ttl_hours)
+            blocked = stale[family] and family_failure_active(entry, family, current, failed_refresh_retry_ttl_hours)
             if blocked:
                 cooldown[family] += 1
             due[family] = bool(allow_network and stale[family] and not blocked)
@@ -371,40 +367,33 @@ def collect_selected_action_context_cached(
     def worker(item: tuple[str, str, bool, bool, bool]) -> tuple[str, dict, list[dict], int, bool]:
         isin, code, dynamic_due, performance_due, deep_due = item
         entry = dict(entries.get(isin, {}))
+        family_maps = _entry_families(entry)
         urls = action_urls(code)
         consensus_url = urls["consensus"]
         key_url = urls["key_figures"]
         course_url = f"{BOURSORAMA_BASE}/cours/{code}/"
         local_failures: list[dict] = []
-        fields = dict(entry.get("fields") or {})
         state_changed = False
         family_successes = 0
 
-        def clear_failure(family: str) -> None:
+        def fail(family: str, reason: str, url: str, detail: str | None = None) -> None:
             nonlocal state_changed
-            for key in (f"{family}_last_failed_at_utc", f"{family}_failure_reason", f"{family}_failure_count"):
-                if key in entry:
-                    entry.pop(key, None)
-                    state_changed = True
-
-        def mark_failure(family: str, reason: str) -> None:
-            nonlocal state_changed
-            entry[f"{family}_last_failed_at_utc"] = current.isoformat()
-            entry[f"{family}_failure_reason"] = reason
-            entry[f"{family}_failure_count"] = min(9999, int(entry.get(f"{family}_failure_count") or 0) + 1)
+            mark_family_failure(entry, family, current, reason)
             state_changed = True
+            row = {"isin": isin, "source": "Boursorama", "reason": reason, "url": url}
+            if detail:
+                row["detail"] = detail[:160]
+            local_failures.append(row)
 
-        def replace_family(name: str, family: str, fresh: dict[str, object], fetched_key: str, url_key: str, url: str, hash_key: str, html: str) -> None:
+        def replace_family(family: str, fresh: dict[str, object], fetched_key: str, url_key: str, url: str, hash_key: str, html: str) -> None:
             nonlocal state_changed, family_successes
-            old = set(entry.get(name) or [])
-            for field in old:
-                fields.pop(field, None)
-            fields.update(fresh)
-            entry[name] = sorted(fresh)
+            clean = {key: value for key, value in fresh.items() if value is not None}
+            store_family_values(entry, family, clean)
+            family_maps[family] = clean
             entry[fetched_key] = current.isoformat()
             entry[url_key] = url
             entry[hash_key] = sha256(html.encode("utf-8", errors="replace")).hexdigest()
-            clear_failure(family)
+            clear_family_failure(entry, family)
             state_changed = True
             family_successes += 1
 
@@ -420,14 +409,11 @@ def collect_selected_action_context_cached(
                 dynamic.update(parse_forward_forecasts_html(html))
                 dynamic.update(parse_consensus_revision_context_html(html))
                 if dynamic:
-                    replace_family("dynamic_fields", "dynamic", dynamic, "dynamic_fetched_at_utc", "consensus_url", consensus_url, "consensus_sha256", html)
+                    replace_family("dynamic", dynamic, "dynamic_fetched_at_utc", "consensus_url", consensus_url, "consensus_sha256", html)
                 else:
-                    mark_failure("dynamic", "NO_DYNAMIC_FIELDS")
-                    local_failures.append({"isin": isin, "source": "Boursorama", "reason": "NO_DYNAMIC_FIELDS", "url": consensus_url})
+                    fail("dynamic", "NO_DYNAMIC_FIELDS", consensus_url)
             except Exception as exc:
-                reason = type(exc).__name__
-                mark_failure("dynamic", reason)
-                local_failures.append({"isin": isin, "source": "Boursorama", "reason": reason, "detail": str(exc)[:160], "url": consensus_url})
+                fail("dynamic", type(exc).__name__, consensus_url, str(exc))
         if performance_due:
             try:
                 rate_limiter.wait()
@@ -438,14 +424,11 @@ def collect_selected_action_context_cached(
                 performance = parse_course_performance_html(html)
                 performance.update(parse_quote_context_html(html))
                 if performance:
-                    replace_family("performance_fields", "performance", performance, "performance_fetched_at_utc", "course_url", course_url, "course_sha256", html)
+                    replace_family("performance", performance, "performance_fetched_at_utc", "course_url", course_url, "course_sha256", html)
                 else:
-                    mark_failure("performance", "NO_PERFORMANCE_FIELDS")
-                    local_failures.append({"isin": isin, "source": "Boursorama", "reason": "NO_PERFORMANCE_FIELDS", "url": course_url})
+                    fail("performance", "NO_PERFORMANCE_FIELDS", course_url)
             except Exception as exc:
-                reason = type(exc).__name__
-                mark_failure("performance", reason)
-                local_failures.append({"isin": isin, "source": "Boursorama", "reason": reason, "detail": str(exc)[:160], "url": course_url})
+                fail("performance", type(exc).__name__, course_url, str(exc))
         if deep_due:
             try:
                 rate_limiter.wait()
@@ -455,14 +438,13 @@ def collect_selected_action_context_cached(
                 html = str(getattr(response, "text", "") or "")
                 deep = parse_action_key_figures_html(html)
                 if deep:
-                    replace_family("deep_fields", "deep", deep, "deep_fetched_at_utc", "key_figures_url", key_url, "key_figures_sha256", html)
+                    replace_family("deep", deep, "deep_fetched_at_utc", "key_figures_url", key_url, "key_figures_sha256", html)
                 else:
-                    mark_failure("deep", "NO_DEEP_FIELDS")
-                    local_failures.append({"isin": isin, "source": "Boursorama", "reason": "NO_DEEP_FIELDS", "url": key_url})
+                    fail("deep", "NO_DEEP_FIELDS", key_url)
             except Exception as exc:
-                reason = type(exc).__name__
-                mark_failure("deep", reason)
-                local_failures.append({"isin": isin, "source": "Boursorama", "reason": reason, "detail": str(exc)[:160], "url": key_url})
+                fail("deep", type(exc).__name__, key_url, str(exc))
+
+        fields = merge_family_values(family_maps, FAMILY_PRECEDENCE_LOW_TO_HIGH)
         entry["status"] = "OK" if fields else "EMPTY"
         entry["boursorama_code"] = code
         entry["fields"] = fields
@@ -490,6 +472,7 @@ def collect_selected_action_context_cached(
             "performance_ttl_hours": performance_ttl_hours,
             "deep_ttl_hours": deep_ttl_hours,
             "failed_refresh_retry_ttl_hours": failed_refresh_retry_ttl_hours,
+            "family_precedence_high_to_low": list(FAMILY_PRECEDENCE_HIGH_TO_LOW),
             "refresh_budget": refresh_budget,
             "request_start_interval_seconds": request_start_interval_seconds,
             "max_workers": max_workers,
@@ -500,28 +483,35 @@ def collect_selected_action_context_cached(
 
     observations: list[dict] = []
     usable = 0
+    family_meta = {
+        "dynamic": ("dynamic_fetched_at_utc", "consensus_url"),
+        "performance": ("performance_fetched_at_utc", "course_url"),
+        "deep": ("deep_fetched_at_utc", "key_figures_url"),
+    }
     for _, row in rows.iterrows():
         isin = str(row.get("isin") or "").strip()
         entry = entries.get(isin)
-        if not entry or entry.get("status") != "OK":
+        if not entry:
+            continue
+        family_maps = _entry_families(entry)
+        fields = merge_family_values(family_maps, FAMILY_PRECEDENCE_LOW_TO_HIGH)
+        if not fields:
             continue
         usable += 1
-        families = [
-            (set(entry.get("dynamic_fields") or []), entry.get("dynamic_fetched_at_utc"), entry.get("consensus_url")),
-            (set(entry.get("performance_fields") or []), entry.get("performance_fetched_at_utc"), entry.get("course_url")),
-            (set(entry.get("deep_fields") or []), entry.get("deep_fetched_at_utc"), entry.get("key_figures_url")),
-        ]
-        fields = dict(entry.get("fields") or {})
         for field, value in fields.items():
-            if value is None:
-                continue
-            fetched = None
-            source_url = None
-            for names, ts, url in families:
-                if field in names:
-                    fetched, source_url = ts, url
-                    break
-            observations.append({"isin": isin, "asset_class": "ACTION", "horizon": str(row.get("horizon") or ""), "field": field, "value": value, "source": "Boursorama public priority fiche", "source_url": source_url, "collected_at": fetched, "validation_status": "POST_SELECTION_PRIORITY_CONTEXT"})
+            owner = field_owner(field, family_maps, FAMILY_PRECEDENCE_HIGH_TO_LOW)
+            fetched_key, url_key = family_meta.get(owner, (None, None))
+            observations.append({
+                "isin": isin,
+                "asset_class": "ACTION",
+                "horizon": str(row.get("horizon") or ""),
+                "field": field,
+                "value": value,
+                "source": "Boursorama public priority fiche",
+                "source_url": entry.get(url_key) if url_key else None,
+                "collected_at": entry.get(fetched_key) if fetched_key else None,
+                "validation_status": "POST_SELECTION_PRIORITY_CONTEXT",
+            })
         metadata = {
             "boursorama_dynamic_age_hours": _age_hours(entry.get("dynamic_fetched_at_utc"), current),
             "boursorama_performance_age_hours": _age_hours(entry.get("performance_fetched_at_utc"), current),
@@ -542,6 +532,7 @@ def collect_selected_action_context_cached(
             "families_refreshed": int(refreshed_families),
             "failure_cooldown_skipped": {key: int(value) for key, value in cooldown.items()},
             "failed_refresh_retry_ttl_hours": float(failed_refresh_retry_ttl_hours),
+            "family_precedence_high_to_low": list(FAMILY_PRECEDENCE_HIGH_TO_LOW),
             "usable_rows": int(usable),
             "observations": int(len(observations)),
             "selected_only": True,
