@@ -1,0 +1,123 @@
+{
+  "version": "RUNTIME_DURATION_CONTRACT_V21_16_1",
+  "status": "STATIC_ARCHITECTURE_VALIDATED_MEASUREMENT_PENDING_USER_AUTHORIZED_RUN",
+  "scope": [
+    "DAILY_TACTICAL_MON_THU",
+    "WEEKLY_FULL_COMMITTEE_FRIDAY"
+  ],
+  "explicitly_out_of_scope": [
+    "PREOPEN_STANDALONE",
+    "BACKTESTS",
+    "HOLDOUTS",
+    "MODEL_RETUNING",
+    "NEW_CRITERIA",
+    "NEW_DATA_SOURCES"
+  ],
+  "historical_pre_optimization_budget": {
+    "daily_wall_target_minutes": 10.1,
+    "daily_billable_target_minutes": 11,
+    "weekly_wall_target_minutes": 25.2,
+    "weekly_billable_target_minutes": 26
+  },
+  "v21_16_1_static_design_budget": {
+    "daily_expected_wall_range_minutes": [4.8, 6.5],
+    "daily_billable_budget_minutes": 7,
+    "daily_alert_wall_minutes": 8.0,
+    "weekly_expected_wall_range_minutes": [16.5, 19.5],
+    "weekly_billable_budget_minutes": 20,
+    "weekly_alert_wall_minutes": 23.0,
+    "measurement_status": "NOT_MEASURED_BY_DESIGN_USER_FORBADE_RUN_DURING_OPTIMIZATION",
+    "targets_are_not_observed_runtime": true
+  },
+  "daily_architecture": {
+    "full_screening_universe_retained": {
+      "actions": 1829,
+      "etf": 102
+    },
+    "slow_context_strategy": "LAST_PASSED_WEEKLY_FULL_BASELINE_PLUS_DAILY_FAST_MARKET_REFRESH",
+    "baseline_max_full_age_days": 8,
+    "baseline_requires_full_quality_gate_pass": true,
+    "ohlcv_incremental_period": "5d",
+    "slow_live_full_universe_waves_removed_from_normal_daily": true,
+    "local_ohlcv_features_recomputed_daily": true,
+    "local_sector_rotation_recomputed_daily": true,
+    "selected_boursorama_investing_gate_retained": true,
+    "selected_source_max_unique_instruments": 40,
+    "tct_baseline_full_universe_retained": true,
+    "t1_t2_exact_daily_scope": "BASELINE_TOP20_AND_MIN_COVERAGE_ONLY",
+    "weekly_t1_t2_exhaustive_research_retained": true,
+    "daily_tactical_shadow_research_bundle_removed": true,
+    "daily_etf_structure_replay_removed": true,
+    "daily_postmarket_operational_steps_retained": [
+      "PIT_OHLC",
+      "POSTMARKET_CATALYST_NEWS"
+    ],
+    "daily_postmarket_research_validation_deferred_to_friday": [
+      "PIT_LINEAGE",
+      "PIT_VALIDATOR"
+    ],
+    "python_processes_for_core_daily_sequence_before": 3,
+    "python_processes_for_core_daily_sequence_after": 1,
+    "fallback_if_baseline_missing_or_stale": "FORCE_FULL_LIVE_REFRESH_WITH_LONG_OHLCV_OVERLAP"
+  },
+  "weekly_architecture": {
+    "full_live_source_refresh_retained": true,
+    "full_quality_gates_retained": true,
+    "full_committee_and_ci_outputs_retained": true,
+    "post_refresh_parallel_lanes": [
+      "ETF_STRUCTURE",
+      "ETF_MT_CACHE_REUSE",
+      "SECTOR_ROTATION_V2"
+    ],
+    "post_committee_parallel_lanes": [
+      "RISK_CONTEXT",
+      "CI_EXPLAINABILITY",
+      "MON_THU_BASELINE_PERSISTENCE"
+    ],
+    "friday_tactical_strategy": "REUSE_CURRENT_WEEKLY_COMMITTEE_AND_V21_8_OUTPUTS_NO_RESCORING",
+    "separate_etf_replay_after_unified_removed": true,
+    "weekly_tail_parallel_lanes": [
+      "TCT_TACTICAL_THEN_FULL_POSTMARKET_SERIAL_STATE_LANE",
+      "DECISION_BRIEF",
+      "ETF_FUND_FLOWS",
+      "CRITERIA_GOVERNANCE"
+    ],
+    "tct_state_writer_order_preserved": true,
+    "weekly_full_postmarket_lineage_validator_retained": true,
+    "final_collection_audit_xlsx_retained": true,
+    "unused_raw_collection_xlsx_removed": [
+      "V18.2_PEA_ACTIONS_ACTUALISE.xlsx",
+      "V18.2_PEA_ETF_ACTUALISE.xlsx",
+      "V18.2_RUN_REPORT.xlsx"
+    ],
+    "intermediate_wave_audit_xlsx_replaced_by_existing_csv_json": true
+  },
+  "non_regression_invariants": {
+    "actions_universe_count": 1829,
+    "action_criteria_count": 633,
+    "etf_criteria_count": 268,
+    "t1_t2_scope": "ACTION_TCT_ONLY",
+    "source_gate_score_influence": 0.0,
+    "source_gate_changes_internal_decision": false,
+    "risk_context_decision_influence": 0.0,
+    "sector_rotation_v2_decision_influence": 0.0,
+    "real_orders_enabled": false,
+    "no_model_weight_change_for_runtime_optimization": true,
+    "no_threshold_change_for_runtime_optimization": true,
+    "no_universe_reduction_for_runtime_optimization": true
+  },
+  "estimated_monthly_effect_on_daily_plus_weekly_jobs_only": {
+    "average_weeks_per_month": 4.348,
+    "daily_runs_per_average_month": 17.392,
+    "weekly_runs_per_average_month": 4.348,
+    "historical_billable_minutes": 304.26,
+    "v21_16_1_billable_budget_minutes": 208.70,
+    "budget_reduction_pct": 31.4,
+    "note": "Static budget arithmetic only; excludes preopen and every other job outside this contract."
+  },
+  "validation_policy": {
+    "during_current_optimization": "STATIC_ONLY_NO_WORKFLOW_NO_MARKET_RUN_NO_BACKTEST",
+    "required_before_claiming_measured_runtime": "ONE_NORMAL_DAILY_RUN_AND_ONE_NORMAL_WEEKLY_RUN_WITH_STEP_TELEMETRY_WHEN_USER_AUTHORIZES",
+    "if_measured_runtime_exceeds_alert": "REOPEN_RUNTIME_ONLY_AUDIT_WITHOUT_CHANGING_MODEL_LOGIC"
+  }
+}
