@@ -5,6 +5,7 @@ from pathlib import Path
 import pandas as pd
 
 from v182.reporting import collection_audit as base
+from v182.reporting import incremental_collection_audit_v21_15_4 as incremental
 from v182.reporting.incremental_collection_audit_v21_15_4 import IncrementalCollectionAuditor
 
 
@@ -41,9 +42,15 @@ def _original(output_root: Path):
     return run
 
 
+def _isolate_provenance(monkeypatch) -> None:
+    empty = lambda: pd.DataFrame()
+    monkeypatch.setattr(base, "actual_sources_by_field", empty)
+    monkeypatch.setattr(incremental, "actual_sources_by_field", empty)
+
+
 def test_incremental_patch_recomputes_only_touched_field_and_final_is_exhaustive(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("PEA_RUN_PROFILE", "DAILY_TACTICAL")
-    monkeypatch.setattr(base, "actual_sources_by_field", lambda: pd.DataFrame())
+    _isolate_provenance(monkeypatch)
     base._reset_audit_cache_for_tests()
     actions, etfs = _frames()
     auditor = IncrementalCollectionAuditor(tmp_path)
@@ -72,7 +79,7 @@ def test_incremental_patch_recomputes_only_touched_field_and_final_is_exhaustive
 
 def test_unchanged_wave_reuses_inventory_without_field_scan(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("PEA_RUN_PROFILE", "DAILY_TACTICAL")
-    monkeypatch.setattr(base, "actual_sources_by_field", lambda: pd.DataFrame())
+    _isolate_provenance(monkeypatch)
     base._reset_audit_cache_for_tests()
     actions, etfs = _frames()
     auditor = IncrementalCollectionAuditor(tmp_path)
@@ -86,7 +93,7 @@ def test_unchanged_wave_reuses_inventory_without_field_scan(tmp_path: Path, monk
 
 def test_incremental_internal_failure_falls_back_to_full_scan(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("PEA_RUN_PROFILE", "DAILY_TACTICAL")
-    monkeypatch.setattr(base, "actual_sources_by_field", lambda: pd.DataFrame())
+    _isolate_provenance(monkeypatch)
     base._reset_audit_cache_for_tests()
     actions, etfs = _frames()
     auditor = IncrementalCollectionAuditor(tmp_path)
