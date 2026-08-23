@@ -9,7 +9,10 @@ import time
 from typing import Any
 
 
-RUNTIME_VERSION = "PIPELINE_RUNTIME_V21_16_3"
+# File names are retained for backward compatibility with existing Committee
+# summaries and artifact consumers. The duration-contract reader itself is V21.16.3.
+RUNTIME_VERSION = "PIPELINE_RUNTIME_V21_13_7"
+DURATION_CONTRACT_READER_VERSION = "V21.16.3"
 DURATION_CONTRACT = Path(__file__).resolve().parents[3] / "config" / "RUNTIME_DURATION_CONTRACT_V21_16.json"
 
 
@@ -49,9 +52,6 @@ def _design_budget(contract: dict) -> dict:
         value = contract.get(key)
         if isinstance(value, dict):
             return value
-    # Future minor versions may change only the suffix. Choose the lexically
-    # latest governed V21.16 static design block rather than silently returning
-    # an empty contract.
     candidates = sorted(
         key
         for key, value in contract.items()
@@ -78,6 +78,7 @@ def _budget_for_profile(profile: str) -> dict:
         return {}
     return {
         "contract_version": contract.get("version"),
+        "contract_reader_version": DURATION_CONTRACT_READER_VERSION,
         "scope": scope,
         "expected_wall_range_minutes": expected,
         "billable_budget_minutes": billable,
@@ -202,6 +203,7 @@ class RuntimeTelemetry:
             }
         return {
             "version": RUNTIME_VERSION,
+            "duration_contract_reader_version": DURATION_CONTRACT_READER_VERSION,
             "status": self._status,
             "run_id": self.run_id,
             "profile": self.profile,
@@ -243,8 +245,9 @@ def write_step_runtime(
     """Write the unified runner's already-measured step durations."""
     root = Path(output_dir)
     root.mkdir(parents=True, exist_ok=True)
-    json_path = root / "UNIFIED_RUNTIME_V21_16_3.json"
-    csv_path = root / "UNIFIED_RUNTIME_V21_16_3.csv"
+    # Preserve historical file paths consumed by unified summaries/artifacts.
+    json_path = root / "UNIFIED_RUNTIME_V21_13_7.json"
+    csv_path = root / "UNIFIED_RUNTIME_V21_13_7.csv"
     rows = []
     for sequence, (name, step) in enumerate(steps.items(), start=1):
         rows.append(
@@ -257,7 +260,8 @@ def write_step_runtime(
             }
         )
     payload = {
-        "version": "UNIFIED_RUNTIME_V21_16_3",
+        "version": "UNIFIED_RUNTIME_V21_13_7",
+        "duration_contract_reader_version": DURATION_CONTRACT_READER_VERSION,
         "status": "SUCCESS",
         "run_id": run_id,
         "profile": profile,
