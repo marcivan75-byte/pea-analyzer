@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 import json
 import math
@@ -8,6 +9,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[3]
 STATE_RELATIVE_PATH = Path("state/provenance/V21_8_ENTRY_EXIT_STATE.csv")
 STATE_KEY_FIELDS = ("asset_class", "horizon", "isin")
+STATE_OBSERVED_AT_FIELD = "v21_8_observed_at_utc"
 
 
 def _num(value):
@@ -48,15 +50,19 @@ def _state_key(row: pd.Series | dict) -> tuple[str, str, str]:
     )
 
 
-def _load_temporal_state(path: Path) -> dict[tuple[str, str, str], str]:
+def _load_state_frame(path: Path) -> pd.DataFrame:
     if not path.exists():
-        return {}
+        return pd.DataFrame()
     try:
-        frame = pd.read_csv(path, sep=";", encoding="utf-8-sig", dtype=str, low_memory=False)
+        return pd.read_csv(path, sep=";", encoding="utf-8-sig", dtype=str, low_memory=False)
     except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError):
-        return {}
+        return pd.DataFrame()
+
+
+def _load_temporal_state(path: Path) -> dict[tuple[str, str, str], str]:
+    frame = _load_state_frame(path)
     required = {*STATE_KEY_FIELDS, "v21_8_position_state"}
-    if not required.issubset(frame.columns):
+    if frame.empty or not required.issubset(frame.columns):
         return {}
     out: dict[tuple[str, str, str], str] = {}
     for _, row in frame.iterrows():
@@ -67,19 +73,60 @@ def _load_temporal_state(path: Path) -> dict[tuple[str, str, str], str]:
     return out
 
 
-def _attach_temporal_state(decisions: pd.DataFrame, state: dict[tuple[str, str, str], str]) -> pd.DataFrame:
+def _load_temporal_state_observed_at(path: Path) -> dict[tuple[str, str, str], str]:
+    frame = _load_state_frame(path)
+    required = {*STATE_KEY_FIELDS, STATE_OBSERVED_AT_FIELD}
+    if frame.empty or not required.issubset(frame.columns):
+        return {}
+    out: dict[tuple[str, str, str], str] = {}
+    for _, row in frame.iterrows():
+        key = _state_key(row)
+        value = str(row.get(STATE_OBSERVED_AT_FIELD, "") or "").strip()
+        parsed = pd.to_datetime(value, errors="coerce", utc=True)
+        if all(key) and value and pd.notna(parsed):
+            out[key] = parsed.isoformat()
+    return out
+
+
+def _attach_temporal_state(
+    decisions: pd.DataFrame,
+    state: dict[tuple[str, str, str], str],
+    state_observed_at: dict[tuple[str, str, str], str] | None = None,
+) -> pd.DataFrame:
     out = decisions.copy()
     existing = out.get("previous_v21_8_position_state")
+    existing_observed = out.get("previous_v21_8_observed_at_utc")
+    observed_map = state_observed_at or {}
     previous: list[str | None] = []
+    previous_observed: list[str | None] = []
     for idx, row in out.iterrows():
+        key = _state_key(row)
         explicit = None
         if existing is not None:
             value = existing.loc[idx]
             if pd.notna(value) and str(value).strip():
                 explicit = str(value).strip().upper()
-        previous.append(explicit or state.get(_state_key(row)))
+        previous.append(explicit or state.get(key))
+
+        explicit_observed = None
+        if existing_observed is not None:
+            value = existing_observed.loc[idx]
+            parsed = pd.to_datetime(value, errors="coerce", utc=True)
+            if pd.notna(parsed):
+                explicit_observed = parsed.isoformat()
+        previous_observed.append(explicit_observed or observed_map.get(key))
     out["previous_v21_8_position_state"] = previous
+    out["previous_v21_8_observed_at_utc"] = previous_observed
     return out
+
+
+def _current_observed_at(row: pd.Series) -> str:
+    for field in ("generated_at_utc", "snapshot_at_utc", "as_of_utc"):
+        value = row.get(field)
+        parsed = pd.to_datetime(value, errors="coerce", utc=True)
+        if pd.notna(parsed):
+            return parsed.isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _persist_temporal_state(governed: pd.DataFrame, path: Path) -> int:
@@ -94,9 +141,11 @@ def _persist_temporal_state(governed: pd.DataFrame, path: Path) -> int:
                 "horizon": key[1],
                 "isin": key[2],
                 "v21_8_position_state": str(row.get("v21_8_position_state", "") or "").upper(),
+                STATE_OBSERVED_AT_FIELD: _current_observed_at(row),
             }
         )
-    state = pd.DataFrame(rows).drop_duplicates(list(STATE_KEY_FIELDS), keep="last") if rows else pd.DataFrame(columns=[*STATE_KEY_FIELDS, "v21_8_position_state"])
+    columns = [*STATE_KEY_FIELDS, "v21_8_position_state", STATE_OBSERVED_AT_FIELD]
+    state = pd.DataFrame(rows).drop_duplicates(list(STATE_KEY_FIELDS), keep="last") if rows else pd.DataFrame(columns=columns)
     path.parent.mkdir(parents=True, exist_ok=True)
     state.to_csv(path, sep=";", index=False, encoding="utf-8-sig")
     return int(len(state))
@@ -171,6 +220,19 @@ def _deterioration_reasons(row: pd.Series) -> list[str]:
     return reasons
 
 
+def _previous_protect_is_temporally_confirmed(row: pd.Series) -> bool:
+    """A rerun of the same calendar observation day cannot confirm PROTECT -> EXIT."""
+    if "previous_v21_8_observed_at_utc" not in row.index:
+        # Backward compatibility for direct callers/tests that supply only a
+        # previous state. Operational paths always attach the observed-at field.
+        return True
+    previous = pd.to_datetime(row.get("previous_v21_8_observed_at_utc"), errors="coerce", utc=True)
+    current = pd.to_datetime(row.get("generated_at_utc"), errors="coerce", utc=True)
+    if pd.isna(previous) or pd.isna(current):
+        return False
+    return previous.date() < current.date()
+
+
 def classify_position(row: pd.Series, cfg: dict) -> tuple[str, list[str]]:
     """Two-stage decision support: deterioration -> PROTECT -> confirmed multifactor EXIT."""
     if _bool(row.get("emergency_risk_flag")):
@@ -190,12 +252,19 @@ def classify_position(row: pd.Series, cfg: dict) -> tuple[str, list[str]]:
     multifactor = structural_count >= 1 and momentum_count >= 1 and (structural_count >= 2 or market_bad)
 
     previous = str(row.get("previous_v21_8_position_state", row.get("previous_position_state", "")) or "").upper()
-    confirmed = _bool(row.get("deterioration_confirmed")) or previous in {"PROTECT", "EXIT"}
+    explicit_confirmation = _bool(row.get("deterioration_confirmed"))
+    prior_confirmation = previous == "EXIT" or (
+        previous == "PROTECT" and _previous_protect_is_temporally_confirmed(row)
+    )
+    confirmed = explicit_confirmation or prior_confirmation
 
     if multifactor and confirmed:
         return "EXIT", reasons + ["MULTIFACTOR_DETERIORATION_CONFIRMED_AFTER_PROTECT"]
     if reasons and any(r != "PROFIT_GIVEBACK_OBSERVED_CONTEXT_ONLY" for r in reasons):
-        return "PROTECT", reasons + (["AWAIT_TEMPORAL_CONFIRMATION"] if multifactor else [])
+        suffix = ["AWAIT_TEMPORAL_CONFIRMATION"] if multifactor else []
+        if multifactor and previous == "PROTECT" and not confirmed:
+            suffix.append("SAME_DAY_RERUN_NOT_TEMPORAL_CONFIRMATION")
+        return "PROTECT", reasons + suffix
     if pnl is not None and pnl > 0:
         return "HOLD", ["POSITIVE_POSITION_NO_VALIDATED_EXIT_TRIGGER"]
     return "HOLD", ["NO_VALIDATED_EXIT_TRIGGER"]
@@ -243,7 +312,8 @@ def run(root: Path = ROOT) -> dict:
     decisions = pd.read_csv(src, sep=";", encoding="utf-8-sig", low_memory=False)
     state_path = root / STATE_RELATIVE_PATH
     previous_state = _load_temporal_state(state_path)
-    decisions_with_state = _attach_temporal_state(decisions, previous_state)
+    previous_observed_at = _load_temporal_state_observed_at(state_path)
+    decisions_with_state = _attach_temporal_state(decisions, previous_state, previous_observed_at)
     governed = apply_governance(decisions_with_state, cfg)
     state_rows = _persist_temporal_state(governed, state_path)
 
@@ -269,7 +339,9 @@ def run(root: Path = ROOT) -> dict:
         "tct_requires_exact_t2_confirmation": True,
         "t1_t2_scope": "ACTION_TCT_ONLY",
         "exit_requires_temporal_confirmation": True,
+        "same_day_rerun_can_confirm_exit": False,
         "temporal_state_persisted": True,
+        "temporal_state_observed_at_persisted": True,
         "temporal_state_path": str(STATE_RELATIVE_PATH),
         "temporal_state_rows": state_rows,
         "weights_unchanged": True,
