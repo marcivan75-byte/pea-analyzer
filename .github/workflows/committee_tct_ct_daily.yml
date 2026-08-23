@@ -110,6 +110,7 @@ jobs:
             outputs/audit/DAILY_TCT_CT_AUDIT.json
             outputs/audit/POSTMARKET_BUNDLE_RUNTIME_V21_13_12.json
             outputs/audit/TCT_NEXT_SESSION_CATALYST_V24_4_2_AUDIT.json
+            state/provenance/DAILY_SOURCE_PREWARM_V1.csv
             state/provenance/daily_fast/BASELINE_META.json
             data/cache/actions/history_manifest.json
             data/cache/etf/history_manifest.json
