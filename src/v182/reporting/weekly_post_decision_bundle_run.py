@@ -11,6 +11,7 @@ import pandas as pd
 
 from v182.reporting import criteria_governance_audit
 from v182.reporting import etf_fund_flows_shadow_run
+from v182.reporting import daily_fast_collection_run as daily_fast
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -90,6 +91,7 @@ def _persist_weekly_master_snapshot(root: Path) -> dict:
         "etf_unique_isins": int(etf["isin"].astype(str).nunique()),
         "actions_sha256": _file_sha256(root / WEEKLY_ACTIONS),
         "etf_sha256": _file_sha256(root / WEEKLY_ETF),
+        "static_contract": daily_fast._static_contract(),
         "contains_weekly_wave09_values": True,
         "daily_wave09_network_required": False,
         "decision_logic_changed": False,
