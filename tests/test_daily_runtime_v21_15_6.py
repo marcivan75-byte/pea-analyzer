@@ -7,21 +7,22 @@ import pytest
 
 from v182.reporting import daily_consolidated_runner_v21_15_4 as deployed
 from v182.reporting import daily_consolidated_runner_v21_15_6 as consolidated
+from v182.reporting import daily_consolidated_runner_v21_15_7 as final_daily
 from v182.reporting import daily_tactical_super_runner_v21_15_6 as tactical
 from v182.reporting import tct_postmarket_bundle_run as postmarket
 
 
-def test_deployed_entrypoint_routes_to_v21_15_6():
-    assert deployed.VERSION == consolidated.VERSION == "DAILY_CONSOLIDATED_RUNTIME_V21_15_6"
-    assert deployed.run is consolidated.run
+def test_deployed_entrypoint_routes_to_v21_15_7():
+    assert deployed.VERSION == final_daily.VERSION == "DAILY_CONSOLIDATED_RUNTIME_V21_15_7"
+    assert deployed.run is final_daily.run
 
 
-def test_daily_seed_guard_fails_closed_without_weekly_or_daily_state():
+def test_v21_15_6_historical_seed_guard_still_fails_closed_without_state():
     with pytest.raises(RuntimeError, match="DAILY_WEEKLY_BASELINE_MISSING"):
         consolidated._require_valid_daily_seed(pd.DataFrame(), pd.DataFrame(), {}, "DISABLED")
 
 
-def test_daily_seed_guard_accepts_valid_reconcile_state():
+def test_v21_15_6_historical_seed_guard_accepts_valid_reconcile_state():
     actions = pd.DataFrame({"isin": ["A"]})
     etf = pd.DataFrame({"isin": ["E"]})
     result = consolidated._require_valid_daily_seed(actions, etf, {"source": "WEEKLY_MASTER_SNAPSHOT_V1"}, "RECONCILE_CACHE")
