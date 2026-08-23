@@ -15,7 +15,7 @@ from v182.reporting import waves
 from v182.reporting.daily_context_baseline import load_context_baseline, publish_context_baseline
 
 ROOT = Path(__file__).resolve().parents[3]
-VERSION = "DAILY_FAST_COLLECTION_V21_16_1"
+VERSION = "DAILY_FAST_COLLECTION_V21_16_2"
 
 
 def _load_cfg(root: Path) -> dict:
@@ -41,10 +41,25 @@ def _coverage(frame: pd.DataFrame, field: str) -> int:
 
 
 def _bootstrap_full(root: Path, reason: str) -> dict:
-    """Fail safe: use the historical complete collector once, then seed the fast baseline."""
+    """Fail safe: force the historical complete LIVE collector once, then seed the fast baseline."""
+    if root.resolve() != ROOT.resolve():
+        raise RuntimeError("DAILY_FAST_FULL_FALLBACK_REQUIRES_REPOSITORY_ROOT")
     from v182.reporting import run as full_enrichment
 
-    result = full_enrichment.run()
+    keys = ("PEA_RUN_PROFILE", "PEA_SLOW_SOURCE_MODE", "PEA_YF_INCREMENTAL_PERIOD")
+    previous = {key: os.environ.get(key) for key in keys}
+    os.environ["PEA_RUN_PROFILE"] = "FULL"
+    os.environ["PEA_SLOW_SOURCE_MODE"] = "LIVE"
+    os.environ["PEA_YF_INCREMENTAL_PERIOD"] = "1mo"
+    try:
+        result = full_enrichment.run()
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
     actions = pd.read_csv(root / "outputs" / "V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv", sep=";", encoding="utf-8-sig", low_memory=False)
     etfs = pd.read_csv(root / "outputs" / "V18.2_PEA_ETF_MASTER_ENRICHED.csv", sep=";", encoding="utf-8-sig", low_memory=False)
     baseline = publish_context_baseline(
@@ -62,6 +77,9 @@ def _bootstrap_full(root: Path, reason: str) -> dict:
         "full_enrichment": result,
         "baseline": baseline,
         "normal_daily_fast_path_used": False,
+        "forced_full_profile": True,
+        "forced_slow_sources_live": True,
+        "forced_yfinance_incremental_period": "1mo",
         "decision_logic_changed": False,
         "score_logic_changed": False,
     }
