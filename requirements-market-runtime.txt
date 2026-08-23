@@ -1,0 +1,14 @@
+# Lean dependency set for scheduled market jobs (daily + weekly Committee).
+# Keeps every dependency imported by the market/CI execution paths while excluding
+# document-browser dependencies that are not used by these workflows.
+pydantic>=2.8
+yfinance>=0.2
+pandas>=2.2
+numpy>=2.0
+pyarrow>=17
+requests>=2.32
+beautifulsoup4>=4.12
+lxml>=5.2
+openpyxl>=3.1
+python-docx>=1.2
+ta>=0.11.0
