@@ -6,6 +6,7 @@ import json
 
 import pandas as pd
 
+from v182.decision import tct_timing_exact_v24_1_7 as exact_timing
 from v182.reporting import daily_tactical_super_runner_v21_15_4 as base
 from v182.reporting import selected_source_enrichment as selected_source
 
@@ -37,7 +38,7 @@ def _daily_tct_scope(actions_with_tct: pd.DataFrame, cfg: dict) -> pd.DataFrame:
 
 def _empty_tct_shadow_schema() -> pd.DataFrame:
     """Return a header-only exact TCT shadow consumable by downstream CSV readers."""
-    template = base.exact_timing._snapshot_row(
+    template = exact_timing._snapshot_row(
         pd.Series(dtype=object),
         "SKIPPED_DAILY_EMPTY_SCOPE",
         "NO_T1_T2",
