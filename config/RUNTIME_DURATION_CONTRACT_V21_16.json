@@ -1,5 +1,5 @@
 {
-  "version": "RUNTIME_DURATION_CONTRACT_V21_16_1",
+  "version": "RUNTIME_DURATION_CONTRACT_V21_16_2",
   "status": "STATIC_ARCHITECTURE_VALIDATED_MEASUREMENT_PENDING_USER_AUTHORIZED_RUN",
   "scope": [
     "DAILY_TACTICAL_MON_THU",
@@ -28,6 +28,16 @@
     "weekly_alert_wall_minutes": 23.0,
     "measurement_status": "NOT_MEASURED_BY_DESIGN_USER_FORBADE_RUN_DURING_OPTIMIZATION",
     "targets_are_not_observed_runtime": true
+  },
+  "measurement_contract": {
+    "authoritative_runtime_source": "outputs/audit/GITHUB_JOB_RUNTIME_V21_16.json_AND_GITHUB_STEP_SUMMARY",
+    "authoritative_scope": "POST_CHECKOUT_THROUGH_CACHE_RESTORE_SETUP_INSTALL_CORE_PROCESS_CACHE_SAVE_AND_ARTIFACT_UPLOAD",
+    "excluded": ["RUNNER_QUEUE_TIME", "INITIAL_CHECKOUT_STEP"],
+    "core_bundle_runtime_is_authoritative": false,
+    "core_bundle_runtime_role": "DIAGNOSTIC_LOWER_BOUND_FOR_PYTHON_CRITICAL_PATH",
+    "runtime_telemetry_stage_files_are_authoritative_for_stage_breakdown_only": true,
+    "end_to_end_json_is_generated_after_artifact_upload": true,
+    "end_to_end_json_persistence": "GITHUB_LOG_AND_STEP_SUMMARY_NOT_THE_PRECEDING_ARTIFACT_BY_DESIGN"
   },
   "daily_architecture": {
     "full_screening_universe_retained": {
@@ -118,6 +128,7 @@
   "validation_policy": {
     "during_current_optimization": "STATIC_ONLY_NO_WORKFLOW_NO_MARKET_RUN_NO_BACKTEST",
     "required_before_claiming_measured_runtime": "ONE_NORMAL_DAILY_RUN_AND_ONE_NORMAL_WEEKLY_RUN_WITH_STEP_TELEMETRY_WHEN_USER_AUTHORIZES",
+    "authoritative_acceptance_source": "GITHUB_JOB_RUNTIME_V21_16",
     "if_measured_runtime_exceeds_alert": "REOPEN_RUNTIME_ONLY_AUDIT_WITHOUT_CHANGING_MODEL_LOGIC"
   }
 }
