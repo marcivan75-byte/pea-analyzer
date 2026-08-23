@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from time import perf_counter
 import json
+import logging
 
 import pandas as pd
 
@@ -15,6 +16,7 @@ VERSION = "DAILY_TACTICAL_DAG_V21_15_5"
 ACTION_CT_DAILY_TOP_N_DEFAULT = 20
 INVESTING_DAILY_RETRY_BUDGET = 8
 INVESTING_DAILY_TIMEOUT_SECONDS = 5.0
+logger = logging.getLogger(__name__)
 
 
 def _daily_tct_scope(actions_with_tct: pd.DataFrame, cfg: dict) -> pd.DataFrame:
@@ -259,8 +261,8 @@ def _patch_runtime_audits(root: Path, payload: dict) -> None:
             daily["daily_tct_exact_scope"] = "BASELINE_TOP_N_ONLY"
             daily["weekly_full_tct_research_preserved"] = True
             daily_path.write_text(json.dumps(daily, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Unable to patch Daily tactical audit metadata: %s: %s", type(exc).__name__, exc)
 
 
 def run(root: Path = ROOT) -> dict:
