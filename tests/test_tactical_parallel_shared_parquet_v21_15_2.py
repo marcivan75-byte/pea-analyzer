@@ -74,10 +74,42 @@ def test_action_ct_and_tct_branches_overlap_without_changing_action_ct_internal_
     assert payload["tct_dependency_on_action_ct_outputs"] is False
     assert payload["shared_parquet_physical_reads_preserved"] is True
     assert payload["external_provider_concurrency_added"] is False
+    assert payload["action_ct_v22_1_worker_cap"] == 2
+    assert payload["nested_cpu_oversubscription_reduced"] is True
+    assert payload["original_v22_1_executor_restored"] is True
     assert payload["decision_logic_changed"] is False
     assert payload["weights_changed"] is False
     assert payload["thresholds_changed"] is False
     assert payload["original_pandas_reader_restored"] is True
+
+
+def test_v22_1_nested_executor_is_capped_and_restored(tmp_path, monkeypatch) -> None:
+    requested_workers: list[int] = []
+
+    class DummyExecutor:
+        def __init__(self, max_workers=None, *args, **kwargs):
+            requested_workers.append(int(max_workers))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(tactical_bundle.action_ct_bundle.v221, "ThreadPoolExecutor", DummyExecutor)
+    original = tactical_bundle.action_ct_bundle.v221.ThreadPoolExecutor
+
+    def fake_action_bundle(*, root: Path):
+        with tactical_bundle.action_ct_bundle.v221.ThreadPoolExecutor(max_workers=7):
+            pass
+        return {"status": "SUCCESS", "version": "TEST"}
+
+    monkeypatch.setattr(tactical_bundle.action_ct_bundle, "run", fake_action_bundle)
+    result = tactical_bundle._run_action_ct_with_worker_cap(tmp_path, worker_cap=2)
+
+    assert result["status"] == "SUCCESS"
+    assert requested_workers == [2]
+    assert tactical_bundle.action_ct_bundle.v221.ThreadPoolExecutor is original
 
 
 def test_parallel_bundle_preserves_independent_error_collection_and_restores_pandas(tmp_path, monkeypatch) -> None:
