@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from v182.reporting import daily_tct_ct_runner as daily_runner
 from v182.reporting import friday_tactical_reuse_runner as friday
 
 
@@ -31,6 +32,18 @@ def _governed() -> pd.DataFrame:
     frame["v21_8_entry_reasons"] = "TEST"
     frame["v21_8_position_reasons"] = "TEST"
     return frame
+
+
+def _write_committee_reuse_inputs(root: Path, stamps: list[str]) -> None:
+    outdir = root / "outputs" / "committee_master"
+    outdir.mkdir(parents=True, exist_ok=True)
+    for name in ("COMMITTEE_DECISIONS.csv", "V21_8_ENTRY_EXIT_CHALLENGER.csv"):
+        pd.DataFrame({"generated_at_utc": stamps}).to_csv(
+            outdir / name,
+            sep=";",
+            index=False,
+            encoding="utf-8-sig",
+        )
 
 
 def test_scope_reuses_only_action_tct_action_ct_and_etf_ct() -> None:
@@ -80,6 +93,29 @@ def test_current_snapshot_requires_every_row_to_be_current_utc_day() -> None:
         friday._assert_current_snapshot(invalid, "TEST", now)
 
 
+def test_contextual_dispatch_requires_fresh_committee_and_non_daily_profile(tmp_path: Path, monkeypatch) -> None:
+    now = datetime(2026, 8, 21, 21, 0, tzinfo=timezone.utc)
+    _write_committee_reuse_inputs(
+        tmp_path,
+        ["2026-08-21T20:00:00+00:00", "2026-08-21T20:05:00+00:00"],
+    )
+    monkeypatch.delenv("PEA_RUN_PROFILE", raising=False)
+    assert daily_runner._current_committee_reuse_available(tmp_path, now=now) is True
+
+    monkeypatch.setenv("PEA_RUN_PROFILE", "DAILY_TACTICAL")
+    assert daily_runner._current_committee_reuse_available(tmp_path, now=now) is False
+
+
+def test_contextual_dispatch_rejects_stale_or_mixed_committee_snapshot(tmp_path: Path, monkeypatch) -> None:
+    now = datetime(2026, 8, 21, 21, 0, tzinfo=timezone.utc)
+    monkeypatch.delenv("PEA_RUN_PROFILE", raising=False)
+    _write_committee_reuse_inputs(
+        tmp_path,
+        ["2026-08-21T20:00:00+00:00", "2026-08-20T20:05:00+00:00"],
+    )
+    assert daily_runner._current_committee_reuse_available(tmp_path, now=now) is False
+
+
 def test_friday_runner_has_no_duplicate_score_tct_or_v21_8_execution() -> None:
     source = (ROOT / "src" / "v182" / "reporting" / "friday_tactical_reuse_runner.py").read_text(encoding="utf-8")
     assert "build_tct_baseline(" not in source
@@ -92,10 +128,13 @@ def test_friday_runner_has_no_duplicate_score_tct_or_v21_8_execution() -> None:
     assert '"temporal_state_advanced_second_time": False' in source
 
 
-def test_weekly_and_daily_workflows_keep_distinct_tactical_paths() -> None:
+def test_existing_workflow_entry_point_dispatches_weekly_but_daily_profile_forces_full_path() -> None:
     weekly = (ROOT / ".github" / "workflows" / "committee_master_daily.yml").read_text(encoding="utf-8")
-    daily = (ROOT / ".github" / "workflows" / "committee_tct_ct_daily.yml").read_text(encoding="utf-8")
-    assert "python -m v182.reporting.friday_tactical_reuse_runner" in weekly
-    assert "python -m v182.reporting.daily_tct_ct_runner" not in weekly
-    assert "python -m v182.reporting.daily_tct_ct_runner" in daily
-    assert "python -m v182.reporting.friday_tactical_reuse_runner" not in daily
+    daily_workflow = (ROOT / ".github" / "workflows" / "committee_tct_ct_daily.yml").read_text(encoding="utf-8")
+    runner = (ROOT / "src" / "v182" / "reporting" / "daily_tct_ct_runner.py").read_text(encoding="utf-8")
+
+    assert "python -m v182.reporting.daily_tct_ct_runner" in weekly
+    assert "python -m v182.reporting.daily_tct_ct_runner" in daily_workflow
+    assert "PEA_RUN_PROFILE: DAILY_TACTICAL" in daily_workflow
+    assert "_current_committee_reuse_available(root)" in runner
+    assert "return friday_tactical_reuse_runner.run(root)" in runner
