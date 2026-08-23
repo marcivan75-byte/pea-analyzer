@@ -22,9 +22,11 @@ Le Daily effectue zéro appel FRED/GDELT W09. Priorité de réutilisation :
 2. snapshot master Hebdo validé ;
 3. uniquement pour le bootstrap, seed Action W09 validé issu du run GitHub `32626511307` du 23/08/2026.
 
-Le seed reproduit les valeurs W09 Action du run source et conserve les sémantiques de provenance : FRED, GDELT ou calcul interne selon le champ. Aucun W09 ETF n'est fabriqué : le périmètre ETF Daily est CT et ses 17 critères actifs n'utilisent pas W09.
+Le seed reproduit les valeurs W09 Action du run source et conserve les sémantiques de provenance : FRED, GDELT ou calcul interne selon le champ. Aucun W09 ETF n'est fabriqué : le périmètre ETF Daily est CT et ses critères actifs n'utilisent pas W09.
 
 Après un bootstrap complet réussi, les masters enrichis Actions/ETF sont promus atomiquement dans `state/provenance/daily_fast_master_v1/` et réutilisés par les Daily suivants.
+
+Un Weekly Heavy n'est donc pas requis uniquement pour initialiser W09. Le prochain Weekly réussi remplace naturellement le bootstrap par le snapshot hebdomadaire autoritaire.
 
 ## Fast-state
 
@@ -36,6 +38,14 @@ L'identité du cache ne dépend plus du SHA GitHub complet. Elle repose sur :
 - contrat des caches fournisseurs.
 
 Un changement workflow/documentation ne doit donc plus forcer artificiellement un cold start.
+
+## TCT borné et cas vide
+
+Le baseline TCT reste calculé sur l'univers Action complet. L'exact T1/T2 est limité au Top-N/minimum de couverture autorisé et reste exclusivement ACTION TCT.
+
+Si aucune Action n'est éligible à l'exact Daily, `TCT_SHADOW_V24_1_7.csv` est désormais écrit avec le schéma complet mais zéro ligne. Cela évite les erreurs de lecture CSV sur fichier sans en-têtes et ne crée aucune décision artificielle.
+
+Le fichier décisionnel TCT complet conserve les lignes hors Top-N sous forme de placeholders non autoritaires `NO_T1_T2`, avec influence score nulle. La recherche exacte full-universe reste réservée au Weekly.
 
 ## Restitution CI quotidienne
 
@@ -75,5 +85,6 @@ Le prochain workflow Daily doit confirmer :
 3. promotion du fast-state si le run démarre sans état rapide ;
 4. génération Word + Excel CI avec `external_collection_calls = 0` et `model_reruns = 0` ;
 5. quality gates collection et PIT sans régression ;
-6. timings détaillés collection / ETF replay / DAG tactique / CI / total ;
-7. run suivant en `DELTA_ONLY` si contrats/caches restent compatibles.
+6. TCT exact borné et fichier shadow lisible même si l'exact scope est vide ;
+7. timings détaillés collection / ETF replay / DAG tactique / CI / total ;
+8. run suivant en `DELTA_ONLY` si contrats/caches restent compatibles.
