@@ -122,6 +122,7 @@ def test_daily_bundle_preserves_order_and_nonblocking_postmarket():
     assert '"previous_python_processes": 3' in source
     assert '"current_python_processes": 1' in source
     assert '"interpreter_startups_avoided": 2' in source
+    assert '_budget_result("DAILY_TACTICAL", wall_seconds)' in source
 
 
 def test_daily_fast_source_contains_no_slow_network_wave_calls():
@@ -170,11 +171,12 @@ def test_weekly_committee_keeps_exhaustive_tct_exact_research():
     assert "_daily_exact_scope" not in source
 
 
-def test_weekly_workflow_has_no_duplicate_friday_rescoring_or_replay():
+def test_weekly_workflow_uses_one_parent_bundle_and_no_duplicate_subcommands():
     workflow = Path(".github/workflows/committee_master_daily.yml").read_text(encoding="utf-8")
-    assert "python -m v182.reporting.weekly_unified_fast_v21_16" in workflow
-    assert "python -m v182.reporting.friday_tactical_reuse_v21_16" in workflow
-    assert "python -m v182.reporting.weekly_tail_parallel_v21_16" in workflow
+    assert "python -m v182.reporting.weekly_full_bundle_v21_16" in workflow
+    assert "python -m v182.reporting.weekly_unified_fast_v21_16" not in workflow
+    assert "python -m v182.reporting.friday_tactical_reuse_v21_16" not in workflow
+    assert "python -m v182.reporting.weekly_tail_parallel_v21_16" not in workflow
     assert "python -m v182.reporting.daily_tct_ct_runner" not in workflow
     assert "python -m v182.reporting.etf_structure_state_replay" not in workflow
     assert "python -m v182.reporting.tactical_shadow_bundle_run" not in workflow
@@ -182,6 +184,15 @@ def test_weekly_workflow_has_no_duplicate_friday_rescoring_or_replay():
     assert "python -m v182.reporting.decision_brief_v21_16" not in workflow
     assert "python -m v182.reporting.etf_fund_flows_shadow_run" not in workflow
     assert "python -m v182.reporting.criteria_governance_audit" not in workflow
+
+
+def test_weekly_full_bundle_preserves_parent_order_and_duration_budget():
+    source = Path("src/v182/reporting/weekly_full_bundle_v21_16.py").read_text(encoding="utf-8")
+    assert source.index('steps["unified"]') < source.index('steps["friday_tactical_reuse"]') < source.index('steps["weekly_tail"]')
+    assert '"previous_parent_python_processes": 3' in source
+    assert '"current_parent_python_processes": 1' in source
+    assert '"parent_interpreter_startups_avoided": 2' in source
+    assert '_budget_result("WEEKLY_FULL_COMMITTEE", wall_seconds)' in source
 
 
 def test_weekly_tail_parallelism_preserves_tct_writer_order():
@@ -218,6 +229,21 @@ def test_weekly_lean_enrichment_drops_only_unused_xlsx_serialization():
     assert '"network_collection_changed": False' in source
     assert '"quality_gates_changed": False' in source
     assert '"committee_ci_outputs_affected": False' in source
+
+
+def test_duration_contract_is_static_and_preserves_model_integrity():
+    contract = json.loads(Path("config/RUNTIME_DURATION_CONTRACT_V21_16.json").read_text(encoding="utf-8"))
+    assert contract["status"] == "STATIC_ARCHITECTURE_VALIDATED_MEASUREMENT_PENDING_USER_AUTHORIZED_RUN"
+    assert contract["v21_16_1_static_design_budget"]["targets_are_not_observed_runtime"] is True
+    assert contract["v21_16_1_static_design_budget"]["daily_billable_budget_minutes"] == 7
+    assert contract["v21_16_1_static_design_budget"]["weekly_billable_budget_minutes"] == 20
+    invariants = contract["non_regression_invariants"]
+    assert invariants["actions_universe_count"] == 1829
+    assert invariants["action_criteria_count"] == 633
+    assert invariants["etf_criteria_count"] == 268
+    assert invariants["no_model_weight_change_for_runtime_optimization"] is True
+    assert invariants["no_threshold_change_for_runtime_optimization"] is True
+    assert invariants["no_universe_reduction_for_runtime_optimization"] is True
 
 
 def test_runtime_optimization_never_reduces_canonical_universe_or_criteria_registry():
