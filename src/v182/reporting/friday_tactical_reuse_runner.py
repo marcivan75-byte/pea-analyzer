@@ -26,13 +26,15 @@ def _read(path: Path) -> pd.DataFrame:
 def _assert_current_snapshot(frame: pd.DataFrame, label: str, now: datetime) -> None:
     if frame.empty or "generated_at_utc" not in frame.columns:
         raise RuntimeError(f"FRIDAY_TACTICAL_REUSE_STALE_OR_UNDATED:{label}")
-    stamps = pd.to_datetime(frame["generated_at_utc"], errors="coerce", utc=True).dropna()
-    if stamps.empty:
+    parsed = pd.to_datetime(frame["generated_at_utc"], errors="coerce", utc=True)
+    if parsed.isna().any():
         raise RuntimeError(f"FRIDAY_TACTICAL_REUSE_INVALID_TIMESTAMP:{label}")
     current_date = now.astimezone(timezone.utc).date()
-    if stamps.max().date() != current_date:
+    dates = set(parsed.dt.date.tolist())
+    if dates != {current_date}:
+        observed = ",".join(sorted(str(value) for value in dates))
         raise RuntimeError(
-            f"FRIDAY_TACTICAL_REUSE_NOT_CURRENT_DAY:{label}:{stamps.max().date()}:{current_date}"
+            f"FRIDAY_TACTICAL_REUSE_NOT_CURRENT_DAY:{label}:{observed}:{current_date}"
         )
 
 
