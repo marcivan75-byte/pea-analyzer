@@ -40,6 +40,7 @@ def run(root: Path = ROOT) -> dict:
         base.tactical = original_tactical
         base.VERSION = original_version
 
+    base_status = str(payload.get("status") or "")
     ci_started = perf_counter()
     ci_payload = daily_ci.run(root=root)
     ci_seconds = perf_counter() - ci_started
@@ -55,9 +56,15 @@ def run(root: Path = ROOT) -> dict:
         "word_output": ci_payload.get("word_output"),
         "excel_output": ci_payload.get("excel_output"),
     }
+    final_status = (
+        "SUCCESS_DAILY_CONSOLIDATED_WITH_CI_AND_ETF_REPLAY_WARNING"
+        if "ETF_REPLAY_WARNING" in base_status
+        else "SUCCESS_DAILY_CONSOLIDATED_WITH_CI"
+    )
 
     payload.update({
-        "status": "SUCCESS_DAILY_CONSOLIDATED_WITH_CI",
+        "status": final_status,
+        "base_status_before_ci": base_status,
         "version": VERSION,
         "tactical_runtime_version": tactical.VERSION,
         "daily_ci_version": daily_ci.VERSION,
