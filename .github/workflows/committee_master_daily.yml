@@ -1,4 +1,4 @@
-name: PEA Weekly Heavy Committee V21.16
+name: PEA Weekly Optimized Committee V21.16.1
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ on:
     - cron: "40 20 * * 5"
 
 concurrency:
-  group: committee-weekly-heavy-${{ github.ref }}
+  group: committee-weekly-optimized-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -24,7 +24,7 @@ env:
 jobs:
   committee-master:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 120
     env:
       PYTHONUNBUFFERED: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
@@ -36,6 +36,7 @@ jobs:
       MARKETSTACK_API_KEY: ${{ secrets.MARKETSTACK_API_KEY }}
       ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
       EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -237,108 +238,54 @@ jobs:
           assert ff["governance"]["can_trigger_orders"] is False
           assert ff["governance"]["can_trigger_sales"] is False
           assert ff["anti_false_signal"]["mixed_currency_absolute_aggregation_forbidden"] is True
-          print(f"V21.8.1 integrity OK: Actions 1829/633, ETF 102/268, no LT/Gold/Crypto/IPO runtime, TCT, Sector Rotation V2 PIT/OOS shadow, Fund Flows V1 PEA-only, RISK V1.1 context-only, Entry/Exit V21.8 baseline (identity-only={materialized.materialized_missing_count})")
+          print(f"V21.16.1 integrity OK: Actions 1829/633, ETF 102/268, retained runtime scope, TCT, Sector Rotation V2, Fund Flows and RISK governance intact (identity-only={materialized.materialized_missing_count})")
           PY
 
       - name: Publish Action identity hydration worklist
         run: python -m v182.audit.identity_hydration
 
-      - name: Run weekly unified Committee pipeline
-        run: python -m v182.reporting.unified_runner
+      - name: Run optimized weekly unified Committee pipeline
+        run: python -m v182.reporting.weekly_unified_fast_v21_16
 
-      - name: Replay governed ETF structural state V21.15 for Friday tactical outputs
-        continue-on-error: true
-        run: python -m v182.reporting.etf_structure_state_replay
+      - name: Reuse current weekly Committee for Friday tactical outputs
+        run: python -m v182.reporting.friday_tactical_reuse_v21_16
 
-      - name: Friday TCT CT scoring and V21.8
-        run: python -m v182.reporting.daily_tct_ct_runner
+      - name: Run optimized weekly tail in parallel lanes
+        run: python -m v182.reporting.weekly_tail_parallel_v21_16
 
-      - name: Action CT V22.0 V22.1 + TCT V24.3.1 Friday shared-parquet SHADOW
-        continue-on-error: true
-        run: python -m v182.reporting.tactical_shadow_bundle_run
-
-      - name: Friday POSTMARKET V24.4.2 OHLC + catalyst + lineage + validator single-process
-        continue-on-error: true
-        run: python -m v182.reporting.tct_postmarket_bundle_run
-
-      - name: Build source-gated decision brief V21.16
-        if: always()
-        run: python -m v182.reporting.decision_brief_v21_16
-
-      - name: Run ETF Fund Flows V1 SHADOW context
-        continue-on-error: true
-        run: python -m v182.reporting.etf_fund_flows_shadow_run
-
-      - name: Audit criteria governance
-        run: python -m v182.reporting.criteria_governance_audit
-
-      - name: Show unified summary
+      - name: Publish weekly summaries and audits
         if: always()
         run: |
-          if [ -f outputs/unified/UNIFIED_SUMMARY_LATEST.json ]; then cat outputs/unified/UNIFIED_SUMMARY_LATEST.json; fi
-          if [ -f outputs/audit/UNIFIED_RUNTIME_V21_13_7.json ]; then cat outputs/audit/UNIFIED_RUNTIME_V21_13_7.json; fi
-          if [ -f outputs/audit/ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json ]; then cat outputs/audit/ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json; fi
-          if [ -f outputs/audit/TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json ]; then cat outputs/audit/TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json; fi
-          if [ -f outputs/audit/POSTMARKET_BUNDLE_RUNTIME_V21_13_12.json ]; then cat outputs/audit/POSTMARKET_BUNDLE_RUNTIME_V21_13_12.json; fi
-
-      - name: Show committee summary
-        if: always()
-        run: |
-          if [ -f outputs/committee_master/SUMMARY.json ]; then cat outputs/committee_master/SUMMARY.json; fi
-
-      - name: Show V21.8 Entry/Exit governance
-        if: always()
-        run: |
-          if [ -f outputs/audit/V21_8_ENTRY_EXIT_GOVERNANCE.json ]; then cat outputs/audit/V21_8_ENTRY_EXIT_GOVERNANCE.json; fi
-
-      - name: Show criteria governance audit
-        if: always()
-        run: |
-          if [ -f outputs/audit/CRITERIA_GOVERNANCE_AUDIT.json ]; then cat outputs/audit/CRITERIA_GOVERNANCE_AUDIT.json; fi
-
-      - name: Show Sector Rotation V2 shadow summary
-        if: always()
-        run: |
-          if [ -f outputs/audit/V2_SECTOR_ROTATION_SHADOW.json ]; then cat outputs/audit/V2_SECTOR_ROTATION_SHADOW.json; fi
-
-      - name: Show Sector Rotation V2 PIT OOS status
-        if: always()
-        run: |
-          if [ -f outputs/audit/V2_SECTOR_ROTATION_PIT_OOS_STATUS.json ]; then cat outputs/audit/V2_SECTOR_ROTATION_PIT_OOS_STATUS.json; fi
-
-      - name: Show ETF Fund Flows V1 shadow audit
-        if: always()
-        run: |
-          if [ -f outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json ]; then cat outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json; fi
-
-      - name: Show RISK V1.1 audit
-        if: always()
-        run: |
-          if [ -f outputs/audit/BETA_CORRELATION_RISK_ENGINE.json ]; then cat outputs/audit/BETA_CORRELATION_RISK_ENGINE.json; fi
-
-      - name: Publish synthetic decision brief
-        if: always()
-        run: |
+          for f in \
+            outputs/unified/UNIFIED_SUMMARY_LATEST.json \
+            outputs/committee_master/SUMMARY.json \
+            outputs/audit/V21_8_ENTRY_EXIT_GOVERNANCE.json \
+            outputs/audit/V2_SECTOR_ROTATION_SHADOW.json \
+            outputs/audit/V2_SECTOR_ROTATION_PIT_OOS_STATUS.json \
+            outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json \
+            outputs/audit/BETA_CORRELATION_RISK_ENGINE.json \
+            outputs/audit/CRITERIA_GOVERNANCE_AUDIT.json \
+            outputs/audit/FRIDAY_TACTICAL_REUSE_V21_16.json \
+            outputs/audit/WEEKLY_TAIL_PARALLEL_V21_16.json; do
+            if [ -f "$f" ]; then
+              echo "===== $f ====="
+              cat "$f"
+            fi
+          done
           if [ -f outputs/decision_brief/DECISION_BRIEF.md ]; then
             cat outputs/decision_brief/DECISION_BRIEF.md >> "$GITHUB_STEP_SUMMARY"
           fi
-
-      - name: Publish full Committee Android summary
-        if: always()
-        run: |
           if [ -f outputs/mobile/ANDROID_CI_CONTROL_CENTER.md ]; then
             cat outputs/mobile/ANDROID_CI_CONTROL_CENTER.md >> "$GITHUB_STEP_SUMMARY"
           elif [ -f outputs/mobile/RISK_V1_1_CONTROL_CENTER.md ]; then
             cat outputs/mobile/RISK_V1_1_CONTROL_CENTER.md >> "$GITHUB_STEP_SUMMARY"
           fi
-          if [ -f outputs/mobile/ETF_FUND_FLOWS_SHADOW.md ]; then
-            printf '\n\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
-            cat outputs/mobile/ETF_FUND_FLOWS_SHADOW.md >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if [ -f outputs/mobile/ANDROID_TCT_NEXT_SESSION_CATALYST_V24_4_2.md ]; then
-            printf '\n\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
-            cat outputs/mobile/ANDROID_TCT_NEXT_SESSION_CATALYST_V24_4_2.md >> "$GITHUB_STEP_SUMMARY"
-          fi
+          for f in outputs/mobile/ETF_FUND_FLOWS_SHADOW.md outputs/mobile/ANDROID_DAILY_TCT_CT.md outputs/mobile/ANDROID_TCT_NEXT_SESSION_CATALYST_V24_4_2.md; do
+            if [ -f "$f" ]; then
+              printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+              cat "$f" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
 
       - name: Save persistent OHLCV cache
         if: ${{ success() && hashFiles('data/cache/**') != '' }}
@@ -368,13 +315,14 @@ jobs:
             state/etf_fund_flows/
           key: weekly-research-state-v1-${{ github.run_id }}
 
-      - name: Upload complete weekly Committee V21.16 results
+      - name: Upload complete weekly Committee V21.16.1 results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: committee-weekly-v21-16-${{ github.run_id }}
+          name: committee-weekly-v21-16-1-${{ github.run_id }}
           path: |
             outputs/unified/
+            outputs/daily_tct_ct/
             outputs/decision_brief/
             outputs/committee_master/
             outputs/etf_mt_v2081/
