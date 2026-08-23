@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 
-from v182.reporting import daily_consolidated_runner_v21_15_6 as impl
+from v182.reporting import daily_consolidated_runner_v21_15_7 as impl
 
 
 # Compatibility entrypoint retained because the deployed workflow historically
-# invokes V21.15.4. Runtime authority now lives in finalized V21.15.6.
+# invokes V21.15.4. Runtime authority now lives in finalized V21.15.7.
 ROOT = impl.ROOT
 VERSION = impl.VERSION
 run = impl.run
@@ -26,7 +26,6 @@ _safe_nonblocking = impl.base._safe_nonblocking
 _run_collection_optimized_locals = impl.base._run_collection_optimized_locals
 _collection_code_contract = impl.base._collection_code_contract
 _load_fast_state_compatible = impl.base._load_fast_state_compatible
-_require_valid_daily_seed = impl._require_valid_daily_seed
 
 
 if __name__ == "__main__":
