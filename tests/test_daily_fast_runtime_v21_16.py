@@ -211,6 +211,7 @@ def test_weekly_workflow_uses_one_parent_one_cache_and_no_duplicate_subcommands(
     assert "python -m v182.reporting.decision_brief_v21_16" not in workflow
     assert "python -m v182.reporting.etf_fund_flows_shadow_run" not in workflow
     assert "python -m v182.reporting.criteria_governance_audit" not in workflow
+    assert "python -m v182.audit.identity_hydration" not in workflow
     assert "runtime_job_summary_v21_16 --profile WEEKLY_FULL_COMMITTEE" in workflow
     assert "continue-on-error: true" in workflow
 
@@ -229,10 +230,13 @@ def test_weekly_tail_parallelism_preserves_tct_writer_order():
     tactical_pos = source.index('"v182.reporting.tactical_shadow_bundle_run"')
     postmarket_pos = source.index('"v182.reporting.tct_postmarket_bundle_run"')
     assert tactical_pos < postmarket_pos
-    assert "ThreadPoolExecutor(max_workers=4" in source
+    assert "ThreadPoolExecutor(max_workers=5" in source
     assert '"decision_brief": pool.submit' in source
     assert '"etf_fund_flows": pool.submit' in source
     assert '"criteria_governance": pool.submit' in source
+    assert '"identity_hydration": pool.submit' in source
+    assert '"identity_hydration_removed_from_pre_bundle_critical_path": True' in source
+    assert '"identity_overlay_application_still_owned_by_wave01": True' in source
     assert '"tct_state_writers_parallelized": False' in source
     assert '"subprocess_isolation": True' in source
 
@@ -263,9 +267,10 @@ def test_weekly_lean_enrichment_drops_only_unused_xlsx_serialization():
 def test_duration_contract_is_static_and_has_authoritative_job_measurement():
     contract = json.loads(Path("config/RUNTIME_DURATION_CONTRACT_V21_16.json").read_text(encoding="utf-8"))
     assert contract["status"] == "STATIC_ARCHITECTURE_VALIDATED_MEASUREMENT_PENDING_USER_AUTHORIZED_RUN"
-    assert contract["v21_16_1_static_design_budget"]["targets_are_not_observed_runtime"] is True
-    assert contract["v21_16_1_static_design_budget"]["daily_billable_budget_minutes"] == 7
-    assert contract["v21_16_1_static_design_budget"]["weekly_billable_budget_minutes"] == 20
+    budget = contract["v21_16_3_static_design_budget"]
+    assert budget["targets_are_not_observed_runtime"] is True
+    assert budget["daily_billable_budget_minutes"] == 6
+    assert budget["weekly_billable_budget_minutes"] == 19
     measurement = contract["measurement_contract"]
     assert measurement["core_bundle_runtime_is_authoritative"] is False
     assert measurement["authoritative_runtime_source"] == "outputs/audit/GITHUB_JOB_RUNTIME_V21_16.json_AND_GITHUB_STEP_SUMMARY"
