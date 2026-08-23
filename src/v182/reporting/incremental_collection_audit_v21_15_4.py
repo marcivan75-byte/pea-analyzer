@@ -109,7 +109,6 @@ class IncrementalCollectionAuditor:
             self._clear()
             return
 
-        touched_total = sum(len(fields) for fields in self.touched.values())
         try:
             recomputed = self._patch_inventory(actions, etfs, wave_id)
             daily_profile = os.environ.get("PEA_RUN_PROFILE", "").strip().upper() == "DAILY_TACTICAL"
