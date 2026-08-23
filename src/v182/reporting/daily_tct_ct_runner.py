@@ -15,7 +15,7 @@ from v182.reporting.selected_source_enrichment import _read_contract, attach_mas
 from v182.risk.entry_exit_governance_v21_8 import STATE_RELATIVE_PATH, _attach_temporal_state, _load_temporal_state, _persist_temporal_state, apply_governance
 
 ROOT = Path(__file__).resolve().parents[3]
-VERSION = "DAILY_TCT_CT_V1_SOURCE_CONTRACT_V21_16_3_FAST_TOP20_EXACT"
+VERSION = "DAILY_TCT_CT_V1_SOURCE_CONTRACT_V21_16_4_IN_MEMORY"
 TACTICAL_DISPLAY_CODES = {
     "BUY_CANDIDATE",
     "WATCH",
@@ -41,13 +41,7 @@ def _read(path: Path) -> pd.DataFrame:
 
 
 def _daily_exact_scope(actions_with_tct: pd.DataFrame, tct_cfg: dict) -> pd.DataFrame:
-    """Apply the existing baseline gate before the expensive exact T1/T2 calculation.
-
-    The TCT contract already forbids T1/T2 outside the baseline Top-N with minimum
-    baseline coverage. Weekly research keeps the exhaustive evaluator unchanged;
-    the daily tactical runner computes exact indicators only for rows that can
-    actually become T1/T2 candidates under the governed rules.
-    """
+    """Apply the existing baseline gate before the expensive exact T1/T2 calculation."""
     if actions_with_tct.empty:
         return actions_with_tct.copy()
     rank = pd.to_numeric(actions_with_tct.get("tct_baseline_rank"), errors="coerce")
@@ -56,6 +50,17 @@ def _daily_exact_scope(actions_with_tct: pd.DataFrame, tct_cfg: dict) -> pd.Data
     min_coverage = float(tct_cfg.get("scope", {}).get("baseline_min_coverage", 0.60))
     eligible = rank.notna() & rank.le(top_n) & coverage.notna() & coverage.ge(min_coverage)
     return actions_with_tct.loc[eligible].copy().reset_index(drop=True)
+
+
+def _compact_tct_baseline(frame: pd.DataFrame) -> pd.DataFrame:
+    """Retain every TCT baseline reconstruction field without serializing the full master."""
+    identity = [
+        c for c in ("isin", "name", "yahoo_ticker", "sector_yf", "sector_v21", "sector")
+        if c in frame.columns
+    ]
+    baseline = [c for c in frame.columns if c.startswith("tct_baseline_")]
+    columns = list(dict.fromkeys(identity + baseline))
+    return frame[columns].copy() if columns else frame.iloc[:, 0:0].copy()
 
 
 def _android_summary(governed: pd.DataFrame, generated_at: str) -> str:
@@ -121,7 +126,13 @@ def _android_summary(governed: pd.DataFrame, generated_at: str) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def run(root: Path = ROOT) -> dict:
+def run(
+    root: Path = ROOT,
+    *,
+    actions: pd.DataFrame | None = None,
+    etfs: pd.DataFrame | None = None,
+    persist_full_baseline: bool = True,
+) -> dict:
     outputs = root / "outputs"
     outdir = outputs / "daily_tct_ct"
     mobile = outputs / "mobile"
@@ -129,8 +140,16 @@ def run(root: Path = ROOT) -> dict:
     outdir.mkdir(parents=True, exist_ok=True)
     mobile.mkdir(parents=True, exist_ok=True)
     auditdir.mkdir(parents=True, exist_ok=True)
-    actions = _read(outputs / "V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv")
-    etfs = _read(outputs / "V18.2_PEA_ETF_MASTER_ENRICHED.csv")
+    in_memory_inputs = actions is not None and etfs is not None
+    if actions is None:
+        actions = _read(outputs / "V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv")
+    else:
+        actions = actions.copy()
+    if etfs is None:
+        etfs = _read(outputs / "V18.2_PEA_ETF_MASTER_ENRICHED.csv")
+    else:
+        etfs = etfs.copy()
+
     action_ref = load_registry(root / "config" / "V21_ACTIONS_REFERENCE_V21_0.json")
     etf_ref = load_registry(root / "config" / "V20_7_1_ETF_CRITERIA_REGISTRY.json")
     tct_cfg = load_tct_config(root / "config" / "TCT_V24_1_7_SHADOW.json")
@@ -140,7 +159,8 @@ def run(root: Path = ROOT) -> dict:
         decisions_from_scores(etfs, etf_ref, "ETF", ["CT"]),
     ]
     actions_with_tct, baseline = build_tct_baseline(actions, tct_cfg)
-    actions_with_tct.to_csv(outdir / "TCT_BASELINE_V24_1_8.csv", sep=";", index=False, encoding="utf-8-sig")
+    baseline_export = actions_with_tct if persist_full_baseline else _compact_tct_baseline(actions_with_tct)
+    baseline_export.to_csv(outdir / "TCT_BASELINE_V24_1_8.csv", sep=";", index=False, encoding="utf-8-sig")
     exact_scope = _daily_exact_scope(actions_with_tct, tct_cfg)
     tct_state_path = root / str(tct_cfg.get("state", {}).get("path", "state/TCT_V24_1_7_T1_STATE.json"))
     tct_shadow, exact = build_exact_timing_snapshot(exact_scope, root / "data" / "cache" / "actions", tct_state_path, tct_cfg)
@@ -174,6 +194,9 @@ def run(root: Path = ROOT) -> dict:
         "scope": ["ACTION_TCT", "ACTION_CT", "ETF_CT"],
         "rows": int(len(governed)),
         "rows_by_asset_horizon": governed.groupby(["asset_class", "horizon"], dropna=False).size().reset_index(name="count").to_dict("records"),
+        "in_memory_master_handoff": bool(in_memory_inputs),
+        "full_master_csv_read_avoided": bool(in_memory_inputs),
+        "tct_baseline_export_mode": "FULL_MASTER_PLUS_BASELINE" if persist_full_baseline else "COMPACT_RECONSTRUCTABLE_BASELINE_ONLY",
         "selected_source_context": source_context,
         "source_confirmation_gate": gate,
         "source_network_policy": "LIVE_IF_DUE",
@@ -182,6 +205,9 @@ def run(root: Path = ROOT) -> dict:
             "ranked_rows": baseline.ranked_rows,
             "top20_rows": baseline.top20_rows,
             "normalization_policy": NORMALIZATION_POLICY,
+            "export_rows": int(len(baseline_export)),
+            "export_columns": int(len(baseline_export.columns)),
+            "all_baseline_component_fields_retained": True,
         },
         "tct_exact": {
             "daily_exact_scope_rows": int(len(exact_scope)),
@@ -213,6 +239,7 @@ def run(root: Path = ROOT) -> dict:
             "entry_exit": "outputs/daily_tct_ct/DAILY_TCT_CT_V21_8.csv",
             "android": "outputs/mobile/ANDROID_DAILY_TCT_CT.md",
             "source_context": "outputs/source_context/DAILY_TCT_CT_SOURCE_OBSERVATIONS.csv",
+            "tct_baseline": "outputs/daily_tct_ct/TCT_BASELINE_V24_1_8.csv",
         },
     }
     (auditdir / "DAILY_TCT_CT_AUDIT.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
