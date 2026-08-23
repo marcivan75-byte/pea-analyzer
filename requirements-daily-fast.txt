@@ -1,0 +1,12 @@
+# Minimal dependency set for the Mon-Thu DAILY_TACTICAL runtime.
+# Intentionally excludes pypdf, playwright, openpyxl and python-docx: the daily
+# fast path emits CSV/JSON/Markdown only and does not build PDF/XLSX/DOCX files.
+pydantic>=2.8
+yfinance>=0.2
+pandas>=2.2
+numpy>=2.0
+pyarrow>=17
+requests>=2.32
+beautifulsoup4>=4.12
+lxml>=5.2
+ta>=0.11.0
