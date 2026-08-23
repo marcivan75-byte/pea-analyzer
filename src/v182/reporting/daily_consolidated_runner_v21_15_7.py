@@ -46,10 +46,9 @@ def _write_ci_failure_audit(root: Path, exc: Exception, elapsed_seconds: float) 
         "thresholds_changed": False,
         "real_orders_enabled": False,
     }
-    (auditdir / "DAILY_CI_FAILURE_V21_15_7.json").write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, default=str),
-        encoding="utf-8",
-    )
+    text = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+    for name in ("DAILY_CI_FAILURE_V21_15_7.json", "DAILY_CI_RESTITUTION_V21_15_7.json"):
+        (auditdir / name).write_text(text, encoding="utf-8")
 
 
 def run(root: Path = ROOT) -> dict:
