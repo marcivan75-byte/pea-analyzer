@@ -10,9 +10,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_source_contract_locks_previous_validated_functions():
     cfg = json.loads((ROOT / "config" / "SOURCE_FUNCTIONAL_CONTRACT_V21_15.json").read_text(encoding="utf-8"))
+    assert cfg["version"] == "V21.15.2"
     assert cfg["boursorama"]["priority_for_selected_actions"] is True
     assert cfg["boursorama"]["priority_for_selected_etfs"] is True
     assert cfg["boursorama"]["full_universe_daily_scrape_forbidden"] is True
+    assert cfg["boursorama"]["asset_branches_overlap_under_shared_limiter"] is True
+    assert cfg["boursorama"]["request_start_interval_seconds"] == 1.0
     assert "replication_management_fee" in cfg["boursorama"]["required_etf_context_families"]
     assert cfg["investing"]["timeframes"] == ["DAILY", "WEEKLY", "MONTHLY"]
     assert cfg["investing"]["allowed_states"] == ["STRONG_SELL", "SELL", "NEUTRAL", "BUY", "STRONG_BUY"]
@@ -46,3 +49,7 @@ def test_all_active_horizon_runners_keep_source_context_hook():
     assert "collect_selected_action_context_cached" in orchestrator
     assert "collect_selected_etf_context_cached" in orchestrator
     assert "collect_technical_context_cached" in orchestrator
+    assert "shared_limiter = StartRateLimiter" in orchestrator
+    assert "fetcher=shared_fetcher" in orchestrator
+    assert orchestrator.count("request_start_interval_seconds=0.0") == 2
+    assert 'thread_name_prefix="boursorama-assets"' in orchestrator
