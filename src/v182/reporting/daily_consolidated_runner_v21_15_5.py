@@ -11,6 +11,7 @@ import pandas as pd
 
 from v182.reporting import daily_fast_collection_run as collection
 from v182.reporting import daily_tactical_super_runner_v21_15_5 as tactical
+from v182.reporting import daily_w09_seed_v21_15_7 as w09_seed
 from v182.reporting import etf_structure_state_replay as etf_replay
 from v182.reporting import wave3_cpu_budget_v21_15_4 as wave3_cpu
 from v182.reporting.earnings_clock_v21_15_4 import refresh_frame as refresh_earnings_clock
@@ -160,7 +161,7 @@ def _safe_nonblocking(name: str, runner) -> tuple[dict, dict | None, float]:
 
 
 def _run_collection_optimized_locals() -> tuple[dict, dict]:
-    """Daily collection: no W09 network, weekly snapshot reuse, functional fast state."""
+    """Daily collection: no W09 network, retained/seeded W09, functional fast state."""
     original_loader = collection._load_fast_state
     original_wave3 = collection.waves.wave3_local_features
     original_wave9 = collection.waves.wave9_topdown
@@ -192,6 +193,7 @@ def _run_collection_optimized_locals() -> tuple[dict, dict]:
             "daily_gdelt_calls": 0,
             "daily_observations_applied": 0,
             "weekly_snapshot_reused_when_needed": True,
+            "validated_seed_fallback": w09_seed.audit_contract(),
             "calls_intercepted": 0,
         },
     }
@@ -215,8 +217,14 @@ def _run_collection_optimized_locals() -> tuple[dict, dict]:
     def weekly_only_wave9(actions_df, etf_df, cfg, fred_api_key):
         policy = diagnostics["wave09_daily_policy"]
         policy["calls_intercepted"] = int(policy.get("calls_intercepted", 0)) + 1
+        mode = str(diagnostics.get("fast_state_identity", {}).get("resolved_mode") or "DISABLED")
+        if mode == "DISABLED":
+            obs_actions, seed_diag = w09_seed.action_observations(actions_df)
+            policy["daily_observations_applied"] = int(len(obs_actions))
+            policy["bootstrap_source"] = "VALIDATED_W09_SEED_RUN_32626511307"
+            return obs_actions, [], seed_diag
         return [], [], {
-            "status": "SKIPPED_DAILY_WEEKLY_ONLY",
+            "status": "SKIPPED_DAILY_WEEKLY_ONLY_RETAINED_MASTER",
             "refresh_cadence": "WEEKLY_ONLY",
             "fred_calls": 0,
             "gdelt_calls": 0,
