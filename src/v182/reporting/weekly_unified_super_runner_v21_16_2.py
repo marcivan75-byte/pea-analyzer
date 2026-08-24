@@ -22,10 +22,11 @@ def _clean_isin(value: object) -> str:
     if value is None:
         return ""
     try:
-        if bool(pd.isna(value)):
-            return ""
+        missing = bool(pd.isna(value))
     except (TypeError, ValueError):
-        pass
+        missing = False
+    if missing:
+        return ""
     text = str(value).strip()
     return "" if text.lower() in {"", "nan", "none", "<na>"} else text
 
