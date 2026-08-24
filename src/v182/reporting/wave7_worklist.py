@@ -5,14 +5,9 @@ import pandas as pd
 from v182.io.frames import is_missing
 
 EURONEXT_BASE = "https://live.euronext.com"
-# Recherche générique GECO (l'AMF n'expose pas de paramètre de requête ISIN
-# stable et documenté : on renvoie vers la page de recherche, à interroger
-# manuellement avec l'ISIN ou le nom).
 AMF_GECO_SEARCH = "https://geco.amf-france.org"
-
-# Champs jugés "critiques" pour l'éligibilité PEA : sans confirmation
-# officielle (courtier/AMF/Euronext), ils ne doivent jamais être devinés.
 CRITICAL_FIELDS = ["pea_confidence", "broker_pea_confirmed", "corporate_status"]
+WORKLIST_COLUMNS = ["isin", "name", "field", "reason", "detail", "euronext_link", "amf_geco_search"]
 
 
 def _euronext_link(row: pd.Series) -> str:
@@ -26,45 +21,70 @@ def _euronext_link(row: pd.Series) -> str:
     return ""
 
 
+def _action_metadata(actions_df: pd.DataFrame) -> pd.DataFrame:
+    """Build the 1-row-per-ISIN metadata map once instead of per quarantine row."""
+    if actions_df.empty or "isin" not in actions_df.columns:
+        return pd.DataFrame(columns=["isin", "name", "euronext_link_resolved"])
+    rows = actions_df.drop_duplicates("isin", keep="last").copy()
+    links = [_euronext_link(row) for _, row in rows.iterrows()]
+    return pd.DataFrame(
+        {
+            "isin": rows["isin"].astype(str).to_numpy(),
+            "name": rows["name"].to_numpy() if "name" in rows.columns else "",
+            "euronext_link_resolved": links,
+        }
+    )
+
+
 def build_worklist(quarantine: list[dict], actions_df: pd.DataFrame) -> pd.DataFrame:
-    """Construit la check-list Wave 07 : une ligne par point à vérifier
-    manuellement auprès d'une source officielle, avec lien direct quand
-    disponible. A remplir dans config/V18.2_MANUAL_OVERRIDES.csv une fois
-    vérifié — jamais de valeur appliquée automatiquement ici."""
-    rows_by_isin = actions_df.set_index("isin", drop=False)
-    entries = []
+    """Build the official verification list with the same rows, vectorized."""
+    metadata = _action_metadata(actions_df)
+    parts: list[pd.DataFrame] = []
 
-    for item in quarantine:
-        isin = item.get("isin")
-        if isin not in rows_by_isin.index:
-            continue
-        row = rows_by_isin.loc[isin]
-        entries.append({
-            "isin": isin,
-            "name": row.get("name", ""),
-            "field": item.get("field"),
-            "reason": "CONFLIT_EVIDENCE_EGALE",
-            "detail": item.get("reason", ""),
-            "euronext_link": _euronext_link(row),
-            "amf_geco_search": AMF_GECO_SEARCH,
-        })
+    if quarantine and not metadata.empty:
+        qframe = pd.DataFrame(quarantine)
+        if "isin" in qframe.columns and "field" in qframe.columns:
+            qframe = qframe.copy()
+            qframe["isin"] = qframe["isin"].astype(str)
+            merged = qframe.merge(metadata, on="isin", how="inner", sort=False)
+            if not merged.empty:
+                conflict = pd.DataFrame(
+                    {
+                        "isin": merged["isin"],
+                        "name": merged["name"],
+                        "field": merged["field"],
+                        "reason": "CONFLIT_EVIDENCE_EGALE",
+                        "detail": merged["reason"] if "reason" in merged.columns else "",
+                        "euronext_link": merged["euronext_link_resolved"],
+                        "amf_geco_search": AMF_GECO_SEARCH,
+                    }
+                )
+                parts.append(conflict)
 
-    for field in CRITICAL_FIELDS:
-        if field not in actions_df.columns:
-            continue
-        gap_rows = actions_df[actions_df[field].apply(is_missing)]
-        for _, row in gap_rows.iterrows():
-            entries.append({
-                "isin": row["isin"],
-                "name": row.get("name", ""),
-                "field": field,
-                "reason": "GAP_CRITIQUE_PEA",
-                "detail": "Confirmation officielle requise, jamais déduite",
-                "euronext_link": _euronext_link(row),
-                "amf_geco_search": AMF_GECO_SEARCH,
-            })
+    if not metadata.empty:
+        link_by_isin = metadata.set_index("isin")["euronext_link_resolved"].to_dict()
+        name_by_isin = metadata.set_index("isin")["name"].to_dict()
+        for field in CRITICAL_FIELDS:
+            if field not in actions_df.columns:
+                continue
+            missing = actions_df[field].apply(is_missing)
+            gap_rows = actions_df.loc[missing, ["isin"]].copy()
+            if gap_rows.empty:
+                continue
+            gap_rows["isin"] = gap_rows["isin"].astype(str)
+            gap_rows["name"] = gap_rows["isin"].map(name_by_isin).fillna("")
+            gap_rows["field"] = field
+            gap_rows["reason"] = "GAP_CRITIQUE_PEA"
+            gap_rows["detail"] = "Confirmation officielle requise, jamais déduite"
+            gap_rows["euronext_link"] = gap_rows["isin"].map(link_by_isin).fillna("")
+            gap_rows["amf_geco_search"] = AMF_GECO_SEARCH
+            parts.append(gap_rows[WORKLIST_COLUMNS])
 
-    return pd.DataFrame(entries).drop_duplicates(["isin", "field", "reason"])
+    if not parts:
+        return pd.DataFrame(columns=WORKLIST_COLUMNS)
+    return pd.concat(parts, ignore_index=True, sort=False)[WORKLIST_COLUMNS].drop_duplicates(
+        ["isin", "field", "reason"], keep="first"
+    )
 
 
 def write_worklist(quarantine: list[dict], actions_df: pd.DataFrame, output_path: str | Path) -> int:
