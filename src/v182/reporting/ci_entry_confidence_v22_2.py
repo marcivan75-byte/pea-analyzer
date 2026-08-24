@@ -14,6 +14,7 @@ from v182.features.tct_v24_1_7_exact import compute_technical_indicators
 ROOT = Path(__file__).resolve().parents[3]
 CONFIG = Path("config/CI_ENTRY_CONFIDENCE_V22_2.json")
 STATE = Path("state/ci_entry_watch/V22_2_CANDIDATE_STATE.csv")
+STATE_CACHE = Path("state/provenance/CI_ENTRY_WATCH_V22_2_STATE.csv")
 OUTPUT = Path("outputs/committee_master/CI_ENTRY_CONFIDENCE_V22_2.csv")
 MOBILE = Path("outputs/mobile/CI_ENTRY_WATCH_V22_2.csv")
 AUDIT = Path("outputs/audit/CI_ENTRY_CONFIDENCE_V22_2.json")
@@ -27,10 +28,36 @@ def _num(value):
     return x if math.isfinite(x) else None
 
 
+def _bool(value) -> bool:
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if value is None:
+        return False
+    try:
+        if pd.isna(value):
+            return False
+    except (TypeError, ValueError):
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "oui", "pass", "confirmed"}
+
+
 def _text(value) -> str:
-    if value is None or pd.isna(value):
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
         return ""
     return str(value).strip()
+
+
+def _first_text(*values) -> str:
+    for value in values:
+        text = _text(value)
+        if text:
+            return text
+    return ""
 
 
 def _read_csv(path: Path) -> pd.DataFrame:
@@ -61,22 +88,20 @@ def _load_metadata(root: Path) -> pd.DataFrame:
     return pd.concat(parts, ignore_index=True, sort=False) if parts else pd.DataFrame()
 
 
-def _metadata_maps(meta: pd.DataFrame) -> tuple[dict[tuple[str, str], dict], dict[str, str]]:
+def _metadata_maps(meta: pd.DataFrame) -> dict[tuple[str, str], dict]:
     by_key: dict[tuple[str, str], dict] = {}
-    ticker_to_asset: dict[str, str] = {}
     if meta.empty:
-        return by_key, ticker_to_asset
+        return by_key
     for _, row in meta.iterrows():
         asset = _text(row.get("asset_class")).upper()
         isin = _text(row.get("isin"))
-        if not asset or not isin:
-            continue
-        record = row.to_dict()
-        by_key[(asset, isin)] = record
-        ticker = _text(row.get("yahoo_ticker") or row.get("ticker"))
-        if ticker:
-            ticker_to_asset[ticker] = asset
-    return by_key, ticker_to_asset
+        if asset and isin:
+            by_key[(asset, isin)] = row.to_dict()
+    return by_key
+
+
+def _ticker(row: pd.Series, meta: dict) -> str:
+    return _first_text(meta.get("yahoo_ticker"), meta.get("ticker"), row.get("yahoo_ticker"), row.get("ticker"))
 
 
 def _load_candidate_histories(root: Path, candidates: pd.DataFrame, meta_map: dict[tuple[str, str], dict]) -> dict[str, pd.DataFrame]:
@@ -84,8 +109,7 @@ def _load_candidate_histories(root: Path, candidates: pd.DataFrame, meta_map: di
     for _, row in candidates.iterrows():
         asset = _text(row.get("asset_class")).upper()
         isin = _text(row.get("isin"))
-        meta = meta_map.get((asset, isin), {})
-        ticker = _text(meta.get("yahoo_ticker") or meta.get("ticker") or row.get("yahoo_ticker"))
+        ticker = _ticker(row, meta_map.get((asset, isin), {}))
         if asset in tickers_by_asset and ticker:
             tickers_by_asset[asset].add(ticker)
     histories: dict[str, pd.DataFrame] = {}
@@ -93,52 +117,55 @@ def _load_candidate_histories(root: Path, candidates: pd.DataFrame, meta_map: di
         if not tickers:
             continue
         cache_dir = root / "data/cache" / ("actions" if asset == "ACTION" else "etf")
-        found = _extract_histories(cache_dir, tickers)
-        histories.update(found)
+        histories.update(_extract_histories(cache_dir, tickers))
     return histories
 
 
-def _technical_snapshot(history: pd.DataFrame, cfg: dict) -> dict:
+def _technical_snapshot(history: pd.DataFrame | None, cfg: dict) -> dict:
     if history is None or history.empty:
         return {"history_status": "MISSING"}
     try:
         tech = compute_technical_indicators(history)
     except Exception as exc:
         return {"history_status": "ERROR", "history_error": f"{type(exc).__name__}:{str(exc)[:120]}"}
-    if tech.empty or len(tech) < 55:
-        return {"history_status": "TOO_SHORT", "sessions": int(len(tech))}
+    if tech.empty or len(tech) < 205:
+        return {"history_status": "TOO_SHORT_FOR_SMA200", "sessions": int(len(tech))}
     close = pd.to_numeric(tech.get("close"), errors="coerce")
     if close is None or close.dropna().empty:
         return {"history_status": "NO_CLOSE"}
     c = _num(close.iloc[-1])
-    prev = _num(close.iloc[-2]) if len(close) > 1 else None
-    sma20 = _num(close.rolling(20, min_periods=20).mean().iloc[-1])
-    sma50 = _num(close.rolling(50, min_periods=50).mean().iloc[-1])
-    sma200 = _num(close.rolling(200, min_periods=120).mean().iloc[-1])
-    prev_sma20 = _num(close.rolling(20, min_periods=20).mean().iloc[-2]) if len(close) > 20 else None
+    prev = _num(close.iloc[-2])
+    sma20_series = close.rolling(20, min_periods=20).mean()
+    sma50_series = close.rolling(50, min_periods=50).mean()
+    sma200_series = close.rolling(200, min_periods=200).mean()
+    sma20 = _num(sma20_series.iloc[-1])
+    sma50 = _num(sma50_series.iloc[-1])
+    sma200 = _num(sma200_series.iloc[-1])
+    prev_sma20 = _num(sma20_series.iloc[-2])
     ret20 = _num(close.pct_change(20).iloc[-1])
-    ret10 = _num(close.pct_change(10).iloc[-1])
-    ret5 = _num(close.pct_change(5).iloc[-1])
-    accel = None if ret10 is None or ret5 is None else ret5 - ret10 / 2.0
+    ret5_series = close.pct_change(5)
+    ret5_now = _num(ret5_series.iloc[-1])
+    ret5_prev = _num(ret5_series.iloc[-6]) if len(ret5_series) >= 11 else None
+    accel = None if ret5_now is None or ret5_prev is None else ret5_now - ret5_prev
     returns = close.pct_change()
-    vol20 = _num(returns.rolling(20, min_periods=15).std().iloc[-1])
+    vol20 = _num(returns.rolling(20, min_periods=20).std().iloc[-1])
     macd = pd.to_numeric(tech.get("macd"), errors="coerce") if "macd" in tech else None
     signal = pd.to_numeric(tech.get("macd_signal"), errors="coerce") if "macd_signal" in tech else None
     macd_hist = _num((macd - signal).iloc[-1]) if macd is not None and signal is not None else None
-    prev_macd_hist = _num((macd - signal).iloc[-2]) if macd is not None and signal is not None and len(macd) > 1 else None
+    prev_macd_hist = _num((macd - signal).iloc[-2]) if macd is not None and signal is not None else None
     volume = pd.to_numeric(tech.get("volume"), errors="coerce") if "volume" in tech else None
     volume_ratio = None
     if volume is not None and len(volume) >= 21:
-        avg = _num(volume.shift(1).rolling(20, min_periods=15).mean().iloc[-1])
+        avg = _num(volume.shift(1).rolling(20, min_periods=20).mean().iloc[-1])
         curv = _num(volume.iloc[-1])
-        if avg and avg > 0 and curv is not None:
+        if avg is not None and avg > 0 and curv is not None:
             volume_ratio = curv / avg
     lookback = int(cfg["entry"].get("breakout_lookback_sessions", 20))
     prior_high = _num(close.shift(1).rolling(lookback, min_periods=lookback).max().iloc[-1])
     breakout = bool(c is not None and prior_high is not None and c > prior_high)
     reclaim20 = bool(c is not None and sma20 is not None and prev is not None and prev_sma20 is not None and c > sma20 and prev <= prev_sma20)
-    dist50 = None if c is None or not sma50 else c / sma50 - 1.0
-    dist200 = None if c is None or not sma200 else c / sma200 - 1.0
+    dist50 = None if c is None or sma50 in {None, 0.0} else c / sma50 - 1.0
+    dist200 = None if c is None or sma200 in {None, 0.0} else c / sma200 - 1.0
     overextension = False
     if dist50 is not None and vol20 is not None and vol20 > 0:
         overextension = dist50 > float(cfg["entry"].get("dynamic_overextension_volatility_multiple", 2.0)) * vol20
@@ -167,8 +194,8 @@ def _entry_state(row: pd.Series, tech: dict, cfg: dict) -> tuple[str, list[str],
     horizon = _text(row.get("horizon")).upper()
     asset = _text(row.get("asset_class")).upper()
     if horizon == "TCT":
-        setup = _text(row.get("setup") or row.get("tct_setup")).upper()
-        confirmed = bool(row.get("t2_confirmed") is True) or setup in {"T2", "T2_CONFIRMATION", "T2_EXACT_TIMING_CONFIRMATION"}
+        setup = _first_text(row.get("setup"), row.get("tct_setup")).upper()
+        confirmed = _bool(row.get("t2_confirmed")) or setup in {"T2", "T2_CONFIRMATION", "T2_EXACT_TIMING_CONFIRMATION"}
         if confirmed:
             return "READY_FOR_REVIEW", ["TCT_EXACT_T2_CONFIRMED"], 100.0
         return "WAIT", ["TCT_EXACT_T2_CONFIRMATION_REQUIRED"], 0.0
@@ -183,38 +210,44 @@ def _entry_state(row: pd.Series, tech: dict, cfg: dict) -> tuple[str, list[str],
         blockers.append("BELOW_SMA200")
     if bool(cfg["entry"].get("block_on_negative_momentum_acceleration", True)) and accel is not None and accel < 0:
         blockers.append("MOMENTUM_DECELERATION")
-    if tech.get("overextension_dynamic"):
+    if _bool(tech.get("overextension_dynamic")):
         blockers.append("DYNAMIC_OVEREXTENSION")
 
     if asset == "ACTION" and horizon == "CT":
-        event = bool(tech.get("breakout_20d") or tech.get("reclaim_sma20"))
-        momentum_ok = bool((_num(tech.get("macd_hist")) or 0.0) >= 0 or tech.get("macd_hist_accelerating"))
+        event = _bool(tech.get("breakout_20d")) or _bool(tech.get("reclaim_sma20"))
+        hist = _num(tech.get("macd_hist"))
+        momentum_ok = (hist is not None and hist >= 0) or _bool(tech.get("macd_hist_accelerating"))
         volume = _num(tech.get("volume_ratio_20d"))
-        volume_ok = volume is None or volume >= 1.0
-        if tech.get("breakout_20d"):
+        volume_ok = volume is not None and volume >= 1.0
+        if _bool(tech.get("breakout_20d")):
             reasons.append("BREAKOUT_20D_CONFIRMED")
-        if tech.get("reclaim_sma20"):
+        if _bool(tech.get("reclaim_sma20")):
             reasons.append("SMA20_RECLAIM_CONFIRMED")
         if momentum_ok:
             reasons.append("MOMENTUM_CONFIRMATION")
         if volume_ok:
-            reasons.append("VOLUME_NOT_BELOW_20D_REFERENCE")
+            reasons.append("VOLUME_AT_OR_ABOVE_20D_REFERENCE")
+        elif volume is None:
+            blockers.append("VOLUME_EVIDENCE_MISSING")
+        else:
+            blockers.append("VOLUME_BELOW_20D_REFERENCE")
         if blockers:
-            return "WAIT", blockers + reasons, 45.0
+            return "WAIT", blockers + reasons, 40.0
         if event and momentum_ok and volume_ok:
             return "READY_FOR_REVIEW", reasons, 100.0
         return "WAIT", reasons + ["CT_TRIGGER_NOT_YET_CONFIRMED"], 60.0
 
-    if asset == "ETF" and horizon == "MT":
+    if horizon == "MT" and asset in {"ACTION", "ETF"}:
         close = _num(tech.get("close")); sma50 = _num(tech.get("sma50")); sma200 = _num(tech.get("sma200"))
         trend_ok = bool(close is not None and sma50 is not None and sma200 is not None and close > sma50 > sma200)
-        momentum_ok = bool((_num(tech.get("ret20")) or -1.0) > 0 and (_num(tech.get("macd_hist")) or -1.0) >= 0)
+        ret20 = _num(tech.get("ret20")); hist = _num(tech.get("macd_hist"))
+        momentum_ok = bool(ret20 is not None and hist is not None and ret20 > 0 and hist >= 0)
         if trend_ok:
             reasons.append("MT_CLOSE_ABOVE_SMA50_ABOVE_SMA200")
         if momentum_ok:
             reasons.append("MT_MOMENTUM_POSITIVE")
         if blockers:
-            return "WAIT", blockers + reasons, 45.0
+            return "WAIT", blockers + reasons, 40.0
         if trend_ok and momentum_ok:
             return "READY_FOR_REVIEW", reasons + ["MT_CLOSE_CONFIRMATION"], 100.0
         return "WAIT", reasons + ["MT_CLOSE_TRIGGER_NOT_YET_CONFIRMED"], 60.0
@@ -225,9 +258,9 @@ def _entry_state(row: pd.Series, tech: dict, cfg: dict) -> tuple[str, list[str],
 
 
 def _provenance_score(row: pd.Series, meta: dict) -> float:
-    evidence_tokens = []
+    evidence_tokens: list[str] = []
     for key in ("evidence_level", "source_evidence_level", "validation_status", "evidence_grade"):
-        value = _text(row.get(key) if key in row.index else meta.get(key)).upper()
+        value = _first_text(row.get(key) if key in row.index else None, meta.get(key)).upper()
         if value:
             evidence_tokens.append(value)
     joined = "|".join(evidence_tokens)
@@ -238,7 +271,7 @@ def _provenance_score(row: pd.Series, meta: dict) -> float:
     if "C" in evidence_tokens:
         return 60.0
     source_fields = sum(bool(_text(meta.get(key))) for key in ("yahoo_ticker", "provider", "official_benchmark", "name"))
-    return min(60.0, source_fields * 15.0)
+    return min(40.0, source_fields * 10.0)
 
 
 def _trend_score(tech: dict) -> float:
@@ -252,26 +285,26 @@ def _trend_score(tech: dict) -> float:
         score += 25.0
     if sma50 is not None and sma200 is not None and sma50 > sma200:
         score += 20.0
-    if (_num(tech.get("momentum_acceleration")) or -1.0) >= 0:
+    accel = _num(tech.get("momentum_acceleration")); hist = _num(tech.get("macd_hist"))
+    if accel is not None and accel >= 0:
         score += 10.0
-    if (_num(tech.get("macd_hist")) or -1.0) >= 0:
+    if hist is not None and hist >= 0:
         score += 10.0
     return min(100.0, score)
 
 
 def _market_sector_score(row: pd.Series, meta: dict) -> float:
-    values = []
-    for key in ("sector_rotation_score", "market_regime_score", "risk_score_0_100_shadow", "risk_verdict"):
+    values: list[float] = []
+    for key in ("sector_rotation_score", "market_regime_score", "risk_score_0_100_shadow"):
         value = row.get(key) if key in row.index else meta.get(key)
         n = _num(value)
         if n is not None:
-            if key == "risk_score_0_100_shadow":
-                values.append(max(0.0, 100.0 - n))
-            else:
-                values.append(max(0.0, min(100.0, n)))
+            values.append(max(0.0, min(100.0, 100.0 - n if key == "risk_score_0_100_shadow" else n)))
     verdict = _text(row.get("risk_verdict")).upper()
     if verdict:
-        values.append({"GREEN": 100.0, "GREEN_AMBER": 80.0, "AMBER": 60.0, "ORANGE": 35.0, "RED": 10.0}.get(verdict, 0.0))
+        mapped = {"GREEN": 100.0, "GREEN_AMBER": 80.0, "AMBER": 60.0, "ORANGE": 35.0, "RED": 10.0}.get(verdict)
+        if mapped is not None:
+            values.append(mapped)
     return float(np.mean(values)) if values else 0.0
 
 
@@ -333,21 +366,20 @@ def run(root: Path = ROOT) -> dict:
     mask = decisions["decision"].astype(str).str.upper().isin(allowed) & decisions["horizon"].astype(str).str.upper().isin(horizons)
     candidates = decisions.loc[mask].copy().reset_index(drop=True)
 
-    meta = _load_metadata(root)
-    meta_map, _ = _metadata_maps(meta)
+    meta_map = _metadata_maps(_load_metadata(root))
     histories = _load_candidate_histories(root, candidates, meta_map)
-    technical_rows = []
-    entry_states = []
-    entry_reasons = []
-    entry_scores = []
-    provenance_scores = []
-    trend_scores = []
-    context_scores = []
-    tickers = []
+    technical_rows: list[dict] = []
+    entry_states: list[str] = []
+    entry_reasons: list[str] = []
+    entry_scores: list[float] = []
+    provenance_scores: list[float] = []
+    trend_scores: list[float] = []
+    context_scores: list[float] = []
+    tickers: list[str] = []
     for _, row in candidates.iterrows():
         asset = _text(row.get("asset_class")).upper(); isin = _text(row.get("isin"))
         record = meta_map.get((asset, isin), {})
-        ticker = _text(record.get("yahoo_ticker") or record.get("ticker") or row.get("yahoo_ticker"))
+        ticker = _ticker(row, record)
         tickers.append(ticker)
         tech = _technical_snapshot(histories.get(ticker), cfg) if ticker else {"history_status": "TICKER_MISSING"}
         technical_rows.append(tech)
@@ -362,7 +394,8 @@ def run(root: Path = ROOT) -> dict:
     candidates["v22_2_entry_reasons"] = entry_reasons
     for field in sorted({key for tech in technical_rows for key in tech}):
         candidates[f"v22_2_{field}"] = [tech.get(field) for tech in technical_rows]
-    candidates["v22_2_component_selection_coverage"] = pd.to_numeric(candidates.get("coverage_pct"), errors="coerce").fillna(0.0).clip(0, 100)
+    coverage = pd.to_numeric(candidates["coverage_pct"], errors="coerce") if "coverage_pct" in candidates.columns else pd.Series(0.0, index=candidates.index)
+    candidates["v22_2_component_selection_coverage"] = coverage.fillna(0.0).clip(0, 100)
     candidates["v22_2_component_provenance_quality"] = provenance_scores
     candidates["v22_2_component_entry_timing"] = entry_scores
     candidates["v22_2_component_trend_momentum"] = trend_scores
@@ -370,7 +403,8 @@ def run(root: Path = ROOT) -> dict:
 
     observed_date = datetime.now(timezone.utc).date().isoformat()
     state_path = root / STATE
-    prior_state = _load_state(state_path)
+    cache_state_path = root / STATE_CACHE
+    prior_state = _load_state(state_path if state_path.exists() else cache_state_path)
     counts, next_state = _stability_update(candidates, prior_state, observed_date)
     candidates["v22_2_consecutive_observations"] = counts
     candidates["v22_2_component_temporal_stability"] = [_stability_score(count, cfg) for count in counts]
@@ -384,7 +418,9 @@ def run(root: Path = ROOT) -> dict:
         "market_sector_context": candidates["v22_2_component_market_sector_context"],
         "temporal_stability": candidates["v22_2_component_temporal_stability"],
     }
-    confidence = sum(pd.to_numeric(components[name], errors="coerce").fillna(0.0) * float(weights[name]) for name in components)
+    confidence = pd.Series(0.0, index=candidates.index, dtype=float)
+    for name, values in components.items():
+        confidence = confidence + pd.to_numeric(values, errors="coerce").fillna(0.0) * float(weights[name])
     candidates["CI_CONFIDENCE_SCORE_0_100"] = confidence.round(2)
     candidates["CI_CONFIDENCE_LEVEL"] = [_confidence_label(float(score), cfg, state) for score, state in zip(candidates["CI_CONFIDENCE_SCORE_0_100"], candidates["v22_2_entry_state"])]
     candidates["v22_2_real_order"] = False
@@ -397,22 +433,23 @@ def run(root: Path = ROOT) -> dict:
     if decision_guard is not None and not decision_guard.equals(decisions["decision"]):
         raise RuntimeError("V22_2_SELECTION_DECISION_MUTATION_FORBIDDEN")
 
-    for path in (root / OUTPUT, root / MOBILE, state_path, root / AUDIT):
+    for path in (root / OUTPUT, root / MOBILE, state_path, cache_state_path, root / AUDIT):
         path.parent.mkdir(parents=True, exist_ok=True)
     candidates.to_csv(root / OUTPUT, sep=";", index=False, encoding="utf-8-sig")
     mobile_cols = [c for c in ["asset_class", "horizon", "isin", "name", "score", "coverage_pct", "decision", "v22_2_entry_state", "v22_2_entry_reasons", "CI_CONFIDENCE_SCORE_0_100", "CI_CONFIDENCE_LEVEL", "v22_2_close", "v22_2_sma20", "v22_2_sma50", "v22_2_sma200", "v22_2_breakout_20d", "v22_2_reclaim_sma20", "v22_2_consecutive_observations"] if c in candidates.columns]
     candidates[mobile_cols].to_csv(root / MOBILE, sep=";", index=False, encoding="utf-8-sig")
     next_state.to_csv(state_path, sep=";", index=False, encoding="utf-8-sig")
+    next_state.to_csv(cache_state_path, sep=";", index=False, encoding="utf-8-sig")
 
     payload = {
         "status": "SUCCESS",
         "version": cfg.get("version"),
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "candidate_rows": int(len(candidates)),
-        "ready_for_review": int((candidates.get("v22_2_entry_state") == "READY_FOR_REVIEW").sum()) if not candidates.empty else 0,
-        "wait": int((candidates.get("v22_2_entry_state") == "WAIT").sum()) if not candidates.empty else 0,
-        "strong_confidence": int((candidates.get("CI_CONFIDENCE_LEVEL") == "STRONG").sum()) if not candidates.empty else 0,
-        "intermediate_confidence": int((candidates.get("CI_CONFIDENCE_LEVEL") == "INTERMEDIATE").sum()) if not candidates.empty else 0,
+        "ready_for_review": int((candidates["v22_2_entry_state"] == "READY_FOR_REVIEW").sum()) if not candidates.empty else 0,
+        "wait": int((candidates["v22_2_entry_state"] == "WAIT").sum()) if not candidates.empty else 0,
+        "strong_confidence": int((candidates["CI_CONFIDENCE_LEVEL"] == "STRONG").sum()) if not candidates.empty else 0,
+        "intermediate_confidence": int((candidates["CI_CONFIDENCE_LEVEL"] == "INTERMEDIATE").sum()) if not candidates.empty else 0,
         "history_loaded_tickers": int(len(histories)),
         "state_rows": int(len(next_state)),
         "selection_score_changed": False,
@@ -422,7 +459,7 @@ def run(root: Path = ROOT) -> dict:
         "t1_t2_scope": "ACTION_TCT_ONLY",
         "real_orders_enabled": False,
         "shadow_until_pit_oos_validation": True,
-        "outputs": {"full": str(OUTPUT), "mobile": str(MOBILE), "state": str(STATE)},
+        "outputs": {"full": str(OUTPUT), "mobile": str(MOBILE), "state": str(STATE), "cached_state": str(STATE_CACHE)},
     }
     (root / AUDIT).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return payload
