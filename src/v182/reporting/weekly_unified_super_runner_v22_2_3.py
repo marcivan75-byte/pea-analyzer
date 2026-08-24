@@ -13,7 +13,7 @@ AUDIT_NAME = "WEEKLY_UNIFIED_SUPER_RUNTIME_V22_2_3.json"
 
 
 def run(root: Path = ROOT) -> dict:
-    """V22.2.3 keeps the full weighted CI and adds a strict source-confirmed LIGHT view."""
+    """V22.2.3 preserves full weighted CI and adds an independent minimalist CI LIGHT view."""
     started = perf_counter()
     audit_dir = root / "outputs/audit"
     audit_dir.mkdir(parents=True, exist_ok=True)
@@ -39,15 +39,23 @@ def run(root: Path = ROOT) -> dict:
             "total_seconds": round(float(perf_counter() - started), 6),
             "full_ci_preserved": True,
             "full_ci_all_weighted_criteria_preserved": True,
+            "full_ci_scores_or_decisions_changed_by_light": False,
             "ci_light_status": light_payload.get("status"),
             "ci_light_selected": light_payload.get("selected"),
             "ci_light_selected_by_horizon": light_payload.get("selected_by_horizon"),
-            "action_boursorama_positive_required": True,
-            "etf_requires_explicit_boursorama_analyst_recommendation": False,
-            "etf_minimum_morningstar_stars": 3.0,
-            "etf_missing_morningstar_policy": "EXCLUDE_FAIL_CLOSED",
-            "ci_light_investing_buy_or_strong_buy_required": True,
-            "ci_light_horizon_mapping": {"TCT": "DAILY", "CT": "WEEKLY", "MT": "MONTHLY"},
+            "ci_light_boursorama_recommendation_required": ["ACHETER", "RENFORCER"],
+            "ci_light_boursorama_analyst_count_rule": ">10",
+            "ci_light_boursorama_upside_rule": ">20%",
+            "ci_light_etf_same_boursorama_rules": True,
+            "ci_light_morningstar_consensus_substitution": False,
+            "ci_light_investing_positive_values": ["BUY", "STRONG_BUY"],
+            "ci_light_investing_daily_required": True,
+            "ci_light_investing_weekly_required": True,
+            "ci_light_investing_monthly_required": True,
+            "ci_light_all_three_timeframes_required_simultaneously": True,
+            "ci_light_boursorama_url_exported": True,
+            "ci_light_investing_url_exported": True,
+            "ci_light_inherits_full_ci_final_score_confidence_gate": False,
             "source_can_create_candidate": False,
             "selection_score_changed": False,
             "criteria_changed": False,
