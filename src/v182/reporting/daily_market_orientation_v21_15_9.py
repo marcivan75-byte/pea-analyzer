@@ -162,35 +162,51 @@ def _fetch_cnn_fear_greed() -> dict:
     }
 
 
+def _parse_stoxx_date(value: str) -> datetime | None:
+    text = str(value or "").strip()
+    for fmt in ("%d.%m.%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
 def _fetch_vstoxx() -> dict:
-    source_url = "https://www.stoxx.com/index-details?stoxxindex=v2tx&symbol=V2TX"
-    payload = _get_json(
-        "https://query1.finance.yahoo.com/v8/finance/chart/V2TX.DE",
-        params={"range": "5d", "interval": "1d", "includePrePost": "false", "events": "div,splits"},
+    data_url = "https://www.stoxx.com/document/Indices/Current/HistoricalData/h_v2tx.txt"
+    response = requests.get(
+        data_url,
         headers={"User-Agent": "Mozilla/5.0 (compatible; PEA-Analyzer/21.15; daily-market-context)"},
+        timeout=5.0,
     )
-    result = ((payload.get("chart") or {}).get("result") or [None])[0]
-    if not result:
-        raise RuntimeError("VSTOXX_CHART_MISSING")
-    timestamps = result.get("timestamp") or []
-    quote = (((result.get("indicators") or {}).get("quote") or [{}])[0])
-    closes = quote.get("close") or []
-    valid: list[tuple[int, float]] = []
-    for ts, close in zip(timestamps, closes):
-        value = _num(close)
+    response.raise_for_status()
+    valid: list[tuple[datetime, float]] = []
+    for raw in response.text.splitlines():
+        line = raw.strip()
+        if not line or not line[0].isdigit():
+            continue
+        delimiter = ";" if ";" in line else ","
+        parts = [part.strip() for part in line.split(delimiter)]
+        if len(parts) < 2:
+            continue
+        observed = _parse_stoxx_date(parts[0])
+        if observed is None:
+            continue
+        value = None
+        if delimiter == ";" and len(parts) >= 3 and parts[1].upper() == "V2TX":
+            value = _num(parts[2])
+        elif delimiter == ",":
+            value = _num(parts[1])
         if value is not None:
-            valid.append((int(ts), value))
+            valid.append((observed, value))
     if not valid:
-        meta = result.get("meta") or {}
-        value = _num(meta.get("regularMarketPrice"))
-        previous = _num(meta.get("chartPreviousClose") or meta.get("previousClose"))
-        if value is None:
-            raise RuntimeError("VSTOXX_VALUE_MISSING")
-        as_of = datetime.fromtimestamp(int(meta.get("regularMarketTime") or _now().timestamp()), timezone.utc).isoformat()
-    else:
-        ts, value = valid[-1]
-        previous = valid[-2][1] if len(valid) > 1 else None
-        as_of = datetime.fromtimestamp(ts, timezone.utc).date().isoformat()
+        raise RuntimeError("VSTOXX_OFFICIAL_HISTORY_MISSING")
+    valid.sort(key=lambda item: item[0])
+    observed, value = valid[-1]
+    previous = valid[-2][1] if len(valid) > 1 else None
+    age_days = (_now().date() - observed.date()).days
+    if age_days < 0 or age_days > 10:
+        raise RuntimeError(f"VSTOXX_OFFICIAL_HISTORY_STALE:{observed.date().isoformat()}:age_days={age_days}")
     return {
         "indicator": "VSTOXX",
         "market": "EUROPE",
@@ -200,11 +216,12 @@ def _fetch_vstoxx() -> dict:
         "change_pct": _pct_change(value, previous),
         "rating": "",
         "risk_direction": _direction(value, previous, inverse=True),
-        "as_of": as_of,
-        "source": "STOXX V2TX via Yahoo Finance",
-        "source_url": source_url,
+        "as_of": observed.date().isoformat(),
+        "source": "STOXX official V2TX historical data",
+        "source_url": data_url,
         "status": "LIVE",
-        "symbol": "V2TX.DE",
+        "symbol": "V2TX",
+        "freshness_age_days": age_days,
     }
 
 
