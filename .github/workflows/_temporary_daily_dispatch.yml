@@ -20,7 +20,7 @@ jobs:
   dispatch-daily:
     runs-on: ubuntu-latest
     steps:
-      - name: Dispatch or reuse recent official Daily workflow
+      - name: Dispatch or reuse active official Daily workflow
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -32,11 +32,12 @@ jobs:
           latest="$(gh run list --repo "$REPO" --workflow "$WORKFLOW" --branch "$BRANCH" --event workflow_dispatch --limit 1 --json databaseId,createdAt,headSha,status,conclusion,url)"
           reuse=false
           if [ "$(jq 'length' <<<"$latest")" -gt 0 ]; then
+            status="$(jq -r '.[0].status' <<<"$latest")"
             created="$(jq -r '.[0].createdAt' <<<"$latest")"
             created_epoch="$(date -d "$created" +%s)"
             now_epoch="$(date +%s)"
             age="$((now_epoch-created_epoch))"
-            if [ "$age" -le 900 ]; then
+            if [ "$age" -le 900 ] && { [ "$status" = "queued" ] || [ "$status" = "in_progress" ] || [ "$status" = "waiting" ] || [ "$status" = "pending" ]; }; then
               reuse=true
             fi
           fi
