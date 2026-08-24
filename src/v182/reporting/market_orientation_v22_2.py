@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
 import json
@@ -16,7 +16,8 @@ CACHE_TTL_HOURS = 6.0
 STALE_FALLBACK_MAX_HOURS = 72.0
 FRED_URL = "https://api.stlouisfed.org/fred/series/observations"
 CNN_URL = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
-VSTOXX_YAHOO_TICKER = "V2TX.DE"
+VSTOXX_OFFICIAL_SYMBOL = "V2TX"
+VSTOXX_YAHOO_CANDIDATES = ("V2TX.DE", "^V2TX", "^V2X")
 
 
 def _now() -> datetime:
@@ -121,34 +122,70 @@ def _fetch_cnn_fear_greed() -> dict:
     }
 
 
-def _fetch_vstoxx() -> dict:
-    import yfinance as yf
-
-    frame = yf.download(
-        VSTOXX_YAHOO_TICKER,
-        period="10d",
-        interval="1d",
-        auto_adjust=False,
-        actions=False,
-        progress=False,
-        threads=False,
-    )
-    if frame is None or frame.empty:
-        raise RuntimeError("VSTOXX_NO_HISTORY")
+def _latest_close_from_frame(frame) -> tuple[float | None, str | None]:
+    if frame is None or frame.empty or "Close" not in frame:
+        return None, None
     close = frame["Close"]
     if isinstance(close, pd.DataFrame):
         close = close.iloc[:, 0]
     close = pd.to_numeric(close, errors="coerce").dropna()
     if close.empty:
-        raise RuntimeError("VSTOXX_NO_NUMERIC_CLOSE")
+        return None, None
     stamp = pd.Timestamp(close.index[-1])
-    return {
-        "value": round(float(close.iloc[-1]), 4),
-        "as_of": stamp.date().isoformat(),
-        "source": "YAHOO:V2TX.DE_VSTOXX",
-        "official_symbol": "V2TX",
-        "source_status": "LIVE",
-    }
+    return float(close.iloc[-1]), stamp.date().isoformat()
+
+
+def _fetch_vstoxx() -> dict:
+    """Fetch current VSTOXX with bounded Yahoo fallbacks.
+
+    STOXX identifies the official 30-day VSTOXX symbol as V2TX. Yahoo coverage is
+    not guaranteed to expose downloadable history consistently, so we first try a
+    short history and then a live/fast-info quote. Missing data fail closed and may
+    use the governed <=72h cache fallback in ``run``.
+    """
+    import yfinance as yf
+
+    errors: list[str] = []
+    for symbol in VSTOXX_YAHOO_CANDIDATES:
+        try:
+            frame = yf.download(
+                symbol,
+                period="10d",
+                interval="1d",
+                auto_adjust=False,
+                actions=False,
+                progress=False,
+                threads=False,
+            )
+            value, as_of = _latest_close_from_frame(frame)
+            if value is not None:
+                return {
+                    "value": round(value, 4),
+                    "as_of": as_of,
+                    "source": f"YAHOO:{symbol}:HISTORY",
+                    "official_symbol": VSTOXX_OFFICIAL_SYMBOL,
+                    "source_status": "LIVE",
+                }
+        except Exception as exc:
+            errors.append(f"{symbol}:history:{type(exc).__name__}:{str(exc)[:90]}")
+
+        try:
+            ticker = yf.Ticker(symbol)
+            fast = ticker.fast_info
+            value = _float(fast.get("last_price") if hasattr(fast, "get") else getattr(fast, "last_price", None))
+            if value is not None:
+                return {
+                    "value": round(value, 4),
+                    "as_of": _now().date().isoformat(),
+                    "source": f"YAHOO:{symbol}:FAST_INFO",
+                    "official_symbol": VSTOXX_OFFICIAL_SYMBOL,
+                    "source_status": "LIVE",
+                }
+            errors.append(f"{symbol}:fast_info:NO_VALUE")
+        except Exception as exc:
+            errors.append(f"{symbol}:fast_info:{type(exc).__name__}:{str(exc)[:90]}")
+
+    raise RuntimeError("VSTOXX_NO_LIVE_VALUE:" + " | ".join(errors)[:420])
 
 
 def _volatility_regime(value: float | None, *, europe: bool = False) -> str:
@@ -284,6 +321,8 @@ def run(root: Path = ROOT) -> dict:
             "weights_changed": False,
             "thresholds_changed": False,
             "real_orders_enabled": False,
+            "fred_series": ["VIXCLS"],
+            "vstoxx_official_symbol": VSTOXX_OFFICIAL_SYMBOL,
         },
     }
 
