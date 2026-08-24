@@ -1,0 +1,25 @@
+name: Temporary Daily Dispatch Bridge
+
+on:
+  push:
+    branches:
+      - codex/runtime-boursorama-shared-limiter-v21-15-2
+    paths:
+      - .github/daily-manual-trigger
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch-daily:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch official Daily workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run committee_tct_ct_daily.yml \
+            --repo "${{ github.repository }}" \
+            --ref "codex/runtime-boursorama-shared-limiter-v21-15-2" \
+            -f run_validation=false
