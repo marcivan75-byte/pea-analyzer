@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+import math
 
 import pandas as pd
 
@@ -25,16 +26,27 @@ def _text(value) -> str:
     return str(value).strip()
 
 
+def _number(value) -> float | None:
+    try:
+        number = float(pd.to_numeric(value, errors="coerce"))
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
 def _evidence_gaps(row: pd.Series) -> list[str]:
     gaps: list[str] = []
     reasons = _text(row.get("v22_2_entry_reasons"))
     if "MISSING" in reasons:
         gaps.append("ENTRY_TIMING_DATA")
-    if float(pd.to_numeric(row.get("v22_2_component_provenance_quality"), errors="coerce") or 0.0) < 60.0:
+    provenance = _number(row.get("v22_2_component_provenance_quality"))
+    context = _number(row.get("v22_2_component_market_sector_context"))
+    stability = _number(row.get("v22_2_component_temporal_stability"))
+    if provenance is None or provenance < 60.0:
         gaps.append("PROVENANCE_QUALITY")
-    if float(pd.to_numeric(row.get("v22_2_component_market_sector_context"), errors="coerce") or 0.0) <= 0.0:
+    if context is None or context <= 0.0:
         gaps.append("MARKET_SECTOR_CONTEXT")
-    if float(pd.to_numeric(row.get("v22_2_component_temporal_stability"), errors="coerce") or 0.0) < 70.0:
+    if stability is None or stability < 70.0:
         gaps.append("TEMPORAL_STABILITY")
     if _text(row.get("v22_2_entry_state")) != "READY_FOR_REVIEW":
         if "TCT_EXACT_T2" in reasons:
