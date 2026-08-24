@@ -29,6 +29,26 @@ def _write_final_audit(root: Path, payload: dict) -> None:
         (auditdir / name).write_text(text, encoding="utf-8")
 
 
+def _write_base_failure_audit(root: Path, exc: Exception, elapsed_seconds: float) -> None:
+    payload = {
+        "status": "FAILED_BASE_RUN",
+        "failed_stage": "base_run",
+        "version": VERSION,
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "exception_type": type(exc).__name__,
+        "exception_message": str(exc),
+        "base_elapsed_seconds": round(float(elapsed_seconds), 6),
+        "traceback": traceback.format_exc(),
+        "decision_logic_changed": False,
+        "criteria_changed": False,
+        "weights_changed": False,
+        "thresholds_changed": False,
+        "t1_t2_scope_changed": False,
+        "real_orders_enabled": False,
+    }
+    _write_final_audit(root, payload)
+
+
 def _write_ci_failure_audit(root: Path, exc: Exception, elapsed_seconds: float) -> None:
     auditdir = root / "outputs" / "audit"
     auditdir.mkdir(parents=True, exist_ok=True)
@@ -59,7 +79,11 @@ def run(root: Path = ROOT) -> dict:
     base.tactical = tactical
     base.VERSION = VERSION
     try:
-        payload = dict(base.run(root=root) or {})
+        try:
+            payload = dict(base.run(root=root) or {})
+        except Exception as exc:
+            _write_base_failure_audit(root, exc, perf_counter() - started)
+            raise
     finally:
         base.tactical = original_tactical
         base.VERSION = original_version
