@@ -38,6 +38,21 @@ def test_parse_public_faq_returns_complete_1d_1w_1m_enum():
     assert fields["tradingview_technical_complete"] is True
 
 
+def test_parse_public_etf_faq_returns_complete_1d_1w_1m_enum():
+    html = """
+    <html><body>
+      Our summary technical rating for EDEU is buy today.
+      Note that market conditions change constantly — according to our
+      1-week rating, the buy trend prevails, and 1 month rating shows
+      the strong buy signal.
+    </body></html>
+    """
+    fields = tv.parse_technical_summary_html(html)
+    assert fields["tradingview_daily_signal"] == "BUY"
+    assert fields["tradingview_weekly_signal"] == "BUY"
+    assert fields["tradingview_monthly_signal"] == "STRONG_BUY"
+
+
 def test_parse_is_fail_closed_when_one_timeframe_is_missing():
     html = _html().replace("1 month rating", "monthly rating")
     assert tv.parse_technical_summary_html(html) == {}
@@ -45,6 +60,7 @@ def test_parse_is_fail_closed_when_one_timeframe_is_missing():
 
 def test_symbol_is_deterministic_from_exchange_qualified_yahoo_ticker():
     assert tv.tradingview_symbol({"yahoo_ticker": "AIR.PA"}) == ("EURONEXT", "AIR")
+    assert tv.tradingview_symbol({"yahoo_ticker": "HM-B.ST"}) == ("OMXSTO", "HM_B")
     assert tv.technical_url({"yahoo_ticker": "STLAM.MI"}) == (
         "https://www.tradingview.com/symbols/MIL-STLAM/technicals/",
         "MIL:STLAM",
