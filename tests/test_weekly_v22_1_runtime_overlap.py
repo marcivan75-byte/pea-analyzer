@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Event
 
 import pandas as pd
 
+from v182.audit import quality as quality_module
 from v182.reporting import run as pipeline
 from v182.reporting import weekly_unified_super_runner_v22_1 as runner
 from v182.sources import morningstar_actions
@@ -70,6 +72,50 @@ def test_v22_1_reuses_prefetched_morningstar_at_original_application_point(monke
     assert '"morningstar_prefetch_started": true' in audit
     assert '"morningstar_prefetch_fallback": false' in audit
     assert '"morningstar_application_position_changed": false' in audit
+
+
+def test_final_audit_overlaps_quality_but_quality_waits_for_audit(monkeypatch, tmp_path: Path) -> None:
+    audit_started = Event()
+    release_audit = Event()
+    audit_finished = Event()
+    calls = {"audit": 0, "quality": 0}
+
+    def fake_audit(actions, etfs, wave_id, *, failures=None, source_context=""):
+        assert wave_id == "WAVE_99_FINAL"
+        calls["audit"] += 1
+        audit_started.set()
+        assert release_audit.wait(timeout=2.0)
+        audit_finished.set()
+
+    class FakeQuality:
+        passed = True
+        checks = []
+
+    def fake_quality(*args, **kwargs):
+        calls["quality"] += 1
+        assert audit_started.wait(timeout=2.0)
+        release_audit.set()
+        return FakeQuality()
+
+    monkeypatch.setattr(pipeline, "_audit", fake_audit)
+    monkeypatch.setattr(quality_module, "run_quality_gates", fake_quality)
+
+    def fake_previous_run(root):
+        frame = pd.DataFrame({"isin": ["FR0000000001"]})
+        pipeline._audit(frame, frame, "WAVE_99_FINAL", failures=[], source_context="final")
+        result = quality_module.run_quality_gates(frame, frame, {}, {}, {}, {})
+        assert result.passed is True
+        assert audit_finished.is_set()
+        return {"status": "SUCCESS"}
+
+    monkeypatch.setattr(runner.previous, "run", fake_previous_run)
+    payload = runner.run(tmp_path)
+
+    assert payload["status"] == "SUCCESS"
+    assert calls == {"audit": 1, "quality": 1}
+    audit = (tmp_path / "outputs/audit/WEEKLY_UNIFIED_SUPER_RUNTIME_V22_1.json").read_text(encoding="utf-8")
+    assert '"final_audit_quality_overlap_started": true' in audit
+    assert '"quality_waits_for_final_audit": true' in audit
 
 
 def test_parallel_excel_exports_keep_exact_outputs(monkeypatch, tmp_path: Path) -> None:
