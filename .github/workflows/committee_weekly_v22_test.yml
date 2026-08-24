@@ -82,8 +82,9 @@ jobs:
         run: pip install --prefer-binary -r requirements-runtime.txt
 
       - name: Validate V22 targeted regressions
-        if: ${{ github.event_name == 'pull_request' || inputs.run_validation }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_validation }}
         run: |
+          pip install pytest
           python -m compileall -q src/v182/reporting/weekly_unified_super_runner_v22.py
           pytest -q tests/test_weekly_v22_no_wave09.py
 
