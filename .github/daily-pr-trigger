@@ -1,3 +1,3 @@
-purpose: dispatch-official-daily-provenance-map-v3-bootstrap
+purpose: dispatch-official-daily-provenance-map-v3-bootstrap-forced
 run_validation: false
-trigger_revision: 12
+trigger_revision: 13
