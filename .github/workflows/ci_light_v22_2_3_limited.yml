@@ -33,7 +33,7 @@ jobs:
         shell: bash
         run: |
           gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${BASELINE_ARTIFACT_ID}/zip" > baseline.zip
-          unzip -q baseline.zip
+          unzip -oq baseline.zip
           test -s outputs/committee_master/CI_ENTRY_WATCH_V22_2.csv
           cp outputs/committee_master/CI_ENTRY_WATCH_V22_2.csv outputs/committee_master/CI_ENTRY_WATCH_V22_2_1.csv
           test "$(python - <<'PY'
