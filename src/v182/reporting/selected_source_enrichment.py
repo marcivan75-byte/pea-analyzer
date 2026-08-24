@@ -147,6 +147,7 @@ def enrich_selected_rows(
     root: Path = ROOT,
     *,
     profile: str = "SELECTED",
+    investing_enabled: bool = True,
 ) -> tuple[pd.DataFrame, dict]:
     contract = _read_contract(root)
     scope = contract["scope"]
@@ -232,7 +233,9 @@ def enrich_selected_rows(
     i_result = None
     branch_errors: list[dict] = []
     with ThreadPoolExecutor(max_workers=2, thread_name_prefix="selected-source") as pool:
-        futures = {"boursorama": pool.submit(run_boursorama), "investing": pool.submit(run_investing)}
+        futures = {"boursorama": pool.submit(run_boursorama)}
+        if investing_enabled:
+            futures["investing"] = pool.submit(run_investing)
         for name, future in futures.items():
             try:
                 result = future.result()
@@ -275,7 +278,11 @@ def enrich_selected_rows(
         "selected_unique_isins": int(selected["isin"].nunique()),
         "boursorama_actions": b_action_result.metrics if b_action_result is not None else {"status": "NO_ACTION_SELECTED_OR_BRANCH_FAILED"},
         "boursorama_etfs": b_etf_result.metrics if b_etf_result is not None else {"status": "NO_ETF_SELECTED_OR_BRANCH_FAILED"},
-        "investing": i_result.metrics if i_result is not None else {"status": "BRANCH_FAILED"},
+        "investing": (
+            i_result.metrics
+            if i_result is not None
+            else {"status": "BRANCH_FAILED" if investing_enabled else "DISABLED_FOR_PROFILE"}
+        ),
         "failures": int(len(failures)),
         "weights_unchanged": True,
         "thresholds_unchanged": True,
