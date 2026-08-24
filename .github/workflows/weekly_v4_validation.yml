@@ -10,6 +10,7 @@ on:
       - "src/v182/reporting/*v4.py"
       - "src/v182/sources/*.py"
       - "scripts/audit_v4_sources_live.py"
+      - "scripts/audit_v4_runtime_optimization.py"
       - "tests/test_*v4*.py"
       - ".github/workflows/weekly_v4_validation.yml"
   workflow_dispatch:
@@ -89,6 +90,8 @@ jobs:
           assert audit['source_context_reused'] is True, audit
           assert audit['source_collection_passes'] == 0, audit
           PY
+      - name: Runtime equivalence audit
+        run: python scripts/audit_v4_runtime_optimization.py --iterations 1
       - name: Build deterministic V4 release package
         run: python scripts/build_weekly_v4_package.py outputs/releases/WEEKLY_V4_HEBDO --release-commit "${GITHUB_SHA}"
       - name: Upload V4 validation evidence
