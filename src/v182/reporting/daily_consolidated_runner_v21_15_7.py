@@ -14,6 +14,16 @@ from v182.reporting import daily_w09_seed_v21_15_7 as w09_seed
 
 ROOT = Path(__file__).resolve().parents[3]
 VERSION = "DAILY_CONSOLIDATED_RUNTIME_V21_15_7"
+QUARANTINE_IDENTITY_FIELDS = (
+    "universe",
+    "isin",
+    "field",
+    "value",
+    "source",
+    "evidence_level",
+    "validation_status",
+    "reason",
+)
 
 
 def _write_final_audit(root: Path, payload: dict) -> None:
@@ -71,36 +81,50 @@ def _write_ci_failure_audit(root: Path, exc: Exception, elapsed_seconds: float) 
         (auditdir / name).write_text(text, encoding="utf-8")
 
 
-def _install_quarantine_dedupe(self, original_fast_install, stats: dict) -> None:
-    """Keep first occurrence of each exact quarantine record across a fast run.
+def _quarantine_semantic_key(row: dict) -> str:
+    payload = {field: row.get(field) for field in QUARANTINE_IDENTITY_FIELDS}
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":"))
 
-    Retained quarantine is replayed by the underlying fast runtime. Subsequent
-    waves can rediscover byte-equivalent conflicts and previously appended them
-    again, making WAVE07 and persistence grow every Daily. Exact duplicates carry
-    no additional validation semantics; first occurrence and all distinct rows are
-    preserved. Financial observations, masters, scores and decisions are untouched.
-    """
+
+def _dedupe_quarantine_latest(rows: list[dict]) -> tuple[list[dict], set[str], int]:
+    """Keep the latest occurrence of every semantically identical conflict."""
+    latest: dict[str, tuple[int, dict]] = {}
+    passthrough: list[tuple[int, dict]] = []
+    for position, row in enumerate(rows):
+        if not isinstance(row, dict):
+            passthrough.append((position, row))
+            continue
+        latest[_quarantine_semantic_key(row)] = (position, row)
+    ordered = sorted([*latest.values(), *passthrough], key=lambda item: item[0])
+    unique = [row for _, row in ordered]
+    return unique, set(latest), max(0, len(rows) - len(unique))
+
+
+def _install_post_wave7_quarantine_guard(self, original_fast_install, state: dict, stats: dict) -> None:
+    """Suppress rediscovery of already retained conflicts after WAVE07 only."""
     original_fast_install(self)
     installed_apply = base.collection.legacy.apply_and_track
-    seen: set[str] = set()
 
-    def deduping_apply(frame, observations):
+    def guarded_apply(frame, observations):
         output, quarantined = installed_apply(frame, observations)
+        if not state.get("active"):
+            return output, quarantined
         unique: list[dict] = []
+        seen: set[str] = state["seen"]
         for row in quarantined:
             if not isinstance(row, dict):
                 unique.append(row)
                 continue
-            key = json.dumps(row, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":"))
+            key = _quarantine_semantic_key(row)
             if key in seen:
-                stats["exact_duplicates_removed"] = int(stats.get("exact_duplicates_removed", 0)) + 1
+                stats["semantic_duplicates_removed_after_wave7"] += 1
                 continue
             seen.add(key)
             unique.append(row)
-        stats["distinct_quarantine_records_seen"] = int(len(seen))
+        stats["distinct_semantic_conflicts_final_seen"] = len(seen)
         return output, unique
 
-    base.collection.legacy.apply_and_track = deduping_apply
+    base.collection.legacy.apply_and_track = guarded_apply
 
 
 def run(root: Path = ROOT) -> dict:
@@ -109,20 +133,37 @@ def run(root: Path = ROOT) -> dict:
     original_tactical = base.tactical
     original_version = base.VERSION
     original_fast_install = base._ORIGINAL_FAST_INSTALL
+    original_wave7 = base.collection.waves.wave7_official_validation
+    quarantine_state: dict = {"active": False, "seen": set()}
     quarantine_stats = {
-        "status": "EXACT_DUPLICATE_GUARD_ENABLED",
-        "exact_duplicates_removed": 0,
-        "distinct_quarantine_records_seen": 0,
+        "status": "SEMANTIC_DUPLICATE_GUARD_ENABLED",
+        "semantic_identity_fields": list(QUARANTINE_IDENTITY_FIELDS),
+        "semantic_duplicates_removed_at_wave7": 0,
+        "semantic_duplicates_removed_after_wave7": 0,
+        "distinct_semantic_conflicts_at_wave7": 0,
+        "distinct_semantic_conflicts_final_seen": 0,
+        "latest_occurrence_preserved": True,
         "decision_logic_changed": False,
         "data_quality_rules_changed": False,
     }
 
-    def fast_install_with_dedupe(self):
-        return _install_quarantine_dedupe(self, original_fast_install, quarantine_stats)
+    def fast_install_with_guard(self):
+        return _install_post_wave7_quarantine_guard(self, original_fast_install, quarantine_state, quarantine_stats)
+
+    def wave7_with_semantic_dedupe(quarantine, overrides_path):
+        unique, seen, removed = _dedupe_quarantine_latest(quarantine)
+        quarantine[:] = unique
+        quarantine_state["seen"] = seen
+        quarantine_state["active"] = True
+        quarantine_stats["semantic_duplicates_removed_at_wave7"] = int(removed)
+        quarantine_stats["distinct_semantic_conflicts_at_wave7"] = int(len(seen))
+        quarantine_stats["distinct_semantic_conflicts_final_seen"] = int(len(seen))
+        return original_wave7(quarantine, overrides_path)
 
     base.tactical = tactical
     base.VERSION = VERSION
-    base._ORIGINAL_FAST_INSTALL = fast_install_with_dedupe
+    base._ORIGINAL_FAST_INSTALL = fast_install_with_guard
+    base.collection.waves.wave7_official_validation = wave7_with_semantic_dedupe
     try:
         try:
             payload = dict(base.run(root=root) or {})
@@ -133,6 +174,7 @@ def run(root: Path = ROOT) -> dict:
         base.tactical = original_tactical
         base.VERSION = original_version
         base._ORIGINAL_FAST_INSTALL = original_fast_install
+        base.collection.waves.wave7_official_validation = original_wave7
 
     base_status = str(payload.get("status") or "")
     ci_started = perf_counter()
