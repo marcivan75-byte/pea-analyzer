@@ -1,5 +1,5 @@
 {
-  "version": "V21.15.3",
+  "version": "V21.15.2",
   "purpose": "Preserve validated selected-only source functions and govern their post-selection decision-support use under provider-wide rate limits.",
   "scope": {
     "selected_only_max_unique_instruments": 40,
