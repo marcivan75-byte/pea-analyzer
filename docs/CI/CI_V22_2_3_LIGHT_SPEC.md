@@ -10,6 +10,8 @@ CI LIGHT est une liste parallèle, minimaliste et purement informative. Elle ne 
 
 CI LIGHT travaille sur le pool borné des instruments déjà amenés jusqu'au stade CI/source-enrichment. Il ne lance pas de scraping Boursorama/Investing sur tout l'univers. Il n'hérite toutefois pas des seuils finaux du CI global `score >= 77` ou `confiance >= 66` comme critères d'admission LIGHT.
 
+Cette architecture préserve le coût et la durée du process : les sources Boursorama et Investing restent post-sélection et limitées au pool CI déjà enrichi. Le filtre LIGHT lui-même reste indépendant des critères pondérés du CI complet.
+
 ## Critères d'admission CI LIGHT
 
 Un instrument, Action ou ETF, n'est inclus que si toutes les conditions suivantes sont vraies simultanément :
