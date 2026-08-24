@@ -68,15 +68,6 @@ jobs:
           restore-keys: |
             weekly-research-state-v1-
 
-      - name: Restore persistent slow-data cache
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
-        with:
-          path: state/slow_data_cache/
-          key: slow-data-v1-v22-2-${{ github.run_id }}
-          restore-keys: |
-            slow-data-v1-v22-2-
-            slow-data-v1-
-
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
@@ -90,8 +81,15 @@ jobs:
         if: ${{ inputs.run_validation }}
         run: |
           pip install pytest
-          python -m compileall -q src/v182/reporting/ci_entry_confidence_v22_2.py src/v182/reporting/weekly_unified_super_runner_v22_2.py
-          pytest -q tests/test_ci_entry_confidence_v22_2.py tests/test_ci_entry_watch_v22_2.py tests/test_weekly_v22_1_runtime_overlap.py tests/test_weekly_v22_no_wave09.py
+          python -m compileall -q \
+            src/v182/reporting/ci_entry_confidence_v22_2.py \
+            src/v182/reporting/weekly_unified_super_runner_v22_2.py \
+            src/v182/reporting/etf_structure_refresh.py
+          pytest -q \
+            tests/test_ci_entry_confidence_v22_2.py \
+            tests/test_ci_entry_watch_v22_2.py \
+            tests/test_weekly_v22_1_runtime_overlap.py \
+            tests/test_weekly_v22_no_wave09.py
 
       - name: Run Weekly V22.2 without WAVE09
         run: python -m v182.reporting.weekly_unified_super_runner_v22_2
@@ -106,7 +104,9 @@ jobs:
             outputs/audit/WEEKLY_UNIFIED_SUPER_RUNTIME_V22_2.json \
             outputs/audit/WEEKLY_UNIFIED_SUPER_RUNTIME_V22_1.json \
             outputs/audit/WEEKLY_UNIFIED_SUPER_RUNTIME_V22.json \
-            outputs/audit/SLOW_DATA_CACHE_V22_2.json \
+            outputs/audit/V21_10_ETF_STRUCTURAL_DATA.json \
+            outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json \
+            outputs/audit/V21_15_ETF_STRUCTURE_STATE_WRITE.json \
             outputs/audit/CI_ENTRY_CONFIDENCE_V22_2.json \
             outputs/audit/CI_ENTRY_WATCH_V22_2.json \
             outputs/audit/WEEKLY_TAIL_SUPER_RUNTIME_V21_16_0.json \
@@ -120,12 +120,17 @@ jobs:
           mkdir -p state/provenance
           cp -f state/ci_entry_watch/V22_2_CANDIDATE_STATE.csv state/provenance/CI_ENTRY_WATCH_V22_2_STATE.csv || true
 
-      - name: Save persistent slow-data cache
-        if: ${{ always() && hashFiles('state/slow_data_cache/**') != '' }}
+      - name: Save consolidated tactical and provenance state
+        if: always()
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684
         with:
-          path: state/slow_data_cache/
-          key: slow-data-v1-v22-2-${{ github.run_id }}
+          path: |
+            state/TCT_V24_1_7_T1_STATE.json
+            state/tct_context/
+            state/action_ct/
+            state/action_ct_v22_1/
+            state/provenance/
+          key: decision-state-v1-v22-2-test-${{ github.run_id }}
 
       - name: Upload V22.2 test results
         if: always()
@@ -146,7 +151,6 @@ jobs:
             outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv
             outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv
             state/ci_entry_watch/
-            state/slow_data_cache/
             state/provenance/CI_ENTRY_WATCH_V22_2_STATE.csv
           if-no-files-found: warn
           compression-level: 1
