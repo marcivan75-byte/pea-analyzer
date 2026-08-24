@@ -8,6 +8,9 @@ on:
         required: false
         type: boolean
         default: true
+  pull_request:
+    branches:
+      - main
 
 concurrency:
   group: committee-weekly-v22-test-${{ github.ref }}
@@ -79,7 +82,7 @@ jobs:
         run: pip install --prefer-binary -r requirements-runtime.txt
 
       - name: Validate V22 targeted regressions
-        if: ${{ inputs.run_validation }}
+        if: ${{ github.event_name == 'pull_request' || inputs.run_validation }}
         run: |
           python -m compileall -q src/v182/reporting/weekly_unified_super_runner_v22.py
           pytest -q tests/test_weekly_v22_no_wave09.py
