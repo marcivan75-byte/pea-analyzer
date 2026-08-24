@@ -11,6 +11,7 @@ import pandas as pd
 
 from v182.reporting import selected_source_enrichment
 from v182.sources.boursorama_public import action_urls, boursorama_code, etf_urls
+from v182.sources.tradingview_technical import collect_technical_context_cached, technical_url
 
 ROOT = Path(__file__).resolve().parents[3]
 # CI LIGHT is deliberately upstream of the full V22.2.2 score/confidence selection gate.
@@ -22,6 +23,7 @@ EXCEL = Path("outputs/committee_master/CI_LIGHT_V22_2_3.xlsx")
 MOBILE = Path("outputs/mobile/ANDROID_CI_LIGHT_V22_2_3.md")
 AUDIT = Path("outputs/audit/CI_LIGHT_V22_2_3.json")
 INVESTING_MAP = Path("state/provenance/source_cache/INVESTING_URL_MAP_V1.json")
+TRADINGVIEW_CACHE = Path("state/provenance/source_cache/TRADINGVIEW_TECHNICAL_V1.json")
 
 # Canonical Boursorama consensus values currently emitted by the governed parser.
 # They correspond to the requested positive recommendation classes:
@@ -151,6 +153,42 @@ def _investing_url(row: pd.Series, meta: dict, validated: dict[str, str]) -> tup
     return f"https://www.investing.com/search/?q={quote_plus(query)}", "SEARCH_FALLBACK"
 
 
+def _tradingview_url(row: pd.Series) -> tuple[str, str]:
+    explicit = _text(row.get("tradingview_source_url"))
+    if explicit.startswith("https://www.tradingview.com/symbols/"):
+        return explicit, "COLLECTED_EXCHANGE_QUALIFIED"
+    resolved = technical_url(row)
+    if resolved is not None:
+        return resolved[0], "DETERMINISTIC_EXCHANGE_TICKER"
+    return "", "UNRESOLVED_FAIL_CLOSED"
+
+
+def _attach_tradingview_context(frame: pd.DataFrame, root: Path) -> tuple[pd.DataFrame, dict]:
+    selected = selected_source_enrichment.select_preselected_rows(frame, max_unique_instruments=40)
+    result = collect_technical_context_cached(
+        selected,
+        root / TRADINGVIEW_CACHE,
+        refresh_budget=40,
+        ttl_hours=6.0,
+        request_start_interval_seconds=1.0,
+        max_workers=8,
+    )
+    context = selected_source_enrichment._pivot(result.observations)
+    enriched = frame.copy()
+    if not context.empty:
+        keys = [column for column in ("isin", "asset_class", "horizon") if column in enriched and column in context]
+        enriched = enriched.merge(context, on=keys, how="left")
+    payload = {
+        "status": "SUCCESS_WITH_CONTEXT" if result.observations else "SUCCESS_NO_SOURCE_DATA",
+        "metrics": result.metrics,
+        "failures": result.failures,
+        "selected_only": True,
+        "identity_fail_closed": True,
+        "source_can_create_candidate": False,
+    }
+    return enriched, payload
+
+
 def _boursorama_recommendation(row: pd.Series) -> tuple[str, str]:
     raw = ""
     for field in ("boursorama_consensus", "boursorama_analyst_recommendation", "boursorama_recommendation"):
@@ -166,9 +204,9 @@ def _evaluate(row: pd.Series) -> tuple[bool, list[str], dict[str, object]]:
     recommendation, raw_recommendation = _boursorama_recommendation(row)
     analyst_count = _num(row.get("boursorama_n_analysts"))
     upside = _num(row.get("boursorama_target_upside_pct"))
-    daily = _norm(row.get("investing_daily_signal"))
-    weekly = _norm(row.get("investing_weekly_signal"))
-    monthly = _norm(row.get("investing_monthly_signal"))
+    daily = _norm(row.get("tradingview_daily_signal"))
+    weekly = _norm(row.get("tradingview_weekly_signal"))
+    monthly = _norm(row.get("tradingview_monthly_signal"))
 
     if horizon not in HORIZON_ORDER:
         reasons.append("UNSUPPORTED_HORIZON")
@@ -186,9 +224,9 @@ def _evaluate(row: pd.Series) -> tuple[bool, list[str], dict[str, object]]:
     signals = {"DAILY": daily, "WEEKLY": weekly, "MONTHLY": monthly}
     for timeframe, signal in signals.items():
         if not signal:
-            reasons.append(f"INVESTING_{timeframe}_SIGNAL_MISSING")
+            reasons.append(f"TRADINGVIEW_{timeframe}_SIGNAL_MISSING")
         elif signal not in INVESTING_POSITIVE:
-            reasons.append(f"INVESTING_{timeframe}_NOT_BUY_OR_STRONG_BUY")
+            reasons.append(f"TRADINGVIEW_{timeframe}_NOT_BUY_OR_STRONG_BUY")
 
     details = {
         "recommendation": recommendation,
@@ -217,8 +255,8 @@ def _export_columns(frame: pd.DataFrame) -> list[str]:
         "name", "isin", "asset_class", "horizon",
         "CI_LIGHT_BOURSORAMA_RECOMMENDATION", "CI_LIGHT_BOURSORAMA_RAW_CONSENSUS",
         "CI_LIGHT_BOURSORAMA_ANALYSTS", "CI_LIGHT_BOURSORAMA_UPSIDE_PCT",
-        "CI_LIGHT_INVESTING_DAILY", "CI_LIGHT_INVESTING_WEEKLY", "CI_LIGHT_INVESTING_MONTHLY",
-        "CI_LIGHT_BOURSORAMA_URL", "CI_LIGHT_INVESTING_URL",
+        "CI_LIGHT_TRADINGVIEW_DAILY", "CI_LIGHT_TRADINGVIEW_WEEKLY", "CI_LIGHT_TRADINGVIEW_MONTHLY",
+        "CI_LIGHT_BOURSORAMA_URL", "CI_LIGHT_TRADINGVIEW_URL", "CI_LIGHT_TRADINGVIEW_SYMBOL", "CI_LIGHT_TRADINGVIEW_COLLECTED_AT_UTC",
         "score", "CI_CONFIDENCE_SCORE_V22_2_1", "CI_CONFIDENCE_SCORE_0_100",
         "CI_EFFECTIVE_ENTRY_STATE_V22_2_2", "V22_2_1_ENTRY_STATE",
         "CI_LIGHT_INCLUDED", "CI_LIGHT_REASON",
@@ -244,7 +282,7 @@ def _markdown(frame: pd.DataFrame, generated: str) -> str:
         "",
         "Liste parallèle au CI complet. Aucun score, poids, seuil ou décision du CI complet n'est modifié.",
         "",
-        "Admission LIGHT stricte: recommandation Boursorama ACHETER/RENFORCER, plus de 10 analystes, potentiel strictement supérieur à 20%, et Investing BUY/STRONG_BUY simultanément en Daily, Weekly et Monthly.",
+        "Admission LIGHT stricte: recommandation Boursorama ACHETER/RENFORCER, plus de 10 analystes, potentiel strictement supérieur à 20%, et TradingView BUY/STRONG_BUY simultanément en Daily, Weekly et Monthly.",
         "",
         "Les ETF sont soumis aux mêmes règles Boursorama; Morningstar n'est pas utilisé comme substitut de consensus analystes.",
         "",
@@ -258,9 +296,9 @@ def _markdown(frame: pd.DataFrame, generated: str) -> str:
         for _, row in subset.iterrows():
             name = _text(row.get("name")) or _text(row.get("isin"))
             lines.extend([
-                f"- {name} | {_text(row.get('asset_class'))} | Boursorama={_text(row.get('CI_LIGHT_BOURSORAMA_RECOMMENDATION'))} | analystes={row.get('CI_LIGHT_BOURSORAMA_ANALYSTS')} | potentiel={row.get('CI_LIGHT_BOURSORAMA_UPSIDE_PCT')}% | Investing D/W/M={_text(row.get('CI_LIGHT_INVESTING_DAILY'))}/{_text(row.get('CI_LIGHT_INVESTING_WEEKLY'))}/{_text(row.get('CI_LIGHT_INVESTING_MONTHLY'))}",
+                f"- {name} | {_text(row.get('asset_class'))} | Boursorama={_text(row.get('CI_LIGHT_BOURSORAMA_RECOMMENDATION'))} | analystes={row.get('CI_LIGHT_BOURSORAMA_ANALYSTS')} | potentiel={row.get('CI_LIGHT_BOURSORAMA_UPSIDE_PCT')}% | TradingView D/W/M={_text(row.get('CI_LIGHT_TRADINGVIEW_DAILY'))}/{_text(row.get('CI_LIGHT_TRADINGVIEW_WEEKLY'))}/{_text(row.get('CI_LIGHT_TRADINGVIEW_MONTHLY'))}",
                 f"  - Boursorama: {_text(row.get('CI_LIGHT_BOURSORAMA_URL'))}",
-                f"  - Investing: {_text(row.get('CI_LIGHT_INVESTING_URL'))}",
+                f"  - TradingView: {_text(row.get('CI_LIGHT_TRADINGVIEW_URL'))}",
             ])
         lines.append("")
     return "\n".join(lines) + "\n"
@@ -286,8 +324,8 @@ def run(root: Path = ROOT) -> dict:
     # Reuse the same selected-only governed caches. This can refresh only the bounded
     # CI pool and never expands into an all-universe Boursorama/Investing scrape.
     frame, source_payload = selected_source_enrichment.enrich_selected_rows(frame, root=root, profile="CI_LIGHT_V22_2_3")
+    frame, tradingview_payload = _attach_tradingview_context(frame, root)
     meta = _metadata(actions, etfs)
-    investing_map = _validated_investing_map(root)
 
     accepted_rows: list[dict] = []
     rejected_rows: list[dict] = []
@@ -297,19 +335,21 @@ def run(root: Path = ROOT) -> dict:
         asset = _norm(row.get("asset_class")) or "ACTION"
         isin = _text(row.get("isin"))
         b_url, b_url_status = _boursorama_url(asset, row, meta.get((asset, isin), {}))
-        i_url, i_url_status = _investing_url(row, meta.get((asset, isin), {}), investing_map)
+        tv_url, tv_url_status = _tradingview_url(row)
         record.update({
             "CI_LIGHT_BOURSORAMA_RECOMMENDATION": details["recommendation"],
             "CI_LIGHT_BOURSORAMA_RAW_CONSENSUS": details["raw_recommendation"],
             "CI_LIGHT_BOURSORAMA_ANALYSTS": details["analyst_count"],
             "CI_LIGHT_BOURSORAMA_UPSIDE_PCT": details["upside"],
-            "CI_LIGHT_INVESTING_DAILY": details["daily"],
-            "CI_LIGHT_INVESTING_WEEKLY": details["weekly"],
-            "CI_LIGHT_INVESTING_MONTHLY": details["monthly"],
+            "CI_LIGHT_TRADINGVIEW_DAILY": details["daily"],
+            "CI_LIGHT_TRADINGVIEW_WEEKLY": details["weekly"],
+            "CI_LIGHT_TRADINGVIEW_MONTHLY": details["monthly"],
             "CI_LIGHT_BOURSORAMA_URL": b_url,
             "CI_LIGHT_BOURSORAMA_URL_STATUS": b_url_status,
-            "CI_LIGHT_INVESTING_URL": i_url,
-            "CI_LIGHT_INVESTING_URL_STATUS": i_url_status,
+            "CI_LIGHT_TRADINGVIEW_URL": tv_url,
+            "CI_LIGHT_TRADINGVIEW_URL_STATUS": tv_url_status,
+            "CI_LIGHT_TRADINGVIEW_SYMBOL": _text(row.get("tradingview_symbol")),
+            "CI_LIGHT_TRADINGVIEW_COLLECTED_AT_UTC": _text(row.get("tradingview_collected_at_utc")),
             "CI_LIGHT_INCLUDED": bool(accepted),
             "CI_LIGHT_REASON": "PASS_ALL_LIGHT_GATES" if accepted else "|".join(reasons),
         })
@@ -336,10 +376,10 @@ def run(root: Path = ROOT) -> dict:
             "boursorama_recommendation": ["ACHETER", "RENFORCER"],
             "boursorama_analyst_count": ">10",
             "boursorama_target_upside_pct": ">20",
-            "investing_daily": ["BUY", "STRONG_BUY"],
-            "investing_weekly": ["BUY", "STRONG_BUY"],
-            "investing_monthly": ["BUY", "STRONG_BUY"],
-            "all_three_investing_timeframes_required": True,
+            "tradingview_daily": ["BUY", "STRONG_BUY"],
+            "tradingview_weekly": ["BUY", "STRONG_BUY"],
+            "tradingview_monthly": ["BUY", "STRONG_BUY"],
+            "all_three_tradingview_timeframes_required": True,
         },
         "recommendation_mapping": {"STRONG_BUY": "ACHETER", "BUY": "RENFORCER"},
         "etf_same_boursorama_rules_as_actions": True,
@@ -354,6 +394,7 @@ def run(root: Path = ROOT) -> dict:
         "thresholds_changed": False,
         "real_orders_enabled": False,
         "source_context": source_payload,
+        "tradingview_context": tradingview_payload,
         "outputs": [str(OUTPUT), str(REJECTED), str(EXCEL), str(MOBILE)],
     }
     (root / AUDIT).write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
