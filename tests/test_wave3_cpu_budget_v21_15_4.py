@@ -30,10 +30,11 @@ def _history(tickers: list[str], periods: int = 280) -> pd.DataFrame:
 
 def _normalized_value(value):
     try:
-        if bool(pd.isna(value)):
-            return "<NA>"
+        missing = bool(pd.isna(value))
     except (TypeError, ValueError):
-        pass
+        missing = False
+    if missing:
+        return "<NA>"
     if isinstance(value, np.generic):
         return value.item()
     return value
