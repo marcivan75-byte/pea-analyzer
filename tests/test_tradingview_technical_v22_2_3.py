@@ -39,7 +39,7 @@ def test_parse_public_faq_returns_complete_1d_1w_1m_enum():
 
 
 def test_parse_is_fail_closed_when_one_timeframe_is_missing():
-    html = _html().replace("1 month rating shows the strong buy signal", "monthly data unavailable")
+    html = _html().replace("1 month rating", "monthly rating")
     assert tv.parse_technical_summary_html(html) == {}
 
 
