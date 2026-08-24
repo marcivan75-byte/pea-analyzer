@@ -1,16 +1,16 @@
-name: PEA Weekly Heavy Committee V22.2.2 TEST
+name: PEA Weekly Heavy Committee V22.2.3 TEST
 
 on:
   workflow_dispatch:
     inputs:
       run_validation:
-        description: "Run V22.2.2 targeted regressions before representative run"
+        description: "Run V22.2.3 targeted regressions before representative run"
         required: false
         type: boolean
         default: true
 
 concurrency:
-  group: committee-weekly-v22-2-2-test-${{ github.ref }}
+  group: committee-weekly-v22-2-3-test-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -20,7 +20,7 @@ env:
   PIP_CONSTRAINT: ${{ github.workspace }}/constraints-ci.txt
 
 jobs:
-  committee-v22-2-2-test:
+  committee-v22-2-3-test:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -41,7 +41,7 @@ jobs:
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: data/cache/
-          key: ohlcv-v3-v22-2-2-test-${{ github.run_id }}
+          key: ohlcv-v3-v22-2-3-test-${{ github.run_id }}
           restore-keys: |
             ohlcv-v3-
 
@@ -54,7 +54,7 @@ jobs:
             state/action_ct/
             state/action_ct_v22_1/
             state/provenance/
-          key: decision-state-v1-v22-2-2-test-${{ github.run_id }}
+          key: decision-state-v1-v22-2-3-test-${{ github.run_id }}
           restore-keys: |
             decision-state-v1-
 
@@ -64,7 +64,7 @@ jobs:
           path: |
             state/sector_rotation_v2/
             state/etf_fund_flows/
-          key: weekly-research-state-v1-v22-2-2-test-${{ github.run_id }}
+          key: weekly-research-state-v1-v22-2-3-test-${{ github.run_id }}
           restore-keys: |
             weekly-research-state-v1-
 
@@ -77,7 +77,7 @@ jobs:
       - name: Install production runtime
         run: pip install --prefer-binary -r requirements-runtime.txt
 
-      - name: Validate V22.2.2 targeted regressions
+      - name: Validate V22.2.3 targeted regressions
         if: ${{ inputs.run_validation }}
         run: |
           pip install pytest
@@ -86,32 +86,34 @@ jobs:
             src/v182/reporting/ci_entry_watch_v22_2.py \
             src/v182/reporting/ci_entry_watch_v22_2_1.py \
             src/v182/reporting/ci_selection_gate_v22_2_2.py \
+            src/v182/reporting/ci_light_v22_2_3.py \
             src/v182/reporting/market_orientation_v22_2.py \
-            src/v182/reporting/weekly_unified_super_runner_v22_2_2.py \
+            src/v182/reporting/weekly_unified_super_runner_v22_2_3.py \
             src/v182/reporting/etf_structure_refresh.py
           pytest -q \
             tests/test_ci_entry_confidence_v22_2.py \
             tests/test_ci_entry_watch_v22_2.py \
             tests/test_ci_entry_watch_v22_2_1.py \
             tests/test_ci_selection_gate_v22_2_2.py \
+            tests/test_ci_light_v22_2_3.py \
             tests/test_market_orientation_v22_2.py \
             tests/test_market_orientation_ci_integration_v22_2.py \
             tests/test_weekly_v22_1_runtime_overlap.py \
             tests/test_weekly_v22_no_wave09.py
 
-      - name: Run Weekly V22.2.2 without WAVE09
-        run: python -m v182.reporting.weekly_unified_super_runner_v22_2_2
+      - name: Run Weekly V22.2.3 without WAVE09
+        run: python -m v182.reporting.weekly_unified_super_runner_v22_2_3
 
       - name: Run Friday tactical, Postmarket and weekly finalization DAG
         run: python -m v182.reporting.weekly_tail_super_runner_v21_16_0
 
-      - name: Show V22.2.2 runtime and CI summaries
+      - name: Show V22.2.3 runtime and CI summaries
         if: always()
         run: |
           for f in \
+            outputs/audit/WEEKLY_UNIFIED_SUPER_RUNTIME_V22_2_3.json \
             outputs/audit/WEEKLY_UNIFIED_SUPER_RUNTIME_V22_2_2.json \
             outputs/audit/WEEKLY_UNIFIED_SUPER_RUNTIME_V22_2_1.json \
-            outputs/audit/WEEKLY_UNIFIED_SUPER_RUNTIME_V22_1.json \
             outputs/audit/MARKET_ORIENTATION_V22_2.json \
             outputs/audit/V21_10_ETF_STRUCTURAL_DATA.json \
             outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json \
@@ -120,6 +122,7 @@ jobs:
             outputs/audit/CI_ENTRY_WATCH_V22_2.json \
             outputs/audit/CI_ENTRY_WATCH_V22_2_1.json \
             outputs/audit/CI_SELECTION_GATE_V22_2_2.json \
+            outputs/audit/CI_LIGHT_V22_2_3.json \
             outputs/audit/WEEKLY_TAIL_SUPER_RUNTIME_V21_16_0.json \
             outputs/audit/CI_EXPLAINABILITY_AUDIT.json; do
             if [ -f "$f" ]; then cat "$f"; fi
@@ -141,13 +144,13 @@ jobs:
             state/action_ct/
             state/action_ct_v22_1/
             state/provenance/
-          key: decision-state-v1-v22-2-2-test-${{ github.run_id }}
+          key: decision-state-v1-v22-2-3-test-${{ github.run_id }}
 
-      - name: Upload V22.2.2 test results
+      - name: Upload V22.2.3 test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: committee-weekly-v22-2-2-test-${{ github.run_id }}
+          name: committee-weekly-v22-2-3-test-${{ github.run_id }}
           path: |
             outputs/unified/
             outputs/decision_brief/
