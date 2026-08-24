@@ -22,13 +22,13 @@ def test_v22_1_reuses_prefetched_morningstar_at_original_application_point(monke
         calls["collect56"] += 1
         return ([], []), ([], [])
 
-    def fake_exports(*args, **kwargs):
+    def fake_parallel_exports(*args, **kwargs):
         calls["exports"] += 1
         return True
 
     monkeypatch.setattr(morningstar_actions, "load_authorized_snapshot", fake_morningstar)
     monkeypatch.setattr(pipeline, "_collect_wave5_wave6_parallel", fake_collect56)
-    monkeypatch.setattr(pipeline, "_export_excel_reports", fake_exports)
+    monkeypatch.setattr(runner, "_parallel_excel_exports", fake_parallel_exports)
 
     observed = {}
 
@@ -65,7 +65,7 @@ def test_v22_1_reuses_prefetched_morningstar_at_original_application_point(monke
     assert payload["status"] == "SUCCESS"
     assert observed["morningstar"] == expected
     assert observed["exports"] is True
-    assert calls == {"morningstar": 1, "collect56": 1, "exports": 0}
+    assert calls == {"morningstar": 1, "collect56": 1, "exports": 1}
     audit = (tmp_path / "outputs/audit/WEEKLY_UNIFIED_SUPER_RUNTIME_V22_1.json").read_text(encoding="utf-8")
     assert '"morningstar_prefetch_started": true' in audit
     assert '"morningstar_prefetch_fallback": false' in audit
