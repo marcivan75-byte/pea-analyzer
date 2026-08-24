@@ -50,7 +50,7 @@
     "ttl_hours": 6,
     "refresh_budget": 40,
     "request_start_interval_seconds": 1.0,
-    "max_workers": 4,
+    "max_workers": 8,
     "raw_html_persisted": false
   },
   "governance": {
