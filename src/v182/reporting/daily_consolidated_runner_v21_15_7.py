@@ -10,6 +10,7 @@ from v182.reporting import daily_ci_restitution_v21_15_7 as daily_ci
 from v182.reporting import daily_consolidated_runner_v21_15_5 as base
 from v182.reporting import daily_tactical_super_runner_v21_15_6 as tactical
 from v182.reporting import daily_w09_seed_v21_15_7 as w09_seed
+from v182.reporting import daily_provenance_compact_cache_v21_15_8 as provenance_compact
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -130,6 +131,15 @@ def _install_post_wave7_quarantine_guard(self, original_fast_install, state: dic
 def run(root: Path = ROOT) -> dict:
     """Final Daily: zero-network W09, bounded tactical engines and same-run CI restitution."""
     started = perf_counter()
+    provenance_original, provenance_stats = provenance_compact.install()
+    provenance_restored = False
+
+    def restore_provenance() -> None:
+        nonlocal provenance_restored
+        if not provenance_restored:
+            provenance_compact.restore(provenance_original)
+            provenance_restored = True
+
     original_tactical = base.tactical
     original_version = base.VERSION
     original_fast_install = base._ORIGINAL_FAST_INSTALL
@@ -169,6 +179,7 @@ def run(root: Path = ROOT) -> dict:
             payload = dict(base.run(root=root) or {})
         except Exception as exc:
             _write_base_failure_audit(root, exc, perf_counter() - started)
+            restore_provenance()
             raise
     finally:
         base.tactical = original_tactical
@@ -182,11 +193,24 @@ def run(root: Path = ROOT) -> dict:
         ci_payload = daily_ci.run(root=root)
     except Exception as exc:
         _write_ci_failure_audit(root, exc, perf_counter() - ci_started)
+        restore_provenance()
         raise
     ci_seconds = perf_counter() - ci_started
 
+    provenance_persist_started = perf_counter()
+    try:
+        provenance_compact.persist(provenance_stats)
+    except Exception as exc:
+        provenance_stats["persist_status"] = "FAILED_NON_BLOCKING"
+        provenance_stats["persist_error_type"] = type(exc).__name__
+        provenance_stats["persist_error"] = str(exc)[:500]
+    finally:
+        provenance_stats["persist_wrapper_seconds"] = round(perf_counter() - provenance_persist_started, 6)
+        restore_provenance()
+
     timings = dict(payload.get("timings_seconds") or {})
     timings["ci_restitution"] = round(float(ci_seconds), 6)
+    timings["provenance_compact_persist"] = round(float(provenance_stats.get("persist_wrapper_seconds", 0.0)), 6)
     timings["total"] = round(float(perf_counter() - started), 6)
     steps = dict(payload.get("steps") or {})
     steps["ci_restitution"] = {
@@ -197,6 +221,7 @@ def run(root: Path = ROOT) -> dict:
         "excel_output": ci_payload.get("excel_output"),
     }
     steps["quarantine_deduplication"] = quarantine_stats
+    steps["provenance_compact_cache"] = provenance_stats
     final_status = (
         "SUCCESS_DAILY_CONSOLIDATED_WITH_CI_AND_ETF_REPLAY_WARNING"
         if "ETF_REPLAY_WARNING" in base_status
