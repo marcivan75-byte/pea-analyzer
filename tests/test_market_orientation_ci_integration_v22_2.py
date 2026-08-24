@@ -9,7 +9,6 @@ from v182.reporting import market_orientation_v22_2 as market
 
 
 def test_market_context_is_exposed_but_shadow_only(tmp_path: Path):
-    path = tmp_path / market.ROOT.relative_to(market.ROOT) if False else tmp_path
     ci = tmp_path / "outputs" / "committee_master"
     ci.mkdir(parents=True, exist_ok=True)
     pd.DataFrame([{
