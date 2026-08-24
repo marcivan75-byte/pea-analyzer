@@ -360,8 +360,12 @@ def run(root: Path = ROOT) -> dict:
         })
         (accepted_rows if accepted else rejected_rows).append(record)
 
-    selected = _ordered(pd.DataFrame(accepted_rows))
     rejected = pd.DataFrame(rejected_rows)
+    selected = _ordered(pd.DataFrame(accepted_rows))
+    if selected.empty:
+        # Preserve the governed export schema when no candidate clears every LIGHT gate.
+        # Empty output is a valid factual result, not an Excel/CSV generation error.
+        selected = pd.DataFrame(columns=rejected.columns if not rejected.empty else frame.columns)
     selected.to_csv(root / OUTPUT, sep=";", index=False, encoding="utf-8-sig")
     rejected.to_csv(root / REJECTED, sep=";", index=False, encoding="utf-8-sig")
     _write_excel(selected, root / EXCEL)
