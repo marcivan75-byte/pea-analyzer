@@ -1,0 +1,84 @@
+{
+  "version": "WEEKLY_V4_0_0",
+  "reference": {
+    "branch": "codex/weekly-v22-2-entry-confidence",
+    "commit": "3b52686f56ed68c63e4a057509c880ea0c3217ff",
+    "runtime": "WEEKLY_UNIFIED_SUPER_RUNTIME_V22_2_3",
+    "reference_is_immutable": true
+  },
+  "audits": {
+    "required_iterations": 5,
+    "domains": [
+      "REFERENTIALS_AND_INVARIANTS",
+      "SOURCE_IDENTITY_FRESHNESS_AND_FACTUALITY",
+      "CRITERIA_WEIGHTS_THRESHOLDS_AND_CALIBRATION",
+      "CODE_TESTS_AND_CI",
+      "ADVERSARIAL_REPRODUCIBILITY_AND_RELEASE"
+    ],
+    "all_iterations_must_pass": true
+  },
+  "referentials": {
+    "actions_registry": "config/V21_ACTIONS_CRITERIA_REGISTRY.json",
+    "actions_criteria_count": 633,
+    "actions_weight_groups": ["CT", "MT", "SHORT", "TOP_DOWN"],
+    "etf_registry": "config/V20_7_1_ETF_CRITERIA_REGISTRY.json",
+    "etf_criteria_count": 268,
+    "etf_weight_groups": ["CT", "SHORT", "TOP_DOWN", "MT_BASELINE_V20_7"],
+    "etf_dynamic_mt_weight_group": "mt_dynamic_38_weights",
+    "etf_dynamic_mt_criteria_count": 38,
+    "weight_sum_tolerance": 1e-09,
+    "negative_weights_forbidden": true,
+    "undeclared_weighted_criteria_forbidden": true
+  },
+  "selection": {
+    "minimum_selection_score": 77.0,
+    "minimum_confidence_score": 66.0,
+    "inclusive_thresholds": true,
+    "action_minimum_consensus_upside_pct": 20.0,
+    "action_consensus_methods": [
+      "CONSENSUS_UPSIDE",
+      "YAHOO_CONSENSUS_UPSIDE",
+      "CONSENSUS_TARGET_PRICE",
+      "YAHOO_TARGET_MEAN"
+    ],
+    "action_boursorama_positive": ["BUY", "STRONG_BUY"],
+    "action_boursorama_hold": ["HOLD"],
+    "action_boursorama_negative": ["SELL", "STRONG_SELL"],
+    "action_boursorama_missing_policy": "WAIT_SOURCE_MISSING",
+    "action_analyst_count_is_context_only": true,
+    "etf_boursorama_analyst_consensus_required": false,
+    "etf_minimum_morningstar_stars": 3.0,
+    "etf_missing_morningstar_policy": "EXCLUDE_FAIL_CLOSED",
+    "technical_entry_positive": ["BUY", "STRONG_BUY"],
+    "technical_neutral": ["NEUTRAL"],
+    "technical_exit_review": ["SELL", "STRONG_SELL"],
+    "technical_horizon_mapping": {
+      "TCT": "DAILY",
+      "CT": "WEEKLY",
+      "MT": "MONTHLY"
+    }
+  },
+  "weight_policy": {
+    "reference_vectors_remain_active": true,
+    "automatic_reweighting_forbidden": true,
+    "promotion_requires_point_in_time_out_of_sample_evidence": true,
+    "stress_period_optimization_weight": 0.0,
+    "missing_active_criteria": "RENORMALIZE_AVAILABLE_TO_100_PERCENT_AFTER_COVERAGE_GATE",
+    "neutral_imputation_forbidden": true,
+    "v4_reweights_reference_scores": false,
+    "rationale": "No reproducible PIT/OOS outcome sample in the release snapshot justifies changing proven reference vectors."
+  },
+  "source_contract": "config/WEEKLY_V4_SOURCE_CONTRACT.json",
+  "release": {
+    "real_orders_enabled": false,
+    "source_can_create_candidate": false,
+    "missing_source_is_negative_signal": false,
+    "investing_enabled": false,
+    "tradingview_enabled": true,
+    "raw_html_persisted": false,
+    "manifest_sha256_required": true,
+    "test_suite_required": true,
+    "ruff_required": true,
+    "repeatability_runs_required": 2
+  }
+}

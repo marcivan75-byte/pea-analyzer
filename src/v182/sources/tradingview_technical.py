@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
+from urllib.parse import urlparse
 import json
 import math
 import re
@@ -16,7 +17,7 @@ import pandas as pd
 from v182.sources.rate_limit import StartRateLimiter
 
 TRADINGVIEW_BASE = "https://www.tradingview.com"
-CACHE_VERSION = "TRADINGVIEW_TECHNICAL_V1"
+CACHE_VERSION = "TRADINGVIEW_TECHNICAL_V2"
 SIGNAL_SCORE = {"STRONG_SELL": -2, "SELL": -1, "NEUTRAL": 0, "BUY": 1, "STRONG_BUY": 2}
 
 # Yahoo suffix -> TradingView exchange. A URL is attempted only when this
@@ -179,7 +180,7 @@ def _default_fetcher(url: str, *, timeout: float):
     return requests.get(
         url,
         headers={
-            "User-Agent": "Mozilla/5.0 (compatible; PEA-Analyzer/22.2.3; selected-public-context)",
+            "User-Agent": "Mozilla/5.0 (compatible; PEA-Analyzer/V4; selected-public-context)",
             "Accept-Language": "en-US,en;q=0.8",
         },
         timeout=timeout,
@@ -214,12 +215,43 @@ def collect_technical_context_cached(
     failures: list[dict] = []
     unique = rows.drop_duplicates("isin").copy() if "isin" in rows else pd.DataFrame()
     due: list[tuple[str, object]] = []
+    cache_hits = 0
+    identity_mismatch_rejected = 0
+    stale_rejected = 0
+    unresolved = 0
     for _, row in unique.iterrows():
         isin = str(row.get("isin") or "").strip()
         if not isin:
             continue
+        resolved = technical_url(row)
+        if resolved is None:
+            unresolved += 1
+            failures.append({"isin": isin, "source": "TradingView", "reason": "NO_DETERMINISTIC_EXCHANGE_TICKER"})
+            cache["entries"].pop(isin, None)
+            continue
+        _, expected_symbol = resolved
         entry = cache["entries"].get(isin)
-        if entry is None or _age_hours(entry.get("fetched_at_utc"), current) >= ttl_hours:
+        fields = dict(entry.get("fields") or {}) if isinstance(entry, dict) else {}
+        identity_valid = bool(
+            entry
+            and entry.get("validated_isin") == isin
+            and entry.get("symbol") == expected_symbol
+        )
+        complete = bool(
+            fields.get("tradingview_technical_complete") is True
+            and all(fields.get(f"tradingview_{timeframe}_signal") in SIGNAL_SCORE for timeframe in ("daily", "weekly", "monthly"))
+            and re.fullmatch(r"[0-9a-f]{64}", str(entry.get("page_sha256") or ""))
+        )
+        fresh = bool(entry and _age_hours(entry.get("fetched_at_utc"), current) <= ttl_hours)
+        if identity_valid and complete and fresh:
+            cache_hits += 1
+        else:
+            if entry and not identity_valid:
+                identity_mismatch_rejected += 1
+            if entry and not fresh:
+                stale_rejected += 1
+            # A stale or differently bound entry must never survive a failed refresh.
+            cache["entries"].pop(isin, None)
             due.append((isin, row))
     due = due[: max(0, int(refresh_budget))]
 
@@ -236,6 +268,19 @@ def collect_technical_context_cached(
                 response.raise_for_status()
             html = str(getattr(response, "text", "") or "")
             final_url = str(getattr(response, "url", url) or url)
+            parsed_final = urlparse(final_url)
+            parsed_expected = urlparse(url)
+            if (
+                parsed_final.hostname not in {"tradingview.com", "www.tradingview.com"}
+                or parsed_final.path.rstrip("/") != parsed_expected.path.rstrip("/")
+            ):
+                return isin, None, {
+                    "isin": isin,
+                    "source": "TradingView",
+                    "reason": "UNEXPECTED_FINAL_URL",
+                    "symbol": symbol,
+                    "url": final_url,
+                }
             # The public page must prove the exact exchange-qualified symbol.
             proof = f"/chart/?symbol={symbol}"
             identity_markers = (
@@ -292,12 +337,24 @@ def collect_technical_context_cached(
     for _, row in rows.iterrows():
         isin = str(row.get("isin") or "").strip()
         entry = cache["entries"].get(isin)
-        if not entry or entry.get("validated_isin") != isin:
+        resolved = technical_url(row)
+        expected_symbol = resolved[1] if resolved is not None else None
+        if (
+            not entry
+            or entry.get("validated_isin") != isin
+            or entry.get("symbol") != expected_symbol
+            or not re.fullmatch(r"[0-9a-f]{64}", str(entry.get("page_sha256") or ""))
+        ):
             continue
-        if _age_hours(entry.get("fetched_at_utc"), current) > max(ttl_hours * 4.0, 48.0):
+        if _age_hours(entry.get("fetched_at_utc"), current) > ttl_hours:
+            continue
+        fields = dict(entry.get("fields") or {})
+        if not (
+            fields.get("tradingview_technical_complete") is True
+            and all(fields.get(f"tradingview_{timeframe}_signal") in SIGNAL_SCORE for timeframe in ("daily", "weekly", "monthly"))
+        ):
             continue
         usable += 1
-        fields = dict(entry.get("fields") or {})
         signal, score = horizon_signal(fields, str(row.get("horizon") or ""))
         if signal is not None:
             fields["tradingview_horizon_signal"] = signal
@@ -305,6 +362,7 @@ def collect_technical_context_cached(
         fields["tradingview_source_url"] = entry.get("source_url")
         fields["tradingview_symbol"] = entry.get("symbol")
         fields["tradingview_collected_at_utc"] = entry.get("fetched_at_utc")
+        fields["tradingview_page_sha256"] = entry.get("page_sha256")
         for field, value in fields.items():
             observations.append({
                 "isin": isin,
@@ -326,6 +384,10 @@ def collect_technical_context_cached(
             "unique_instruments": int(len(unique)),
             "live_refresh_requested": int(len(due)),
             "live_refresh_success": int(success),
+            "cache_hits": int(cache_hits),
+            "identity_mismatch_rejected": int(identity_mismatch_rejected),
+            "stale_rejected": int(stale_rejected),
+            "unresolved_identity": int(unresolved),
             "usable_rows": int(usable),
             "observations": int(len(observations)),
             "selected_only": True,

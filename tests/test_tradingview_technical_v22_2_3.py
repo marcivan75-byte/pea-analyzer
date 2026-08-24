@@ -110,4 +110,77 @@ def test_collector_emits_audited_three_timeframe_context(tmp_path):
     assert fields["tradingview_monthly_signal"] == "STRONG_BUY"
     assert fields["tradingview_symbol"] == "EURONEXT:AIR"
     assert fields["tradingview_horizon_signal"] == "BUY"
+    assert len(fields["tradingview_page_sha256"]) == 64
+
+
+def test_cache_is_bound_to_current_exchange_qualified_symbol(tmp_path):
+    cache = tmp_path / "tv.json"
+    now = datetime(2026, 8, 24, tzinfo=timezone.utc)
+
+    def fetcher(url: str, *, timeout: float):
+        symbol = "EURONEXT:CAP" if "CAP" in url else "EURONEXT:AIR"
+        return _Response(_html(symbol), url)
+
+    air = pd.DataFrame([
+        {"isin": "FR0000000001", "asset_class": "ACTION", "horizon": "CT", "yahoo_ticker": "AIR.PA"}
+    ])
+    cap = air.assign(yahoo_ticker="CAP.PA")
+    first = tv.collect_technical_context_cached(
+        air, cache, fetcher=fetcher, request_start_interval_seconds=0, now=now
+    )
+    second = tv.collect_technical_context_cached(
+        cap, cache, fetcher=fetcher, request_start_interval_seconds=0, now=now
+    )
+    fields = {item["field"]: item["value"] for item in second.observations}
+    assert first.metrics["live_refresh_success"] == 1
+    assert second.metrics["identity_mismatch_rejected"] == 1
+    assert second.metrics["live_refresh_success"] == 1
+    assert fields["tradingview_symbol"] == "EURONEXT:CAP"
+
+
+def test_stale_cache_is_not_reused_when_refresh_fails(tmp_path):
+    rows = pd.DataFrame([
+        {"isin": "FR0000000001", "asset_class": "ACTION", "horizon": "CT", "yahoo_ticker": "AIR.PA"}
+    ])
+    cache = tmp_path / "tv.json"
+    first_now = datetime(2026, 8, 24, tzinfo=timezone.utc)
+
+    def ok(url: str, *, timeout: float):
+        return _Response(_html(), url)
+
+    def unavailable(url: str, *, timeout: float):
+        raise TimeoutError("source unavailable")
+
+    tv.collect_technical_context_cached(
+        rows, cache, fetcher=ok, request_start_interval_seconds=0, now=first_now
+    )
+    result = tv.collect_technical_context_cached(
+        rows,
+        cache,
+        fetcher=unavailable,
+        request_start_interval_seconds=0,
+        now=datetime(2026, 8, 24, 7, tzinfo=timezone.utc),
+    )
+    assert result.observations == []
+    assert result.metrics["stale_rejected"] == 1
+    assert result.metrics["usable_rows"] == 0
+
+
+def test_redirect_to_unexpected_host_is_rejected(tmp_path):
+    rows = pd.DataFrame([
+        {"isin": "FR0000000001", "asset_class": "ACTION", "horizon": "CT", "yahoo_ticker": "AIR.PA"}
+    ])
+
+    def redirected(url: str, *, timeout: float):
+        return _Response(_html(), "https://example.invalid/symbols/EURONEXT-AIR/technicals/")
+
+    result = tv.collect_technical_context_cached(
+        rows,
+        tmp_path / "tv.json",
+        fetcher=redirected,
+        request_start_interval_seconds=0,
+        now=datetime(2026, 8, 24, tzinfo=timezone.utc),
+    )
+    assert result.observations == []
+    assert result.failures[0]["reason"] == "UNEXPECTED_FINAL_URL"
 

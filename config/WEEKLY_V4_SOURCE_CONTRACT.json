@@ -1,0 +1,71 @@
+{
+  "version": "WEEKLY_V4_SOURCE_CONTRACT_1",
+  "scope": {
+    "selected_only": true,
+    "maximum_unique_instruments": 40,
+    "full_universe_scraping_forbidden": true,
+    "source_can_create_candidate": false
+  },
+  "boursorama": {
+    "asset_classes": ["ACTION", "ETF"],
+    "actions": {
+      "role": "POST_SELECTION_CONSENSUS_QUALITY_GATE",
+      "exact_exchange_ticker_url_preferred": true,
+      "accepted_consensus": ["BUY", "STRONG_BUY"],
+      "wait_consensus": ["HOLD"],
+      "rejected_consensus": ["SELL", "STRONG_SELL"],
+      "missing_policy": "WAIT_SOURCE_MISSING_NEVER_BEARISH",
+      "analyst_count_is_context_only": true,
+      "target_upside_is_context_only": true
+    },
+    "etfs": {
+      "role": "POST_SELECTION_STRUCTURAL_CONTEXT_ONLY",
+      "analyst_consensus_required": false,
+      "analyst_count_required": false,
+      "target_upside_required": false,
+      "reason": "ETF product pages do not provide an equity analyst-consensus contract comparable to listed companies."
+    },
+    "dynamic_ttl_hours": 8,
+    "deep_ttl_hours": 168,
+    "refresh_budget": 40,
+    "request_start_interval_seconds": 1.0,
+    "provider_max_inflight": 4,
+    "raw_html_persisted": false
+  },
+  "tradingview": {
+    "role": "POST_SELECTION_MULTI_HORIZON_ENTRY_EXIT_TIMING_GATE",
+    "replaces_investing": true,
+    "public_pages_only": true,
+    "symbol_resolution": "DETERMINISTIC_EXCHANGE_QUALIFIED_TICKER_ONLY",
+    "free_name_search_forbidden": true,
+    "exact_symbol_identity_proof_required": true,
+    "timeframes": ["DAILY", "WEEKLY", "MONTHLY"],
+    "allowed_states": ["STRONG_SELL", "SELL", "NEUTRAL", "BUY", "STRONG_BUY"],
+    "horizon_mapping": {
+      "TCT": "DAILY",
+      "CT": "WEEKLY",
+      "MT": "MONTHLY"
+    },
+    "entry_confirmation_states": ["BUY", "STRONG_BUY"],
+    "wait_states": ["NEUTRAL"],
+    "exit_review_states": ["SELL", "STRONG_SELL"],
+    "missing_policy": "WAIT_SOURCE_MISSING_NEVER_SELL",
+    "ttl_hours": 6,
+    "refresh_budget": 40,
+    "request_start_interval_seconds": 1.0,
+    "provider_max_inflight": 8,
+    "raw_html_persisted": false,
+    "page_sha256_required": true,
+    "collected_at_utc_required": true
+  },
+  "investing": {
+    "enabled": false,
+    "reason": "Resolver and public page identity were not sufficiently factual for the governed V4 decision path."
+  },
+  "missing_data": {
+    "explicit_na_required": true,
+    "failure_audit_required": true,
+    "neutral_imputation_forbidden": true,
+    "negative_signal_imputation_forbidden": true
+  }
+}

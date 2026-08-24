@@ -221,6 +221,10 @@ def collect_selected_etf_context_cached(
                 failures.append({"isin": isin, "source": "Boursorama ETF", "reason": "NO_DETERMINISTIC_CODE"})
             continue
         entry = entries.get(isin, {})
+        if entry and entry.get("boursorama_code") != code:
+            failures.append({"isin": isin, "source": "Boursorama ETF", "reason": "CACHE_IDENTITY_CHANGED_REFRESH_REQUIRED"})
+            entries.pop(isin, None)
+            entry = {}
         dynamic_due = _age_hours(entry.get("dynamic_fetched_at_utc"), current) >= dynamic_ttl_hours
         deep_due = _age_hours(entry.get("deep_fetched_at_utc"), current) >= deep_ttl_hours
         if dynamic_due or deep_due:
@@ -234,6 +238,9 @@ def collect_selected_etf_context_cached(
         local_failures: list[dict] = []
         fields = dict(entry.get("fields") or {})
         if dynamic_due:
+            for name in set(entry.get("dynamic_fields") or []):
+                fields.pop(name, None)
+            entry["dynamic_fields"] = []
             try:
                 limiter.wait()
                 response = fetch(urls["composition"], timeout=timeout_seconds)
@@ -242,9 +249,6 @@ def collect_selected_etf_context_cached(
                 html = str(getattr(response, "text", "") or "")
                 dynamic = parse_etf_sheet_html(html)
                 if dynamic:
-                    old = set(entry.get("dynamic_fields") or [])
-                    for name in old:
-                        fields.pop(name, None)
                     fields.update(dynamic)
                     entry["dynamic_fields"] = sorted(dynamic)
                     entry["dynamic_fetched_at_utc"] = current.isoformat()
@@ -255,6 +259,9 @@ def collect_selected_etf_context_cached(
             except Exception as exc:
                 local_failures.append({"isin": isin, "source": "Boursorama ETF", "reason": type(exc).__name__, "detail": str(exc)[:160], "url": urls["composition"]})
         if deep_due:
+            for name in set(entry.get("deep_fields") or []):
+                fields.pop(name, None)
+            entry["deep_fields"] = []
             try:
                 limiter.wait()
                 response = fetch(urls["risk"], timeout=timeout_seconds)
@@ -264,9 +271,6 @@ def collect_selected_etf_context_cached(
                 deep = parse_etf_sheet_html(html)
                 deep.update(parse_etf_risk_html(html))
                 if deep:
-                    old = set(entry.get("deep_fields") or [])
-                    for name in old:
-                        fields.pop(name, None)
                     fields.update(deep)
                     entry["deep_fields"] = sorted(deep)
                     entry["deep_fetched_at_utc"] = current.isoformat()
@@ -311,13 +315,18 @@ def collect_selected_etf_context_cached(
     for _, row in rows.iterrows():
         isin = str(row.get("isin") or "").strip()
         entry = entries.get(isin)
-        if not entry or entry.get("status") != "OK":
+        expected_code = boursorama_code(row, "ETF") if isin else None
+        if not entry or entry.get("status") != "OK" or entry.get("boursorama_code") != expected_code:
             continue
         usable += 1
-        collected_at = entry.get("dynamic_fetched_at_utc") or entry.get("deep_fetched_at_utc")
+        dynamic_fields = set(entry.get("dynamic_fields") or [])
         for field, value in dict(entry.get("fields") or {}).items():
             if value is None:
                 continue
+            is_dynamic = field in dynamic_fields
+            collected_at = entry.get("dynamic_fetched_at_utc") if is_dynamic else entry.get("deep_fetched_at_utc")
+            source_url = entry.get("composition_url") if is_dynamic else entry.get("risk_url")
+            page_sha256 = entry.get("composition_sha256") if is_dynamic else entry.get("risk_sha256")
             observations.append({
                 "isin": isin,
                 "asset_class": "ETF",
@@ -325,8 +334,9 @@ def collect_selected_etf_context_cached(
                 "field": field,
                 "value": value,
                 "source": "Boursorama public priority ETF fiche",
-                "source_url": entry.get("composition_url") or entry.get("risk_url"),
+                "source_url": source_url,
                 "collected_at": collected_at,
+                "page_sha256": page_sha256,
                 "validation_status": "POST_SELECTION_PRIORITY_CONTEXT",
             })
     return BoursoramaSelectedETFResult(

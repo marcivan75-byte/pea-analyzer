@@ -172,18 +172,11 @@ def _markdown(frame: pd.DataFrame, generated: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def run(root: Path = ROOT) -> dict:
+def govern_existing_frame(frame: pd.DataFrame, root: Path = ROOT) -> pd.DataFrame:
+    """Apply the V22.2.1 entry overlay to a frozen, already-produced V22.2 frame."""
     cfg = _cfg(root)
-    # If this wrapper is run standalone, ensure the lightweight market context exists first.
-    market_file = root / previous.MARKET_ORIENTATION
-    if not market_file.exists():
-        market_orientation_v22_2.run(root=root)
-
-    base_payload = previous.run(root=root)
-    if base_payload.get("status") != "SUCCESS":
-        return {"status": "BLOCKED_V22_2", "base": base_payload}
-    frame = _read(root / previous.OUTPUT)
     meta_map = _metadata(root)
+    governed = frame.copy()
     potentials: list[float | None] = []
     potential_methods: list[str] = []
     potential_refs: list[float | None] = []
@@ -193,34 +186,53 @@ def run(root: Path = ROOT) -> dict:
     confidences: list[float] = []
     final_states: list[str] = []
     final_reasons: list[str] = []
-
-    for _, row in frame.iterrows():
+    for _, row in governed.iterrows():
         asset = _text(row.get("asset_class")).upper()
         isin = _text(row.get("isin"))
         meta = meta_map.get((asset, isin), {})
         potential, method, ref = _potential(asset, meta, cfg)
         gate, reason, points, scope = _market_gate(row, meta, cfg)
         base_conf = _num(row.get("CI_CONFIDENCE_SCORE_0_100")) or 0.0
-        low = float(cfg["confidence_adjustment"].get("min", 0.0)); high = float(cfg["confidence_adjustment"].get("max", 100.0))
+        low = float(cfg["confidence_adjustment"].get("min", 0.0))
+        high = float(cfg["confidence_adjustment"].get("max", 100.0))
         confidence = round(max(low, min(high, base_conf + points)), 2)
         state, final_reason = _final_entry_state(row, gate, confidence, cfg)
-        potentials.append(potential); potential_methods.append(method); potential_refs.append(ref)
-        gates.append(gate); gate_reasons.append(reason); market_scopes.append(scope); confidences.append(confidence)
-        final_states.append(state); final_reasons.append(final_reason)
+        potentials.append(potential)
+        potential_methods.append(method)
+        potential_refs.append(ref)
+        gates.append(gate)
+        gate_reasons.append(reason)
+        market_scopes.append(scope)
+        confidences.append(confidence)
+        final_states.append(state)
+        final_reasons.append(final_reason)
+    governed["CI_POTENTIAL_UPSIDE_PCT"] = potentials
+    governed["CI_POTENTIAL_METHOD"] = potential_methods
+    governed["CI_POTENTIAL_REFERENCE_LEVEL"] = potential_refs
+    governed["CI_MARKET_GATE"] = gates
+    governed["CI_MARKET_GATE_REASON"] = gate_reasons
+    governed["CI_MARKET_SCOPE"] = market_scopes
+    governed["CI_CONFIDENCE_SCORE_V22_2_1"] = confidences
+    governed["V22_2_1_ENTRY_STATE"] = final_states
+    governed["V22_2_1_ENTRY_REASON"] = final_reasons
+    governed["CI_AUTOMATIC_ORDER_ALLOWED"] = False
+    governed["CI_SELECTION_SCORE_CHANGED_V22_2_1"] = False
+    governed["CI_V22_2_1_GENERATED_AT_UTC"] = datetime.now(timezone.utc).isoformat()
+    return governed
 
-    frame["CI_POTENTIAL_UPSIDE_PCT"] = potentials
-    frame["CI_POTENTIAL_METHOD"] = potential_methods
-    frame["CI_POTENTIAL_REFERENCE_LEVEL"] = potential_refs
-    frame["CI_MARKET_GATE"] = gates
-    frame["CI_MARKET_GATE_REASON"] = gate_reasons
-    frame["CI_MARKET_SCOPE"] = market_scopes
-    frame["CI_CONFIDENCE_SCORE_V22_2_1"] = confidences
-    frame["V22_2_1_ENTRY_STATE"] = final_states
-    frame["V22_2_1_ENTRY_REASON"] = final_reasons
-    frame["CI_AUTOMATIC_ORDER_ALLOWED"] = False
-    frame["CI_SELECTION_SCORE_CHANGED_V22_2_1"] = False
-    generated = datetime.now(timezone.utc).isoformat()
-    frame["CI_V22_2_1_GENERATED_AT_UTC"] = generated
+
+def run(root: Path = ROOT) -> dict:
+    # If this wrapper is run standalone, ensure the lightweight market context exists first.
+    market_file = root / previous.MARKET_ORIENTATION
+    if not market_file.exists():
+        market_orientation_v22_2.run(root=root)
+
+    base_payload = previous.run(root=root)
+    if base_payload.get("status") != "SUCCESS":
+        return {"status": "BLOCKED_V22_2", "base": base_payload}
+    frame = _read(root / previous.OUTPUT)
+    frame = govern_existing_frame(frame, root)
+    generated = str(frame["CI_V22_2_1_GENERATED_AT_UTC"].iloc[0]) if not frame.empty else datetime.now(timezone.utc).isoformat()
 
     out = root / OUTPUT; md = root / MOBILE_MD; audit = root / AUDIT
     for path in (out, md, audit):
