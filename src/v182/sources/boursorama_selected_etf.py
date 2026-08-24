@@ -87,6 +87,22 @@ def _capture_num(text: str, pattern: str) -> float | None:
     return _num(value) if value is not None else None
 
 
+def _morningstar_rating(text: str) -> float | None:
+    patterns = (
+        r"(?:note|rating)\s+morningstar(?:\s*[™®])?\s*[:\-]?\s*([1-5](?:[.,]\d+)?)\s*(?:/\s*5|étoiles?)?",
+        r"morningstar(?:\s*[™®])?\s*(?:rating|note)?\s*[:\-]?\s*([1-5](?:[.,]\d+)?)\s*(?:/\s*5|étoiles?)",
+        r"([1-5](?:[.,]\d+)?)\s*étoiles?\s+morningstar",
+    )
+    for pattern in patterns:
+        value = _capture_num(text, pattern)
+        if value is not None and 1.0 <= value <= 5.0:
+            return value
+    glyph = re.search(r"morningstar.{0,100}([★]{1,5})", text, flags=re.IGNORECASE)
+    if glyph:
+        return float(len(glyph.group(1)))
+    return None
+
+
 def parse_etf_sheet_html(html: str) -> dict[str, object]:
     text = _text(html)
     if not text:
@@ -105,6 +121,9 @@ def parse_etf_sheet_html(html: str) -> dict[str, object]:
         value = _capture_num(text, pattern)
         if value is not None:
             fields[field] = value
+    rating = _morningstar_rating(text)
+    if rating is not None:
+        fields["boursorama_etf_morningstar_rating"] = rating
     assets = re.search(r"Actif net \(EUR\)\s+([0-9\s,.]+)([KMB])?\s*/", text, flags=re.IGNORECASE)
     if assets:
         number = _num(assets.group(1))
