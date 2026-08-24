@@ -1,148 +1,117 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pandas as pd
 
 from v182.reporting import ci_light_v22_2_3 as light
 
 
-def _row(**kwargs):
-    base = {
-        "name": "TEST",
+def _row(**overrides):
+    row = {
         "isin": "FR0000000001",
+        "name": "Test",
         "asset_class": "ACTION",
         "horizon": "CT",
-        "score": 82.0,
-        "CI_CONFIDENCE_SCORE_V22_2_1": 75.0,
         "boursorama_consensus": "BUY",
-        "investing_weekly_signal": "BUY",
+        "boursorama_n_analysts": 11,
+        "boursorama_target_upside_pct": 20.1,
+        "investing_daily_signal": "BUY",
+        "investing_weekly_signal": "STRONG_BUY",
+        "investing_monthly_signal": "BUY",
+        # Deliberately below full-CI thresholds: these fields must not gate LIGHT.
+        "score": 1.0,
+        "CI_CONFIDENCE_SCORE_V22_2_1": 1.0,
     }
-    base.update(kwargs)
-    return pd.Series(base)
+    row.update(overrides)
+    return pd.Series(row)
 
 
-def test_action_requires_both_boursorama_and_investing_positive():
-    accepted, reasons, boursorama, investing, morningstar = light._evaluate(_row())
+def test_light_accepts_exact_strict_source_contract():
+    accepted, reasons, details = light._evaluate(_row())
     assert accepted is True
     assert reasons == []
-    assert boursorama == "BUY"
-    assert investing == "BUY"
-    assert morningstar is None
+    assert details["recommendation"] == "RENFORCER"
+    assert details["analyst_count"] == 11
+    assert details["upside"] == 20.1
 
 
-def test_action_boursorama_renforcer_and_investing_strong_buy_pass():
-    accepted, reasons, boursorama, investing, _ = light._evaluate(
-        _row(boursorama_consensus="Renforcer", investing_weekly_signal="Strong Buy")
+def test_light_requires_strictly_more_than_ten_analysts():
+    accepted, reasons, _ = light._evaluate(_row(boursorama_n_analysts=10))
+    assert accepted is False
+    assert "BOURSORAMA_ANALYST_COUNT_NOT_GT_10" in reasons
+
+
+def test_light_requires_strictly_more_than_twenty_percent_upside():
+    accepted, reasons, _ = light._evaluate(_row(boursorama_target_upside_pct=20.0))
+    assert accepted is False
+    assert "BOURSORAMA_TARGET_UPSIDE_NOT_GT_20" in reasons
+
+
+def test_light_requires_all_three_investing_timeframes_positive():
+    accepted, reasons, _ = light._evaluate(_row(investing_monthly_signal="NEUTRAL"))
+    assert accepted is False
+    assert "INVESTING_MONTHLY_NOT_BUY_OR_STRONG_BUY" in reasons
+
+
+def test_light_missing_one_investing_timeframe_fails_closed():
+    accepted, reasons, _ = light._evaluate(_row(investing_daily_signal=pd.NA))
+    assert accepted is False
+    assert "INVESTING_DAILY_SIGNAL_MISSING" in reasons
+
+
+def test_light_etf_does_not_substitute_morningstar_for_boursorama_consensus():
+    accepted, reasons, _ = light._evaluate(
+        _row(asset_class="ETF", boursorama_consensus=pd.NA, morningstar_rating=5)
     )
+    assert accepted is False
+    assert "BOURSORAMA_NOT_ACHETER_OR_RENFORCER" in reasons
+
+
+def test_light_etf_must_meet_same_analyst_and_upside_rules():
+    accepted, reasons, _ = light._evaluate(
+        _row(asset_class="ETF", boursorama_consensus="STRONG_BUY", boursorama_n_analysts=9)
+    )
+    assert accepted is False
+    assert "BOURSORAMA_ANALYST_COUNT_NOT_GT_10" in reasons
+
+
+def test_light_strong_buy_maps_to_acheter_and_buy_to_renforcer():
+    assert light._boursorama_recommendation(_row(boursorama_consensus="STRONG_BUY"))[0] == "ACHETER"
+    assert light._boursorama_recommendation(_row(boursorama_consensus="BUY"))[0] == "RENFORCER"
+
+
+def test_light_rejects_hold_accumuler_and_other_non_requested_labels():
+    for value in ("HOLD", "ACCUMULER", "ACHAT", "SELL"):
+        accepted, reasons, _ = light._evaluate(_row(boursorama_consensus=value))
+        assert accepted is False
+        assert "BOURSORAMA_NOT_ACHETER_OR_RENFORCER" in reasons
+
+
+def test_light_does_not_use_full_ci_score_or_confidence_as_admission_gate():
+    accepted, reasons, _ = light._evaluate(_row(score=0.0, CI_CONFIDENCE_SCORE_V22_2_1=0.0))
     assert accepted is True
     assert reasons == []
-    assert boursorama == "RENFORCER"
-    assert investing == "STRONG_BUY"
 
 
-def test_investing_signal_is_horizon_specific():
-    accepted, reasons, _, investing, _ = light._evaluate(
-        _row(horizon="TCT", investing_daily_signal="BUY", investing_weekly_signal="SELL")
-    )
-    assert accepted is True
-    assert reasons == []
-    assert investing == "BUY"
-
-
-def test_etf_three_stars_passes_without_analyst_recommendation():
-    accepted, reasons, boursorama, investing, morningstar = light._evaluate(
-        _row(
-            asset_class="ETF",
-            boursorama_consensus=None,
-            morningstar_rating=3.0,
-            investing_weekly_signal="STRONG_BUY",
-        )
-    )
-    assert accepted is True
-    assert reasons == []
-    assert boursorama == ""
-    assert investing == "STRONG_BUY"
-    assert morningstar == 3.0
-
-
-def test_etf_two_stars_is_excluded():
-    accepted, reasons, _, _, morningstar = light._evaluate(
-        _row(asset_class="ETF", boursorama_consensus=None, morningstar_rating=2.0)
-    )
-    assert accepted is False
-    assert morningstar == 2.0
-    assert "ETF_MORNINGSTAR_RATING_LT_3" in reasons
-
-
-def test_etf_missing_morningstar_is_fail_closed():
-    accepted, reasons, _, _, morningstar = light._evaluate(
-        _row(asset_class="ETF", boursorama_consensus=None, morningstar_rating=None)
-    )
-    assert accepted is False
-    assert morningstar is None
-    assert "ETF_MORNINGSTAR_RATING_MISSING" in reasons
-
-
-def test_negative_investing_blocks_light_even_with_positive_quality_gate():
-    accepted, reasons, _, _, _ = light._evaluate(_row(investing_weekly_signal="NEUTRAL"))
-    assert accepted is False
-    assert "INVESTING_HORIZON_NOT_BUY_OR_STRONG_BUY" in reasons
-
-    accepted, reasons, _, _, _ = light._evaluate(
-        _row(asset_class="ETF", morningstar_rating=5.0, investing_weekly_signal="SELL")
-    )
-    assert accepted is False
-    assert "INVESTING_HORIZON_NOT_BUY_OR_STRONG_BUY" in reasons
-
-
-def test_attach_etf_morningstar_uses_exact_isin_master(tmp_path: Path):
-    master_path = tmp_path / "outputs/V18.2_PEA_ETF_MASTER_ENRICHED.csv"
-    master_path.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(
-        [
-            {"isin": "ETF3", "morningstar_rating": 3.0},
-            {"isin": "ETF5", "morningstar_rating": 5.0},
-        ]
-    ).to_csv(master_path, sep=";", index=False, encoding="utf-8-sig")
-    frame = pd.DataFrame(
-        [
-            {"isin": "ETF3", "asset_class": "ETF"},
-            {"isin": "OTHER", "asset_class": "ETF"},
-        ]
-    )
-    enriched = light._attach_etf_morningstar(frame, tmp_path)
-    assert float(enriched.loc[enriched["isin"].eq("ETF3"), "morningstar_rating"].iloc[0]) == 3.0
-    assert pd.isna(enriched.loc[enriched["isin"].eq("OTHER"), "morningstar_rating"].iloc[0])
-
-
-def test_run_outputs_horizon_workbook_and_does_not_change_scores(tmp_path: Path):
-    upstream = tmp_path / light.UPSTREAM
-    upstream.parent.mkdir(parents=True, exist_ok=True)
+def test_light_export_contains_three_signals_and_both_urls():
     frame = pd.DataFrame([
-        _row(name="A", isin="FR1", horizon="TCT", investing_daily_signal="STRONG_BUY").to_dict(),
-        _row(name="B", isin="FR2", horizon="CT", investing_weekly_signal="BUY").to_dict(),
-        _row(name="C", isin="FR3", horizon="MT", investing_monthly_signal="SELL").to_dict(),
-        _row(
-            name="ETF3", isin="ETF3", asset_class="ETF", horizon="MT",
-            boursorama_consensus=None, morningstar_rating=3.0, investing_monthly_signal="BUY"
-        ).to_dict(),
-        _row(
-            name="ETF2", isin="ETF2", asset_class="ETF", horizon="MT",
-            boursorama_consensus=None, morningstar_rating=2.0, investing_monthly_signal="BUY"
-        ).to_dict(),
+        {
+            **_row().to_dict(),
+            "CI_LIGHT_BOURSORAMA_RECOMMENDATION": "RENFORCER",
+            "CI_LIGHT_BOURSORAMA_ANALYSTS": 11,
+            "CI_LIGHT_BOURSORAMA_UPSIDE_PCT": 21,
+            "CI_LIGHT_INVESTING_DAILY": "BUY",
+            "CI_LIGHT_INVESTING_WEEKLY": "BUY",
+            "CI_LIGHT_INVESTING_MONTHLY": "STRONG_BUY",
+            "CI_LIGHT_BOURSORAMA_URL": "https://www.boursorama.com/cours/consensus/TEST/",
+            "CI_LIGHT_INVESTING_URL": "https://www.investing.com/equities/test-technical",
+        }
     ])
-    frame.to_csv(upstream, sep=";", index=False, encoding="utf-8-sig")
-    payload = light.run(tmp_path)
-    assert payload["status"] == "SUCCESS"
-    assert payload["selected"] == 3
-    assert payload["selected_by_horizon"] == {"TCT": 1, "CT": 1, "MT": 1}
-    assert payload["etf_minimum_morningstar_stars"] == 3.0
-    assert payload["etf_analyst_consensus_required"] is False
-    selected = pd.read_csv(tmp_path / light.OUTPUT, sep=";", encoding="utf-8-sig")
-    assert selected.set_index("isin").loc["FR1", "score"] == 82.0
-    assert "ETF3" in set(selected["isin"])
-    assert "ETF2" not in set(selected["isin"])
-    assert (tmp_path / light.EXCEL).exists()
-    book = pd.ExcelFile(tmp_path / light.EXCEL)
-    assert set(["ALL", "TCT", "CT", "MT"]).issubset(book.sheet_names)
+    columns = light._export_columns(frame)
+    for required in (
+        "CI_LIGHT_INVESTING_DAILY",
+        "CI_LIGHT_INVESTING_WEEKLY",
+        "CI_LIGHT_INVESTING_MONTHLY",
+        "CI_LIGHT_BOURSORAMA_URL",
+        "CI_LIGHT_INVESTING_URL",
+    ):
+        assert required in columns
