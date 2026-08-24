@@ -1,2 +1,3 @@
-purpose: dispatch-official-daily-diagnostic
+purpose: dispatch-official-daily-after-earnings-dtype-fix
 run_validation: false
+trigger_revision: 2
