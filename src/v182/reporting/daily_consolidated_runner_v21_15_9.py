@@ -8,6 +8,7 @@ import json
 from v182.reporting import daily_consolidated_runner_v21_15_7 as impl
 from v182.reporting import daily_market_orientation_v21_15_9 as market_orientation
 from v182.reporting import daily_tct_timing_ci_publish_v21_15_10 as tct_timing_ci
+from v182.reporting import daily_ci_light_finalize_v21_8_3 as ci_light_finalize
 
 
 ROOT = impl.ROOT
@@ -50,6 +51,15 @@ def run(root: Path = ROOT) -> dict:
 
     payload = dict(impl.run(root=root) or {})
 
+    ci_light_finalize_started = perf_counter()
+    try:
+        ci_light_final = ci_light_finalize.run(root)
+        ci_light_finalize_status = "SUCCESS"
+    except Exception as exc:
+        ci_light_final = {"error_type": type(exc).__name__, "error": str(exc)[:500]}
+        ci_light_finalize_status = "FAILED_NON_BLOCKING"
+    ci_light_finalize_seconds = perf_counter() - ci_light_finalize_started
+
     publish_started = perf_counter()
     try:
         ci_publish = market_orientation.publish_ci_context(root, orientation)
@@ -91,10 +101,20 @@ def run(root: Path = ROOT) -> dict:
         "t1_t2_scope": "ACTION_TCT_ONLY",
         "real_orders_enabled": False,
     }
+    ci_light_finalize_step = {
+        "status": ci_light_finalize_status,
+        "version": ci_light_finalize.VERSION,
+        **ci_light_final,
+        "decision_influence": False,
+        "score_influence": 0.0,
+        "real_orders_enabled": False,
+    }
     steps = dict(payload.get("steps") or {})
+    steps["ci_light_finalize"] = ci_light_finalize_step
     steps["market_orientation_upstream"] = market_step
     steps["tct_t1_t2_ci_context"] = tct_step
     timings = dict(payload.get("timings_seconds") or {})
+    timings["ci_light_finalize"] = round(float(ci_light_finalize_seconds), 6)
     timings["market_orientation_upstream"] = round(float(orientation_seconds), 6)
     timings["market_orientation_ci_publish"] = round(float(publish_seconds), 6)
     timings["tct_t1_t2_ci_publish"] = round(float(tct_publish_seconds), 6)
@@ -105,6 +125,7 @@ def run(root: Path = ROOT) -> dict:
         "market_orientation_version": market_orientation.VERSION,
         "market_orientation_scope": "DAILY_UPSTREAM_LIGHT_CONTEXT_ONLY",
         "market_orientation": market_step,
+        "ci_light_finalize": ci_light_finalize_step,
         "tct_t1_t2_ci_context": tct_step,
         "decision_logic_changed": False,
         "criteria_changed": False,
@@ -121,6 +142,7 @@ def run(root: Path = ROOT) -> dict:
         "market_orientation": market_step,
         "market_orientation_decision_influence": False,
         "market_orientation_score_influence": 0.0,
+        "ci_light_finalize": ci_light_finalize_step,
         "tct_t1_t2_context_version": tct_timing_ci.VERSION,
         "tct_t1_t2_context": tct_step,
         "tct_t1_t2_context_decision_influence": False,
