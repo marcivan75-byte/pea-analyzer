@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from time import perf_counter
 import json
@@ -18,7 +19,9 @@ def run(root: Path = ROOT) -> dict:
 
     WAVE09 remains disabled. Market orientation does not alter selection scoring or
     candidate decisions; it only gates entry review after the existing technical
-    trigger. Potential upside is an explanatory CI field, not a score component.
+    trigger. The three lightweight market sources run in one background branch while
+    the independent Weekly core executes, so their wall-clock latency is normally
+    hidden by the much longer core. Potential upside is explanatory only.
     """
     started = perf_counter()
     audit_dir = root / "outputs/audit"
@@ -27,9 +30,17 @@ def run(root: Path = ROOT) -> dict:
     market_payload: dict = {}
     watch_payload: dict = {}
     error = None
+    market_join_wait_seconds = None
+    market_overlap_started = False
     try:
-        market_payload = market_orientation_v22_2.run(root=root)
-        payload = core.run(root=root)
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="market-orientation-overlap") as pool:
+            market_future = pool.submit(market_orientation_v22_2.run, root=root)
+            market_overlap_started = True
+            payload = core.run(root=root)
+            wait_started = perf_counter()
+            market_payload = market_future.result()
+            market_join_wait_seconds = round(float(perf_counter() - wait_started), 6)
+
         watch_payload = ci_entry_watch_v22_2_1.run(root=root)
         if watch_payload.get("status") != "SUCCESS":
             raise RuntimeError(f"V22_2_1_CI_WATCH_FAILED:{watch_payload.get('status')}")
@@ -48,6 +59,9 @@ def run(root: Path = ROOT) -> dict:
             "error": error,
             "total_seconds": round(float(perf_counter() - started), 6),
             "market_orientation_total_seconds": market_payload.get("total_seconds"),
+            "market_orientation_overlaps_weekly_core": True,
+            "market_orientation_overlap_started": market_overlap_started,
+            "market_orientation_join_wait_seconds": market_join_wait_seconds,
             "market_orientation_us": orientation.get("us"),
             "market_orientation_europe": orientation.get("europe"),
             "market_orientation_global": orientation.get("global"),
