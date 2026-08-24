@@ -7,6 +7,7 @@ import json
 import traceback
 
 from v182.reporting import daily_ci_restitution_v21_15_7 as daily_ci
+from v182.reporting import daily_ci_light_v21_8_2 as ci_light
 from v182.reporting import daily_consolidated_runner_v21_15_5 as base
 from v182.reporting import daily_tactical_super_runner_v21_15_6 as tactical
 from v182.reporting import daily_w09_seed_v21_15_7 as w09_seed
@@ -189,8 +190,12 @@ def run(root: Path = ROOT) -> dict:
 
     base_status = str(payload.get("status") or "")
     ci_started = perf_counter()
+    light_started = None
     try:
         ci_payload = daily_ci.run(root=root)
+        light_started = perf_counter()
+        ci_light_payload = ci_light.run(root=root)
+        ci_light_seconds = perf_counter() - light_started
     except Exception as exc:
         _write_ci_failure_audit(root, exc, perf_counter() - ci_started)
         restore_provenance()
@@ -210,6 +215,7 @@ def run(root: Path = ROOT) -> dict:
 
     timings = dict(payload.get("timings_seconds") or {})
     timings["ci_restitution"] = round(float(ci_seconds), 6)
+    timings["ci_light_restitution"] = round(float(ci_light_seconds), 6)
     timings["provenance_compact_persist"] = round(float(provenance_stats.get("persist_wrapper_seconds", 0.0)), 6)
     timings["total"] = round(float(perf_counter() - started), 6)
     steps = dict(payload.get("steps") or {})
@@ -219,6 +225,17 @@ def run(root: Path = ROOT) -> dict:
         "selected_rows": ci_payload.get("selected_rows"),
         "word_output": ci_payload.get("word_output"),
         "excel_output": ci_payload.get("excel_output"),
+        "full_weighted_criteria_preserved": True,
+    }
+    steps["ci_light"] = {
+        "status": ci_light_payload.get("status"),
+        "version": ci_light_payload.get("version"),
+        "selected_rows": ci_light_payload.get("selected_rows"),
+        "selected_actions": ci_light_payload.get("selected_actions"),
+        "selected_etfs": ci_light_payload.get("selected_etfs"),
+        "csv_output": ci_light_payload.get("csv_output"),
+        "excel_sheet": ci_light_payload.get("excel_sheet"),
+        "score_or_decision_mutation": False,
     }
     steps["quarantine_deduplication"] = quarantine_stats
     steps["provenance_compact_cache"] = provenance_stats
@@ -234,6 +251,7 @@ def run(root: Path = ROOT) -> dict:
         "version": VERSION,
         "tactical_runtime_version": tactical.VERSION,
         "daily_ci_version": daily_ci.VERSION,
+        "daily_ci_light_version": ci_light.VERSION,
         "wave09_refresh_cadence": "WEEKLY_ONLY",
         "wave09_daily_network_calls": 0,
         "wave09_bootstrap_seed": w09_seed.audit_contract(),
@@ -241,6 +259,7 @@ def run(root: Path = ROOT) -> dict:
         "legacy_validated_w09_seed_used_only_when_fast_or_weekly_master_missing": True,
         "committee_model_reruns": 0,
         "committee_external_collection_calls": 0,
+        "ci_light_external_collection_calls": 0,
         "decision_logic_changed": False,
         "criteria_changed": False,
         "weights_changed": False,
