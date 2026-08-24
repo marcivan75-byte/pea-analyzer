@@ -4,7 +4,7 @@ from pathlib import Path
 from time import perf_counter
 import json
 
-from v182.reporting import waves
+from v182.reporting import committee_master_run, etf_mt_v2081_run, waves
 from v182.reporting import weekly_unified_super_runner_v21_16_2 as previous
 
 
@@ -21,16 +21,26 @@ def run(root: Path = ROOT) -> dict:
     no-op for this run. No WAVE09 observation is created, no stale WAVE09 value is
     injected, and downstream modules continue under their existing missing-data
     rules. The criteria registries, weights and thresholds are not modified.
+
+    V22 also repairs two identity adapters exposed by the V21.16.2 representative
+    run: the ETF MT ranking uses ``instrument_id`` as its canonical ISIN key while
+    selected-source enrichment and the Committee MT overlay historically expected
+    a physical ``isin`` column. The adapters materialize that exact same identifier;
+    no score, rank, selection, weight or threshold is recomputed or changed.
     """
     started = perf_counter()
     auditdir = root / "outputs" / "audit"
     auditdir.mkdir(parents=True, exist_ok=True)
 
     original_wave9 = waves.wave9_topdown
+    original_attach_context = etf_mt_v2081_run._attach_selected_source_context
+    original_overlay_etf_mt = committee_master_run.overlay_etf_mt
     state = {
         "calls": 0,
         "actions_rows_seen": 0,
         "etf_rows_seen": 0,
+        "etf_mt_isin_materializations": 0,
+        "committee_mt_isin_materializations": 0,
     }
 
     def wave9_disabled(actions_df, etf_df, cfg, fred_api_key=None):
@@ -50,7 +60,25 @@ def run(root: Path = ROOT) -> dict:
         }
         return [], [], diagnostics
 
+    def attach_context_with_canonical_isin(dynamic_snapshot, etf_with_tickers, root_arg):
+        frame = dynamic_snapshot.copy()
+        if "isin" not in frame.columns and "instrument_id" in frame.columns:
+            frame["isin"] = frame["instrument_id"]
+            state["etf_mt_isin_materializations"] += int(frame["isin"].notna().sum())
+        return original_attach_context(frame, etf_with_tickers, root_arg)
+
+    def overlay_etf_mt_with_canonical_isin(etf_frame, mt_ranking):
+        ranking = mt_ranking
+        if ranking is not None and not ranking.empty and "isin" not in ranking.columns and "instrument_id" in ranking.columns:
+            ranking = ranking.copy()
+            ranking["isin"] = ranking["instrument_id"]
+            state["committee_mt_isin_materializations"] += int(ranking["isin"].notna().sum())
+        return original_overlay_etf_mt(etf_frame, ranking)
+
     waves.wave9_topdown = wave9_disabled
+    etf_mt_v2081_run._attach_selected_source_context = attach_context_with_canonical_isin
+    committee_master_run.overlay_etf_mt = overlay_etf_mt_with_canonical_isin
+
     payload: dict = {}
     error: str | None = None
     try:
@@ -61,6 +89,8 @@ def run(root: Path = ROOT) -> dict:
         raise
     finally:
         waves.wave9_topdown = original_wave9
+        etf_mt_v2081_run._attach_selected_source_context = original_attach_context
+        committee_master_run.overlay_etf_mt = original_overlay_etf_mt
         audit = {
             "version": VERSION,
             "status": payload.get("status") if payload else "FAILED_EXCEPTION",
@@ -73,6 +103,11 @@ def run(root: Path = ROOT) -> dict:
             "wave09_actions_rows_seen": int(state["actions_rows_seen"]),
             "wave09_etf_rows_seen": int(state["etf_rows_seen"]),
             "wave09_reintroduction_policy": "PROGRESSIVE_SUBFUNCTIONS_AFTER_V22_BASELINE",
+            "etf_mt_identity_adapter_fixed": True,
+            "etf_mt_isin_materializations": int(state["etf_mt_isin_materializations"]),
+            "committee_mt_identity_adapter_fixed": True,
+            "committee_mt_isin_materializations": int(state["committee_mt_isin_materializations"]),
+            "identity_value_source": "EXACT_INSTRUMENT_ID",
             "criteria_registry_changed": False,
             "weights_changed": False,
             "thresholds_changed": False,
