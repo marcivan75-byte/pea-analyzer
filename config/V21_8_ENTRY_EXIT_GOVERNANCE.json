@@ -1,5 +1,5 @@
 {
-  "version": "V21.8_CHALLENGER_2026_08_16",
+  "version": "V21.8.2_INVESTING_ENTRY_EXIT_2026_08_24",
   "mode": "RESEARCH_AND_DECISION_SUPPORT_ONLY_NO_REAL_ORDERS",
   "selection": {
     "etf_mt_source": "V20.8.1_EXACT_38_DYNAMIC_PIT_CORE",
@@ -9,7 +9,7 @@
   },
   "entry_gate": {
     "states": ["ACTION", "WAIT", "TEMPORARY_REJECT"],
-    "mandatory_checks": ["OVEREXTENSION", "MOMENTUM_DECELERATION", "VOLATILITY", "TREND_STRUCTURE", "MARKET_REGIME"],
+    "mandatory_checks": ["OVEREXTENSION", "MOMENTUM_DECELERATION", "VOLATILITY", "TREND_STRUCTURE", "MARKET_REGIME", "INVESTING_HORIZON_CONFIRMATION"],
     "selected_decision_codes": ["BUY", "ACTION", "BUY_CANDIDATE"],
     "extreme_score_requires_overextension_review": true,
     "extreme_score_reference": 92.0,
@@ -17,6 +17,21 @@
     "numeric_entry_thresholds_promoted": false,
     "tct_requires_exact_t2_confirmation": true,
     "tct_t1_alone_never_opens_challenger_position": true
+  },
+  "investing_confirmation": {
+    "enabled": true,
+    "role": "STRONG_ENTRY_EXIT_TIMING_CONFIRMATION_NO_SELECTION_SCORE_MUTATION",
+    "horizon_mapping": {"TCT": "DAILY", "CT": "WEEKLY", "MT": "MONTHLY"},
+    "entry_confirming_states": ["BUY", "STRONG_BUY"],
+    "entry_wait_states": ["NEUTRAL"],
+    "entry_blocking_states": ["SELL", "STRONG_SELL"],
+    "missing_signal_policy": "FALLBACK_TO_INTERNAL_TIMING_WITH_EXPLICIT_MISSING_WARNING",
+    "sell_is_position_deterioration": true,
+    "strong_sell_is_major_deterioration": true,
+    "strong_sell_alone_can_exit": false,
+    "exit_still_requires_multifactor_and_temporal_confirmation": true,
+    "changes_selection_score": false,
+    "can_create_buy_candidate": false
   },
   "position_management": {
     "states": ["HOLD", "PROTECT", "EXIT", "EMERGENCY_EXIT"],
