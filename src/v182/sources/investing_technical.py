@@ -10,6 +10,7 @@ import math
 import re
 import unicodedata
 from typing import Callable
+from urllib.parse import quote_plus, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
 import pandas as pd
@@ -17,6 +18,7 @@ import pandas as pd
 from v182.sources.rate_limit import StartRateLimiter
 
 INVESTING_BASE = "https://fr.investing.com"
+INVESTING_SEARCH_BASE = "https://api.investing.com/api/search/v2/search"
 CACHE_VERSION = "INVESTING_TECHNICAL_V1"
 SIGNAL_SCORE = {"STRONG_SELL": -2, "SELL": -1, "NEUTRAL": 0, "BUY": 1, "STRONG_BUY": 2}
 
@@ -82,18 +84,13 @@ def _canon_signal(value: str) -> str | None:
 
 
 def parse_technical_summary_html(html: str) -> dict[str, object]:
-    """Extract Investing daily/weekly/monthly technical-summary recommendations.
-
-    The source exposes one of five states. We preserve the source verdict verbatim
-    as a canonical enum and add a small ordinal solely for comparison/reporting;
-    this module never changes a model selection score or threshold.
-    """
+    """Extract Investing daily/weekly/monthly technical-summary recommendations."""
     text = _visible_text(html)
     if not text:
         return {}
     state_pattern = r"(Strong Sell|Strong Buy|Sell|Buy|Neutral|Vente Forte|Achat Fort|Vente|Achat|Neutre|Vendi Adesso|Compra Adesso|Vendi|Compra|Neutrale)"
     patterns = {
-        "daily": rf"(?:Daily|Journalier|Giornaliero)\s+{state_pattern}",
+        "daily": rf"(?:Daily|Journalier|Giornalier|Giornaliero)\s+{state_pattern}",
         "weekly": rf"(?:Weekly|Hebdomadaire|Settimanale)\s+{state_pattern}",
         "monthly": rf"(?:Monthly|Mensuel|Mensile)\s+{state_pattern}",
     }
@@ -170,12 +167,174 @@ def _candidate_base_urls(row: object) -> list[str]:
 
 
 def _scoreboard_url(base_url: str) -> str:
-    base = str(base_url or "").split("?", 1)[0].rstrip("/")
+    parts = urlsplit(str(base_url or ""))
+    path = parts.path.rstrip("/")
     for suffix in ("-technical", "-scoreboard", "-chart", "-news"):
-        if base.endswith(suffix):
-            base = base[: -len(suffix)]
+        if path.endswith(suffix):
+            path = path[: -len(suffix)]
             break
-    return base + "-scoreboard"
+    return urlunsplit((parts.scheme, parts.netloc, path + "-scoreboard", parts.query, parts.fragment))
+
+
+def _technical_url(base_url: str) -> str:
+    parts = urlsplit(str(base_url or ""))
+    path = parts.path.rstrip("/")
+    for suffix in ("-technical", "-scoreboard", "-chart", "-news"):
+        if path.endswith(suffix):
+            path = path[: -len(suffix)]
+            break
+    return urlunsplit((parts.scheme, parts.netloc, path + "-technical", parts.query, parts.fragment))
+
+
+def _overview_url(base_url: str) -> str:
+    parts = urlsplit(str(base_url or ""))
+    path = parts.path.rstrip("/")
+    for suffix in ("-technical", "-scoreboard", "-chart", "-news"):
+        if path.endswith(suffix):
+            path = path[: -len(suffix)]
+            break
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
+
+
+def _quote_compatible(quote: dict, asset_class: str) -> bool:
+    url = str(quote.get("url") or "").lower()
+    qtype = str(quote.get("type") or "").lower()
+    asset = str(asset_class or "ACTION").upper()
+    if asset == "ETF":
+        return "/etfs/" in url or "etf" in qtype
+    return "/equities/" in url or any(token in qtype for token in ("stock", "equity", "share"))
+
+
+def _absolute_investing_url(value: object) -> str | None:
+    url = str(value or "").strip()
+    if not url:
+        return None
+    if url.startswith("https://fr.investing.com/"):
+        return url
+    if url.startswith("https://www.investing.com/"):
+        return INVESTING_BASE + url.split(".com", 1)[1]
+    if url.startswith("/"):
+        return INVESTING_BASE + url
+    return None
+
+
+def _search_exact_isin(
+    row: object,
+    isin: str,
+    *,
+    fetcher: Callable[..., object],
+    limiter: StartRateLimiter,
+    timeout_seconds: float,
+) -> tuple[str | None, dict]:
+    """Resolve Investing canonical URL through its public search endpoint using exact ISIN."""
+    target = str(isin or "").strip().upper()
+    if not target:
+        return None, {}
+    search_url = f"{INVESTING_SEARCH_BASE}?q={quote_plus(target)}"
+    try:
+        limiter.wait()
+        response = fetcher(search_url, timeout=timeout_seconds)
+        if hasattr(response, "raise_for_status"):
+            response.raise_for_status()
+        try:
+            payload = response.json()
+        except Exception:
+            payload = json.loads(str(getattr(response, "text", "") or "{}"))
+        quotes = payload.get("quotes") if isinstance(payload, dict) else None
+        if not isinstance(quotes, list):
+            return None, {}
+        asset = str(row.get("asset_class", "ACTION") if hasattr(row, "get") else "ACTION").upper()
+        compatible = [quote for quote in quotes if isinstance(quote, dict) and _quote_compatible(quote, asset)]
+        if not compatible:
+            return None, {}
+        ticker = str(row.get("yahoo_ticker", "") if hasattr(row, "get") else "").upper().split(".", 1)[0]
+        name = _slug(row.get("name", "") if hasattr(row, "get") else "")
+
+        def rank(item: dict) -> tuple[int, int, int]:
+            symbol = str(item.get("symbol") or "").upper()
+            description = _slug(item.get("description") or "")
+            url = str(item.get("url") or "")
+            return (
+                1 if ticker and symbol == ticker else 0,
+                1 if name and (name in description or description in name) else 0,
+                1 if "?" not in url else 0,
+            )
+
+        compatible.sort(key=rank, reverse=True)
+        best = compatible[0]
+        resolved = _absolute_investing_url(best.get("url"))
+        if not resolved:
+            return None, {}
+        metadata = {
+            "pair_id": best.get("id"),
+            "description": best.get("description"),
+            "symbol": best.get("symbol"),
+            "exchange": best.get("exchange"),
+            "quote_type": best.get("type"),
+            "search_url": search_url,
+        }
+        return resolved, metadata
+    except Exception:
+        return None, {}
+
+
+def _resolve_by_scoreboard_fallback(
+    row: object,
+    isin: str,
+    *,
+    fetcher: Callable[..., object],
+    limiter: StartRateLimiter,
+    timeout_seconds: float,
+) -> tuple[str | None, str | None]:
+    target = str(isin or "").strip().upper()
+    for candidate in _candidate_base_urls(row):
+        try:
+            check_url = _scoreboard_url(candidate)
+            limiter.wait()
+            response = fetcher(check_url, timeout=timeout_seconds)
+            if hasattr(response, "raise_for_status"):
+                response.raise_for_status()
+            html = str(getattr(response, "text", "") or "")
+            if not target or target not in html.upper():
+                continue
+            final = _overview_url(str(getattr(response, "url", check_url) or check_url))
+            return final, sha256(html.encode("utf-8", errors="replace")).hexdigest()
+        except Exception:
+            continue
+    return None, None
+
+
+def _resolve_base_url(
+    row: object,
+    isin: str,
+    *,
+    fetcher: Callable[..., object],
+    limiter: StartRateLimiter,
+    timeout_seconds: float,
+) -> tuple[str | None, dict]:
+    base_url, metadata = _search_exact_isin(
+        row,
+        isin,
+        fetcher=fetcher,
+        limiter=limiter,
+        timeout_seconds=timeout_seconds,
+    )
+    if base_url:
+        metadata["validation_method"] = "PUBLIC_SEARCH_EXACT_ISIN_QUERY"
+        return base_url, metadata
+    fallback, scoreboard_hash = _resolve_by_scoreboard_fallback(
+        row,
+        isin,
+        fetcher=fetcher,
+        limiter=limiter,
+        timeout_seconds=timeout_seconds,
+    )
+    if fallback:
+        return fallback, {
+            "validation_method": "PUBLIC_SCOREBOARD_EXACT_ISIN_FALLBACK",
+            "overview_sha256": scoreboard_hash,
+        }
+    return None, {}
 
 
 def _load(path: Path, version: str) -> dict:
@@ -200,51 +359,13 @@ def _save(path: Path, payload: dict) -> None:
 def _default_fetcher(url: str, *, timeout: float):
     import requests
 
-    return requests.get(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0 (compatible; PEA-Analyzer/21.15; selected-public-context)",
-            "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.7",
-        },
-        timeout=timeout,
-        allow_redirects=True,
-    )
-
-
-def _resolve_base_url(
-    row: object,
-    isin: str,
-    *,
-    fetcher: Callable[..., object],
-    limiter: StartRateLimiter,
-    timeout_seconds: float,
-) -> tuple[str | None, str | None]:
-    """Resolve safely through Investing's public scoreboard, which exposes ISIN.
-
-    Overview/technical pages do not reliably print ISIN in visible HTML. Requiring
-    it there caused valid URLs to be rejected. The scoreboard page is the identity
-    proof; only a candidate whose scoreboard contains the exact ISIN is accepted.
-    """
-    target = str(isin or "").strip().upper()
-    for candidate in _candidate_base_urls(row):
-        try:
-            check_url = _scoreboard_url(candidate)
-            limiter.wait()
-            response = fetcher(check_url, timeout=timeout_seconds)
-            if hasattr(response, "raise_for_status"):
-                response.raise_for_status()
-            html = str(getattr(response, "text", "") or "")
-            if not target or target not in html.upper():
-                continue
-            final = str(getattr(response, "url", check_url) or check_url).split("?", 1)[0].rstrip("/")
-            if final.endswith("-scoreboard"):
-                final = final[: -len("-scoreboard")]
-            elif final.endswith("-technical"):
-                final = final[: -len("-technical")]
-            return final, sha256(html.encode("utf-8", errors="replace")).hexdigest()
-        except Exception:
-            continue
-    return None, None
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; PEA-Analyzer/21.15; selected-public-context)",
+        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.7",
+    }
+    if url.startswith(INVESTING_SEARCH_BASE):
+        headers["Accept"] = "application/json, text/plain, */*"
+    return requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
 
 
 def collect_technical_context_cached(
@@ -285,7 +406,7 @@ def collect_technical_context_cached(
         mapped = mappings["entries"].get(isin, {})
         base_url = str(mapped.get("base_url") or "").strip()
         if not base_url:
-            base_url, overview_hash = _resolve_base_url(
+            base_url, resolution = _resolve_base_url(
                 row,
                 isin,
                 fetcher=fetch,
@@ -297,11 +418,11 @@ def collect_technical_context_cached(
             mappings["entries"][isin] = {
                 "base_url": base_url,
                 "validated_isin": isin,
-                "validation_method": "PUBLIC_SCOREBOARD_EXACT_ISIN",
+                "validation_method": resolution.get("validation_method"),
                 "resolved_at_utc": current.isoformat(),
-                "overview_sha256": overview_hash,
+                **{key: value for key, value in resolution.items() if key != "validation_method"},
             }
-        technical_url = base_url.rstrip("/") + "-technical"
+        technical_url = _technical_url(base_url)
         try:
             limiter.wait()
             response = fetch(technical_url, timeout=timeout_seconds)
@@ -309,11 +430,24 @@ def collect_technical_context_cached(
                 response.raise_for_status()
             html = str(getattr(response, "text", "") or "")
             fields = parse_technical_summary_html(html)
+            source_url = technical_url
+            if not fields:
+                overview_url = _overview_url(base_url)
+                limiter.wait()
+                overview_response = fetch(overview_url, timeout=timeout_seconds)
+                if hasattr(overview_response, "raise_for_status"):
+                    overview_response.raise_for_status()
+                overview_html = str(getattr(overview_response, "text", "") or "")
+                fields = parse_technical_summary_html(overview_html)
+                if fields:
+                    html = overview_html
+                    source_url = overview_url
             if not fields:
                 return isin, None, {"isin": isin, "source": "Investing.com", "reason": "NO_TECHNICAL_SUMMARY", "url": technical_url}
             return isin, {
                 "fetched_at_utc": current.isoformat(),
-                "source_url": technical_url,
+                "source_url": source_url,
+                "technical_url": technical_url,
                 "fields": fields,
                 "page_sha256": sha256(html.encode("utf-8", errors="replace")).hexdigest(),
             }, None
@@ -343,7 +477,7 @@ def collect_technical_context_cached(
         "raw_html_persisted": False,
         "decision_influence": False,
         "entry_exit_governance_influence": True,
-        "url_validation_method": "PUBLIC_SCOREBOARD_EXACT_ISIN",
+        "url_validation_method": "PUBLIC_SEARCH_EXACT_ISIN_QUERY_WITH_SCOREBOARD_FALLBACK",
     }
     mappings["updated_at_utc"] = current.isoformat()
     _save(cache_file, cache)
@@ -375,6 +509,11 @@ def collect_technical_context_cached(
                 "validation_status": "POST_SELECTION_ENTRY_EXIT_CONTEXT",
             })
 
+    methods = sorted({
+        str(entry.get("validation_method"))
+        for entry in mappings.get("entries", {}).values()
+        if isinstance(entry, dict) and entry.get("validation_method")
+    })
     return InvestingResult(
         observations=observations,
         failures=failures,
@@ -389,7 +528,8 @@ def collect_technical_context_cached(
             "decision_influence": False,
             "score_influence": 0.0,
             "entry_exit_governance_influence": True,
-            "url_validation_method": "PUBLIC_SCOREBOARD_EXACT_ISIN",
+            "url_validation_method": "PUBLIC_SEARCH_EXACT_ISIN_QUERY_WITH_SCOREBOARD_FALLBACK",
+            "resolved_validation_methods": methods,
             "raw_html_persisted": False,
         },
     )
