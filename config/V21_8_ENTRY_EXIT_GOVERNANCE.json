@@ -1,5 +1,5 @@
 {
-  "version": "V21.8.2_INVESTING_ENTRY_EXIT_2026_08_24",
+  "version": "V21.8.3_TRADINGVIEW_ENTRY_EXIT_2026_08_24",
   "mode": "RESEARCH_AND_DECISION_SUPPORT_ONLY_NO_REAL_ORDERS",
   "selection": {
     "etf_mt_source": "V20.8.1_EXACT_38_DYNAMIC_PIT_CORE",
@@ -9,7 +9,7 @@
   },
   "entry_gate": {
     "states": ["ACTION", "WAIT", "TEMPORARY_REJECT"],
-    "mandatory_checks": ["OVEREXTENSION", "MOMENTUM_DECELERATION", "VOLATILITY", "TREND_STRUCTURE", "MARKET_REGIME", "INVESTING_HORIZON_CONFIRMATION"],
+    "mandatory_checks": ["OVEREXTENSION", "MOMENTUM_DECELERATION", "VOLATILITY", "TREND_STRUCTURE", "MARKET_REGIME", "TRADINGVIEW_HORIZON_CONFIRMATION"],
     "selected_decision_codes": ["BUY", "ACTION", "BUY_CANDIDATE"],
     "extreme_score_requires_overextension_review": true,
     "extreme_score_reference": 92.0,
@@ -18,9 +18,10 @@
     "tct_requires_exact_t2_confirmation": true,
     "tct_t1_alone_never_opens_challenger_position": true
   },
-  "investing_confirmation": {
+  "tradingview_confirmation": {
     "enabled": true,
     "role": "STRONG_ENTRY_EXIT_TIMING_CONFIRMATION_NO_SELECTION_SCORE_MUTATION",
+    "implementation_source": "WEEKLY_VALIDATED_TRADINGVIEW_TECH_V22_2_3",
     "horizon_mapping": {"TCT": "DAILY", "CT": "WEEKLY", "MT": "MONTHLY"},
     "entry_confirming_states": ["BUY", "STRONG_BUY"],
     "entry_wait_states": ["NEUTRAL"],
