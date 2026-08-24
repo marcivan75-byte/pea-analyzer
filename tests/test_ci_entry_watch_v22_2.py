@@ -54,7 +54,9 @@ def test_ready_for_review_never_means_automatic_order():
 
 
 def test_state_cache_is_inside_existing_provenance_cache():
-    assert str(core.STATE_CACHE).startswith("state/provenance/")
+    # Governance paths are repository-relative and must remain portable across
+    # Linux runners and Windows audit workstations.
+    assert core.STATE_CACHE.as_posix().startswith("state/provenance/")
 
 
 def test_watch_run_enriches_core_without_rewriting_core_file(monkeypatch, tmp_path: Path):

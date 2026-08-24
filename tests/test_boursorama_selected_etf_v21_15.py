@@ -86,4 +86,27 @@ def test_selected_etf_cache_uses_two_ttls_and_no_raw_html(tmp_path: Path):
     assert len(calls) == first_calls == 2
     assert any(row["field"] == "boursorama_etf_aum_eur_m" for row in second.observations)
     assert any(row["field"] == "boursorama_etf_beta_1y" for row in second.observations)
+    assert all(len(row["page_sha256"]) == 64 for row in second.observations)
     assert "<html>" not in cache.read_text(encoding="utf-8")
+
+
+def test_etf_cache_is_invalidated_when_boursorama_code_changes(tmp_path: Path):
+    cache = tmp_path / "boursorama_etf.json"
+    now = datetime(2026, 8, 22, 20, 0, tzinfo=timezone.utc)
+
+    def fetcher(url, timeout):
+        return FakeResponse(ETF_RISK if "performances-risques" in url else ETF_SHEET)
+
+    first = pd.DataFrame(
+        [{"isin": "LU0000000001", "asset_class": "ETF", "horizon": "MT", "yahoo_ticker": "WPEA.PA"}]
+    )
+    changed = first.assign(yahoo_ticker="ESE.PA")
+    collect_selected_etf_context_cached(
+        first, cache, request_start_interval_seconds=0, fetcher=fetcher, now=now
+    )
+    result = collect_selected_etf_context_cached(
+        changed, cache, request_start_interval_seconds=0, fetcher=fetcher, now=now
+    )
+    assert result.metrics["refresh_requested"] == 1
+    assert any(row["reason"] == "CACHE_IDENTITY_CHANGED_REFRESH_REQUIRED" for row in result.failures)
+    assert all("/1rTESE/" in row["source_url"] for row in result.observations)
