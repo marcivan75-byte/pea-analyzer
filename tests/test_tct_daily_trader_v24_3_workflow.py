@@ -20,11 +20,17 @@ def test_v2431_runner_requires_no_new_market_download():
     assert "_completed_daily_history" in source
 
 
-def test_daily_workflow_runs_v2431_via_tactical_bundle_and_purges_old_cache():
+def test_daily_workflow_runs_v2431_via_consolidated_tactical_dag_and_purges_old_cache():
     workflow = (ROOT / ".github" / "workflows" / "committee_tct_ct_daily.yml").read_text(encoding="utf-8")
+    daily_entry = (ROOT / "src" / "v182" / "reporting" / "daily_consolidated_runner_v21_15_4.py").read_text(encoding="utf-8")
+    daily_impl = (ROOT / "src" / "v182" / "reporting" / "daily_consolidated_runner_v21_15_7.py").read_text(encoding="utf-8")
+    daily_tactical = (ROOT / "src" / "v182" / "reporting" / "daily_tactical_super_runner_v21_15_4.py").read_text(encoding="utf-8")
     bundle = (ROOT / "src" / "v182" / "reporting" / "tactical_shadow_bundle_run.py").read_text(encoding="utf-8")
-    assert "Action CT V22.0 V22.1 + TCT V24.3.1 shared-parquet SHADOW" in workflow
-    assert "python -m v182.reporting.tactical_shadow_bundle_run" in workflow
+
+    assert "python -m v182.reporting.daily_consolidated_runner_v21_15_4" in workflow
+    assert "daily_consolidated_runner_v21_15_7 as impl" in daily_entry
+    assert "daily_tactical_super_runner_v21_15_6 as tactical" in daily_impl
+    assert "tactical_shadow_bundle_run as tactical" in daily_tactical
     assert "tct_trader.run(root=root)" in bundle
     assert "ANDROID_TCT_DAILY_TRADER_SHADOW.md" in workflow
     assert "TCT_DAILY_TRADER_V24_3_1_AUDIT.json" in workflow

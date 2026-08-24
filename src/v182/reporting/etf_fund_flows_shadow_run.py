@@ -9,6 +9,12 @@ import time
 import pandas as pd
 
 from v182.features.etf_fund_flows_v1 import build_flow_computation, load_config
+from v182.reporting.fund_flow_same_day_reuse import (
+    load_same_day_reuse,
+    merge_reuse_entries,
+    successful_snapshot_entries,
+    write_same_day_reuse_marker,
+)
 from v182.sources.etf_fund_flows import (
     build_pea_flow_universe,
     collect_current_snapshot,
@@ -98,64 +104,83 @@ def _collect_snapshot_parallel(
     max_workers: int,
     chunk_size: int,
     delay_seconds: float,
-) -> tuple[pd.DataFrame,pd.DataFrame,dict]:
+) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """Run the existing validated collector in bounded independent chunks."""
-    started=time.perf_counter()
+    started = time.perf_counter()
     if universe.empty:
-        return pd.DataFrame(),pd.DataFrame(),{"mode":"EMPTY","runtime_seconds":0.0,"chunks":0,"workers":0}
-    size=max(1,int(chunk_size))
-    chunks=[universe.iloc[start:start+size].copy() for start in range(0,len(universe),size)]
-    workers=max(1,min(int(max_workers),len(chunks)))
-    snapshots=[]; failures=[]
+        return pd.DataFrame(), pd.DataFrame(), {"mode": "EMPTY", "runtime_seconds": 0.0, "chunks": 0, "workers": 0}
+    size = max(1, int(chunk_size))
+    chunks = [universe.iloc[start : start + size].copy() for start in range(0, len(universe), size)]
+    workers = max(1, min(int(max_workers), len(chunks)))
+    snapshots = []
+    failures = []
 
-    def _run_chunk(chunk: pd.DataFrame) -> tuple[pd.DataFrame,pd.DataFrame]:
-        ids=set(chunk["instrument_id"].astype(str))
-        official_chunk=official[official["instrument_id"].astype(str).isin(ids)].copy() if not official.empty else pd.DataFrame()
-        return collect_current_snapshot(chunk,official_input=official_chunk,delay_seconds=delay_seconds)
+    def _run_chunk(chunk: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+        ids = set(chunk["instrument_id"].astype(str))
+        official_chunk = (
+            official[official["instrument_id"].astype(str).isin(ids)].copy() if not official.empty else pd.DataFrame()
+        )
+        return collect_current_snapshot(chunk, official_input=official_chunk, delay_seconds=delay_seconds)
 
-    if workers==1:
+    if workers == 1:
         for chunk in chunks:
-            snap,fail=_run_chunk(chunk); snapshots.append(snap); failures.append(fail)
+            snap, fail = _run_chunk(chunk)
+            snapshots.append(snap)
+            failures.append(fail)
     else:
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures=[executor.submit(_run_chunk,chunk) for chunk in chunks]
+            futures = [executor.submit(_run_chunk, chunk) for chunk in chunks]
             for future in as_completed(futures):
-                snap,fail=future.result(); snapshots.append(snap); failures.append(fail)
-    snapshot_frames=[frame for frame in snapshots if frame is not None and not frame.empty]
-    failure_frames=[frame for frame in failures if frame is not None and not frame.empty]
-    snapshot=pd.concat(snapshot_frames,ignore_index=True,sort=False) if snapshot_frames else pd.DataFrame()
-    failed=pd.concat(failure_frames,ignore_index=True,sort=False) if failure_frames else pd.DataFrame()
-    elapsed=round(time.perf_counter()-started,3)
-    metrics={
-        "mode":"BOUNDED_PARALLEL_CHUNKS" if workers>1 else "SERIAL_FALLBACK",
-        "runtime_seconds":elapsed,
-        "universe_count":int(len(universe)),
-        "chunks":int(len(chunks)),
-        "chunk_size":size,
-        "workers":workers,
-        "request_start_delay_seconds_per_worker":float(delay_seconds),
-        "snapshot_rows":int(len(snapshot)),
-        "collection_failures":int(len(failed)),
-        "history_rebuilt":False,
-        "decision_logic_changed":False,
+                snap, fail = future.result()
+                snapshots.append(snap)
+                failures.append(fail)
+    snapshot_frames = [frame for frame in snapshots if frame is not None and not frame.empty]
+    failure_frames = [frame for frame in failures if frame is not None and not frame.empty]
+    snapshot = pd.concat(snapshot_frames, ignore_index=True, sort=False) if snapshot_frames else pd.DataFrame()
+    failed = pd.concat(failure_frames, ignore_index=True, sort=False) if failure_frames else pd.DataFrame()
+    elapsed = round(time.perf_counter() - started, 3)
+    metrics = {
+        "mode": "BOUNDED_PARALLEL_CHUNKS" if workers > 1 else "SERIAL_FALLBACK",
+        "runtime_seconds": elapsed,
+        "universe_count": int(len(universe)),
+        "chunks": int(len(chunks)),
+        "chunk_size": size,
+        "workers": workers,
+        "request_start_delay_seconds_per_worker": float(delay_seconds),
+        "snapshot_rows": int(len(snapshot)),
+        "collection_failures": int(len(failed)),
+        "history_rebuilt": False,
+        "decision_logic_changed": False,
     }
-    return snapshot,failed,metrics
+    return snapshot, failed, metrics
 
 
 def run(root: Path = ROOT) -> dict:
+    run_now = datetime.now(timezone.utc)
     cfg = load_config(root / "config" / "ETF_FUND_FLOW_V1_SHADOW.json")
     try:
-        master_cfg=json.loads((root/"config"/"V18.2_MASTER_CONFIG.json").read_text(encoding="utf-8"))
+        master_cfg = json.loads((root / "config" / "V18.2_MASTER_CONFIG.json").read_text(encoding="utf-8"))
     except Exception:
-        master_cfg={}
-    runtime_opt=master_cfg.get("runtime_optimization",{}).get("etf_fund_flows",{})
+        master_cfg = {}
+    runtime_opt = master_cfg.get("runtime_optimization", {}).get("etf_fund_flows", {})
     master, master_source = _read_pea_master(root)
     pea_universe = build_pea_flow_universe(master)
     external = load_external_flow_universe(root / "config" / "ETF_FUND_FLOW_EXTERNAL_UNIVERSE_V1.csv")
     universe = pd.concat([pea_universe, external], ignore_index=True, sort=False)
     if universe["instrument_id"].duplicated().any():
-        duplicates = sorted(universe.loc[universe["instrument_id"].duplicated(keep=False), "instrument_id"].astype(str).unique())
+        duplicates = sorted(
+            universe.loc[universe["instrument_id"].duplicated(keep=False), "instrument_id"].astype(str).unique()
+        )
         raise RuntimeError(f"ETF_FLOW_DUPLICATE_INSTRUMENT_ID:{','.join(duplicates[:20])}")
+
+    state_dir = root / "state" / "etf_fund_flows"
+    out_dir = root / "outputs" / "etf_fund_flows"
+    audit_dir = root / "outputs" / "audit"
+    gaps_dir = root / "outputs" / "gaps"
+    for directory in (state_dir, out_dir, audit_dir, gaps_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+    history_path = state_dir / "ETF_FUND_FLOW_OBSERVATIONS.csv"
+    reuse_marker_path = state_dir / "ETF_FUND_FLOW_SAME_DAY_REUSE_V1.json"
 
     official = load_official_observations(root / "inputs" / "ETF_FUND_FLOW_OFFICIAL_OBSERVATIONS.csv")
     known_ids = set(universe["instrument_id"].astype(str))
@@ -167,28 +192,64 @@ def run(root: Path = ROOT) -> dict:
             official_failures["stage"] = "OFFICIAL_INPUT"
             official_failures["reason"] = "UNKNOWN_INSTRUMENT_ID"
             official = official.loc[~unknown_mask].copy()
-    snapshot, failures, collection_metrics = _collect_snapshot_parallel(
+
+    reuse_enabled = bool(runtime_opt.get("reuse_previous_snapshot", False))
+    reusable_ids, prior_reuse_entries, reuse_metrics = load_same_day_reuse(
+        reuse_marker_path,
+        history_path,
         universe,
         official,
-        max_workers=int(runtime_opt.get("max_workers",8)),
-        chunk_size=int(runtime_opt.get("chunk_size",18)),
-        delay_seconds=float(runtime_opt.get("request_start_delay_seconds",0.08)),
+        enabled=reuse_enabled,
+        now=run_now,
     )
+    collection_universe = universe[~universe["instrument_id"].astype(str).isin(reusable_ids)].copy()
+    collection_official = (
+        official[official["instrument_id"].astype(str).isin(set(collection_universe["instrument_id"].astype(str)))].copy()
+        if not official.empty
+        else pd.DataFrame()
+    )
+    snapshot, failures, collection_metrics = _collect_snapshot_parallel(
+        collection_universe,
+        collection_official,
+        max_workers=int(runtime_opt.get("max_workers", 8)),
+        chunk_size=int(runtime_opt.get("chunk_size", 18)),
+        delay_seconds=float(runtime_opt.get("request_start_delay_seconds", 0.08)),
+    )
+    network_universe_count = int(collection_metrics.get("universe_count", len(collection_universe)))
+    collection_metrics.update(reuse_metrics)
+    collection_metrics["universe_count"] = int(len(universe))
+    collection_metrics["network_universe_count"] = network_universe_count
+    collection_metrics["network_instruments_avoided"] = int(len(reusable_ids))
+    if reusable_ids and collection_universe.empty:
+        collection_metrics["mode"] = "SAME_DAY_FULL_REUSE"
+    elif reusable_ids:
+        collection_metrics["mode"] = "SAME_DAY_PARTIAL_REUSE"
+
     failure_frames = [frame for frame in (official_failures, failures) if not frame.empty]
     failures = pd.concat(failure_frames, ignore_index=True, sort=False) if failure_frames else pd.DataFrame()
-    collection_metrics["collection_failures_total"]=int(len(failures))
+    collection_metrics["collection_failures_total"] = int(len(failures))
+    (audit_dir / "ETF_FUND_FLOW_COLLECTION_RUNTIME_V21_13_2.json").write_text(
+        json.dumps(collection_metrics, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
-    state_dir = root / "state" / "etf_fund_flows"
-    out_dir = root / "outputs" / "etf_fund_flows"
-    audit_dir = root / "outputs" / "audit"
-    gaps_dir = root / "outputs" / "gaps"
-    for directory in (state_dir, out_dir, audit_dir, gaps_dir):
-        directory.mkdir(parents=True, exist_ok=True)
-    (audit_dir/"ETF_FUND_FLOW_COLLECTION_RUNTIME_V21_13_2.json").write_text(json.dumps(collection_metrics,ensure_ascii=False,indent=2),encoding="utf-8")
-
-    history_path = state_dir / "ETF_FUND_FLOW_OBSERVATIONS.csv"
     history = _append_observation_history(history_path, snapshot)
     generated = datetime.now(timezone.utc).isoformat()
+    current_success_entries = successful_snapshot_entries(snapshot, failures)
+    reusable_entries = merge_reuse_entries(prior_reuse_entries, current_success_entries)
+
+    # Persist the network checkpoint immediately after the immutable history is
+    # safely written. If downstream computation/reporting fails, a same-day rerun
+    # reuses every successful instrument instead of repeating external collection.
+    marker_written = False
+    if reuse_enabled:
+        write_same_day_reuse_marker(
+            reuse_marker_path,
+            universe,
+            official,
+            reusable_entries,
+            now=run_now,
+        )
+        marker_written = True
 
     if history.empty:
         payload = {
@@ -198,6 +259,11 @@ def run(root: Path = ROOT) -> dict:
             "master_source": master_source,
             "universe_count": int(len(universe)),
             "current_snapshot_rows": 0,
+            "same_day_reused_instruments": int(len(reusable_ids)),
+            "same_day_reused_snapshot_rows": int(len(prior_reuse_entries)),
+            "network_collection_universe_count": int(len(collection_universe)),
+            "same_day_reuse_marker": str(reuse_marker_path.relative_to(root)),
+            "same_day_reuse_marker_written": marker_written,
             "collection_runtime": collection_metrics,
             "decision_influence": 0.0,
             "live_orders_enabled": False,
@@ -206,7 +272,9 @@ def run(root: Path = ROOT) -> dict:
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         if not failures.empty:
-            failures.to_csv(gaps_dir / "ETF_FUND_FLOW_COLLECTION_FAILURES.csv", sep=";", index=False, encoding="utf-8-sig")
+            failures.to_csv(
+                gaps_dir / "ETF_FUND_FLOW_COLLECTION_FAILURES.csv", sep=";", index=False, encoding="utf-8-sig"
+            )
         return payload
 
     result = build_flow_computation(history, cfg)
@@ -231,7 +299,9 @@ def run(root: Path = ROOT) -> dict:
     _write_markdown(result.instruments, result.rotations, result.diagnostics, mobile_path)
 
     if not failures.empty:
-        failures.to_csv(gaps_dir / "ETF_FUND_FLOW_COLLECTION_FAILURES.csv", sep=";", index=False, encoding="utf-8-sig")
+        failures.to_csv(
+            gaps_dir / "ETF_FUND_FLOW_COLLECTION_FAILURES.csv", sep=";", index=False, encoding="utf-8-sig"
+        )
 
     payload = dict(result.diagnostics)
     payload.update(
@@ -243,6 +313,12 @@ def run(root: Path = ROOT) -> dict:
             "pea_universe_count": int(len(pea_universe)),
             "external_universe_count": int(len(external)),
             "current_snapshot_rows": int(len(snapshot)),
+            "same_day_reused_instruments": int(len(reusable_ids)),
+            "same_day_reused_snapshot_rows": int(len(prior_reuse_entries)),
+            "effective_snapshot_rows": int(len(snapshot) + len(prior_reuse_entries)),
+            "network_collection_universe_count": int(len(collection_universe)),
+            "same_day_reuse_marker": str(reuse_marker_path.relative_to(root)),
+            "same_day_reuse_marker_written": marker_written,
             "collection_failures": int(len(failures)),
             "collection_runtime": collection_metrics,
             "state_history_path": str(history_path.relative_to(root)),

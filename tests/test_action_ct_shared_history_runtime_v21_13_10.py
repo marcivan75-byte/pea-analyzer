@@ -71,21 +71,33 @@ def test_v220_v221_share_same_governed_history_contract():
         assert cfg0["data_policy"][field] == cfg1["data_policy"][field]
 
 
-def test_daily_and_weekly_workflows_keep_v211310_bundle_inside_tactical_bundle():
-    daily = (ROOT / ".github" / "workflows" / "committee_tct_ct_daily.yml").read_text(encoding="utf-8")
-    weekly = (ROOT / ".github" / "workflows" / "committee_master_daily.yml").read_text(encoding="utf-8")
+def test_daily_and_weekly_keep_v211310_bundle_through_super_runners():
+    daily_workflow = (ROOT / ".github" / "workflows" / "committee_tct_ct_daily.yml").read_text(encoding="utf-8")
+    daily_entry = (ROOT / "src" / "v182" / "reporting" / "daily_consolidated_runner_v21_15_4.py").read_text(encoding="utf-8")
+    daily_impl = (ROOT / "src" / "v182" / "reporting" / "daily_consolidated_runner_v21_15_7.py").read_text(encoding="utf-8")
+    daily_tactical = (ROOT / "src" / "v182" / "reporting" / "daily_tactical_super_runner_v21_15_4.py").read_text(encoding="utf-8")
+    weekly_workflow = (ROOT / ".github" / "workflows" / "committee_master_daily.yml").read_text(encoding="utf-8")
+    weekly_tail = (ROOT / "src" / "v182" / "reporting" / "weekly_tail_super_runner_v21_16_0.py").read_text(encoding="utf-8")
     tactical = (ROOT / "src" / "v182" / "reporting" / "tactical_shadow_bundle_run.py").read_text(encoding="utf-8")
     postmarket = (ROOT / "src" / "v182" / "reporting" / "tct_postmarket_bundle_run.py").read_text(encoding="utf-8")
 
-    for workflow in (daily, weekly):
-        assert workflow.count("python -m v182.reporting.tactical_shadow_bundle_run") == 1
-        assert workflow.count("python -m v182.reporting.tct_postmarket_bundle_run") == 1
-        assert "python -m v182.reporting.action_ct_shadow_run_v22_0" not in workflow
-        assert "python -m v182.reporting.action_ct_shadow_run_v22_1" not in workflow
+    assert "python -m v182.reporting.daily_consolidated_runner_v21_15_4" in daily_workflow
+    assert "daily_consolidated_runner_v21_15_7 as impl" in daily_entry
+    assert "daily_tactical_super_runner_v21_15_6 as tactical" in daily_impl
+    assert "tactical_shadow_bundle_run as tactical" in daily_tactical
+    assert "tct_postmarket_bundle_run as postmarket" in daily_tactical
+
+    assert "python -m v182.reporting.weekly_tail_super_runner_v21_16_0" in weekly_workflow
+    assert "tactical_shadow_bundle_run as tactical" in weekly_tail
+    assert "tct_postmarket_bundle_run as postmarket" in weekly_tail
 
     assert "action_ct_bundle.run(root=root)" in tactical
     assert 'catalyst.run(root=root, phase="POSTMARKET")' in postmarket
-    assert "ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json" in daily
+    assert "ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json" in daily_workflow
+
+    for workflow in (daily_workflow, weekly_workflow):
+        assert "python -m v182.reporting.action_ct_shadow_run_v22_0" not in workflow
+        assert "python -m v182.reporting.action_ct_shadow_run_v22_1" not in workflow
 
 
 def test_bundle_source_preserves_model_order_and_separate_failure_containment():

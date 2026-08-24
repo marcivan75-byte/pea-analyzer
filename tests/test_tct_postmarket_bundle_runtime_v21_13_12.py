@@ -41,6 +41,12 @@ def test_postmarket_bundle_preserves_exact_step_order_and_phase(monkeypatch, tmp
 
     assert calls == ["OHLC", "CATALYST", "LINEAGE", "VALIDATOR"]
     assert payload["status"] == "SUCCESS_POSTMARKET_SINGLE_PROCESS"
+    assert payload["step_order"] == [
+        "PIT_OHLC_V24.4.2",
+        "POSTMARKET_CATALYST_V24.4.2",
+        "PIT_LINEAGE_V24.4.2",
+        "PIT_VALIDATOR_V24.4.2",
+    ]
     assert payload["postmarket_phase_explicit"] is True
     assert payload["previous_python_processes"] == 4
     assert payload["current_python_processes"] == 1
@@ -86,7 +92,16 @@ def test_postmarket_bundle_attempts_later_steps_after_prior_failure(monkeypatch,
 def test_daily_and_weekly_use_single_postmarket_process_but_preopen_stays_autonomous():
     daily = (ROOT / ".github/workflows/committee_tct_ct_daily.yml").read_text(encoding="utf-8")
     weekly = (ROOT / ".github/workflows/committee_master_daily.yml").read_text(encoding="utf-8")
+    daily_tactical = (ROOT / "src/v182/reporting/daily_tactical_super_runner_v21_15_4.py").read_text(encoding="utf-8")
+    weekly_tail = (ROOT / "src/v182/reporting/weekly_tail_super_runner_v21_16_0.py").read_text(encoding="utf-8")
     preopen = (ROOT / ".github/workflows/tct_next_session_context.yml").read_text(encoding="utf-8")
+
+    assert "python -m v182.reporting.daily_consolidated_runner_v21_15_4" in daily
+    assert "tct_postmarket_bundle_run as postmarket" in daily_tactical
+    assert "lambda: postmarket.run(root=root)" in daily_tactical
+    assert "python -m v182.reporting.weekly_tail_super_runner_v21_16_0" in weekly
+    assert "tct_postmarket_bundle_run as postmarket" in weekly_tail
+    assert "lambda: postmarket.run(root=root)" in weekly_tail
 
     direct = (
         "python -m v182.reporting.tct_pit_ohlc_ledger_v24_4_2",
@@ -95,7 +110,6 @@ def test_daily_and_weekly_use_single_postmarket_process_but_preopen_stays_autono
         "python -m v182.reporting.tct_v24_4_2_pit_validator",
     )
     for workflow in (daily, weekly):
-        assert workflow.count("python -m v182.reporting.tct_postmarket_bundle_run") == 1
         for command in direct:
             assert command not in workflow
         assert "POSTMARKET_BUNDLE_RUNTIME_V21_13_12.json" in workflow
@@ -121,7 +135,8 @@ def test_bundle_changes_runtime_only_not_financial_or_pit_contract():
         '"real_orders_enabled": False',
     ):
         assert invariant in source
-    assert 'catalyst.run(root=root, phase="POSTMARKET")' in source
-    assert source.index("ohlc_ledger.run(root=root)") < source.index('catalyst.run(root=root, phase="POSTMARKET")')
-    assert source.index('catalyst.run(root=root, phase="POSTMARKET")') < source.index("lineage.run(root=root)")
-    assert source.index("lineage.run(root=root)") < source.index("validator.run(root=root)")
+
+    specifications = source.split("specifications: list[tuple[str, Callable[[], dict]]] = [", 1)[1].split("]", 1)[0]
+    assert specifications.index("ohlc_ledger.run(root=root)") < specifications.index('catalyst.run(root=root, phase="POSTMARKET")')
+    assert specifications.index('catalyst.run(root=root, phase="POSTMARKET")') < specifications.index("_run_lineage_dtype_safe(root)")
+    assert specifications.index("_run_lineage_dtype_safe(root)") < specifications.index("validator.run(root=root)")

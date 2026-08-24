@@ -1,0 +1,42 @@
+{
+  "as_of": "2026-08-23",
+  "country_macro_by_country_yf": {
+    "Austria": 51.4989,
+    "Belgium": 46.792,
+    "Cyprus": 52.7625,
+    "Denmark": 84.2213,
+    "Finland": 69.0469,
+    "France": 49.9546,
+    "Germany": 52.5658,
+    "Ireland": 72.2895,
+    "Italy": 49.0639,
+    "Luxembourg": 54.4653,
+    "Netherlands": 50.26,
+    "Norway": 55.6077,
+    "Portugal": 56.5865,
+    "Spain": 54.5626,
+    "Sweden": 61.3502,
+    "United States": 52.7503
+  },
+  "country_news_by_country_yf": {
+    "Germany": 50.0,
+    "Greece": 32.3223,
+    "Italy": 50.0,
+    "Malta": 37.5
+  },
+  "funnel_global_macro_score": 64.4034,
+  "funnel_market_sentiment_score": 52.8504,
+  "instrument_news_by_isin": {
+    "FR0010208488": 75.0,
+    "NL0010273215": 62.5,
+    "NL0010832176": 62.5,
+    "NO0010096985": 57.2169
+  },
+  "sector_news_by_sector_yf": {
+    "Energy": 89.5285,
+    "Industrials": 100.0
+  },
+  "sentiment_regime_score": 52.8504,
+  "source_run_id": 32626511307,
+  "version": "W09_ACTION_SEED_V1"
+}
