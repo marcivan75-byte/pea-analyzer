@@ -39,6 +39,8 @@ jobs:
               "EURONEXT:BNP",
               "EURONEXT:RNO",
               "MIL:STLAM",
+              "OMXSTO:HM_B",
+              "EURONEXT:EDEU",
           ]
           results = []
           headers = {
@@ -53,7 +55,12 @@ jobs:
                   response = requests.get(url, headers=headers, timeout=20, allow_redirects=True)
                   item["http_status"] = response.status_code
                   item["bytes"] = len(response.content)
-                  item["identity_proven"] = f"/chart/?symbol={symbol}" in response.text
+                  item["identity_proven"] = any(marker in response.text for marker in (
+                      f"/chart/?symbol={symbol}",
+                      f'"pro_symbol":"{symbol}"',
+                      f'"resolved_symbol":"{symbol}"',
+                      f'"primary_name":"{symbol}"',
+                  ))
                   fields = parse_technical_summary_html(response.text)
                   item["daily"] = fields.get("tradingview_daily_signal")
                   item["weekly"] = fields.get("tradingview_weekly_signal")
