@@ -1,4 +1,4 @@
-trigger: 2026-08-24T19:24:00+02:00
-purpose: validate-investing-multipage-identity-morningstar-3-or-4
+trigger: 2026-08-24T19:38:00+02:00
+purpose: validate-investing-reader-snapshot-and-morningstar-positive-proof
 run_validation: false
-revision: 5
+revision: 6
