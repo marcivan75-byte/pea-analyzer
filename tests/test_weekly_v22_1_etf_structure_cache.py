@@ -84,10 +84,13 @@ def test_v22_1_does_not_cache_failed_http_request(monkeypatch, tmp_path: Path) -
     monkeypatch.setattr(etf_inception_data, "_get", inception_get)
 
     def fake_previous_run(root):
+        caught = False
         try:
             etf_structural_data._get(object(), url)
-        except TimeoutError:
-            pass
+        except TimeoutError as exc:
+            caught = True
+            assert str(exc) == "first request failed"
+        assert caught is True
         response = etf_inception_data._get(object(), url)
         assert response.content == b"recovered"
         return {"status": "SUCCESS"}
