@@ -1,4 +1,4 @@
-trigger: 2026-08-24T16:31:00+02:00
-purpose: validate-investing-scoreboard-resolution-v21-8-2
-run_validation: false
-revision: 2
+trigger: 2026-08-24T16:49:00+02:00
+purpose: validate-ci-light-boursorama-investing-v21-8-2
+run_validation: true
+revision: 3
