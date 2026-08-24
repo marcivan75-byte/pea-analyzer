@@ -83,11 +83,13 @@ jobs:
           pip install pytest
           python -m compileall -q \
             src/v182/reporting/ci_entry_confidence_v22_2.py \
+            src/v182/reporting/market_orientation_v22_2.py \
             src/v182/reporting/weekly_unified_super_runner_v22_2.py \
             src/v182/reporting/etf_structure_refresh.py
           pytest -q \
             tests/test_ci_entry_confidence_v22_2.py \
             tests/test_ci_entry_watch_v22_2.py \
+            tests/test_market_orientation_v22_2.py \
             tests/test_weekly_v22_1_runtime_overlap.py \
             tests/test_weekly_v22_no_wave09.py
 
@@ -104,6 +106,7 @@ jobs:
             outputs/audit/WEEKLY_UNIFIED_SUPER_RUNTIME_V22_2.json \
             outputs/audit/WEEKLY_UNIFIED_SUPER_RUNTIME_V22_1.json \
             outputs/audit/WEEKLY_UNIFIED_SUPER_RUNTIME_V22.json \
+            outputs/audit/MARKET_ORIENTATION_V22_2.json \
             outputs/audit/V21_10_ETF_STRUCTURAL_DATA.json \
             outputs/audit/V21_15_ETF_STRUCTURE_STATE_REPLAY.json \
             outputs/audit/V21_15_ETF_STRUCTURE_STATE_WRITE.json \
