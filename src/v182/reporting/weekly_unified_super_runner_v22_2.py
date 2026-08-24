@@ -15,7 +15,7 @@ AUDIT_NAME = "WEEKLY_UNIFIED_SUPER_RUNTIME_V22_2.json"
 
 
 def run(root: Path = ROOT) -> dict:
-    """V22.2 = V22.1 runtime gains + CI watch + cadence-aware slow-data cache."""
+    """V22.2 = V22.1 runtime gains + CI watch + cadence-aware delta cache."""
     started = perf_counter()
     audit_dir = root / "outputs/audit"
     audit_dir.mkdir(parents=True, exist_ok=True)
@@ -28,23 +28,14 @@ def run(root: Path = ROOT) -> dict:
     original_inception = etf_structure_refresh.collect_etf_inception_data
     original_fund_structure = etf_structure_refresh.collect_fund_structure
 
-    etf_structure_refresh.collect_etf_structural_data = slow_cache.cached_call(
-        original_structural,
-        slow_cache.ETF_STRUCTURAL,
-        root=root,
-        metrics=slow_metrics,
+    etf_structure_refresh.collect_etf_structural_data = slow_cache.cached_etf_frame_collector(
+        original_structural, slow_cache.ETF_STRUCTURAL, root=root, metrics=slow_metrics
     )
-    etf_structure_refresh.collect_etf_inception_data = slow_cache.cached_call(
-        original_inception,
-        slow_cache.ETF_INCEPTION,
-        root=root,
-        metrics=slow_metrics,
+    etf_structure_refresh.collect_etf_inception_data = slow_cache.cached_etf_frame_collector(
+        original_inception, slow_cache.ETF_INCEPTION, root=root, metrics=slow_metrics
     )
-    etf_structure_refresh.collect_fund_structure = slow_cache.cached_call(
-        original_fund_structure,
-        slow_cache.ETF_FUND_STRUCTURE,
-        root=root,
-        metrics=slow_metrics,
+    etf_structure_refresh.collect_fund_structure = slow_cache.cached_ticker_collector(
+        original_fund_structure, slow_cache.ETF_FUND_STRUCTURE, root=root, metrics=slow_metrics
     )
 
     try:
