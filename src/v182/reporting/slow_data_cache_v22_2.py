@@ -12,7 +12,7 @@ from typing import Any, Callable
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[3]
-CACHE_VERSION = "V22_2_SLOW_DATA_CACHE_V1"
+CACHE_VERSION = "V22_2_SLOW_DATA_CACHE_V2"
 
 
 @dataclass(frozen=True)
@@ -31,49 +31,26 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _safe_key(value: object) -> str:
+    text = str(value or "").strip()
+    return sha256(text.encode("utf-8")).hexdigest()[:24]
+
+
 def _cache_dir(root: Path, policy: CachePolicy) -> Path:
     path = root / "state" / "slow_data_cache" / policy.name
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def _frame_identity(frame: pd.DataFrame) -> str:
-    cols = [c for c in ("isin", "provider", "yahoo_ticker") if c in frame.columns]
-    if not cols:
-        return f"rows={len(frame)}"
-    normalized = frame[cols].copy()
-    for col in cols:
-        normalized[col] = normalized[col].astype(str).fillna("")
-    normalized = normalized.sort_values(cols, kind="stable").reset_index(drop=True)
-    return normalized.to_csv(index=False, lineterminator="\n")
-
-
-def _args_fingerprint(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str:
-    parts: list[str] = []
-    for arg in args:
-        if isinstance(arg, pd.DataFrame):
-            parts.append("DF:" + _frame_identity(arg))
-        elif isinstance(arg, (list, tuple, set)):
-            parts.append("SEQ:" + "|".join(sorted(str(x) for x in arg)))
-        else:
-            parts.append(f"ARG:{type(arg).__name__}:{str(arg)}")
-    for key in sorted(kwargs):
-        value = kwargs[key]
-        if key in {"today", "delay_seconds"}:
-            continue
-        parts.append(f"KW:{key}:{str(value)}")
-    return sha256("\n".join(parts).encode("utf-8")).hexdigest()
-
-
-def _paths(root: Path, policy: CachePolicy, fingerprint: str) -> tuple[Path, Path]:
-    base = _cache_dir(root, policy) / fingerprint
+def _paths(root: Path, policy: CachePolicy, key: str) -> tuple[Path, Path]:
+    base = _cache_dir(root, policy) / _safe_key(key)
     return base.with_suffix(".pkl"), base.with_suffix(".json")
 
 
-def _load(root: Path, policy: CachePolicy, fingerprint: str) -> tuple[bool, Any, dict[str, Any]]:
-    data_path, meta_path = _paths(root, policy, fingerprint)
+def _load_record(root: Path, policy: CachePolicy, key: str) -> tuple[bool, list[dict], dict[str, Any]]:
+    data_path, meta_path = _paths(root, policy, key)
     if not data_path.exists() or not meta_path.exists():
-        return False, None, {"reason": "MISS_NOT_FOUND"}
+        return False, [], {"reason": "MISS_NOT_FOUND", "key": key}
     try:
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         collected = datetime.fromisoformat(str(meta["collected_at_utc"]))
@@ -81,67 +58,173 @@ def _load(root: Path, policy: CachePolicy, fingerprint: str) -> tuple[bool, Any,
             collected = collected.replace(tzinfo=timezone.utc)
         expires = collected + timedelta(days=policy.ttl_days)
         if _utcnow() >= expires:
-            return False, None, {**meta, "reason": "MISS_EXPIRED", "expires_at_utc": expires.isoformat()}
+            return False, [], {**meta, "reason": "MISS_EXPIRED", "expires_at_utc": expires.isoformat()}
         with data_path.open("rb") as handle:
-            value = pickle.load(handle)
-        return True, value, {**meta, "reason": "HIT", "expires_at_utc": expires.isoformat()}
+            observations = pickle.load(handle)
+        if not isinstance(observations, list):
+            raise TypeError("CACHE_PAYLOAD_NOT_LIST")
+        return True, observations, {**meta, "reason": "HIT", "expires_at_utc": expires.isoformat()}
     except Exception as exc:
-        return False, None, {"reason": "MISS_CORRUPT", "detail": f"{type(exc).__name__}:{str(exc)[:180]}"}
+        return False, [], {"reason": "MISS_CORRUPT", "key": key, "detail": f"{type(exc).__name__}:{str(exc)[:180]}"}
 
 
-def _save(root: Path, policy: CachePolicy, fingerprint: str, value: Any) -> dict[str, Any]:
-    data_path, meta_path = _paths(root, policy, fingerprint)
+def _save_record(root: Path, policy: CachePolicy, key: str, observations: list[dict]) -> dict[str, Any]:
+    data_path, meta_path = _paths(root, policy, key)
     collected = _utcnow()
     tmp = data_path.with_suffix(".tmp")
     with tmp.open("wb") as handle:
-        pickle.dump(value, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        pickle.dump(observations, handle, protocol=pickle.HIGHEST_PROTOCOL)
     tmp.replace(data_path)
     meta = {
         "version": CACHE_VERSION,
         "policy": policy.name,
         "cadence": policy.cadence,
         "ttl_days": policy.ttl_days,
-        "fingerprint": fingerprint,
+        "instrument_key": key,
         "collected_at_utc": collected.isoformat(),
         "next_refresh_utc": (collected + timedelta(days=policy.ttl_days)).isoformat(),
+        "observation_count": len(observations),
     }
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     return meta
 
 
-def cached_call(
-    original: Callable[..., Any],
+def _slot(metrics: dict[str, Any] | None, policy: CachePolicy) -> dict[str, Any] | None:
+    if metrics is None:
+        return None
+    return metrics.setdefault(policy.name, {
+        "instrument_hits": 0,
+        "instrument_misses": 0,
+        "instrument_saved": 0,
+        "instrument_failures_not_cached": 0,
+        "network_instruments_requested": 0,
+        "cached_observations_reused": 0,
+        "fresh_observations": 0,
+        "refresh_seconds": 0.0,
+    })
+
+
+def cached_etf_frame_collector(
+    original: Callable[..., tuple[list[dict], list[dict], dict[str, Any]]],
     policy: CachePolicy,
     *,
     root: Path = ROOT,
     metrics: dict[str, Any] | None = None,
-) -> Callable[..., Any]:
-    """Reuse an exact collector result until its governed cadence expires.
+) -> Callable[..., tuple[list[dict], list[dict], dict[str, Any]]]:
+    """Cache successful ETF collector observations per ISIN and refresh only due ISINs."""
+    def wrapped(frame: pd.DataFrame, *args, **kwargs):
+        if "isin" not in frame.columns:
+            return original(frame, *args, **kwargs)
+        slot = _slot(metrics, policy)
+        keys = [str(x).strip() for x in frame["isin"].dropna().astype(str).unique() if str(x).strip()]
+        cached_obs: list[dict] = []
+        due: list[str] = []
+        for key in keys:
+            hit, observations, _ = _load_record(root, policy, key)
+            if hit:
+                cached_obs.extend(observations)
+                if slot is not None:
+                    slot["instrument_hits"] += 1
+                    slot["cached_observations_reused"] += len(observations)
+            else:
+                due.append(key)
+                if slot is not None:
+                    slot["instrument_misses"] += 1
+        if not due:
+            collector_metrics = {
+                "status": "CACHE_ONLY",
+                "requested": 0,
+                "cache_hits": len(keys),
+                "cache_misses": 0,
+                "cadence": policy.cadence,
+                "ttl_days": policy.ttl_days,
+            }
+            return cached_obs, [], collector_metrics
 
-    Cache identity follows the instrument/provider worklist, not the run date. Failed
-    calls are never cached. The cached value is returned byte-for-byte from pickle,
-    preserving collector semantics and evidence metadata.
-    """
-    def wrapped(*args, **kwargs):
-        fingerprint = _args_fingerprint(args, kwargs)
+        due_frame = frame[frame["isin"].astype(str).isin(set(due))].copy()
         started = perf_counter()
-        hit, value, diag = _load(root, policy, fingerprint)
-        if metrics is not None:
-            metrics.setdefault(policy.name, {"hits": 0, "misses": 0, "saved": 0, "seconds_saved_estimate": 0.0, "last": {}})
-            slot = metrics[policy.name]
-            slot["last"] = diag
-        if hit:
-            if metrics is not None:
-                slot["hits"] += 1
-            return value
-        if metrics is not None:
-            slot["misses"] += 1
-        value = original(*args, **kwargs)
-        meta = _save(root, policy, fingerprint, value)
-        if metrics is not None:
-            slot["saved"] += 1
-            slot["last"] = {**meta, "reason": "MISS_REFRESHED", "refresh_seconds": round(perf_counter() - started, 6)}
-        return value
+        fresh_obs, failures, collector_metrics = original(due_frame, *args, **kwargs)
+        elapsed = perf_counter() - started
+        failure_keys = {str(row.get("isin") or "").strip() for row in failures}
+        grouped: dict[str, list[dict]] = {}
+        for obs in fresh_obs:
+            key = str(obs.get("isin") or "").strip()
+            if key:
+                grouped.setdefault(key, []).append(obs)
+        for key, observations in grouped.items():
+            if key in failure_keys:
+                if slot is not None:
+                    slot["instrument_failures_not_cached"] += 1
+                continue
+            _save_record(root, policy, key, observations)
+            if slot is not None:
+                slot["instrument_saved"] += 1
+        if slot is not None:
+            slot["network_instruments_requested"] += len(due)
+            slot["fresh_observations"] += len(fresh_obs)
+            slot["refresh_seconds"] = round(float(slot["refresh_seconds"]) + elapsed, 6)
+            slot["instrument_failures_not_cached"] += len(failure_keys - set(grouped))
+        merged_metrics = dict(collector_metrics or {})
+        merged_metrics.update({
+            "cache_hits": len(keys) - len(due),
+            "cache_misses": len(due),
+            "network_requested_after_cache": len(due),
+            "cadence": policy.cadence,
+            "ttl_days": policy.ttl_days,
+        })
+        return cached_obs + list(fresh_obs), list(failures), merged_metrics
+    return wrapped
+
+
+def cached_ticker_collector(
+    original: Callable[..., tuple[list[dict], list[dict]]],
+    policy: CachePolicy,
+    *,
+    root: Path = ROOT,
+    metrics: dict[str, Any] | None = None,
+) -> Callable[..., tuple[list[dict], list[dict]]]:
+    """Cache successful ticker observations individually; failed tickers always remain due."""
+    def wrapped(tickers: list[str], *args, **kwargs):
+        slot = _slot(metrics, policy)
+        keys = sorted({str(x).strip() for x in tickers if str(x).strip()})
+        cached_obs: list[dict] = []
+        due: list[str] = []
+        for key in keys:
+            hit, observations, _ = _load_record(root, policy, key)
+            if hit:
+                cached_obs.extend(observations)
+                if slot is not None:
+                    slot["instrument_hits"] += 1
+                    slot["cached_observations_reused"] += len(observations)
+            else:
+                due.append(key)
+                if slot is not None:
+                    slot["instrument_misses"] += 1
+        if not due:
+            return cached_obs, []
+        started = perf_counter()
+        fresh_obs, failures = original(due, *args, **kwargs)
+        elapsed = perf_counter() - started
+        failure_keys = {str(row.get("ticker") or "").strip() for row in failures}
+        grouped: dict[str, list[dict]] = {}
+        for obs in fresh_obs:
+            key = str(obs.get("ticker") or "").strip()
+            if key:
+                grouped.setdefault(key, []).append(obs)
+        for key, observations in grouped.items():
+            if key in failure_keys:
+                if slot is not None:
+                    slot["instrument_failures_not_cached"] += 1
+                continue
+            _save_record(root, policy, key, observations)
+            if slot is not None:
+                slot["instrument_saved"] += 1
+        if slot is not None:
+            slot["network_instruments_requested"] += len(due)
+            slot["fresh_observations"] += len(fresh_obs)
+            slot["refresh_seconds"] = round(float(slot["refresh_seconds"]) + elapsed, 6)
+            slot["instrument_failures_not_cached"] += len(failure_keys - set(grouped))
+        return cached_obs + list(fresh_obs), list(failures)
     return wrapped
 
 
@@ -157,9 +240,10 @@ def write_audit(root: Path, metrics: dict[str, Any]) -> None:
             ETF_FUND_STRUCTURE.name: {"ttl_days": ETF_FUND_STRUCTURE.ttl_days, "cadence": ETF_FUND_STRUCTURE.cadence},
         },
         "metrics": metrics,
-        "failed_calls_cached": False,
-        "universe_change_invalidates_cache": True,
-        "provider_worklist_change_invalidates_cache": True,
+        "cache_scope": "PER_INSTRUMENT_SUCCESSFUL_OBSERVATIONS_ONLY",
+        "failed_or_partial_instruments_cached": False,
+        "new_instruments_refresh_immediately": True,
+        "expired_instruments_refresh_immediately": True,
         "selection_logic_changed": False,
         "criteria_changed": False,
         "weights_changed": False,
