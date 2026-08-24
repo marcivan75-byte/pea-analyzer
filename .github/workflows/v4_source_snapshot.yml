@@ -6,6 +6,9 @@ on:
       - codex/weekly-v4-five-audit
     paths:
       - '.github/workflows/v4_source_snapshot.yml'
+  pull_request:
+    paths:
+      - '.github/workflows/v4_source_snapshot.yml'
   workflow_dispatch:
 
 permissions:
