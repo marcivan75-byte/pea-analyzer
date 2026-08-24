@@ -1,4 +1,4 @@
-trigger: 2026-08-24T16:49:00+02:00
-purpose: validate-ci-light-boursorama-investing-v21-8-2
-run_validation: true
-revision: 3
+trigger: 2026-08-24T17:05:00+02:00
+purpose: validate-investing-isin-search-ci-light-v21-8-3
+run_validation: false
+revision: 4
