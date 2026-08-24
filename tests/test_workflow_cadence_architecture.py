@@ -93,14 +93,16 @@ def test_postmarket_catalyst_is_consolidated_into_main_super_runners():
     catalyst = _text("tct_next_session_context.yml")
     daily = _text("committee_tct_ct_daily.yml")
     weekly = _text("committee_master_daily.yml")
-    daily_impl = (ROOT / "src/v182/reporting/daily_tactical_super_runner_v21_15_6.py").read_text(encoding="utf-8")
+    daily_v6 = (ROOT / "src/v182/reporting/daily_tactical_super_runner_v21_15_6.py").read_text(encoding="utf-8")
+    daily_v5 = (ROOT / "src/v182/reporting/daily_tactical_super_runner_v21_15_5.py").read_text(encoding="utf-8")
     weekly_tail = (ROOT / "src/v182/reporting/weekly_tail_super_runner_v21_16_0.py").read_text(encoding="utf-8")
     bundle = (ROOT / "src/v182/reporting/tct_postmarket_bundle_run.py").read_text(encoding="utf-8")
 
     assert 'cron: "15 21 * * 1-5"' not in catalyst
     assert catalyst.count("cron:") == 1
     assert "python -m v182.reporting.daily_consolidated_runner_v21_15_4" in daily
-    assert "tct_postmarket_bundle_run" in daily_impl
+    assert "daily_tactical_super_runner_v21_15_5 as base" in daily_v6
+    assert "base.postmarket.run" in daily_v5
     assert "python -m v182.reporting.weekly_tail_super_runner_v21_16_0" in weekly
     assert "tct_postmarket_bundle_run as postmarket" in weekly_tail
     for workflow in (daily, weekly):
