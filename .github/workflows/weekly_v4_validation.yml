@@ -74,16 +74,20 @@ jobs:
           audit = run(Path.cwd(), ensure_upstream=False)
           assert audit['status'] == 'SUCCESS', audit
           PY
-          python -m v182.reporting.ci_light_v4
           python - <<'PY'
           import json
           from pathlib import Path
+          from v182.reporting.ci_light_v4 import run
+          result = run(Path.cwd(), reuse_selection_context=True)
+          assert result['status'] == 'SUCCESS', result
           audit = json.loads(Path('outputs/audit/CI_LIGHT_V4.json').read_text(encoding='utf-8'))
           assert audit['status'] == 'SUCCESS', audit
           assert audit['input_rows'] == 15, audit
           assert audit['investing_enabled'] is False, audit
           assert audit['etf_rules']['analyst_consensus_required'] is False, audit
           assert audit['source_can_create_candidate'] is False, audit
+          assert audit['source_context_reused'] is True, audit
+          assert audit['source_collection_passes'] == 0, audit
           PY
       - name: Build deterministic V4 release package
         run: python scripts/build_weekly_v4_package.py outputs/releases/WEEKLY_V4_HEBDO --release-commit "${GITHUB_SHA}"
@@ -99,6 +103,7 @@ jobs:
             outputs/committee_master/CI_LIGHT_V4.csv
             outputs/committee_master/CI_LIGHT_REJECTED_V4.csv
             outputs/committee_master/CI_LIGHT_V4.xlsx
+            outputs/committee_master/CI_SELECTION_ALL_V4.csv
             outputs/mobile/ANDROID_CI_LIGHT_V4.md
             outputs/source_context/CI_LIGHT_V4_V4_SOURCE_*.csv
             outputs/releases/WEEKLY_V4_HEBDO/**

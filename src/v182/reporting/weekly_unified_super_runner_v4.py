@@ -22,17 +22,22 @@ def run(root: Path = ROOT) -> dict:
     selection: dict = {}
     light: dict = {}
     status = "FAILED_EXCEPTION"
+    timings: dict[str, float] = {}
     try:
+        phase = perf_counter()
         selection = ci_selection_gate_v4.run(root=root, ensure_upstream=True)
+        timings["selection_seconds"] = round(perf_counter() - phase, 6)
         if selection.get("status") != "SUCCESS":
             status = "BLOCKED_SELECTION_GATE"
             return {"status": status, "selection": selection}
-        light = ci_light_v4.run(root=root)
+        phase = perf_counter()
+        light = ci_light_v4.run(root=root, reuse_selection_context=True)
+        timings["ci_light_seconds"] = round(perf_counter() - phase, 6)
         if light.get("status") != "SUCCESS":
             status = "BLOCKED_CI_LIGHT"
             return {"status": status, "selection": selection, "ci_light": light}
         status = "SUCCESS"
-        return {"status": status, "version": VERSION, "selection": selection, "ci_light": light}
+        return {"status": status, "version": VERSION, "selection": selection, "ci_light": light, "timings_seconds": timings}
     except Exception as exc:
         error = f"{type(exc).__name__}: {str(exc)[:700]}"
         raise
@@ -46,6 +51,9 @@ def run(root: Path = ROOT) -> dict:
                     "status": status,
                     "error": error,
                     "total_seconds": round(perf_counter() - started, 6),
+                    "phase_timings_seconds": timings,
+                    "source_collection_passes": 1,
+                    "ci_light_reuses_selection_context": True,
                     "selection_status": selection.get("status"),
                     "ci_light_status": light.get("status"),
                     "investing_enabled": False,

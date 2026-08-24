@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 import json
 import math
 
@@ -17,6 +18,7 @@ CONFIG = Path("config/WEEKLY_V4_GOVERNANCE.json")
 UPSTREAM = Path("outputs/committee_master/CI_ENTRY_WATCH_V22_2_1.csv")
 OUTPUT = Path("outputs/committee_master/CI_SELECTION_V4.csv")
 REJECTED = Path("outputs/committee_master/CI_SELECTION_REJECTED_V4.csv")
+ALL_ROWS = Path("outputs/committee_master/CI_SELECTION_ALL_V4.csv")
 MOBILE_MD = Path("outputs/mobile/ANDROID_CI_SELECTION_V4.md")
 AUDIT = Path("outputs/audit/CI_SELECTION_GATE_V4.json")
 
@@ -214,25 +216,36 @@ def _markdown(selected: pd.DataFrame, rejected: pd.DataFrame, generated: str) ->
 
 
 def run(root: Path = ROOT, *, ensure_upstream: bool = True) -> dict:
+    started = perf_counter()
+    timings: dict[str, float] = {}
     cfg = _load_config(root)
     selection = cfg["selection"]
     upstream_path = root / UPSTREAM
     upstream_payload: dict = {}
     if ensure_upstream or not upstream_path.exists():
+        phase = perf_counter()
         upstream_payload = upstream.run(root=root)
+        timings["upstream_seconds"] = round(perf_counter() - phase, 6)
         if upstream_payload.get("status") != "SUCCESS":
             return {"status": "BLOCKED_UPSTREAM", "upstream": upstream_payload}
+    phase = perf_counter()
     frame = _read_csv(upstream_path)
+    timings["input_load_seconds"] = round(perf_counter() - phase, 6)
     if frame.empty:
         return {"status": "NO_CANDIDATES", "selected": 0, "rejected": 0}
 
     input_isins = set(frame["isin"].astype(str))
+    phase = perf_counter()
     actions, etfs = _master_frames(root)
     frame = _attach_master_context(frame, actions, etfs)
+    timings["master_context_seconds"] = round(perf_counter() - phase, 6)
+    phase = perf_counter()
     frame, source_payload = enrich_selected_rows_v4(frame, root=root, profile="WEEKLY_V4")
+    timings["source_collection_seconds"] = round(perf_counter() - phase, 6)
     if set(frame["isin"].astype(str)) != input_isins or len(frame) != len(_read_csv(upstream_path)):
         raise RuntimeError("SOURCE_LAYER_CHANGED_CANDIDATE_SET")
 
+    phase = perf_counter()
     records: list[dict] = []
     for _, row in frame.iterrows():
         base_pass, base_reasons = _base_gate(row, selection)
@@ -263,6 +276,7 @@ def run(root: Path = ROOT, *, ensure_upstream: bool = True) -> dict:
             }
         )
     frame = pd.concat([frame.reset_index(drop=True), pd.DataFrame(records)], axis=1)
+    timings["gate_evaluation_seconds"] = round(perf_counter() - phase, 6)
     frame["CI_REFERENCE_SCORE_CHANGED_BY_SOURCES"] = False
     frame["CI_SOURCE_CAN_CREATE_CANDIDATE"] = False
     frame["CI_REAL_ORDER_ALLOWED"] = False
@@ -271,11 +285,15 @@ def run(root: Path = ROOT, *, ensure_upstream: bool = True) -> dict:
     selected = frame[frame["CI_SELECTION_GATE_STATUS_V4"].eq("SELECTED")].copy()
     rejected = frame[~frame["CI_SELECTION_GATE_STATUS_V4"].eq("SELECTED")].copy()
 
-    for relative in (OUTPUT, REJECTED, MOBILE_MD, AUDIT):
+    phase = perf_counter()
+    for relative in (OUTPUT, REJECTED, ALL_ROWS, MOBILE_MD, AUDIT):
         (root / relative).parent.mkdir(parents=True, exist_ok=True)
+    frame.to_csv(root / ALL_ROWS, sep=";", index=False, encoding="utf-8-sig")
     selected.to_csv(root / OUTPUT, sep=";", index=False, encoding="utf-8-sig")
     rejected.to_csv(root / REJECTED, sep=";", index=False, encoding="utf-8-sig")
     (root / MOBILE_MD).write_text(_markdown(selected, rejected, generated), encoding="utf-8")
+    timings["output_write_seconds"] = round(perf_counter() - phase, 6)
+    timings["total_seconds"] = round(perf_counter() - started, 6)
     payload = {
         "status": "SUCCESS",
         "version": "WEEKLY_V4_SELECTION_GATE_1",
@@ -286,6 +304,8 @@ def run(root: Path = ROOT, *, ensure_upstream: bool = True) -> dict:
         "ready_for_review": int(frame["CI_EFFECTIVE_ENTRY_STATE_V4"].eq("READY_FOR_REVIEW").sum()),
         "exit_reviews": int(frame["CI_EFFECTIVE_EXIT_STATE_V4"].isin({"EXIT_REVIEW_IF_HELD", "STRONG_EXIT_REVIEW_IF_HELD"}).sum()),
         "source_context": source_payload,
+        "timings_seconds": timings,
+        "source_collection_passes": 1,
         "thresholds": selection,
         "governance": {
             "investing_enabled": False,
@@ -300,6 +320,7 @@ def run(root: Path = ROOT, *, ensure_upstream: bool = True) -> dict:
         "outputs": {
             "selected_csv": OUTPUT.as_posix(),
             "rejected_csv": REJECTED.as_posix(),
+            "all_rows_csv": ALL_ROWS.as_posix(),
             "mobile_markdown": MOBILE_MD.as_posix(),
         },
         "upstream": upstream_payload,

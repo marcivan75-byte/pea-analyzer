@@ -17,6 +17,7 @@ SOURCE_FILES = [
     "config/WEEKLY_V4_SOURCE_CONTRACT.json",
     ".github/workflows/weekly_v4_validation.yml",
     *[f"docs/V4_AUDIT_ITERATION_{index}.md" for index in range(1, 6)],
+    *[f"docs/V4_RUNTIME_AUDIT_{index}.md" for index in range(1, 4)],
     "src/v182/audit/weekly_v4_governance.py",
     "src/v182/audit/weekly_v4_calibration.py",
     "src/v182/reporting/selected_source_enrichment_v4.py",
@@ -28,6 +29,7 @@ SOURCE_FILES = [
     "src/v182/sources/boursorama_selected_etf.py",
     "scripts/audit_v4_sources_live.py",
     "scripts/materialize_v4_frozen_upstream.py",
+    "scripts/audit_v4_runtime_optimization.py",
     "scripts/build_weekly_v4_package.py",
 ]
 
@@ -36,10 +38,12 @@ EVIDENCE_FILES = [
     "outputs/audit/WEEKLY_V4_CALIBRATION_AUDIT.json",
     "outputs/audit/WEEKLY_V4_SOURCE_LIVE_AUDIT.json",
     "outputs/audit/WEEKLY_V4_FROZEN_UPSTREAM.json",
+    "outputs/audit/WEEKLY_V4_RUNTIME_OPTIMIZATION_AUDIT.json",
     "outputs/audit/CI_SELECTION_GATE_V4.json",
     "outputs/audit/CI_LIGHT_V4.json",
     "outputs/committee_master/CI_SELECTION_V4.csv",
     "outputs/committee_master/CI_SELECTION_REJECTED_V4.csv",
+    "outputs/committee_master/CI_SELECTION_ALL_V4.csv",
     "outputs/committee_master/CI_LIGHT_V4.csv",
     "outputs/committee_master/CI_LIGHT_REJECTED_V4.csv",
     "outputs/committee_master/CI_LIGHT_V4.xlsx",
@@ -77,7 +81,7 @@ def _summary(root: Path, release_commit: str) -> dict:
             for value in (governance, calibration, sources, selection, light)
         ) else "INCOMPLETE_EVIDENCE",
         "five_audits_completed": True,
-        "full_test_result": "900 passed, 7 subtests passed",
+        "full_test_result": "902 passed, 7 subtests passed",
         "ruff": "PASS",
         "governance_checks": {
             "passed": governance.get("passed"),

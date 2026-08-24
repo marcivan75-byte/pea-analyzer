@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 import json
 import math
 import unicodedata
@@ -21,6 +22,8 @@ REJECTED = Path("outputs/committee_master/CI_LIGHT_REJECTED_V4.csv")
 EXCEL = Path("outputs/committee_master/CI_LIGHT_V4.xlsx")
 MOBILE = Path("outputs/mobile/ANDROID_CI_LIGHT_V4.md")
 AUDIT = Path("outputs/audit/CI_LIGHT_V4.json")
+SELECTION_ALL = Path("outputs/committee_master/CI_SELECTION_ALL_V4.csv")
+SELECTION_AUDIT = Path("outputs/audit/CI_SELECTION_GATE_V4.json")
 POSITIVE = {"BUY", "STRONG_BUY"}
 HORIZON_ORDER = {"TCT": 0, "CT": 1, "MT": 2}
 MIN_ANALYSTS_EXCLUSIVE = 10
@@ -62,6 +65,14 @@ def _read(path: Path) -> pd.DataFrame:
     if not path.exists() or path.stat().st_size == 0:
         return pd.DataFrame()
     return pd.read_csv(path, sep=";", encoding="utf-8-sig", low_memory=False)
+
+
+def _read_json(path: Path) -> dict:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _recommendation(row: pd.Series) -> tuple[str, str]:
@@ -202,8 +213,12 @@ def _markdown(frame: pd.DataFrame, generated: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def run(root: Path = ROOT) -> dict:
+def run(root: Path = ROOT, *, reuse_selection_context: bool = False) -> dict:
+    started = perf_counter()
+    timings: dict[str, float] = {}
+    phase = perf_counter()
     frame = _read(root / UPSTREAM)
+    timings["upstream_load_seconds"] = round(perf_counter() - phase, 6)
     generated = datetime.now(timezone.utc).isoformat()
     for relative in (OUTPUT, REJECTED, EXCEL, MOBILE, AUDIT):
         (root / relative).parent.mkdir(parents=True, exist_ok=True)
@@ -212,12 +227,23 @@ def run(root: Path = ROOT) -> dict:
         (root / AUDIT).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         return payload
     input_isins = set(frame["isin"].astype(str))
-    actions, etfs = _master_frames(root)
-    frame = _attach_master_context(frame, actions, etfs)
-    frame, source_payload = enrich_selected_rows_v4(frame, root=root, profile="CI_LIGHT_V4")
+    phase = perf_counter()
+    if reuse_selection_context:
+        prepared = _read(root / SELECTION_ALL)
+        selection_audit = _read_json(root / SELECTION_AUDIT)
+        source_payload = selection_audit.get("source_context", {})
+        if prepared.empty or not source_payload:
+            raise RuntimeError("REUSABLE_SELECTION_CONTEXT_MISSING")
+        frame = prepared
+    else:
+        actions, etfs = _master_frames(root)
+        frame = _attach_master_context(frame, actions, etfs)
+        frame, source_payload = enrich_selected_rows_v4(frame, root=root, profile="CI_LIGHT_V4")
+    timings["context_prepare_seconds"] = round(perf_counter() - phase, 6)
     if set(frame["isin"].astype(str)) != input_isins:
         raise RuntimeError("SOURCE_LAYER_CHANGED_CANDIDATE_SET")
 
+    phase = perf_counter()
     accepted_rows: list[dict] = []
     rejected_rows: list[dict] = []
     for _, row in frame.iterrows():
@@ -244,6 +270,8 @@ def run(root: Path = ROOT) -> dict:
             }
         )
         (accepted_rows if accepted else rejected_rows).append(record)
+    timings["evaluation_seconds"] = round(perf_counter() - phase, 6)
+    phase = perf_counter()
     rejected = pd.DataFrame(rejected_rows)
     selected = _ordered(pd.DataFrame(accepted_rows))
     if selected.empty:
@@ -252,6 +280,8 @@ def run(root: Path = ROOT) -> dict:
     rejected.to_csv(root / REJECTED, sep=";", index=False, encoding="utf-8-sig")
     _write_excel(selected, root / EXCEL)
     (root / MOBILE).write_text(_markdown(selected, generated), encoding="utf-8")
+    timings["output_write_seconds"] = round(perf_counter() - phase, 6)
+    timings["total_seconds"] = round(perf_counter() - started, 6)
     payload = {
         "status": "SUCCESS",
         "version": "CI_LIGHT_V4_1",
@@ -270,6 +300,9 @@ def run(root: Path = ROOT) -> dict:
         "selection_score_changed": False,
         "real_orders_enabled": False,
         "source_context": source_payload,
+        "source_context_reused": reuse_selection_context,
+        "source_collection_passes": 0 if reuse_selection_context else 1,
+        "timings_seconds": timings,
         "outputs": [relative.as_posix() for relative in (OUTPUT, REJECTED, EXCEL, MOBILE)],
     }
     (root / AUDIT).write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")

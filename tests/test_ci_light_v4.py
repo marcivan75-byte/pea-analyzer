@@ -58,3 +58,24 @@ def test_all_three_tradingview_horizons_must_be_positive():
 def test_urls_fail_closed_without_exact_identity():
     assert light._boursorama_url(_row(isin="X", yahoo_ticker=None))[1] == "UNRESOLVED_FAIL_CLOSED"
     assert light._tradingview_url(_row(isin="X", yahoo_ticker=None))[1] == "UNRESOLVED_FAIL_CLOSED"
+
+
+def test_light_reuses_selection_context_without_second_collection(monkeypatch, tmp_path):
+    row = {"isin": "A", "name": "A", **_row().to_dict()}
+    upstream = tmp_path / light.UPSTREAM
+    prepared = tmp_path / light.SELECTION_ALL
+    audit = tmp_path / light.SELECTION_AUDIT
+    for path in (upstream, prepared, audit):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([row]).to_csv(upstream, sep=";", index=False, encoding="utf-8-sig")
+    pd.DataFrame([row]).to_csv(prepared, sep=";", index=False, encoding="utf-8-sig")
+    audit.write_text('{"source_context":{"status":"SUCCESS_WITH_CONTEXT"}}', encoding="utf-8")
+    monkeypatch.setattr(
+        light,
+        "enrich_selected_rows_v4",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("second collection")),
+    )
+    payload = light.run(tmp_path, reuse_selection_context=True)
+    assert payload["status"] == "SUCCESS"
+    assert payload["source_context_reused"] is True
+    assert payload["source_collection_passes"] == 0
