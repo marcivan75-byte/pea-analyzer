@@ -45,8 +45,13 @@ def refresh_frame(frame: pd.DataFrame, *, now: datetime | None = None) -> tuple[
 
     days = (epoch - anchor.timestamp()) / 86400.0
     for field in (DAYS_FIELD, FLAG_7D, FLAG_30D):
-        if field not in out.columns:
-            out[field] = pd.NA
+        if field in out.columns:
+            # Cached parquet may restore these columns as Arrow string dtype.
+            # The clock refresh writes numeric values, so normalize only the
+            # container dtype while preserving every existing value unchanged.
+            out[field] = out[field].astype(object)
+        else:
+            out[field] = pd.Series(pd.NA, index=out.index, dtype=object)
 
     out.loc[valid, DAYS_FIELD] = days.loc[valid].round(3).astype(object)
     out.loc[valid, FLAG_7D] = days.loc[valid].between(0.0, 7.0).astype(float).astype(object)
