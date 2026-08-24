@@ -323,7 +323,12 @@ def run(root: Path = ROOT) -> dict:
     frame = selected_source_enrichment.attach_master_identity(frame, actions, etfs)
     # Reuse the same selected-only governed caches. This can refresh only the bounded
     # CI pool and never expands into an all-universe Boursorama/Investing scrape.
-    frame, source_payload = selected_source_enrichment.enrich_selected_rows(frame, root=root, profile="CI_LIGHT_V22_2_3")
+    frame, source_payload = selected_source_enrichment.enrich_selected_rows(
+        frame,
+        root=root,
+        profile="CI_LIGHT_V22_2_3",
+        investing_enabled=False,
+    )
     frame, tradingview_payload = _attach_tradingview_context(frame, root)
     meta = _metadata(actions, etfs)
 
@@ -394,6 +399,7 @@ def run(root: Path = ROOT) -> dict:
         "thresholds_changed": False,
         "real_orders_enabled": False,
         "source_context": source_payload,
+        "investing_disabled_for_light": True,
         "tradingview_context": tradingview_payload,
         "outputs": [str(OUTPUT), str(REJECTED), str(EXCEL), str(MOBILE)],
     }
