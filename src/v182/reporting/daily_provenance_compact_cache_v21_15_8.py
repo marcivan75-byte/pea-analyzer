@@ -3,6 +3,7 @@ from __future__ import annotations
 from hashlib import sha256
 from pathlib import Path
 from time import perf_counter
+import gzip
 import json
 
 import pandas as pd
@@ -10,13 +11,13 @@ import pandas as pd
 from v182.audit import provenance
 
 
-VERSION = "DAILY_PROVENANCE_COMPACT_CACHE_V21_15_8"
+VERSION = "DAILY_PROVENANCE_COMPACT_CACHE_V21_15_8_MAP_V2"
 ROOT = Path(__file__).resolve().parents[3]
 CACHE_DIR = ROOT / "state" / "provenance" / "daily_compact_cache_v1"
 META = CACHE_DIR / "manifest.json"
-RETAINED = CACHE_DIR / "retained.parquet"
-EVENTS = CACHE_DIR / "latest_events.parquet"
-SOURCES = CACHE_DIR / "sources_by_field.parquet"
+MAPS = CACHE_DIR / "provenance_maps.json.gz"
+SOURCES = CACHE_DIR / "sources_by_field.json.gz"
+SEP = "\x1f"
 
 
 def _sha256_file(path: Path) -> str | None:
@@ -49,13 +50,36 @@ def _read_meta() -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
+def _write_gzip_json(path: Path, payload) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with gzip.open(tmp, "wt", encoding="utf-8", compresslevel=1) as handle:
+        json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"), default=str)
+    tmp.replace(path)
+
+
+def _read_gzip_json(path: Path):
+    with gzip.open(path, "rt", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _encode(parts: tuple[str, ...]) -> str:
+    return SEP.join(str(part) for part in parts)
+
+
+def _decode(value: str, expected: int) -> tuple[str, ...]:
+    parts = tuple(str(value).split(SEP))
+    if len(parts) != expected:
+        raise ValueError("PROVENANCE_COMPACT_KEY_ARITY")
+    return parts
+
+
 def _load_persisted(path: Path, stats: dict):
     started = perf_counter()
     meta = _read_meta()
     if meta.get("version") != VERSION or meta.get("code_contract") != _code_contract():
         stats["load_status"] = "MISS_CONTRACT"
         return None
-    if not all(p.exists() for p in (RETAINED, EVENTS, SOURCES)):
+    if not MAPS.exists() or not SOURCES.exists():
         stats["load_status"] = "MISS_FILES"
         return None
     try:
@@ -73,36 +97,46 @@ def _load_persisted(path: Path, stats: dict):
     if not ledger_sha or ledger_sha != meta.get("ledger_sha256"):
         stats["load_status"] = "MISS_HASH"
         return None
-    if meta.get("retained_sha256") != _sha256_file(RETAINED) or meta.get("events_sha256") != _sha256_file(EVENTS) or meta.get("sources_sha256") != _sha256_file(SOURCES):
+    if meta.get("maps_sha256") != _sha256_file(MAPS) or meta.get("sources_sha256") != _sha256_file(SOURCES):
         stats["load_status"] = "MISS_CACHE_HASH"
         return None
 
     try:
-        retained = pd.read_parquet(RETAINED)
-        events = pd.read_parquet(EVENTS)
-        sources = pd.read_parquet(SOURCES)
+        packed = _read_gzip_json(MAPS)
+        source_records = _read_gzip_json(SOURCES)
+        retained_packed = packed.get("retained", {})
+        latest_index = packed.get("latest_index", {})
+        events_packed = packed.get("events", {})
+        if not isinstance(retained_packed, dict) or not isinstance(latest_index, dict) or not isinstance(events_packed, dict):
+            raise ValueError("PROVENANCE_COMPACT_MAP_SCHEMA")
+        retained_rows_map = {_decode(key, 3): record for key, record in retained_packed.items()}
+        latest_map = {
+            _decode(key, 2): retained_packed[row_key]
+            for key, row_key in latest_index.items()
+            if row_key in retained_packed
+        }
+        latest_event_map = {_decode(key, 2): record for key, record in events_packed.items()}
+        sources = pd.DataFrame.from_records(source_records)
     except Exception:
         stats["load_status"] = "MISS_READ_ERROR"
         return None
-    if not set(provenance.COLUMNS).issubset(retained.columns) or not {"isin", "field"}.issubset(events.columns):
-        stats["load_status"] = "MISS_SCHEMA"
-        return None
-    if int(meta.get("retained_rows", -1)) != len(retained) or int(meta.get("event_rows", -1)) != len(events):
+
+    if int(meta.get("retained_rows", -1)) != len(retained_rows_map) or int(meta.get("event_rows", -1)) != len(latest_event_map) or int(meta.get("latest_rows", -1)) != len(latest_map):
         stats["load_status"] = "MISS_ROWCOUNT"
         return None
 
     signature = provenance._file_signature(path)
     entry = provenance._RetainedCacheEntry(
         signature=signature,
-        latest=retained,
-        latest_map=provenance._latest_mapping(retained),
-        retained_rows_map=provenance._retained_rows_mapping(retained),
-        latest_event_map=provenance._latest_event_mapping(events),
+        latest=None,
+        latest_map=latest_map,
+        retained_rows_map=retained_rows_map,
+        latest_event_map=latest_event_map,
         sources_by_field=sources,
     )
     stats["load_status"] = "HIT_EXACT"
-    stats["retained_rows"] = int(len(retained))
-    stats["event_rows"] = int(len(events))
+    stats["retained_rows"] = int(len(retained_rows_map))
+    stats["event_rows"] = int(len(latest_event_map))
     stats["load_seconds"] = round(perf_counter() - started, 6)
     return entry
 
@@ -111,6 +145,7 @@ def install() -> tuple[callable, dict]:
     original = provenance._latest_entry_for_path
     stats = {
         "version": VERSION,
+        "representation": "DIRECT_MAP_JSON_GZIP",
         "load_status": "NOT_USED",
         "exact_ledger_hash_required": True,
         "code_contract_required": True,
@@ -149,21 +184,31 @@ def persist(stats: dict, path: Path | None = None) -> dict:
     started = perf_counter()
     p = Path(path) if path is not None else provenance.provenance_path()
     entry = provenance._latest_entry_for_path(p)
-    retained = provenance._retained_frame(entry).copy()
-    events_records = list(entry.latest_event_map.values())
-    events = pd.DataFrame.from_records(events_records, columns=provenance.COLUMNS) if events_records else pd.DataFrame(columns=provenance.COLUMNS)
-    sources = entry.sources_by_field.copy(deep=True) if entry.sources_by_field is not None else provenance._aggregate_sources(retained)
+    retained_rows_map = dict(entry.retained_rows_map)
+    latest_map = dict(entry.latest_map)
+    latest_event_map = dict(entry.latest_event_map)
+    if entry.sources_by_field is not None:
+        sources = entry.sources_by_field.copy(deep=True)
+    else:
+        retained = provenance._retained_frame(entry)
+        sources = provenance._aggregate_sources(retained)
+
+    retained_packed = {_encode(key): record for key, record in retained_rows_map.items()}
+    row_key_by_object = {
+        (str(record.get("isin", "")), str(record.get("field", ""))): packed_key
+        for packed_key, record in retained_packed.items()
+    }
+    latest_index = {
+        _encode(key): row_key_by_object.get((str(record.get("isin", "")), str(record.get("field", ""))), "")
+        for key, record in latest_map.items()
+    }
+    if any(not value for value in latest_index.values()):
+        raise RuntimeError("PROVENANCE_COMPACT_LATEST_INDEX_INCOMPLETE")
+    events_packed = {_encode(key): record for key, record in latest_event_map.items()}
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    retained_tmp = RETAINED.with_suffix(".parquet.tmp")
-    events_tmp = EVENTS.with_suffix(".parquet.tmp")
-    sources_tmp = SOURCES.with_suffix(".parquet.tmp")
-    retained.to_parquet(retained_tmp, index=False)
-    events.to_parquet(events_tmp, index=False)
-    sources.to_parquet(sources_tmp, index=False)
-    retained_tmp.replace(RETAINED)
-    events_tmp.replace(EVENTS)
-    sources_tmp.replace(SOURCES)
+    _write_gzip_json(MAPS, {"retained": retained_packed, "latest_index": latest_index, "events": events_packed})
+    _write_gzip_json(SOURCES, sources.to_dict("records"))
 
     ledger_hash_started = perf_counter()
     ledger_sha = _sha256_file(p)
@@ -171,14 +216,15 @@ def persist(stats: dict, path: Path | None = None) -> dict:
     payload = {
         "version": VERSION,
         "validated": True,
+        "representation": "DIRECT_MAP_JSON_GZIP",
         "code_contract": _code_contract(),
         "ledger_size": int(p.stat().st_size) if p.exists() else 0,
         "ledger_sha256": ledger_sha,
-        "retained_rows": int(len(retained)),
-        "event_rows": int(len(events)),
+        "retained_rows": int(len(retained_rows_map)),
+        "latest_rows": int(len(latest_map)),
+        "event_rows": int(len(latest_event_map)),
         "sources_rows": int(len(sources)),
-        "retained_sha256": _sha256_file(RETAINED),
-        "events_sha256": _sha256_file(EVENTS),
+        "maps_sha256": _sha256_file(MAPS),
         "sources_sha256": _sha256_file(SOURCES),
         "exact_ledger_hash_required": True,
         "decision_logic_changed": False,
@@ -192,6 +238,6 @@ def persist(stats: dict, path: Path | None = None) -> dict:
     stats["persist_status"] = "SUCCESS"
     stats["persist_ledger_hash_seconds"] = round(hash_seconds, 6)
     stats["persist_seconds"] = round(perf_counter() - started, 6)
-    stats["persisted_retained_rows"] = int(len(retained))
-    stats["persisted_event_rows"] = int(len(events))
+    stats["persisted_retained_rows"] = int(len(retained_rows_map))
+    stats["persisted_event_rows"] = int(len(latest_event_map))
     return payload
