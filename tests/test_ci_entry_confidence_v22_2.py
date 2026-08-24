@@ -51,7 +51,7 @@ def test_action_ct_requires_concrete_event_and_momentum():
     state, reasons, timing = mod._entry_state(row, tech, _cfg())
     assert state == "WAIT"
     assert "MOMENTUM_DECELERATION" in reasons
-    assert timing == 45.0
+    assert timing == 40.0
 
 
 def test_etf_mt_requires_close_trend_and_positive_momentum():
