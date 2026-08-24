@@ -100,12 +100,22 @@ def parse_technical_summary_html(html: str) -> dict[str, object]:
     if not text:
         return {}
     state = r"(strong sell|strong buy|sell|buy|neutral)"
-    pattern = (
-        rf"Our technical rating for .*? is\s+{state}\s+today\."
-        rf".*?1 week rating\s+(?:the\s+)?{state}\s+trend is prevailing,"
-        rf"\s+and 1 month rating shows\s+(?:the\s+)?{state}\s+signal"
+    patterns = (
+        (
+            rf"Our technical rating for .*? is\s+{state}\s+today\."
+            rf".*?1 week rating\s+(?:the\s+)?{state}\s+trend is prevailing,"
+            rf"\s+and 1 month rating shows\s+(?:the\s+)?{state}\s+signal"
+        ),
+        (
+            rf"Our summary technical rating for .*? is\s+{state}\s+today\."
+            rf".*?1[- ]week rating,?\s+(?:the\s+)?{state}\s+trend prevails,"
+            rf"\s+and 1 month rating shows\s+(?:the\s+)?{state}\s+signal"
+        ),
     )
-    match = re.search(pattern, text, flags=re.IGNORECASE)
+    match = next(
+        (candidate for pattern in patterns if (candidate := re.search(pattern, text, flags=re.IGNORECASE))),
+        None,
+    )
     if not match:
         return {}
     daily, weekly, monthly = (_canon_signal(value) for value in match.groups())
@@ -131,6 +141,8 @@ def tradingview_symbol(row: object) -> tuple[str, str] | None:
     exchange = YAHOO_SUFFIX_TO_EXCHANGE.get(suffix)
     if not exchange or not re.fullmatch(r"[A-Z0-9._-]{1,40}", ticker):
         return None
+    if exchange in {"OMXSTO", "OMXCOP", "OMXHEX"}:
+        ticker = ticker.replace("-", "_")
     return exchange, ticker
 
 
@@ -226,7 +238,13 @@ def collect_technical_context_cached(
             final_url = str(getattr(response, "url", url) or url)
             # The public page must prove the exact exchange-qualified symbol.
             proof = f"/chart/?symbol={symbol}"
-            if proof not in html:
+            identity_markers = (
+                proof,
+                f'"pro_symbol":"{symbol}"',
+                f'"resolved_symbol":"{symbol}"',
+                f'"primary_name":"{symbol}"',
+            )
+            if not any(marker in html for marker in identity_markers):
                 return isin, None, {"isin": isin, "source": "TradingView", "reason": "SYMBOL_IDENTITY_NOT_PROVEN", "symbol": symbol, "url": final_url}
             fields = parse_technical_summary_html(html)
             if not fields:
