@@ -1,0 +1,57 @@
+name: V4 source snapshot
+
+on:
+  push:
+    branches:
+      - codex/weekly-v4-five-audit
+    paths:
+      - '.github/workflows/v4_source_snapshot.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Record immutable reference
+        shell: bash
+        run: |
+          git rev-parse HEAD > V4_SOURCE_COMMIT.txt
+          git status --short
+      - name: Upload governed source snapshot
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: v4-source-snapshot-${{ github.run_id }}
+          retention-days: 3
+          if-no-files-found: error
+          include-hidden-files: true
+          path: |
+            .env.example
+            .github
+            .gitignore
+            README.md
+            FINAL_PACKAGE_V21_13_16_MANIFEST.json
+            RUN_TOTAL_NOW_MAIN.txt
+            V18.2_BUILD_MANIFEST.json
+            V18.2_MANIFEST_SHA256.txt
+            V18.2_RELEASE_VALIDATION.json
+            V18.2_RELEASE_VALIDATION.txt
+            config
+            constraints-ci.txt
+            docs
+            inputs
+            outputs
+            packages
+            pyproject.toml
+            requirements-catalyst.txt
+            requirements-runtime.txt
+            schemas
+            scripts
+            src
+            state
+            tests
+            V4_SOURCE_COMMIT.txt
