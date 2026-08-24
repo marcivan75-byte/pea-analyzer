@@ -71,13 +71,58 @@ def _write_ci_failure_audit(root: Path, exc: Exception, elapsed_seconds: float) 
         (auditdir / name).write_text(text, encoding="utf-8")
 
 
+def _install_quarantine_dedupe(self, original_fast_install, stats: dict) -> None:
+    """Keep first occurrence of each exact quarantine record across a fast run.
+
+    Retained quarantine is replayed by the underlying fast runtime. Subsequent
+    waves can rediscover byte-equivalent conflicts and previously appended them
+    again, making WAVE07 and persistence grow every Daily. Exact duplicates carry
+    no additional validation semantics; first occurrence and all distinct rows are
+    preserved. Financial observations, masters, scores and decisions are untouched.
+    """
+    original_fast_install(self)
+    installed_apply = base.collection.legacy.apply_and_track
+    seen: set[str] = set()
+
+    def deduping_apply(frame, observations):
+        output, quarantined = installed_apply(frame, observations)
+        unique: list[dict] = []
+        for row in quarantined:
+            if not isinstance(row, dict):
+                unique.append(row)
+                continue
+            key = json.dumps(row, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":"))
+            if key in seen:
+                stats["exact_duplicates_removed"] = int(stats.get("exact_duplicates_removed", 0)) + 1
+                continue
+            seen.add(key)
+            unique.append(row)
+        stats["distinct_quarantine_records_seen"] = int(len(seen))
+        return output, unique
+
+    base.collection.legacy.apply_and_track = deduping_apply
+
+
 def run(root: Path = ROOT) -> dict:
     """Final Daily: zero-network W09, bounded tactical engines and same-run CI restitution."""
     started = perf_counter()
     original_tactical = base.tactical
     original_version = base.VERSION
+    original_fast_install = base._ORIGINAL_FAST_INSTALL
+    quarantine_stats = {
+        "status": "EXACT_DUPLICATE_GUARD_ENABLED",
+        "exact_duplicates_removed": 0,
+        "distinct_quarantine_records_seen": 0,
+        "decision_logic_changed": False,
+        "data_quality_rules_changed": False,
+    }
+
+    def fast_install_with_dedupe(self):
+        return _install_quarantine_dedupe(self, original_fast_install, quarantine_stats)
+
     base.tactical = tactical
     base.VERSION = VERSION
+    base._ORIGINAL_FAST_INSTALL = fast_install_with_dedupe
     try:
         try:
             payload = dict(base.run(root=root) or {})
@@ -87,6 +132,7 @@ def run(root: Path = ROOT) -> dict:
     finally:
         base.tactical = original_tactical
         base.VERSION = original_version
+        base._ORIGINAL_FAST_INSTALL = original_fast_install
 
     base_status = str(payload.get("status") or "")
     ci_started = perf_counter()
@@ -108,6 +154,7 @@ def run(root: Path = ROOT) -> dict:
         "word_output": ci_payload.get("word_output"),
         "excel_output": ci_payload.get("excel_output"),
     }
+    steps["quarantine_deduplication"] = quarantine_stats
     final_status = (
         "SUCCESS_DAILY_CONSOLIDATED_WITH_CI_AND_ETF_REPLAY_WARNING"
         if "ETF_REPLAY_WARNING" in base_status
