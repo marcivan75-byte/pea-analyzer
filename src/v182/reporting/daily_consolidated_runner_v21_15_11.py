@@ -7,7 +7,7 @@ import json
 
 from v182.reporting import daily_consolidated_runner_v21_15_9 as impl
 from v182.reporting import selected_source_reliability_v21_8_4 as source_reliability
-from v182.reporting import daily_ci_light_v21_8_4 as ci_light
+from v182.reporting import daily_ci_light_v21_8_5 as ci_light
 
 
 ROOT = impl.ROOT
@@ -40,8 +40,8 @@ def run(root: Path = ROOT) -> dict:
     ci_seconds = perf_counter() - ci_started
 
     steps = dict(payload.get("steps") or {})
-    steps["source_reliability_v21_8_4"] = source_patch
-    steps["ci_light_v21_8_4"] = {
+    steps["source_reliability_v21_8_5"] = source_patch
+    steps["ci_light_v21_8_5"] = {
         "status": ci_status,
         **ci_payload,
         "decision_influence": False,
@@ -49,13 +49,13 @@ def run(root: Path = ROOT) -> dict:
         "real_orders_enabled": False,
     }
     timings = dict(payload.get("timings_seconds") or {})
-    timings["ci_light_v21_8_4"] = round(ci_seconds, 6)
+    timings["ci_light_v21_8_5"] = round(ci_seconds, 6)
     timings["total_v21_15_11"] = round(perf_counter() - started, 6)
 
     payload.update({
         "version": VERSION,
         "source_reliability": source_patch,
-        "ci_light_v21_8_4": steps["ci_light_v21_8_4"],
+        "ci_light_v21_8_5": steps["ci_light_v21_8_5"],
         "steps": steps,
         "timings_seconds": timings,
         "decision_logic_changed": False,
@@ -69,7 +69,7 @@ def run(root: Path = ROOT) -> dict:
     audit_patch = {
         "runtime_version": VERSION,
         "source_reliability": source_patch,
-        "ci_light_v21_8_4": steps["ci_light_v21_8_4"],
+        "ci_light_v21_8_5": steps["ci_light_v21_8_5"],
     }
     for name in ("DAILY_CI_RESTITUTION_V21_15_7.json", "CI_EXPLAINABILITY_AUDIT.json"):
         _patch_json(root / "outputs" / "audit" / name, audit_patch)
