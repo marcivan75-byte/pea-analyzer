@@ -10,6 +10,7 @@ import pandas as pd
 
 from v182.reporting import selected_source_enrichment as identity
 from v182.reporting import selected_source_enrichment_v4 as sources
+from v182.reporting.ci_selection_gate_v4 import _master_frames
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,8 +24,9 @@ def run(candidate_path: Path, root: Path = ROOT) -> dict:
     rows = _read(candidate_path)
     if len(rows) > 40:
         raise ValueError(f"BOUNDED_POOL_EXCEEDED:{len(rows)}")
-    actions = _read(root / "inputs/V18.2_PEA_ACTIONS_MASTER.csv")
-    etfs = _read(root / "inputs/V18.2_PEA_ETF_MASTER.csv")
+    # Use the same enriched-first identity policy as the governed V4 gate. The
+    # static masters remain the fallback, never a competing identity source.
+    actions, etfs = _master_frames(root)
     rows = identity.attach_master_identity(rows, actions, etfs)
     enriched, source_payload = sources.enrich_selected_rows_v4(rows, root=root, profile="WEEKLY_V4_LIVE_AUDIT")
 
