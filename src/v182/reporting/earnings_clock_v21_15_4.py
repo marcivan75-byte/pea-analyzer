@@ -46,11 +46,15 @@ def refresh_frame(frame: pd.DataFrame, *, now: datetime | None = None) -> tuple[
     days = (epoch - anchor.timestamp()) / 86400.0
     for field in (DAYS_FIELD, FLAG_7D, FLAG_30D):
         if field not in out.columns:
-            out[field] = pd.NA
+            out[field] = np.nan
 
-    out.loc[valid, DAYS_FIELD] = days.loc[valid].round(3).astype(object)
-    out.loc[valid, FLAG_7D] = days.loc[valid].between(0.0, 7.0).astype(float).astype(object)
-    out.loc[valid, FLAG_30D] = days.loc[valid].between(0.0, 30.0).astype(float).astype(object)
+    # Keep these deterministic clock-derived columns numeric. Pandas 3 rejects
+    # object arrays assigned into existing float blocks even when every element is
+    # numerically representable. Numeric assignment is lossless and preserves the
+    # exact historical semantics of these three fields.
+    out.loc[valid, DAYS_FIELD] = days.loc[valid].round(3)
+    out.loc[valid, FLAG_7D] = days.loc[valid].between(0.0, 7.0).astype(float)
+    out.loc[valid, FLAG_30D] = days.loc[valid].between(0.0, 30.0).astype(float)
 
     return out, {
         "version": VERSION,
