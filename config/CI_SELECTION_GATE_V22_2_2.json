@@ -7,6 +7,8 @@
     "action_minimum_analyst_consensus_upside_pct": 20.0,
     "action_missing_consensus_policy": "EXCLUDE_FAIL_CLOSED",
     "etf_analyst_consensus_gate_applies": false,
+    "etf_minimum_morningstar_stars": 3.0,
+    "etf_missing_morningstar_policy": "EXCLUDE_FAIL_CLOSED",
     "inclusive_thresholds": true
   },
   "action_consensus_methods": [
@@ -24,6 +26,15 @@
     "analyst_count_context_only": true,
     "target_upside_context_only": true,
     "revision_context_only": true,
+    "cannot_create_candidate": true
+  },
+  "etf_morningstar_gate": {
+    "enabled": true,
+    "field": "morningstar_rating",
+    "minimum_stars": 3.0,
+    "inclusive": true,
+    "missing_policy": "EXCLUDE_FAIL_CLOSED",
+    "replaces_etf_analyst_consensus": true,
     "cannot_create_candidate": true
   },
   "investing_timing_gate": {
