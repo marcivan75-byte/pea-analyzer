@@ -16,7 +16,7 @@ import pandas as pd
 
 from v182.sources.rate_limit import StartRateLimiter
 
-INVESTING_BASE = "https://www.investing.com"
+INVESTING_BASE = "https://fr.investing.com"
 CACHE_VERSION = "INVESTING_TECHNICAL_V1"
 SIGNAL_SCORE = {"STRONG_SELL": -2, "SELL": -1, "NEUTRAL": 0, "BUY": 1, "STRONG_BUY": 2}
 
@@ -86,7 +86,7 @@ def parse_technical_summary_html(html: str) -> dict[str, object]:
 
     The source exposes one of five states. We preserve the source verdict verbatim
     as a canonical enum and add a small ordinal solely for comparison/reporting;
-    this module never changes a model score or threshold.
+    this module never changes a model selection score or threshold.
     """
     text = _visible_text(html)
     if not text:
@@ -121,8 +121,6 @@ def horizon_signal(fields: dict[str, object], horizon: str) -> tuple[object | No
 
 def _slug(value: object) -> str:
     text = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii").lower()
-    # Remove legal-form suffix words, but preserve semantic words such as
-    # "Holding" and "Group" because they are part of real Investing slugs.
     text = re.sub(r"\b(sa|se|nv|ag|plc|spa|s\.p\.a|inc|ltd|limited)\b", " ", text)
     text = text.replace("&", " and ")
     text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
@@ -148,8 +146,10 @@ def _candidate_base_urls(row: object) -> list[str]:
     urls: list[str] = []
     if explicit:
         base = explicit.split("?", 1)[0].rstrip("/")
-        if base.endswith("-technical"):
-            base = base[: -len("-technical")]
+        for suffix in ("-technical", "-scoreboard", "-chart", "-news"):
+            if base.endswith(suffix):
+                base = base[: -len(suffix)]
+                break
         if base.startswith("https://www.investing.com/") or base.startswith("https://fr.investing.com/"):
             path = base.split(".com", 1)[1]
             urls.append(f"{INVESTING_BASE}{path}")
@@ -167,6 +167,15 @@ def _candidate_base_urls(row: object) -> list[str]:
         if url not in dedup:
             dedup.append(url)
     return dedup[:4]
+
+
+def _scoreboard_url(base_url: str) -> str:
+    base = str(base_url or "").split("?", 1)[0].rstrip("/")
+    for suffix in ("-technical", "-scoreboard", "-chart", "-news"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
+    return base + "-scoreboard"
 
 
 def _load(path: Path, version: str) -> dict:
@@ -195,7 +204,7 @@ def _default_fetcher(url: str, *, timeout: float):
         url,
         headers={
             "User-Agent": "Mozilla/5.0 (compatible; PEA-Analyzer/21.15; selected-public-context)",
-            "Accept-Language": "en-US,en;q=0.8",
+            "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.7",
         },
         timeout=timeout,
         allow_redirects=True,
@@ -210,17 +219,27 @@ def _resolve_base_url(
     limiter: StartRateLimiter,
     timeout_seconds: float,
 ) -> tuple[str | None, str | None]:
-    for url in _candidate_base_urls(row):
+    """Resolve safely through Investing's public scoreboard, which exposes ISIN.
+
+    Overview/technical pages do not reliably print ISIN in visible HTML. Requiring
+    it there caused valid URLs to be rejected. The scoreboard page is the identity
+    proof; only a candidate whose scoreboard contains the exact ISIN is accepted.
+    """
+    target = str(isin or "").strip().upper()
+    for candidate in _candidate_base_urls(row):
         try:
+            check_url = _scoreboard_url(candidate)
             limiter.wait()
-            response = fetcher(url, timeout=timeout_seconds)
+            response = fetcher(check_url, timeout=timeout_seconds)
             if hasattr(response, "raise_for_status"):
                 response.raise_for_status()
             html = str(getattr(response, "text", "") or "")
-            if isin and isin.upper() not in html.upper():
+            if not target or target not in html.upper():
                 continue
-            final = str(getattr(response, "url", url) or url).split("?", 1)[0].rstrip("/")
-            if final.endswith("-technical"):
+            final = str(getattr(response, "url", check_url) or check_url).split("?", 1)[0].rstrip("/")
+            if final.endswith("-scoreboard"):
+                final = final[: -len("-scoreboard")]
+            elif final.endswith("-technical"):
                 final = final[: -len("-technical")]
             return final, sha256(html.encode("utf-8", errors="replace")).hexdigest()
         except Exception:
@@ -278,6 +297,7 @@ def collect_technical_context_cached(
             mappings["entries"][isin] = {
                 "base_url": base_url,
                 "validated_isin": isin,
+                "validation_method": "PUBLIC_SCOREBOARD_EXACT_ISIN",
                 "resolved_at_utc": current.isoformat(),
                 "overview_sha256": overview_hash,
             }
@@ -322,6 +342,8 @@ def collect_technical_context_cached(
         "max_workers": int(max_workers),
         "raw_html_persisted": False,
         "decision_influence": False,
+        "entry_exit_governance_influence": True,
+        "url_validation_method": "PUBLIC_SCOREBOARD_EXACT_ISIN",
     }
     mappings["updated_at_utc"] = current.isoformat()
     _save(cache_file, cache)
@@ -350,7 +372,7 @@ def collect_technical_context_cached(
                 "source": "Investing.com public technical summary",
                 "source_url": entry.get("source_url"),
                 "collected_at": entry.get("fetched_at_utc"),
-                "validation_status": "POST_SELECTION_CONTEXT_ONLY",
+                "validation_status": "POST_SELECTION_ENTRY_EXIT_CONTEXT",
             })
 
     return InvestingResult(
@@ -366,6 +388,8 @@ def collect_technical_context_cached(
             "selected_only": True,
             "decision_influence": False,
             "score_influence": 0.0,
+            "entry_exit_governance_influence": True,
+            "url_validation_method": "PUBLIC_SCOREBOARD_EXACT_ISIN",
             "raw_html_persisted": False,
         },
     )
