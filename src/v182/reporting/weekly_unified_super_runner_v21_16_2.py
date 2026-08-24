@@ -18,6 +18,18 @@ AUDIT_NAME = "WEEKLY_UNIFIED_SUPER_RUNTIME_V21_16_2.json"
 _RATIO_FIELDS = {"per_ttm_yf", "per_forward_yf", "pb"}
 
 
+def _clean_isin(value: object) -> str:
+    if value is None:
+        return ""
+    try:
+        if bool(pd.isna(value)):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    text = str(value).strip()
+    return "" if text.lower() in {"", "nan", "none", "<na>"} else text
+
+
 def _rematerialize_wave4_observations(
     actions_df: pd.DataFrame,
     prefetched_observations: list[dict],
@@ -26,14 +38,14 @@ def _rematerialize_wave4_observations(
 
     WAVE04 network data can be collected before WAVE03 finishes because its
     ticker selection and refresh tiers do not depend on WAVE03 OHLCV features.
-    The three ratios below *do* depend on the current ``last_close``.  Therefore
+    The three ratios below *do* depend on the current ``last_close``. Therefore
     stale prefetch-time ratio observations are discarded and rebuilt from the
     post-WAVE03 frame plus the exact prefetched Yahoo fundamental values.
     """
     result = [row for row in prefetched_observations if str(row.get("field")) not in _RATIO_FIELDS]
     fields_by_isin: dict[str, dict[str, object]] = {}
     for row in result:
-        isin = str(row.get("isin") or "")
+        isin = _clean_isin(row.get("isin"))
         field = str(row.get("field") or "")
         if isin and field:
             fields_by_isin.setdefault(isin, {})[field] = row.get("value")
@@ -43,7 +55,9 @@ def _rematerialize_wave4_observations(
         return result, rematerialized
     closes = actions_df.get("last_close", pd.Series(index=actions_df.index, dtype=float))
     for isin, close in zip(actions_df["isin"], closes):
-        key = str(isin or "")
+        key = _clean_isin(isin)
+        if not key:
+            continue
         fields = fields_by_isin.get(key)
         if not fields:
             continue
@@ -72,8 +86,8 @@ def run(root: Path = ROOT) -> dict:
     """V21.16.1 plus safe WAVE04 network prefetch overlap.
 
     The Yahoo Action fundamental collection starts immediately after WAVE01
-    Action OHLCV completes.  It therefore overlaps WAVE02 ETF OHLCV and WAVE03
-    local feature computation.  WAVE04 still blocks on the exact same Yahoo
+    Action OHLCV completes. It therefore overlaps WAVE02 ETF OHLCV and WAVE03
+    local feature computation. WAVE04 still blocks on the exact same Yahoo
     result before applying observations, and the price-dependent ratios are
     rebuilt against the post-WAVE03 ``last_close`` values.
     """
