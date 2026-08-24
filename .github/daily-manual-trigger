@@ -1,3 +1,3 @@
-trigger: 2026-08-24T15:12:00+02:00
-purpose: validate-daily-market-orientation-v21-15-9-official-vstoxx
+trigger: 2026-08-24T15:18:00+02:00
+purpose: final-validate-daily-market-orientation-v21-15-9-fresh-vstoxx
 run_validation: false
