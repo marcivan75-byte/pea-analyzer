@@ -3,7 +3,6 @@ from __future__ import annotations
 from hashlib import sha256
 from pathlib import Path
 from time import perf_counter
-import gzip
 import json
 
 import pandas as pd
@@ -11,13 +10,20 @@ import pandas as pd
 from v182.audit import provenance
 
 
-VERSION = "DAILY_PROVENANCE_COMPACT_CACHE_V21_15_8_MAP_V2"
+VERSION = "DAILY_PROVENANCE_COMPACT_CACHE_V21_15_8_MAP_V3"
 ROOT = Path(__file__).resolve().parents[3]
 CACHE_DIR = ROOT / "state" / "provenance" / "daily_compact_cache_v1"
 META = CACHE_DIR / "manifest.json"
-MAPS = CACHE_DIR / "provenance_maps.json.gz"
-SOURCES = CACHE_DIR / "sources_by_field.json.gz"
+MAPS = CACHE_DIR / "provenance_maps.json"
+SOURCES = CACHE_DIR / "sources_by_field.json"
 SEP = "\x1f"
+LEGACY_CACHE_FILES = (
+    "retained.parquet",
+    "latest_events.parquet",
+    "sources_by_field.parquet",
+    "provenance_maps.json.gz",
+    "sources_by_field.json.gz",
+)
 
 
 def _sha256_file(path: Path) -> str | None:
@@ -50,15 +56,15 @@ def _read_meta() -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
-def _write_gzip_json(path: Path, payload) -> None:
+def _write_json(path: Path, payload) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
-    with gzip.open(tmp, "wt", encoding="utf-8", compresslevel=1) as handle:
+    with tmp.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"), default=str)
     tmp.replace(path)
 
 
-def _read_gzip_json(path: Path):
-    with gzip.open(path, "rt", encoding="utf-8") as handle:
+def _read_json(path: Path):
+    with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
 
 
@@ -102,8 +108,8 @@ def _load_persisted(path: Path, stats: dict):
         return None
 
     try:
-        packed = _read_gzip_json(MAPS)
-        source_records = _read_gzip_json(SOURCES)
+        packed = _read_json(MAPS)
+        source_records = _read_json(SOURCES)
         retained_packed = packed.get("retained", {})
         latest_index = packed.get("latest_index", {})
         events_packed = packed.get("events", {})
@@ -145,7 +151,7 @@ def install() -> tuple[callable, dict]:
     original = provenance._latest_entry_for_path
     stats = {
         "version": VERSION,
-        "representation": "DIRECT_MAP_JSON_GZIP",
+        "representation": "DIRECT_MAP_JSON",
         "load_status": "NOT_USED",
         "exact_ledger_hash_required": True,
         "code_contract_required": True,
@@ -209,8 +215,8 @@ def persist(stats: dict, path: Path | None = None) -> dict:
     events_packed = {_encode(key): record for key, record in latest_event_map.items()}
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    _write_gzip_json(MAPS, {"retained": retained_packed, "latest_index": latest_index, "events": events_packed})
-    _write_gzip_json(SOURCES, sources.to_dict("records"))
+    _write_json(MAPS, {"retained": retained_packed, "latest_index": latest_index, "events": events_packed})
+    _write_json(SOURCES, sources.to_dict("records"))
 
     ledger_hash_started = perf_counter()
     ledger_sha = _sha256_file(p)
@@ -218,7 +224,7 @@ def persist(stats: dict, path: Path | None = None) -> dict:
     payload = {
         "version": VERSION,
         "validated": True,
-        "representation": "DIRECT_MAP_JSON_GZIP",
+        "representation": "DIRECT_MAP_JSON",
         "code_contract": _code_contract(),
         "ledger_size": int(p.stat().st_size) if p.exists() else 0,
         "ledger_sha256": ledger_sha,
@@ -237,6 +243,13 @@ def persist(stats: dict, path: Path | None = None) -> dict:
     tmp = META.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(META)
+    for name in LEGACY_CACHE_FILES:
+        legacy = CACHE_DIR / name
+        if legacy.exists() and legacy not in {MAPS, SOURCES}:
+            try:
+                legacy.unlink()
+            except OSError:
+                pass
     stats["persist_status"] = "SUCCESS"
     stats["persist_ledger_hash_seconds"] = round(hash_seconds, 6)
     stats["persist_seconds"] = round(perf_counter() - started, 6)
