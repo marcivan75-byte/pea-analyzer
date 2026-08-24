@@ -1,0 +1,39 @@
+name: Temporary Daily Dispatch Bridge
+
+on:
+  push:
+    branches:
+      - codex/runtime-boursorama-shared-limiter-v21-15-2
+    paths:
+      - .github/daily-manual-trigger
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  dispatch-daily:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch official Daily workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: codex/runtime-boursorama-shared-limiter-v21-15-2
+          WORKFLOW: committee_tct_ct_daily.yml
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run "$WORKFLOW" --repo "$REPO" --ref "$BRANCH" -f run_validation=false
+          sleep 8
+          latest="$(gh run list --repo "$REPO" --workflow "$WORKFLOW" --branch "$BRANCH" --event workflow_dispatch --limit 1 --json databaseId,createdAt,headSha,status,conclusion,url)"
+          jq '.[0] // {error:"no_daily_run_found"}' <<<"$latest" > /tmp/daily-dispatch-status.json
+          path='.github/daily-dispatch-status.json'
+          encoded="$(base64 -w0 /tmp/daily-dispatch-status.json)"
+          existing_sha="$(gh api "repos/$REPO/contents/$path?ref=$BRANCH" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$existing_sha" ]; then
+            jq -n --arg message 'chore(actions): record daily dispatch status' --arg content "$encoded" --arg branch "$BRANCH" --arg sha "$existing_sha" '{message:$message,content:$content,branch:$branch,sha:$sha}' > /tmp/payload.json
+          else
+            jq -n --arg message 'chore(actions): record daily dispatch status' --arg content "$encoded" --arg branch "$BRANCH" '{message:$message,content:$content,branch:$branch}' > /tmp/payload.json
+          fi
+          gh api --method PUT "repos/$REPO/contents/$path" --input /tmp/payload.json >/dev/null
