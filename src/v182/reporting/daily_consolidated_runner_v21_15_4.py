@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 
-from v182.reporting import daily_consolidated_runner_v21_15_7 as impl
+from v182.reporting import daily_consolidated_runner_v21_15_9 as impl
 
 
 # Compatibility entrypoint retained because the deployed workflow historically
-# invokes V21.15.4. Runtime authority now lives in finalized V21.15.7.
+# invokes V21.15.4. Runtime authority now lives in finalized V21.15.9.
 ROOT = impl.ROOT
 VERSION = impl.VERSION
 run = impl.run
@@ -14,10 +14,10 @@ run = impl.run
 # Compatibility aliases retained for tests/downstream imports that used the old
 # V21.15.4 module as a facade.
 base = impl.base
-collection = impl.base.collection
-etf_replay = impl.base.etf_replay
-wave3_cpu = impl.base.wave3_cpu
-refresh_earnings_clock = impl.base.refresh_earnings_clock
+collection = impl.collection
+etf_replay = impl.etf_replay
+wave3_cpu = impl.wave3_cpu
+refresh_earnings_clock = impl.refresh_earnings_clock
 tactical = impl.tactical
 
 _bootstrap_safe_fast_install = impl.base._bootstrap_safe_fast_install
