@@ -15,6 +15,27 @@
     "CONSENSUS_TARGET_PRICE",
     "YAHOO_TARGET_MEAN"
   ],
+  "boursorama_action_gate": {
+    "enabled": true,
+    "accepted_consensus": ["BUY", "STRONG_BUY"],
+    "wait_consensus": ["HOLD"],
+    "rejected_consensus": ["SELL", "STRONG_SELL"],
+    "missing_policy": "REVIEW_NOT_ENTRY_READY",
+    "analyst_count_context_only": true,
+    "target_upside_context_only": true,
+    "revision_context_only": true,
+    "cannot_create_candidate": true
+  },
+  "investing_timing_gate": {
+    "enabled": true,
+    "entry_confirm": ["BUY", "STRONG_BUY"],
+    "neutral": ["NEUTRAL"],
+    "exit_review": ["SELL", "STRONG_SELL"],
+    "missing_entry_policy": "WAIT_SOURCE_MISSING",
+    "cannot_create_candidate": true,
+    "sell_blocks_new_entry": true,
+    "strong_sell_requires_strong_exit_review": true
+  },
   "links": {
     "boursorama_direct_preferred": true,
     "investing_validated_map_preferred": true,
@@ -25,6 +46,9 @@
     "base_criteria_weights_changed": false,
     "base_scores_overwritten": false,
     "selection_gate_changes_effective_shortlist": true,
+    "source_gate_changes_reference_score": false,
+    "source_gate_can_create_candidate": false,
+    "source_missing_is_negative_signal": false,
     "wave09_reintroduced": false,
     "t1_t2_scope": "ACTION_TCT_ONLY",
     "real_orders_enabled": false
