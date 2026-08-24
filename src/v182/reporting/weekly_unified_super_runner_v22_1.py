@@ -3,11 +3,12 @@ from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor
 from hashlib import sha256
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock
 from time import perf_counter
 import json
 
 from v182.audit import quality as quality_module
+from v182.decision import committee_master as committee_decision
 from v182.reporting import run as pipeline
 from v182.reporting import weekly_unified_super_runner_v22 as previous
 from v182.sources import etf_inception_data, etf_structural_data, morningstar_actions
@@ -39,8 +40,10 @@ def run(root: Path = ROOT) -> dict:
     """V22.1 scheduling/cache-only gains on top of the validated V22 baseline.
 
     - Reuse exact same-URL ETF issuer HTTP responses and exact PDF text between the
-      structural and inception collectors. The collectors remain sequential and keep
-      their original parsing/source/evidence rules; failed requests are never cached.
+      structural and inception collectors. Collectors stay sequential and failed
+      requests are never cached.
+    - Reuse identical cross-sectional percentile ranks across Committee horizons
+      when V21.16's resolver returns the exact same immutable Series + direction.
     - Pre-read the authorized Morningstar snapshot under WAVE05/WAVE06, but apply it
       only at the historical WAVE06B position.
     - Overlap final read-only WAVE99 audit with quality gates; quality waits for audit.
@@ -59,14 +62,19 @@ def run(root: Path = ROOT) -> dict:
     original_inception_get = etf_inception_data._get
     original_struct_pdf = etf_structural_data._pdf_text
     original_inception_pdf = etf_inception_data._pdf_text
+    original_pct_score = committee_decision._pct_score
 
     prefetch_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="weekly-morningstar-prefetch")
     final_audit_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="weekly-final-audit")
     holder: dict[str, Future | None] = {"future": None}
     final_audit: dict[str, Future | None] = {"future": None}
     cache_lock = Lock()
+    pct_lock = Lock()
     http_cache: dict[str, object] = {}
     pdf_text_cache: dict[str, str] = {}
+    pct_cache: dict[tuple[int, str], object] = {}
+    pct_inflight: dict[tuple[int, str], Event] = {}
+    pct_series_refs: dict[int, object] = {}
     metrics = {
         "morningstar_prefetch_started": False,
         "morningstar_prefetch_wait_seconds": 0.0,
@@ -79,6 +87,9 @@ def run(root: Path = ROOT) -> dict:
         "etf_amundi_exact_url_reuse_hits": 0,
         "etf_pdf_text_cache_hits": 0,
         "etf_pdf_text_cache_misses": 0,
+        "committee_percentile_cache_hits": 0,
+        "committee_percentile_cache_misses": 0,
+        "committee_percentile_cache_waits": 0,
     }
 
     def cached_get(original_get):
@@ -111,6 +122,40 @@ def run(root: Path = ROOT) -> dict:
                 pdf_text_cache[digest] = text
             return text
         return wrapped
+
+    def cached_pct_score(series, direction: str):
+        key = (id(series), str(direction))
+        while True:
+            owner = False
+            with pct_lock:
+                pct_series_refs[id(series)] = series
+                cached = pct_cache.get(key)
+                if cached is not None:
+                    metrics["committee_percentile_cache_hits"] += 1
+                    return cached
+                event = pct_inflight.get(key)
+                if event is None:
+                    event = Event()
+                    pct_inflight[key] = event
+                    metrics["committee_percentile_cache_misses"] += 1
+                    owner = True
+                else:
+                    metrics["committee_percentile_cache_waits"] += 1
+            if not owner:
+                event.wait()
+                continue
+            try:
+                result = original_pct_score(series, direction)
+            except BaseException:
+                with pct_lock:
+                    pct_inflight.pop(key, None)
+                    event.set()
+                raise
+            with pct_lock:
+                pct_cache[key] = result
+                pct_inflight.pop(key, None)
+                event.set()
+            return result
 
     def collect_56_with_morningstar_prefetch(actions_df, etf_with_tickers, cfg, finnhub_key, *, run_wave5, run_wave6):
         if holder["future"] is None:
@@ -162,6 +207,7 @@ def run(root: Path = ROOT) -> dict:
     etf_inception_data._get = cached_get(original_inception_get)
     etf_structural_data._pdf_text = cached_pdf_text(original_struct_pdf)
     etf_inception_data._pdf_text = cached_pdf_text(original_inception_pdf)
+    committee_decision._pct_score = cached_pct_score
 
     payload: dict = {}
     error: str | None = None
@@ -181,6 +227,7 @@ def run(root: Path = ROOT) -> dict:
         etf_inception_data._get = original_inception_get
         etf_structural_data._pdf_text = original_struct_pdf
         etf_inception_data._pdf_text = original_inception_pdf
+        committee_decision._pct_score = original_pct_score
         prefetch_pool.shutdown(wait=True, cancel_futures=False)
         final_audit_pool.shutdown(wait=True, cancel_futures=False)
 
@@ -190,6 +237,8 @@ def run(root: Path = ROOT) -> dict:
             "error": error,
             "total_seconds": round(float(perf_counter() - started), 6),
             **metrics,
+            "committee_percentile_cache_scope": "RUN_LOCAL_EXACT_SERIES_ID_PLUS_DIRECTION",
+            "committee_percentile_semantics_changed": False,
             "etf_structure_collectors_remain_sequential": True,
             "etf_exact_url_reuse_only": True,
             "etf_failed_http_requests_cached": False,
