@@ -1,3 +1,3 @@
-purpose: dispatch-official-daily-semantic-quarantine-measurement
+purpose: dispatch-official-daily-provenance-compact-bootstrap
 run_validation: false
-trigger_revision: 6
+trigger_revision: 7
