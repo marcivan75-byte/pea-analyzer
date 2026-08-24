@@ -106,7 +106,7 @@ def action_observations(actions_df: pd.DataFrame, path: Path = SEED_PATH) -> tup
 
     return rows, {
         "version": VERSION,
-        "status": "SUCCESS_SEED_REHYDRATION",
+        "status": "REUSED_VALIDATED_DAILY_W09_SEED",
         "seed_version": seed.get("version"),
         "seed_as_of": as_of,
         "source_run_id": seed.get("source_run_id"),
@@ -117,6 +117,7 @@ def action_observations(actions_df: pd.DataFrame, path: Path = SEED_PATH) -> tup
         "fred_calls": 0,
         "gdelt_calls": 0,
         "daily_only": True,
+        "etf_w09_fabricated": False,
         "weekly_wave09_execution_changed": False,
         "decision_logic_changed": False,
         "criteria_changed": False,
@@ -129,10 +130,14 @@ def audit_contract(path: Path = SEED_PATH) -> dict:
     seed = load_seed(path)
     return {
         "version": VERSION,
+        "status": "REUSED_VALIDATED_DAILY_W09_SEED",
         "seed_version": seed.get("version"),
         "seed_as_of": seed.get("as_of"),
         "source_run_id": seed.get("source_run_id"),
         "network_calls": 0,
+        "fred_calls": 0,
+        "gdelt_calls": 0,
+        "etf_w09_fabricated": False,
         "weekly_wave09_execution_changed": False,
         "decision_logic_changed": False,
         "criteria_changed": False,
