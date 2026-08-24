@@ -6,6 +6,11 @@ on:
       - codex/runtime-boursorama-shared-limiter-v21-15-2
     paths:
       - .github/daily-manual-trigger
+  pull_request:
+    branches:
+      - codex/runtime-boursorama-shared-limiter-v21-15-2
+    paths:
+      - .github/daily-pr-trigger
 
 permissions:
   actions: write
