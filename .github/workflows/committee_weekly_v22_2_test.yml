@@ -83,6 +83,7 @@ jobs:
           pip install pytest
           python -m compileall -q \
             src/v182/reporting/ci_entry_confidence_v22_2.py \
+            src/v182/reporting/ci_entry_watch_v22_2.py \
             src/v182/reporting/market_orientation_v22_2.py \
             src/v182/reporting/weekly_unified_super_runner_v22_2.py \
             src/v182/reporting/etf_structure_refresh.py
@@ -90,6 +91,7 @@ jobs:
             tests/test_ci_entry_confidence_v22_2.py \
             tests/test_ci_entry_watch_v22_2.py \
             tests/test_market_orientation_v22_2.py \
+            tests/test_market_orientation_ci_integration_v22_2.py \
             tests/test_weekly_v22_1_runtime_overlap.py \
             tests/test_weekly_v22_no_wave09.py
 
