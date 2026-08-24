@@ -194,15 +194,17 @@ def persist(stats: dict, path: Path | None = None) -> dict:
         sources = provenance._aggregate_sources(retained)
 
     retained_packed = {_encode(key): record for key, record in retained_rows_map.items()}
-    row_key_by_object = {
-        (str(record.get("isin", "")), str(record.get("field", ""))): packed_key
-        for packed_key, record in retained_packed.items()
-    }
     latest_index = {
-        _encode(key): row_key_by_object.get((str(record.get("isin", "")), str(record.get("field", ""))), "")
+        _encode(key): _encode(
+            (
+                str(record.get("universe", "")),
+                str(record.get("isin", "")),
+                str(record.get("field", "")),
+            )
+        )
         for key, record in latest_map.items()
     }
-    if any(not value for value in latest_index.values()):
+    if any(row_key not in retained_packed for row_key in latest_index.values()):
         raise RuntimeError("PROVENANCE_COMPACT_LATEST_INDEX_INCOMPLETE")
     events_packed = {_encode(key): record for key, record in latest_event_map.items()}
 
