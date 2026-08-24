@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[3]
 STATE_RELATIVE_PATH = Path("state/provenance/V21_8_ENTRY_EXIT_STATE.csv")
 STATE_KEY_FIELDS = ("asset_class", "horizon", "isin")
 STATE_OBSERVED_AT_FIELD = "v21_8_observed_at_utc"
+INVESTING_STATES = {"STRONG_SELL", "SELL", "NEUTRAL", "BUY", "STRONG_BUY"}
 
 
 def _num(value):
@@ -39,6 +40,23 @@ def _first_num(row: pd.Series, fields: tuple[str, ...]):
 
 def _horizon(row: pd.Series) -> str:
     return str(row.get("horizon", row.get("primary_horizon", "")) or "").upper()
+
+
+def _investing_signal(row: pd.Series) -> str | None:
+    """Return the canonical Investing signal matching the model horizon.
+
+    The post-selection source layer already maps TCT->daily, CT->weekly and
+    MT->monthly into investing_horizon_signal. The explicit fallback fields keep
+    governance deterministic for persisted/replayed rows that predate that field.
+    """
+    direct = str(row.get("investing_horizon_signal", "") or "").strip().upper()
+    if direct in INVESTING_STATES:
+        return direct
+    field = {"TCT": "investing_daily_signal", "CT": "investing_weekly_signal", "MT": "investing_monthly_signal"}.get(_horizon(row))
+    if not field:
+        return None
+    signal = str(row.get(field, "") or "").strip().upper()
+    return signal if signal in INVESTING_STATES else None
 
 
 def _state_key(row: pd.Series | dict) -> tuple[str, str, str]:
@@ -159,7 +177,7 @@ def _tct_t2_confirmed(row: pd.Series) -> bool:
 
 
 def classify_entry(row: pd.Series, cfg: dict) -> tuple[str, list[str]]:
-    """Keep selection and entry separate; missing timing evidence fails closed to WAIT."""
+    """Keep selection and entry separate; Investing is a strong timing confirmer."""
     selected = {str(x).upper() for x in cfg["entry_gate"].get("selected_decision_codes", ["BUY", "ACTION", "BUY_CANDIDATE"])}
     decision = str(row.get("decision", "") or "").upper()
     if decision not in selected:
@@ -189,13 +207,31 @@ def classify_entry(row: pd.Series, cfg: dict) -> tuple[str, list[str]]:
     if dist200 is not None and dist200 < 0:
         reasons.append("BELOW_SMA200_TREND_CONCERN")
 
-    blocking = {"MOMENTUM_DECELERATION", "BELOW_SMA200_TREND_CONCERN", "EXTREME_SCORE_REQUIRES_OVEREXTENSION_REVIEW"}
+    icfg = cfg.get("investing_confirmation", {})
+    investing = _investing_signal(row) if icfg.get("enabled", False) else None
+    if investing in set(icfg.get("entry_blocking_states", ["SELL", "STRONG_SELL"])):
+        reasons.append(f"INVESTING_{investing}_ENTRY_BLOCK")
+    elif investing in set(icfg.get("entry_wait_states", ["NEUTRAL"])):
+        reasons.append("INVESTING_NEUTRAL_ENTRY_NOT_CONFIRMED")
+    elif investing in set(icfg.get("entry_confirming_states", ["BUY", "STRONG_BUY"])):
+        reasons.append(f"INVESTING_{investing}_ENTRY_CONFIRMED")
+    elif icfg.get("enabled", False):
+        reasons.append("INVESTING_SIGNAL_MISSING_FALLBACK_INTERNAL")
+
+    blocking = {
+        "MOMENTUM_DECELERATION",
+        "BELOW_SMA200_TREND_CONCERN",
+        "EXTREME_SCORE_REQUIRES_OVEREXTENSION_REVIEW",
+        "INVESTING_SELL_ENTRY_BLOCK",
+        "INVESTING_STRONG_SELL_ENTRY_BLOCK",
+        "INVESTING_NEUTRAL_ENTRY_NOT_CONFIRMED",
+    }
     if blocking.intersection(reasons):
         return "WAIT", reasons
     return "ACTION", reasons or ["NO_CHALLENGER_TIMING_BLOCKER_OBSERVED"]
 
 
-def _deterioration_reasons(row: pd.Series) -> list[str]:
+def _deterioration_reasons(row: pd.Series, cfg: dict | None = None) -> list[str]:
     reasons: list[str] = []
     dist50, _ = _first_num(row, ("dist_sma50", "distance_sma50"))
     dist200, _ = _first_num(row, ("dist_sma200", "distance_sma200"))
@@ -217,14 +253,20 @@ def _deterioration_reasons(row: pd.Series) -> list[str]:
         reasons.append("MOMENTUM_DECELERATION")
     if market21 is not None and market200 is not None and market21 < 0 and market200 < 0:
         reasons.append("MARKET_REGIME_DETERIORATED")
+
+    icfg = (cfg or {}).get("investing_confirmation", {})
+    if icfg.get("enabled", False):
+        investing = _investing_signal(row)
+        if investing == "STRONG_SELL" and icfg.get("strong_sell_is_major_deterioration", True):
+            reasons.append("INVESTING_STRONG_SELL_MAJOR_DETERIORATION")
+        elif investing == "SELL" and icfg.get("sell_is_position_deterioration", True):
+            reasons.append("INVESTING_SELL_DETERIORATION")
     return reasons
 
 
 def _previous_protect_is_temporally_confirmed(row: pd.Series) -> bool:
     """A rerun of the same calendar observation day cannot confirm PROTECT -> EXIT."""
     if "previous_v21_8_observed_at_utc" not in row.index:
-        # Backward compatibility for direct callers/tests that supply only a
-        # previous state. Operational paths always attach the observed-at field.
         return True
     previous = pd.to_datetime(row.get("previous_v21_8_observed_at_utc"), errors="coerce", utc=True)
     current = pd.to_datetime(row.get("generated_at_utc"), errors="coerce", utc=True)
@@ -234,22 +276,23 @@ def _previous_protect_is_temporally_confirmed(row: pd.Series) -> bool:
 
 
 def classify_position(row: pd.Series, cfg: dict) -> tuple[str, list[str]]:
-    """Two-stage decision support: deterioration -> PROTECT -> confirmed multifactor EXIT."""
+    """Two-stage decision support with Investing as a strong deterioration confirmer."""
     if _bool(row.get("emergency_risk_flag")):
         return "EMERGENCY_EXIT", ["EXPLICIT_EMERGENCY_RISK_FLAG"]
 
-    reasons = _deterioration_reasons(row)
+    reasons = _deterioration_reasons(row, cfg)
     pnl, _ = _first_num(row, ("return_since_entry", "pnl_pct", "performance_pct", "return_pct"))
     peak, _ = _first_num(row, ("max_return_since_entry", "peak_return_since_entry", "mfe_since_entry"))
     if pnl is not None and peak is not None and peak > pnl:
         reasons.append("PROFIT_GIVEBACK_OBSERVED_CONTEXT_ONLY")
 
     structural = {"BELOW_SMA200", "SMA50_SLOPE_NEGATIVE", "BELOW_SMA50"}
-    momentum = {"RETURN_21D_NEGATIVE", "MOMENTUM_DECELERATION"}
+    momentum = {"RETURN_21D_NEGATIVE", "MOMENTUM_DECELERATION", "INVESTING_SELL_DETERIORATION", "INVESTING_STRONG_SELL_MAJOR_DETERIORATION"}
     structural_count = len(structural.intersection(reasons))
     momentum_count = len(momentum.intersection(reasons))
     market_bad = "MARKET_REGIME_DETERIORATED" in reasons
-    multifactor = structural_count >= 1 and momentum_count >= 1 and (structural_count >= 2 or market_bad)
+    investing_strong_sell = "INVESTING_STRONG_SELL_MAJOR_DETERIORATION" in reasons
+    multifactor = structural_count >= 1 and momentum_count >= 1 and (structural_count >= 2 or market_bad or investing_strong_sell)
 
     previous = str(row.get("previous_v21_8_position_state", row.get("previous_position_state", "")) or "").upper()
     explicit_confirmation = _bool(row.get("deterioration_confirmed"))
@@ -265,6 +308,9 @@ def classify_position(row: pd.Series, cfg: dict) -> tuple[str, list[str]]:
         if multifactor and previous == "PROTECT" and not confirmed:
             suffix.append("SAME_DAY_RERUN_NOT_TEMPORAL_CONFIRMATION")
         return "PROTECT", reasons + suffix
+    investing = _investing_signal(row)
+    if investing in {"BUY", "STRONG_BUY"}:
+        return "HOLD", [f"INVESTING_{investing}_POSITION_SUPPORT"]
     if pnl is not None and pnl > 0:
         return "HOLD", ["POSITIVE_POSITION_NO_VALIDATED_EXIT_TRIGGER"]
     return "HOLD", ["NO_VALIDATED_EXIT_TRIGGER"]
@@ -275,7 +321,7 @@ def apply_governance(decisions: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     score_guard = out["score"].copy() if "score" in out.columns else None
     decision_guard = out["decision"].copy() if "decision" in out.columns else None
 
-    entry_states, entry_reasons, position_states, position_reasons = [], [], [], []
+    entry_states, entry_reasons, position_states, position_reasons, investing_signals = [], [], [], [], []
     for _, row in out.iterrows():
         e_state, e_reasons = classify_entry(row, cfg)
         p_state, p_reasons = classify_position(row, cfg)
@@ -283,11 +329,14 @@ def apply_governance(decisions: pd.DataFrame, cfg: dict) -> pd.DataFrame:
         entry_reasons.append("|".join(e_reasons))
         position_states.append(p_state)
         position_reasons.append("|".join(p_reasons))
+        investing_signals.append(_investing_signal(row))
 
     out["v21_8_entry_state"] = entry_states
     out["v21_8_entry_reasons"] = entry_reasons
     out["v21_8_position_state"] = position_states
     out["v21_8_position_reasons"] = position_reasons
+    out["v21_8_investing_horizon_signal"] = investing_signals
+    out["v21_8_investing_entry_exit_influence"] = [signal is not None for signal in investing_signals]
     out["v21_8_fixed_take_profit"] = False
     out["v21_8_legacy_fixed_stop_engine"] = False
     out["v21_8_new_hard_stop_promoted"] = False
@@ -322,6 +371,7 @@ def run(root: Path = ROOT) -> dict:
     auditdir.mkdir(parents=True, exist_ok=True)
     governed.to_csv(outdir / "V21_8_ENTRY_EXIT_CHALLENGER.csv", sep=";", index=False, encoding="utf-8-sig")
 
+    investing_available = int(governed["v21_8_investing_horizon_signal"].notna().sum()) if "v21_8_investing_horizon_signal" in governed else 0
     payload = {
         "status": "SUCCESS",
         "version": cfg["version"],
@@ -329,6 +379,12 @@ def run(root: Path = ROOT) -> dict:
         "rows": int(len(governed)),
         "entry_states": governed["v21_8_entry_state"].value_counts(dropna=False).to_dict(),
         "position_states": governed["v21_8_position_state"].value_counts(dropna=False).to_dict(),
+        "investing_confirmation_enabled": bool(cfg.get("investing_confirmation", {}).get("enabled", False)),
+        "investing_signals_available": investing_available,
+        "investing_horizon_mapping": cfg.get("investing_confirmation", {}).get("horizon_mapping", {}),
+        "investing_changes_selection_score": False,
+        "investing_can_create_buy_candidate": False,
+        "investing_strong_sell_can_exit_alone": False,
         "fixed_take_profit_enabled": False,
         "legacy_fixed_stop_engine_enabled": False,
         "historical_plus_4pct_operational": False,
