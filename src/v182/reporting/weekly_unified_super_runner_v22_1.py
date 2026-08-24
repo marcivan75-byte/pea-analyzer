@@ -5,6 +5,7 @@ from pathlib import Path
 from time import perf_counter
 import json
 
+from v182.audit import quality as quality_module
 from v182.reporting import run as pipeline
 from v182.reporting import weekly_unified_super_runner_v22 as previous
 from v182.sources import morningstar_actions
@@ -59,6 +60,8 @@ def run(root: Path = ROOT) -> dict:
     Changes are deliberately narrow:
     - pre-read the authorized Morningstar Action snapshot while WAVE05/WAVE06 run;
       its observations are still applied only at the historical WAVE06B location;
+    - overlap the final read-only WAVE99 inventory audit with quality-gate checks;
+      quality does not return until the final audit has also completed successfully;
     - generate the three independent final Excel workbooks concurrently.
 
     No same-provider network concurrency is added. No criterion, weight, threshold,
@@ -72,13 +75,19 @@ def run(root: Path = ROOT) -> dict:
     original_collect_56 = pipeline._collect_wave5_wave6_parallel
     original_morningstar = morningstar_actions.load_authorized_snapshot
     original_exports = pipeline._export_excel_reports
+    original_audit = pipeline._audit
+    original_quality = quality_module.run_quality_gates
 
     prefetch_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="weekly-morningstar-prefetch")
+    final_audit_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="weekly-final-audit")
     holder: dict[str, Future | None] = {"future": None}
+    final_audit: dict[str, Future | None] = {"future": None}
     metrics = {
         "morningstar_prefetch_started": False,
         "morningstar_prefetch_wait_seconds": 0.0,
         "morningstar_prefetch_fallback": False,
+        "final_audit_quality_overlap_started": False,
+        "final_audit_quality_join_wait_seconds": 0.0,
         "parallel_excel_exports": True,
     }
 
@@ -131,8 +140,50 @@ def run(root: Path = ROOT) -> dict:
                 float(perf_counter() - wait_started), 6
             )
 
+    def audit_with_final_overlap(
+        actions,
+        etfs,
+        wave_id,
+        *,
+        failures=None,
+        source_context="",
+    ):
+        if wave_id != "WAVE_99_FINAL":
+            return original_audit(
+                actions,
+                etfs,
+                wave_id,
+                failures=failures,
+                source_context=source_context,
+            )
+        if final_audit["future"] is not None:
+            return final_audit["future"].result()
+        final_audit["future"] = final_audit_pool.submit(
+            original_audit,
+            actions,
+            etfs,
+            wave_id,
+            failures=failures,
+            source_context=source_context,
+        )
+        metrics["final_audit_quality_overlap_started"] = True
+        return None
+
+    def quality_joining_final_audit(*args, **kwargs):
+        result = original_quality(*args, **kwargs)
+        future = final_audit.get("future")
+        if future is not None:
+            wait_started = perf_counter()
+            future.result()
+            metrics["final_audit_quality_join_wait_seconds"] = round(
+                float(perf_counter() - wait_started), 6
+            )
+        return result
+
     pipeline._collect_wave5_wave6_parallel = collect_56_with_morningstar_prefetch
     morningstar_actions.load_authorized_snapshot = morningstar_from_prefetch
+    pipeline._audit = audit_with_final_overlap
+    quality_module.run_quality_gates = quality_joining_final_audit
     pipeline._export_excel_reports = _parallel_excel_exports
 
     payload: dict = {}
@@ -146,8 +197,11 @@ def run(root: Path = ROOT) -> dict:
     finally:
         pipeline._collect_wave5_wave6_parallel = original_collect_56
         morningstar_actions.load_authorized_snapshot = original_morningstar
+        pipeline._audit = original_audit
+        quality_module.run_quality_gates = original_quality
         pipeline._export_excel_reports = original_exports
         prefetch_pool.shutdown(wait=True, cancel_futures=False)
+        final_audit_pool.shutdown(wait=True, cancel_futures=False)
 
         audit = {
             "version": VERSION,
@@ -157,6 +211,9 @@ def run(root: Path = ROOT) -> dict:
             **metrics,
             "morningstar_application_position_changed": False,
             "morningstar_source_function_changed": False,
+            "final_audit_function_changed": False,
+            "quality_gate_function_changed": False,
+            "quality_waits_for_final_audit": True,
             "same_provider_network_concurrency_added": False,
             "excel_export_functions_changed": False,
             "excel_output_paths_changed": False,
