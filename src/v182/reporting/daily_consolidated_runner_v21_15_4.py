@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 
 from v182.reporting import ci_entry_confidence_v22_2
 from v182.reporting import daily_consolidated_runner_v21_15_7 as impl
@@ -28,16 +29,34 @@ _collection_code_contract = impl.base._collection_code_contract
 _load_fast_state_compatible = impl.base._load_fast_state_compatible
 
 
-def run(root=ROOT):
-    """Run the existing Daily, then refresh only the current CI candidate watch.
+def _restore_ci_watch_state(root):
+    runtime_state = root / ci_entry_confidence_v22_2.STATE
+    cached_state = root / "state/provenance/CI_ENTRY_WATCH_V22_2_STATE.csv"
+    if not runtime_state.exists() and cached_state.exists():
+        runtime_state.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(cached_state, runtime_state)
 
-    V22.2 uses the Committee decisions and OHLCV cache already produced/restored by
-    Daily. It performs no new broad-universe network collection and never mutates
-    the historical Daily score/decision outputs.
+
+def _checkpoint_ci_watch_state(root):
+    runtime_state = root / ci_entry_confidence_v22_2.STATE
+    cached_state = root / "state/provenance/CI_ENTRY_WATCH_V22_2_STATE.csv"
+    if runtime_state.exists():
+        cached_state.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(runtime_state, cached_state)
+
+
+def run(root=ROOT):
+    """Run existing Daily, then refresh only current CI candidates.
+
+    The watch reuses Daily Committee decisions and OHLCV cache. No broad-universe
+    network collection is added. Stability state is mirrored into state/provenance,
+    which is already part of the consolidated Daily decision cache.
     """
     payload = impl.run(root=root)
     try:
+        _restore_ci_watch_state(root)
         watch = ci_entry_confidence_v22_2.run(root=root)
+        _checkpoint_ci_watch_state(root)
     except Exception as exc:
         watch = {"status": "FAILED_NON_BLOCKING", "error": f"{type(exc).__name__}: {str(exc)[:240]}"}
     if isinstance(payload, dict):
