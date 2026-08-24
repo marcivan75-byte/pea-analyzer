@@ -94,7 +94,7 @@ def parse_technical_summary_html(html: str) -> dict[str, object]:
     that same sentence and belong to TradingView's documented five-state enum.
     """
     try:
-        text = " ".join(BeautifulSoup(html, "lxml").stripped_strings)
+        text = " ".join(" ".join(BeautifulSoup(html, "lxml").stripped_strings).split())
     except Exception:
         return {}
     if not text:
