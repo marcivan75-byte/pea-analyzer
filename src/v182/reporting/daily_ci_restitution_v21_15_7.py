@@ -185,6 +185,8 @@ def _preserve_internal_tct_provenance(root: Path, detail: pd.DataFrame) -> pd.Da
     original = detail.reset_index(drop=True)
     tct = attached["horizon"].astype(str).str.upper().eq("TCT")
     for column in ("source", "as_of", "evidence_level", "validation_status"):
+        if column not in original.columns:
+            continue
         missing = attached[column].isna() | attached[column].astype(str).str.strip().isin({"", "nan", "None"})
         attached.loc[tct & missing, column] = original.loc[tct & missing, column]
     return attached
