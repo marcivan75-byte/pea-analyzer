@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from time import perf_counter
 import json
 
 import pandas as pd
@@ -80,6 +82,33 @@ def _build_core_full_decision_shape(root: Path) -> dict:
     return core
 
 
+def _attach_context_to_precomputed_governance(
+    core_decisions: pd.DataFrame,
+    enriched: pd.DataFrame,
+    governed_core: pd.DataFrame,
+) -> pd.DataFrame:
+    """Reattach source-only columns after governance computed from authoritative core.
+
+    Selected-source enrichment is contractually forbidden from mutating row keys,
+    score or decision. V21.8 governance reads only authoritative model/timing/risk
+    fields already present in the core. Running it on the core therefore produces
+    identical governance columns; source-only context is then joined back 1:1.
+    """
+    base.base._assert_non_authoritative_enrichment(core_decisions, enriched)
+    keys = list(base.base.KEYS)
+    source_only = [column for column in enriched.columns if column not in core_decisions.columns]
+    governance_only = [column for column in governed_core.columns if column not in core_decisions.columns]
+    if source_only:
+        context = enriched[keys + source_only].copy()
+        result = governed_core.merge(context, on=keys, how="left", validate="one_to_one")
+    else:
+        result = governed_core.copy()
+    expected_columns = list(enriched.columns) + [column for column in governance_only if column not in enriched.columns]
+    result = result[expected_columns]
+    base.base._assert_non_authoritative_enrichment(enriched, result)
+    return result
+
+
 def _patch_audit_version(root: Path, payload: dict) -> None:
     auditdir = root / "outputs" / "audit"
     auditdir.mkdir(parents=True, exist_ok=True)
@@ -107,24 +136,64 @@ def run(root: Path = ROOT) -> dict:
     original_v221_latest = v221.LATEST
     original_version = base.VERSION
     original_core = base._build_core_daily
+    original_govern = base.base._govern
+
+    governance_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="daily-governance")
+    governance_state: dict = {
+        "future": None,
+        "core_decisions": None,
+        "compute_seconds": 0.0,
+        "fallback_serial": False,
+    }
+
+    def governance_job(decisions: pd.DataFrame, target_root: Path):
+        started = perf_counter()
+        try:
+            return original_govern(decisions, target_root)
+        finally:
+            governance_state["compute_seconds"] = round(perf_counter() - started, 6)
+
+    def build_core_and_start_governance(target_root: Path) -> dict:
+        core = _build_core_full_decision_shape(target_root)
+        authoritative = core["decisions"].copy()
+        governance_state["core_decisions"] = authoritative
+        governance_state["future"] = governance_pool.submit(governance_job, authoritative.copy(), target_root)
+        return core
+
+    def govern_from_precomputed(enriched: pd.DataFrame, target_root: Path):
+        future = governance_state.get("future")
+        authoritative = governance_state.get("core_decisions")
+        if future is None or authoritative is None:
+            governance_state["fallback_serial"] = True
+            return original_govern(enriched, target_root)
+        governed_core, state_rows = future.result()
+        governed = _attach_context_to_precomputed_governance(authoritative, enriched, governed_core)
+        return governed, state_rows
 
     v220.LATEST = v220.STATE_DIR / "ACTION_CT_V22_0_0_DAILY_LATEST.csv"
     v221.LATEST = v221.STATE_DIR / "ACTION_CT_V22_1_0_DAILY_LATEST.csv"
     base.VERSION = VERSION
-    base._build_core_daily = _build_core_full_decision_shape
+    base._build_core_daily = build_core_and_start_governance
+    base.base._govern = govern_from_precomputed
     try:
         payload = base.run(root=root)
     finally:
+        governance_pool.shutdown(wait=True, cancel_futures=False)
         v220.LATEST = original_v220_latest
         v221.LATEST = original_v221_latest
         base.VERSION = original_version
         base._build_core_daily = original_core
+        base.base._govern = original_govern
 
     payload = dict(payload or {})
     payload["version"] = VERSION
     payload["action_ct_daily_latest_isolated"] = True
     payload["weekly_action_ct_latest_preserved"] = True
     payload["full_tct_decision_shape_preserved"] = True
+    payload["governance_overlapped_with_selected_source"] = not bool(governance_state["fallback_serial"])
+    payload["governance_compute_seconds"] = float(governance_state["compute_seconds"])
+    payload["governance_serial_fallback"] = bool(governance_state["fallback_serial"])
+    payload["governance_source_context_dependency"] = False
     payload["decision_logic_changed"] = False
     payload["criteria_changed"] = False
     payload["weights_changed"] = False
