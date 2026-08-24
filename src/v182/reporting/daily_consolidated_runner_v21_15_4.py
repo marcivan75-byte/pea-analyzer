@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 
-from v182.reporting import daily_consolidated_runner_v21_15_9 as impl
+from v182.reporting import daily_consolidated_runner_v21_15_11 as impl
 
 
 # Compatibility entrypoint retained because the deployed workflow historically
-# invokes V21.15.4. Runtime authority now lives in finalized V21.15.9.
+# invokes V21.15.4. Runtime authority now lives in finalized V21.15.11.
 ROOT = impl.ROOT
 VERSION = impl.VERSION
 run = impl.run
