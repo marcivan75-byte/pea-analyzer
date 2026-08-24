@@ -11,6 +11,7 @@ from v182.audit import quality as quality_module
 from v182.decision import committee_master as committee_decision
 from v182.reporting import run as pipeline
 from v182.reporting import weekly_unified_super_runner_v22 as previous
+from v182.risk import beta_correlation_engine as risk_engine
 from v182.sources import etf_inception_data, etf_structural_data, morningstar_actions
 
 
@@ -39,15 +40,10 @@ def _parallel_excel_exports(actions, etfs, before, after, quality_checks, run_pr
 def run(root: Path = ROOT) -> dict:
     """V22.1 scheduling/cache-only gains on top of the validated V22 baseline.
 
-    - Reuse exact same-URL ETF issuer HTTP responses and exact PDF text between the
-      structural and inception collectors. Collectors stay sequential and failed
-      requests are never cached.
-    - Reuse identical cross-sectional percentile ranks across Committee horizons
-      when V21.16's resolver returns the exact same immutable Series + direction.
-    - Pre-read the authorized Morningstar snapshot under WAVE05/WAVE06, but apply it
-      only at the historical WAVE06B position.
-    - Overlap final read-only WAVE99 audit with quality gates; quality waits for audit.
-    - Generate the three independent final Excel workbooks concurrently.
+    Exact repeated work is reused only within the current run: ETF same-URL source
+    responses/PDF text, Committee percentile ranks, and Risk returns/beta metrics.
+    Morningstar is prefetched but applied at WAVE06B, final audit overlaps quality,
+    and disjoint final Excel exports run concurrently. Decision semantics are intact.
     """
     started = perf_counter()
     auditdir = root / "outputs" / "audit"
@@ -63,6 +59,8 @@ def run(root: Path = ROOT) -> dict:
     original_struct_pdf = etf_structural_data._pdf_text
     original_inception_pdf = etf_inception_data._pdf_text
     original_pct_score = committee_decision._pct_score
+    original_to_returns = risk_engine.to_returns
+    original_compute_beta = risk_engine.compute_beta_metrics
 
     prefetch_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="weekly-morningstar-prefetch")
     final_audit_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="weekly-final-audit")
@@ -70,11 +68,16 @@ def run(root: Path = ROOT) -> dict:
     final_audit: dict[str, Future | None] = {"future": None}
     cache_lock = Lock()
     pct_lock = Lock()
+    risk_lock = Lock()
     http_cache: dict[str, object] = {}
     pdf_text_cache: dict[str, str] = {}
     pct_cache: dict[tuple[int, str], object] = {}
     pct_inflight: dict[tuple[int, str], Event] = {}
     pct_series_refs: dict[int, object] = {}
+    returns_cache: dict[int, object] = {}
+    returns_refs: dict[int, object] = {}
+    beta_cache: dict[tuple[int, int], dict] = {}
+    beta_refs: dict[int, object] = {}
     metrics = {
         "morningstar_prefetch_started": False,
         "morningstar_prefetch_wait_seconds": 0.0,
@@ -90,6 +93,10 @@ def run(root: Path = ROOT) -> dict:
         "committee_percentile_cache_hits": 0,
         "committee_percentile_cache_misses": 0,
         "committee_percentile_cache_waits": 0,
+        "risk_returns_cache_hits": 0,
+        "risk_returns_cache_misses": 0,
+        "risk_beta_cache_hits": 0,
+        "risk_beta_cache_misses": 0,
     }
 
     def cached_get(original_get):
@@ -157,6 +164,35 @@ def run(root: Path = ROOT) -> dict:
                 event.set()
             return result
 
+    def cached_to_returns(prices):
+        key = id(prices)
+        with risk_lock:
+            returns_refs[key] = prices
+            cached = returns_cache.get(key)
+            if cached is not None:
+                metrics["risk_returns_cache_hits"] += 1
+                return cached
+            metrics["risk_returns_cache_misses"] += 1
+        result = original_to_returns(prices)
+        with risk_lock:
+            returns_cache[key] = result
+        return result
+
+    def cached_compute_beta(returns, benchmark):
+        key = (id(returns), id(benchmark))
+        with risk_lock:
+            beta_refs[id(returns)] = returns
+            beta_refs[id(benchmark)] = benchmark
+            cached = beta_cache.get(key)
+            if cached is not None:
+                metrics["risk_beta_cache_hits"] += 1
+                return dict(cached)
+            metrics["risk_beta_cache_misses"] += 1
+        result = original_compute_beta(returns, benchmark)
+        with risk_lock:
+            beta_cache[key] = dict(result)
+        return result
+
     def collect_56_with_morningstar_prefetch(actions_df, etf_with_tickers, cfg, finnhub_key, *, run_wave5, run_wave6):
         if holder["future"] is None:
             ms_cfg = cfg.get("morningstar_actions", {})
@@ -208,6 +244,8 @@ def run(root: Path = ROOT) -> dict:
     etf_structural_data._pdf_text = cached_pdf_text(original_struct_pdf)
     etf_inception_data._pdf_text = cached_pdf_text(original_inception_pdf)
     committee_decision._pct_score = cached_pct_score
+    risk_engine.to_returns = cached_to_returns
+    risk_engine.compute_beta_metrics = cached_compute_beta
 
     payload: dict = {}
     error: str | None = None
@@ -228,6 +266,8 @@ def run(root: Path = ROOT) -> dict:
         etf_structural_data._pdf_text = original_struct_pdf
         etf_inception_data._pdf_text = original_inception_pdf
         committee_decision._pct_score = original_pct_score
+        risk_engine.to_returns = original_to_returns
+        risk_engine.compute_beta_metrics = original_compute_beta
         prefetch_pool.shutdown(wait=True, cancel_futures=False)
         final_audit_pool.shutdown(wait=True, cancel_futures=False)
 
@@ -237,6 +277,8 @@ def run(root: Path = ROOT) -> dict:
             "error": error,
             "total_seconds": round(float(perf_counter() - started), 6),
             **metrics,
+            "risk_cache_scope": "RUN_LOCAL_EXACT_PRICE_SERIES_AND_BENCHMARK_IDENTITY",
+            "risk_formulas_changed": False,
             "committee_percentile_cache_scope": "RUN_LOCAL_EXACT_SERIES_ID_PLUS_DIRECTION",
             "committee_percentile_semantics_changed": False,
             "etf_structure_collectors_remain_sequential": True,
