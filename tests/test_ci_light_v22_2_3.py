@@ -14,9 +14,9 @@ def _row(**overrides):
         "boursorama_consensus": "BUY",
         "boursorama_n_analysts": 11,
         "boursorama_target_upside_pct": 20.1,
-        "investing_daily_signal": "BUY",
-        "investing_weekly_signal": "STRONG_BUY",
-        "investing_monthly_signal": "BUY",
+        "tradingview_daily_signal": "BUY",
+        "tradingview_weekly_signal": "STRONG_BUY",
+        "tradingview_monthly_signal": "BUY",
         # Deliberately below full-CI thresholds: these fields must not gate LIGHT.
         "score": 1.0,
         "CI_CONFIDENCE_SCORE_V22_2_1": 1.0,
@@ -46,16 +46,16 @@ def test_light_requires_strictly_more_than_twenty_percent_upside():
     assert "BOURSORAMA_TARGET_UPSIDE_NOT_GT_20" in reasons
 
 
-def test_light_requires_all_three_investing_timeframes_positive():
-    accepted, reasons, _ = light._evaluate(_row(investing_monthly_signal="NEUTRAL"))
+def test_light_requires_all_three_tradingview_timeframes_positive():
+    accepted, reasons, _ = light._evaluate(_row(tradingview_monthly_signal="NEUTRAL"))
     assert accepted is False
-    assert "INVESTING_MONTHLY_NOT_BUY_OR_STRONG_BUY" in reasons
+    assert "TRADINGVIEW_MONTHLY_NOT_BUY_OR_STRONG_BUY" in reasons
 
 
-def test_light_missing_one_investing_timeframe_fails_closed():
-    accepted, reasons, _ = light._evaluate(_row(investing_daily_signal=pd.NA))
+def test_light_missing_one_tradingview_timeframe_fails_closed():
+    accepted, reasons, _ = light._evaluate(_row(tradingview_daily_signal=pd.NA))
     assert accepted is False
-    assert "INVESTING_DAILY_SIGNAL_MISSING" in reasons
+    assert "TRADINGVIEW_DAILY_SIGNAL_MISSING" in reasons
 
 
 def test_light_etf_does_not_substitute_morningstar_for_boursorama_consensus():
@@ -99,19 +99,19 @@ def test_light_export_contains_three_signals_and_both_urls():
             "CI_LIGHT_BOURSORAMA_RECOMMENDATION": "RENFORCER",
             "CI_LIGHT_BOURSORAMA_ANALYSTS": 11,
             "CI_LIGHT_BOURSORAMA_UPSIDE_PCT": 21,
-            "CI_LIGHT_INVESTING_DAILY": "BUY",
-            "CI_LIGHT_INVESTING_WEEKLY": "BUY",
-            "CI_LIGHT_INVESTING_MONTHLY": "STRONG_BUY",
+            "CI_LIGHT_TRADINGVIEW_DAILY": "BUY",
+            "CI_LIGHT_TRADINGVIEW_WEEKLY": "BUY",
+            "CI_LIGHT_TRADINGVIEW_MONTHLY": "STRONG_BUY",
             "CI_LIGHT_BOURSORAMA_URL": "https://www.boursorama.com/cours/consensus/TEST/",
-            "CI_LIGHT_INVESTING_URL": "https://www.investing.com/equities/test-technical",
+            "CI_LIGHT_TRADINGVIEW_URL": "https://www.tradingview.com/symbols/EURONEXT-TEST/technicals/",
         }
     ])
     columns = light._export_columns(frame)
     for required in (
-        "CI_LIGHT_INVESTING_DAILY",
-        "CI_LIGHT_INVESTING_WEEKLY",
-        "CI_LIGHT_INVESTING_MONTHLY",
+        "CI_LIGHT_TRADINGVIEW_DAILY",
+        "CI_LIGHT_TRADINGVIEW_WEEKLY",
+        "CI_LIGHT_TRADINGVIEW_MONTHLY",
         "CI_LIGHT_BOURSORAMA_URL",
-        "CI_LIGHT_INVESTING_URL",
+        "CI_LIGHT_TRADINGVIEW_URL",
     ):
         assert required in columns
