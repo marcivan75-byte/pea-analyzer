@@ -1,0 +1,32 @@
+{
+  "version": "V22.2.2",
+  "selection_gate": {
+    "enabled": true,
+    "minimum_selection_score": 77.0,
+    "minimum_confidence_score": 66.0,
+    "action_minimum_analyst_consensus_upside_pct": 20.0,
+    "action_missing_consensus_policy": "EXCLUDE_FAIL_CLOSED",
+    "etf_analyst_consensus_gate_applies": false,
+    "inclusive_thresholds": true
+  },
+  "action_consensus_methods": [
+    "CONSENSUS_UPSIDE",
+    "YAHOO_CONSENSUS_UPSIDE",
+    "CONSENSUS_TARGET_PRICE",
+    "YAHOO_TARGET_MEAN"
+  ],
+  "links": {
+    "boursorama_direct_preferred": true,
+    "investing_validated_map_preferred": true,
+    "search_fallback_allowed": true
+  },
+  "governance": {
+    "base_scoring_formula_changed": false,
+    "base_criteria_weights_changed": false,
+    "base_scores_overwritten": false,
+    "selection_gate_changes_effective_shortlist": true,
+    "wave09_reintroduced": false,
+    "t1_t2_scope": "ACTION_TCT_ONLY",
+    "real_orders_enabled": false
+  }
+}
