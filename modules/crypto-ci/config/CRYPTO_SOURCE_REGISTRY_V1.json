@@ -1,0 +1,90 @@
+{
+  "version": "CRYPTO_SOURCE_REGISTRY_V1.0.0",
+  "policy": {
+    "raw_secrets_persisted": false,
+    "raw_html_persisted": false,
+    "future_observations_forbidden": true,
+    "source_failure_never_bearish": true,
+    "cross_source_identity_required": true
+  },
+  "sources": [
+    {
+      "id": "COINGECKO",
+      "tier": "A_AGGREGATE",
+      "role": ["identity", "market_cap", "spot_history", "volume", "supply"],
+      "base_url": "https://api.coingecko.com/api/v3",
+      "authentication": "OPTIONAL_DEMO_OR_PRO_KEY",
+      "ttl_seconds": 1800,
+      "rate_limit_per_second": 0.4,
+      "required_core": true
+    },
+    {
+      "id": "BINANCE_PUBLIC",
+      "tier": "A_VENUE_PRIMARY",
+      "role": ["spot_quote", "spread", "funding", "open_interest"],
+      "base_url": "https://data-api.binance.vision",
+      "derivatives_base_url": "https://fapi.binance.com",
+      "authentication": "NONE_FOR_USED_ENDPOINTS",
+      "ttl_seconds": 900,
+      "rate_limit_per_second": 2.0,
+      "required_core": false
+    },
+    {
+      "id": "KRAKEN_PUBLIC",
+      "tier": "A_VENUE_CONFIRMATION",
+      "role": ["spot_quote", "spread", "cross_venue_confirmation"],
+      "base_url": "https://api.kraken.com/0/public",
+      "authentication": "NONE_FOR_USED_ENDPOINTS",
+      "ttl_seconds": 900,
+      "rate_limit_per_second": 1.0,
+      "required_core": false
+    },
+    {
+      "id": "COIN_METRICS_COMMUNITY",
+      "tier": "A_NETWORK_PRIMARY",
+      "role": ["active_addresses", "transactions", "fees"],
+      "base_url": "https://community-api.coinmetrics.io/v4",
+      "authentication": "NONE_COMMUNITY_COVERAGE",
+      "ttl_seconds": 21600,
+      "rate_limit_per_second": 0.5,
+      "required_core": false
+    },
+    {
+      "id": "DEFILLAMA",
+      "tier": "A_DEFI_PRIMARY",
+      "role": ["chain_tvl", "protocol_tvl", "stablecoin_supply", "fees_revenue"],
+      "base_url": "https://api.llama.fi",
+      "authentication": "NONE_FOR_USED_ENDPOINTS",
+      "ttl_seconds": 21600,
+      "rate_limit_per_second": 1.0,
+      "required_core": false
+    },
+    {
+      "id": "GLASSNODE_OPTIONAL",
+      "tier": "A_PREMIUM_NETWORK",
+      "role": ["active_entities", "exchange_flows", "realized_cap", "mvrv"],
+      "base_url": "https://api.glassnode.com/v1",
+      "authentication": "GLASSNODE_API_KEY",
+      "ttl_seconds": 21600,
+      "rate_limit_per_second": 0.5,
+      "required_core": false
+    },
+    {
+      "id": "PIT_MANUAL_EVIDENCE",
+      "tier": "A_OR_B_ATTRIBUTED",
+      "role": ["security_incident", "token_unlock", "governance_catalyst", "regulatory_event"],
+      "authentication": "N/A",
+      "ttl_seconds": 0,
+      "required_fields": ["asset_id", "observed_at", "effective_at", "expires_at", "source_url", "severity"],
+      "required_core": false
+    }
+  ],
+  "fallback_order": {
+    "identity": ["COINGECKO", "PIT_MANUAL_EVIDENCE"],
+    "spot_market": ["COINGECKO", "BINANCE_PUBLIC", "KRAKEN_PUBLIC"],
+    "derivatives": ["BINANCE_PUBLIC", "GLASSNODE_OPTIONAL"],
+    "network": ["COIN_METRICS_COMMUNITY", "GLASSNODE_OPTIONAL"],
+    "defi": ["DEFILLAMA"],
+    "catalysts": ["PIT_MANUAL_EVIDENCE"]
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "version": "CRYPTO_UNIVERSE_V1.1.0_TOP100",
+  "quote_currency": "USD",
+  "universe_mode": "TOP_MARKET_CAP_DYNAMIC",
+  "target_count": 100,
+  "ranking_source": "COINGECKO_COINS_MARKETS_MARKET_CAP_DESC",
+  "ranking_cache_ttl_seconds": 1800,
+  "selection_policy": "TOP_100_MARKET_CAP_THEN_ANALYZE_ALL_AND_BLOCK_GOVERNED_EXCLUSIONS",
+  "assets_role": "IDENTITY_AND_SOURCE_OVERRIDES_NOT_FULL_UNIVERSE",
+  "classification_overrides": {
+    "tether": "STABLECOIN",
+    "usd-coin": "STABLECOIN",
+    "dai": "STABLECOIN",
+    "ethena-usde": "STABLECOIN",
+    "usds": "STABLECOIN",
+    "first-digital-usd": "STABLECOIN",
+    "paypal-usd": "STABLECOIN",
+    "true-usd": "STABLECOIN",
+    "frax": "STABLECOIN",
+    "wrapped-bitcoin": "WRAPPED",
+    "coinbase-wrapped-btc": "WRAPPED",
+    "wrapped-steth": "WRAPPED",
+    "staked-ether": "WRAPPED",
+    "binance-staked-sol": "WRAPPED"
+  },
+  "assets": [
+    {"id":"bitcoin","symbol":"BTC","name":"Bitcoin","binance":"BTCUSDT","kraken":"XBTUSD","coinmetrics":"btc","glassnode":"BTC","chain":"Bitcoin","category":"L1","contract":null},
+    {"id":"ethereum","symbol":"ETH","name":"Ethereum","binance":"ETHUSDT","kraken":"ETHUSD","coinmetrics":"eth","glassnode":"ETH","chain":"Ethereum","category":"L1","contract":null},
+    {"id":"solana","symbol":"SOL","name":"Solana","binance":"SOLUSDT","kraken":"SOLUSD","coinmetrics":"sol","glassnode":null,"chain":"Solana","category":"L1","contract":null},
+    {"id":"binancecoin","symbol":"BNB","name":"BNB","binance":"BNBUSDT","kraken":null,"coinmetrics":"bnb","glassnode":null,"chain":"BSC","category":"L1","contract":null},
+    {"id":"ripple","symbol":"XRP","name":"XRP","binance":"XRPUSDT","kraken":"XRPUSD","coinmetrics":"xrp","glassnode":null,"chain":null,"category":"PAYMENT","contract":null},
+    {"id":"cardano","symbol":"ADA","name":"Cardano","binance":"ADAUSDT","kraken":"ADAUSD","coinmetrics":"ada","glassnode":null,"chain":"Cardano","category":"L1","contract":null},
+    {"id":"chainlink","symbol":"LINK","name":"Chainlink","binance":"LINKUSDT","kraken":"LINKUSD","coinmetrics":"link","glassnode":"LINK","chain":null,"category":"ORACLE","contract":"ethereum:0x514910771af9ca656af840dff83e8264ecf986ca"},
+    {"id":"avalanche-2","symbol":"AVAX","name":"Avalanche","binance":"AVAXUSDT","kraken":"AVAXUSD","coinmetrics":"avax","glassnode":null,"chain":"Avalanche","category":"L1","contract":null},
+    {"id":"polkadot","symbol":"DOT","name":"Polkadot","binance":"DOTUSDT","kraken":"DOTUSD","coinmetrics":"dot","glassnode":null,"chain":"Polkadot","category":"L0","contract":null},
+    {"id":"near","symbol":"NEAR","name":"NEAR Protocol","binance":"NEARUSDT","kraken":"NEARUSD","coinmetrics":"near","glassnode":null,"chain":"Near","category":"L1","contract":null}
+  ]
+}

@@ -1,0 +1,136 @@
+{
+  "version": "CRYPTO_CI_V1.6.0_TOP100_LIGHTWEIGHT_CRITERIA_T1_T2_NO_STO_SAR",
+  "asset_class": "CRYPTO",
+  "status": "SHADOW_RESEARCH_ONLY",
+  "real_orders_enabled": false,
+  "automatic_weight_promotion": false,
+  "holdout_locked": true,
+  "missing_data_policy": "EXCLUDE_AND_RENORMALIZE_AFTER_COVERAGE_GATE",
+  "horizons": {
+    "TCT": {"holding_days": [1, 7], "primary_outcome_days": 3},
+    "CT": {"holding_days": [14, 84], "primary_outcome_days": 30}
+  },
+  "weights": {
+    "TCT": {
+      "market_regime": 0.15,
+      "trend_momentum": 0.25,
+      "liquidity_market_quality": 0.20,
+      "derivatives_positioning": 0.15,
+      "onchain_network": 0.10,
+      "fundamental_tokenomics": 0.05,
+      "catalyst_sentiment": 0.05,
+      "risk_quality": 0.05
+    },
+    "CT": {
+      "market_regime": 0.15,
+      "trend_momentum": 0.20,
+      "liquidity_market_quality": 0.12,
+      "derivatives_positioning": 0.10,
+      "onchain_network": 0.18,
+      "fundamental_tokenomics": 0.15,
+      "catalyst_sentiment": 0.05,
+      "risk_quality": 0.05
+    }
+  },
+  "incremental_criteria_weights": {
+    "TCT": {
+      "trend_momentum": {"existing_basket": 0.70, "momentum_acceleration": 0.10, "price_volume_confirmation": 0.10, "btc_relative_strength": 0.10},
+      "liquidity_market_quality": {"existing_basket": 0.85, "amihud_illiquidity_proxy": 0.15},
+      "risk_quality": {"existing_basket": 0.75, "downside_volatility": 0.25}
+    },
+    "CT": {
+      "trend_momentum": {"existing_basket": 0.70, "momentum_acceleration": 0.10, "price_volume_confirmation": 0.10, "btc_relative_strength": 0.10},
+      "liquidity_market_quality": {"existing_basket": 0.85, "amihud_illiquidity_proxy": 0.15},
+      "risk_quality": {"existing_basket": 0.75, "downside_volatility": 0.25}
+    }
+  },
+  "thresholds": {
+    "TCT": {"ready": 72, "strong": 82, "minimum_coverage": 0.80, "minimum_confidence": 70, "minimum_confirmations": 4},
+    "CT": {"ready": 70, "strong": 80, "minimum_coverage": 0.75, "minimum_confidence": 68, "minimum_confirmations": 4}
+  },
+  "universe_gates": {
+    "minimum_market_cap_usd": 250000000,
+    "minimum_median_daily_volume_usd": 10000000,
+    "minimum_history_days": 200,
+    "stablecoins_forbidden": true,
+    "wrapped_assets_forbidden": true,
+    "leveraged_tokens_forbidden": true,
+    "privacy_assets_manual_review": true
+  },
+  "risk_gates": {
+    "market_data_max_age_hours": 36,
+    "source_divergence_block_pct": 5.0,
+    "annualized_volatility_wait_pct": 180.0,
+    "drawdown_90d_wait_pct": -60.0,
+    "extreme_funding_abs_8h": 0.0015,
+    "hard_incident_severities": ["CRITICAL", "HIGH"],
+    "incident_lookback_days": 14
+  },
+  "validation": {
+    "outcome_days": [3, 7, 30, 90],
+    "minimum_labeled_rows_30d": 300,
+    "minimum_assets": 20,
+    "minimum_snapshot_dates": 30,
+    "walk_forward_purged": true,
+    "embargo_days": 7,
+    "transaction_costs_required": true,
+    "multiple_testing_control_required": true,
+    "no_automatic_promotion_on_pass": true
+  },
+  "t1_t2": {
+    "version": "CRYPTO_T1_T2_V1.2.0_NO_STO_SAR",
+    "scope": "CRYPTO_TCT_ONLY",
+    "status": "SHADOW_RESEARCH_ONLY",
+    "score_influence": 0.0,
+    "real_orders_enabled": false,
+    "daily_close_utc_only": true,
+    "ttl_calendar_days": 10,
+    "minimum_history_days": 120,
+    "state_path": "state/CRYPTO_T1_STATE.json",
+    "squeeze": {
+      "percentile": 0.15,
+      "lookback_days": 100,
+      "minimum_consecutive_days": 7
+    },
+    "t1": {
+      "quality_threshold": 70.0,
+      "starter_threshold": 80.0,
+      "minimum_component_coverage": 0.80,
+      "volume_increase_ratio_min": 1.0,
+      "components": {
+        "seven_day_squeeze": 0.25,
+        "upper_band_breakout_and_expansion": 0.25,
+        "volume_increases": 0.20,
+        "macd_below_signal": 0.15,
+        "above_sma50": 0.15
+      }
+    },
+    "t2": {
+      "quality_threshold": 75.0,
+      "minimum_component_coverage": 0.80,
+      "bandwidth_expansion_ratio_min": 1.0,
+      "volume_increase_ratio_min": 1.0,
+      "components": {
+        "bandwidth_continues": 0.25,
+        "above_upper_band": 0.20,
+        "macd_bullish_crossover": 0.25,
+        "volume_increases": 0.15,
+        "above_sma50": 0.15
+      }
+    },
+    "research_entry_variant": {
+      "t1_fraction": 0.25,
+      "t2_fraction": 0.75,
+      "promotion_authority": false
+    }
+  },
+  "runtime": {
+    "max_workers": 8,
+    "request_timeout_seconds": 12,
+    "retries": 2,
+    "performance_budget_seconds_100_assets_cached": 1.5,
+    "network_budget_requests_100_assets": 230,
+    "estimated_uncached_seconds_100_assets_keyless": 270,
+    "target_count": 100
+  }
+}
