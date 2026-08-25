@@ -9,7 +9,8 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: "40 20 * * 5"
+    - cron: "30 18 * * 5"
+      timezone: "Europe/Paris"
 
 concurrency:
   group: committee-weekly-heavy-${{ github.ref }}
