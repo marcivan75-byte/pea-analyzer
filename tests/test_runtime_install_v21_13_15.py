@@ -26,15 +26,22 @@ def test_daily_workflow_uses_runtime_file_and_pythonpath():
     assert "Install production runtime" in workflow
 
 
-def test_daily_financial_execution_order_is_preserved():
+def test_daily_financial_execution_order_is_preserved_inside_consolidated_runner():
     workflow = (ROOT / ".github/workflows/committee_tct_ct_daily.yml").read_text(encoding="utf-8")
-    commands = [
-        "python -m v182.reporting.run",
-        "python -m v182.reporting.etf_structure_state_replay",
-        "python -m v182.reporting.daily_tct_ct_runner",
-        "python -m v182.reporting.tactical_shadow_bundle_run",
-        "python -m v182.reporting.tct_postmarket_bundle_run",
+    facade = (ROOT / "src/v182/reporting/daily_consolidated_runner_v21_15_4.py").read_text(encoding="utf-8")
+    base = (ROOT / "src/v182/reporting/daily_consolidated_runner_v21_15_5.py").read_text(encoding="utf-8")
+    impl = (ROOT / "src/v182/reporting/daily_consolidated_runner_v21_15_7.py").read_text(encoding="utf-8")
+
+    command = "python -m v182.reporting.daily_consolidated_runner_v21_15_4"
+    assert workflow.count(command) == 1
+    assert "daily_consolidated_runner_v21_15_7 as impl" in facade
+
+    ordered_markers = [
+        "collection_payload, local_optimizations = _run_collection_optimized_locals()",
+        '"ETF_STRUCTURE_STATE_REPLAY"',
+        "tactical_payload = tactical.run(root=root)",
     ]
-    positions = [workflow.index(command) for command in commands]
+    positions = [base.index(marker) for marker in ordered_markers]
     assert positions == sorted(positions)
-    assert all(workflow.count(command) == 1 for command in commands)
+    assert "daily_tactical_super_runner_v21_15_6 as tactical" in impl
+    assert "ci_payload = daily_ci.run(root=root)" in impl
