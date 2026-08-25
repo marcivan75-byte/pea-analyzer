@@ -9,7 +9,8 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: "0 21 * * 1-4"
+    - cron: "30 18 * * 1-4"
+      timezone: "Europe/Paris"
 
 concurrency:
   group: pea-daily-tct-ct
