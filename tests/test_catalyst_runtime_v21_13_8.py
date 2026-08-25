@@ -58,14 +58,16 @@ def test_daily_runtime_consolidates_decision_state_without_mixing_ohlcv_cache():
     ):
         assert state_path in workflow
 
+    assert "Validate OHLCV cache checkpoint" in workflow
     assert "Save persistent OHLCV cache" in workflow
-    assert "success() && hashFiles('data/cache/**') != ''" in workflow
+    assert "hashFiles('state/OHLCV_CACHE_VALIDATED') != ''" in workflow
     assert "key: ohlcv-v3-${{ github.run_id }}" in workflow
     assert "compression-level: 1" in workflow
 
 
-def test_weekly_runtime_uses_two_state_caches_and_preserves_migration_fallbacks():
+def test_weekly_runtime_uses_two_state_caches_and_consolidated_tail_runner():
     workflow = (ROOT / ".github" / "workflows" / "committee_master_daily.yml").read_text(encoding="utf-8")
+    tail = (ROOT / "src" / "v182" / "reporting" / "weekly_tail_super_runner_v21_16_0.py").read_text(encoding="utf-8")
 
     assert "Restore consolidated tactical decision state" in workflow
     assert "Restore consolidated weekly research state" in workflow
@@ -78,17 +80,18 @@ def test_weekly_runtime_uses_two_state_caches_and_preserves_migration_fallbacks(
     assert "state/sector_rotation_v2/" in workflow
     assert "state/etf_fund_flows/" in workflow
 
-    for required_step in (
-        "Run weekly unified Committee pipeline",
-        "Friday TCT CT scoring and V21.8",
-        "Action CT V22.0 V22.1 + TCT V24.3.1 Friday shared-parquet SHADOW",
-        "Friday POSTMARKET V24.4.2 OHLC + catalyst + lineage + validator single-process",
-        "Run ETF Fund Flows V1 SHADOW context",
-        "Audit criteria governance",
+    assert "python -m v182.reporting.weekly_unified_super_runner_v21_16_2" in workflow
+    assert "python -m v182.reporting.weekly_tail_super_runner_v21_16_0" in workflow
+    for required_component in (
+        "friday_tactical_reuse_runner as friday_reuse",
+        "tactical_shadow_bundle_run as tactical",
+        "tct_postmarket_bundle_run as postmarket",
+        "weekly_post_decision_bundle_run as weekly_post",
+        "decision_brief",
     ):
-        assert required_step in workflow
-    assert workflow.count("python -m v182.reporting.tactical_shadow_bundle_run") == 1
-    assert workflow.count("python -m v182.reporting.tct_postmarket_bundle_run") == 1
+        assert required_component in tail
+    assert "friday_committee_score_recompute_removed\": True" in tail
+    assert "friday_tct_baseline_recompute_removed\": True" in tail
     assert "state/action_ct/" in workflow
     assert "state/action_ct_v22_1/" in workflow
     assert "state/tct_context/" in workflow

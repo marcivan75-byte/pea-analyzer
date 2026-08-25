@@ -55,7 +55,7 @@ def test_multifactor_deterioration_first_moves_to_protect_then_exit_after_confir
     assert "MULTIFACTOR_DETERIORATION_CONFIRMED_AFTER_PROTECT" in reasons
 
 
-def test_temporal_protect_state_is_persisted_and_confirms_exit_on_next_run(tmp_path: Path):
+def test_temporal_protect_state_is_persisted_and_confirms_exit_on_next_observation_day(tmp_path: Path):
     (tmp_path / "config").mkdir(parents=True)
     (tmp_path / "outputs" / "committee_master").mkdir(parents=True)
     (tmp_path / "config" / "V21_8_ENTRY_EXIT_GOVERNANCE.json").write_text(json.dumps(CFG), encoding="utf-8")
@@ -72,9 +72,11 @@ def test_temporal_protect_state_is_persisted_and_confirms_exit_on_next_run(tmp_p
             "slope_sma50_20d": -0.02,
             "ret_21d": -0.05,
             "vol20": 0.2,
+            "generated_at_utc": "2026-08-23T20:00:00+00:00",
         }
     ])
-    decisions.to_csv(tmp_path / "outputs" / "committee_master" / "COMMITTEE_DECISIONS.csv", sep=";", index=False, encoding="utf-8-sig")
+    decisions_path = tmp_path / "outputs" / "committee_master" / "COMMITTEE_DECISIONS.csv"
+    decisions.to_csv(decisions_path, sep=";", index=False, encoding="utf-8-sig")
 
     first = run(tmp_path)
     first_rows = pd.read_csv(tmp_path / "outputs" / "committee_master" / "V21_8_ENTRY_EXIT_CHALLENGER.csv", sep=";")
@@ -82,6 +84,8 @@ def test_temporal_protect_state_is_persisted_and_confirms_exit_on_next_run(tmp_p
     assert first_rows.loc[0, "v21_8_position_state"] == "PROTECT"
     assert (tmp_path / "state" / "provenance" / "V21_8_ENTRY_EXIT_STATE.csv").exists()
 
+    decisions.loc[0, "generated_at_utc"] = "2026-08-24T20:00:00+00:00"
+    decisions.to_csv(decisions_path, sep=";", index=False, encoding="utf-8-sig")
     second = run(tmp_path)
     second_rows = pd.read_csv(tmp_path / "outputs" / "committee_master" / "V21_8_ENTRY_EXIT_CHALLENGER.csv", sep=";")
     assert second["temporal_state_rows"] == 1

@@ -37,8 +37,8 @@ def test_w09_seed_rehydrates_actions_without_network() -> None:
     assert values[("FR0010208488", "funnel_country_macro_score")] == 49.9546
     assert values[("FR0010208488", "funnel_sector_news_score")] == 89.5285
     assert values[("FR0010208488", "funnel_instrument_news_score")] == 75.0
-    assert values[("FR0010208488", "news_catalyst_score")] == 75.0
     assert values[("TEST00000001", "funnel_country_news_score")] == 50.0
+    assert all(row["field"] != "news_catalyst_score" for row in rows)
 
 
 def test_daily_tct_ci_reference_reconstructs_v24_1_8_score(tmp_path: Path) -> None:

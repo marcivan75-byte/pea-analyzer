@@ -4,6 +4,7 @@ from pathlib import Path
 from time import perf_counter
 import json
 
+from v182.reporting import ci_entry_watch_v22_2
 from v182.reporting import daily_ci_restitution_v21_15_7 as daily_ci
 from v182.reporting import daily_consolidated_runner_v21_15_5 as base
 from v182.reporting import daily_tactical_super_runner_v21_15_6 as tactical
@@ -28,7 +29,7 @@ def _write_final_audit(root: Path, payload: dict) -> None:
 
 
 def run(root: Path = ROOT) -> dict:
-    """Final Daily: zero-network W09, bounded tactical engines and same-run CI restitution."""
+    """Final Daily plus low-cost V22.2 watch of current CI candidates only."""
     started = perf_counter()
     original_tactical = base.tactical
     original_version = base.VERSION
@@ -45,8 +46,21 @@ def run(root: Path = ROOT) -> dict:
     ci_payload = daily_ci.run(root=root)
     ci_seconds = perf_counter() - ci_started
 
+    watch_started = perf_counter()
+    try:
+        watch_payload = ci_entry_watch_v22_2.run(root=root)
+    except Exception as exc:
+        watch_payload = {
+            "status": "FAILED_NON_BLOCKING",
+            "error": f"{type(exc).__name__}: {str(exc)[:240]}",
+            "broad_universe_network_collection_added": False,
+            "real_orders_enabled": False,
+        }
+    watch_seconds = perf_counter() - watch_started
+
     timings = dict(payload.get("timings_seconds") or {})
     timings["ci_restitution"] = round(float(ci_seconds), 6)
+    timings["ci_entry_watch_v22_2"] = round(float(watch_seconds), 6)
     timings["total"] = round(float(perf_counter() - started), 6)
     steps = dict(payload.get("steps") or {})
     steps["ci_restitution"] = {
@@ -55,6 +69,15 @@ def run(root: Path = ROOT) -> dict:
         "selected_rows": ci_payload.get("selected_rows"),
         "word_output": ci_payload.get("word_output"),
         "excel_output": ci_payload.get("excel_output"),
+    }
+    steps["ci_entry_watch_v22_2"] = {
+        "status": watch_payload.get("status"),
+        "candidate_rows": watch_payload.get("candidate_rows"),
+        "ready_for_review": watch_payload.get("ready_for_review"),
+        "broad_universe_network_collection_added": False,
+        "selection_score_changed": False,
+        "selection_decision_changed": False,
+        "real_orders_enabled": False,
     }
     final_status = (
         "SUCCESS_DAILY_CONSOLIDATED_WITH_CI_AND_ETF_REPLAY_WARNING"
@@ -75,6 +98,7 @@ def run(root: Path = ROOT) -> dict:
         "legacy_validated_w09_seed_used_only_when_fast_or_weekly_master_missing": True,
         "committee_model_reruns": 0,
         "committee_external_collection_calls": 0,
+        "ci_entry_watch_v22_2": watch_payload,
         "decision_logic_changed": False,
         "criteria_changed": False,
         "weights_changed": False,

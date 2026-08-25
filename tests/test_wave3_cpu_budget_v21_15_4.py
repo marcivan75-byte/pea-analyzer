@@ -28,13 +28,25 @@ def _history(tickers: list[str], periods: int = 280) -> pd.DataFrame:
     return pd.DataFrame(data, index=index, columns=pd.MultiIndex.from_tuples(columns))
 
 
+def _normalized_value(value):
+    try:
+        missing = bool(pd.isna(value))
+    except (TypeError, ValueError):
+        missing = False
+    if missing:
+        return "<NA>"
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
 def _canonical(rows: list[dict]) -> list[tuple]:
     return [
         (
             row.get("universe"),
             row.get("isin"),
             row.get("field"),
-            row.get("value"),
+            _normalized_value(row.get("value")),
             row.get("source"),
             row.get("evidence_level"),
         )

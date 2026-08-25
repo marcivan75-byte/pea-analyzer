@@ -19,7 +19,7 @@ def test_daily_and_weekly_share_same_persistent_ohlcv_cache_namespace():
 
 def test_daily_artifact_keeps_only_cache_manifests_not_full_ohlcv_payload():
     daily = _workflow("committee_tct_ct_daily.yml")
-    upload = daily.split("Upload compact daily tactical artifact", 1)[1]
+    upload = daily.split("Upload compact daily tactical and CI artifact", 1)[1]
     assert "data/cache/actions/history_manifest.json" in upload
     assert "data/cache/etf/history_manifest.json" in upload
     assert "data/cache/\n" not in upload

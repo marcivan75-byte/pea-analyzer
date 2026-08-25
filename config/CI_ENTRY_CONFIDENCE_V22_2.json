@@ -1,0 +1,43 @@
+{
+  "version": "V22.2_CI_ENTRY_CONFIDENCE_SHADOW",
+  "mode": "DECISION_SUPPORT_ONLY_NO_REAL_ORDERS",
+  "candidate_decisions": ["BUY", "ACTION", "BUY_CANDIDATE"],
+  "monitored_horizons": ["TCT", "CT", "MT"],
+  "confidence_weights": {
+    "selection_coverage": 0.30,
+    "provenance_quality": 0.20,
+    "entry_timing": 0.20,
+    "trend_momentum": 0.10,
+    "market_sector_context": 0.10,
+    "temporal_stability": 0.10
+  },
+  "confidence_labels": {
+    "strong_min": 80.0,
+    "intermediate_min": 70.0
+  },
+  "entry": {
+    "tct_requires_exact_t2_confirmation": true,
+    "ct_requires_daily_technical_evidence": true,
+    "etf_mt_requires_close_confirmation": true,
+    "block_on_missing_history": true,
+    "block_on_below_sma200": true,
+    "block_on_negative_momentum_acceleration": true,
+    "dynamic_overextension_volatility_multiple": 2.0,
+    "breakout_lookback_sessions": 20
+  },
+  "stability": {
+    "strong_observations": 3,
+    "intermediate_observations": 2,
+    "same_day_rerun_does_not_increment": true
+  },
+  "governance": {
+    "selection_score_changed": false,
+    "selection_decision_changed": false,
+    "weights_changed": false,
+    "thresholds_changed": false,
+    "real_orders_enabled": false,
+    "automatic_parameter_promotion": false,
+    "t1_t2_scope": "ACTION_TCT_ONLY",
+    "shadow_until_pit_oos_validation": true
+  }
+}
