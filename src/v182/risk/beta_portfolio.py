@@ -12,6 +12,48 @@ ACTIVE_DECISIONS = {"BUY", "BUY_CANDIDATE", "HOLD"}
 DECISION_PRIORITY = {"BUY": 0, "BUY_CANDIDATE": 1, "HOLD": 2}
 
 
+def _finite_corr(pair: pd.DataFrame, min_obs: int) -> float | None:
+    if len(pair) < min_obs:
+        return None
+    left_std = float(pair.iloc[:, 0].std())
+    right_std = float(pair.iloc[:, 1].std())
+    if (
+        not math.isfinite(left_std)
+        or not math.isfinite(right_std)
+        or left_std <= 0
+        or right_std <= 0
+    ):
+        return None
+    value = float(pair.iloc[:, 0].corr(pair.iloc[:, 1]))
+    return value if math.isfinite(value) else None
+
+
+def _series_corr(
+    left: pd.Series,
+    right: pd.Series,
+    min_obs: int,
+    window: int | None = None,
+) -> float | None:
+    aligned_left, aligned_right = left.align(right, join="inner")
+    valid = aligned_left.notna() & aligned_right.notna()
+    left_values = aligned_left[valid].to_numpy(dtype=float, copy=False)
+    right_values = aligned_right[valid].to_numpy(dtype=float, copy=False)
+    if window is not None:
+        left_values = left_values[-window:]
+        right_values = right_values[-window:]
+    if len(left_values) < min_obs:
+        return None
+    left_centered = left_values - left_values.mean()
+    right_centered = right_values - right_values.mean()
+    denominator = float(
+        np.sqrt(np.dot(left_centered, left_centered) * np.dot(right_centered, right_centered))
+    )
+    if not math.isfinite(denominator) or denominator <= 0:
+        return None
+    value = float(np.dot(left_centered, right_centered) / denominator)
+    return value if math.isfinite(value) else None
+
+
 def economic_overlap_scores(rows: pd.DataFrame, returns_by_isin: dict[str, pd.Series]) -> list[float | None]:
     """Compute the legacy overlap score once per unique ISIN/tag combination.
 
@@ -44,12 +86,7 @@ def economic_overlap_scores(rows: pd.DataFrame, returns_by_isin: dict[str, pd.Se
         if left is None or right is None:
             pair_corr_cache[key] = None
             return None
-        pair = pd.concat([left, right], axis=1).dropna().tail(126)
-        if len(pair) < 40:
-            pair_corr_cache[key] = None
-            return None
-        corr = float(pair.iloc[:, 0].corr(pair.iloc[:, 1]))
-        value = corr if math.isfinite(corr) else None
+        value = _series_corr(left, right, min_obs=40, window=126)
         pair_corr_cache[key] = value
         return value
 
@@ -182,17 +219,20 @@ def portfolio_summary(
     stress_dates = benchmark[benchmark <= benchmark.quantile(0.10)].index
     for pos, left in enumerate(active_isins):
         for right in active_isins[pos + 1 :]:
-            pair = pd.concat([returns_by_isin[left], returns_by_isin[right]], axis=1).dropna().tail(252)
-            if len(pair) >= 40:
-                value = float(pair.iloc[:, 0].corr(pair.iloc[:, 1]))
-                if math.isfinite(value):
-                    pair_corrs.append(value)
-            stress = pd.concat([returns_by_isin[left], returns_by_isin[right]], axis=1).dropna()
-            stress = stress.loc[stress.index.intersection(stress_dates)]
-            if len(stress) >= 12:
-                value = float(stress.iloc[:, 0].corr(stress.iloc[:, 1]))
-                if math.isfinite(value):
-                    stress_corrs.append(value)
+            value = _series_corr(
+                returns_by_isin[left], returns_by_isin[right], min_obs=40, window=252
+            )
+            if value is not None:
+                pair_corrs.append(value)
+            stress_left = returns_by_isin[left].loc[
+                returns_by_isin[left].index.intersection(stress_dates)
+            ]
+            stress_right = returns_by_isin[right].loc[
+                returns_by_isin[right].index.intersection(stress_dates)
+            ]
+            value = _series_corr(stress_left, stress_right, min_obs=12)
+            if value is not None:
+                stress_corrs.append(value)
     mean_corr = float(np.mean(pair_corrs)) if pair_corrs else None
     mean_stress = float(np.mean(stress_corrs)) if stress_corrs else None
     if top_share >= 0.70 or (mean_stress is not None and mean_stress >= 0.85):

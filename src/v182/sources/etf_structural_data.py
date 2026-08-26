@@ -176,7 +176,12 @@ def _benchmark_after_label(text: str) -> str | None:
 
 def _source_date(text: str, fallback: str) -> str:
     clean = _clean_text(text)
-    fallback_ts = pd.to_datetime(fallback, errors="coerce", dayfirst=True)
+    fallback_text = str(fallback).strip()
+    fallback_ts = (
+        pd.to_datetime(fallback_text, format="%Y-%m-%d", errors="coerce")
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", fallback_text)
+        else pd.to_datetime(fallback_text, errors="coerce", dayfirst=True)
+    )
     latest_allowed = None if pd.isna(fallback_ts) else fallback_ts + pd.Timedelta(days=1)
     patterns = (
         r"Date de VL et d['’]actif géré\s*([0-3]?\d/[01]?\d/20\d{2})",

@@ -22,22 +22,30 @@ def test_daily_and_weekly_share_same_production_runtime_dependency_contract():
         assert "pip install --prefer-binary -r requirements-runtime.txt" in workflow
 
 
-def test_weekly_financial_execution_order_is_preserved():
+def test_weekly_financial_execution_order_is_preserved_through_super_runners():
     workflow = (ROOT / ".github/workflows/committee_master_daily.yml").read_text(encoding="utf-8")
+    tail = (ROOT / "src/v182/reporting/weekly_tail_super_runner_v21_16_0.py").read_text(encoding="utf-8")
+
     commands = [
         "python -m v182.audit.identity_hydration",
-        "python -m v182.reporting.unified_runner",
-        "python -m v182.reporting.etf_structure_state_replay",
-        "python -m v182.reporting.daily_tct_ct_runner",
-        "python -m v182.reporting.tactical_shadow_bundle_run",
-        "python -m v182.reporting.tct_postmarket_bundle_run",
-        "python -m v182.reporting.decision_brief",
-        "python -m v182.reporting.etf_fund_flows_shadow_run",
-        "python -m v182.reporting.criteria_governance_audit",
+        "python -m v182.reporting.weekly_unified_super_runner_v21_16_2",
+        "python -m v182.reporting.weekly_tail_super_runner_v21_16_0",
     ]
     positions = [workflow.index(command) for command in commands]
     assert positions == sorted(positions)
     assert all(workflow.count(command) == 1 for command in commands)
+
+    ordered_tail_markers = [
+        'steps["etf_structure_replay"]',
+        'steps["friday_tactical_reuse"]',
+        'steps["tactical_shadow"]',
+        'steps["postmarket"]',
+        "_brief_and_post_decision_parallel(root)",
+    ]
+    tail_positions = [tail.index(marker) for marker in ordered_tail_markers]
+    assert tail_positions == sorted(tail_positions)
+    assert "weekly_post_decision_bundle_run as weekly_post" in tail
+    assert "decision_brief" in tail
 
 
 def test_weekly_validation_and_state_persistence_remain_present():
@@ -48,7 +56,7 @@ def test_weekly_validation_and_state_persistence_remain_present():
         "Save persistent OHLCV cache",
         "Save consolidated tactical decision state",
         "Save consolidated weekly research state",
-        "Upload complete weekly Committee V21.8.1 results",
+        "Upload complete weekly Committee V21.16.2 results",
     ]
     for needle in required:
         assert needle in workflow

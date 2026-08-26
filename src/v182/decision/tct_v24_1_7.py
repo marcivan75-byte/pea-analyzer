@@ -116,12 +116,15 @@ def evaluate_t1(row:pd.Series,cfg:dict)->dict:
     else:
         if rank>cfg["scope"]["baseline_top_n"]: reasons.append("NOT_BASELINE_TOP20")
         if cov<cfg["scope"]["baseline_min_coverage"]: reasons.append("BASELINE_COVERAGE_LOW")
-    squeeze=_f(row,"bb_squeeze_fraction_8")
-    if squeeze is None: missing.append("COMPRESSION")
-    elif squeeze<sq["minimum_fraction_below_threshold"]: reasons.append("COMPRESSION_FAIL")
+    squeeze_sessions=_f(row,"bb_squeeze_consecutive_sessions")
+    if squeeze_sessions is None: missing.append("CONTINUOUS_SQUEEZE_PROOF")
+    elif squeeze_sessions<sq.get("minimum_consecutive_sessions",5): reasons.append("CONTINUOUS_SQUEEZE_LT_ONE_WEEK")
     rvol=_first_float(row,"vol_ratio_exact","vol_ratio","rvol20")
     if rvol is None: missing.append("RVOL")
     elif rvol<t1["rvol_min"]: reasons.append("RVOL_FAIL")
+    volume_increasing=_b(row,"volume_increase_flag")
+    if volume_increasing is None: missing.append("VOLUME_INCREASE_PROOF")
+    elif not volume_increasing: reasons.append("VOLUME_NOT_INCREASING")
     cross=_b(row,"bb_breakout_cross_flag"); close=_first_float(row,"last_close","close"); bb=_first_float(row,"bb_upper","bb_high"); atr=_first_float(row,"atr14","atr_14")
     if cross is None or close is None or bb is None or atr is None or atr<=0 or bb<=0: missing.append("BREAKOUT")
     else:
@@ -135,11 +138,11 @@ def evaluate_t1(row:pd.Series,cfg:dict)->dict:
     hist=_f(row,"macd_hist"); rising=_f(row,"macd_hist_rising_share_3")
     if hist is None or rising is None: missing.append("MACD_ACCELERATION")
     elif not (hist<0 and rising>=t1["macd_hist_acceleration_min"]): reasons.append("MACD_NEGATIVE_ACCELERATION_FAIL")
-    k=_f(row,"stoch_k"); d=_f(row,"stoch_d"); rsi=_first_float(row,"rsi14","rsi"); sar=_f(row,"sar"); mm50=_f(row,"mm50")
-    if any(x is None for x in (k,d,rsi,close,sar,mm50)): missing.append("TECHNICAL_GATE")
+    k=_f(row,"stoch_k"); d=_f(row,"stoch_d"); rsi=_first_float(row,"rsi14","rsi"); sar=_f(row,"sar"); mm50=_f(row,"mm50"); stoch_cross=_b(row,"stoch_bull_cross_flag")
+    if any(x is None for x in (k,d,rsi,close,sar,mm50,stoch_cross)): missing.append("TECHNICAL_GATE")
     else:
         assert k is not None and d is not None and rsi is not None and close is not None and sar is not None and mm50 is not None
-        if not (k>d and rsi<70 and k<70 and close>sar and close>mm50): reasons.append("TECHNICAL_GATE_FAIL")
+        if not (stoch_cross and k>d and rsi<70 and k<70 and close>sar and close>mm50): reasons.append("TECHNICAL_GATE_FAIL")
     quality=weighted_quality(row,t1["component_fields"],t1["components"],t1["quality_component_min_coverage"])
     if quality.score is None: missing.append("T1_QUALITY_COMPONENTS")
     if reasons: return {"status":"SHADOW_GATE_FAIL","decision":"NO_T1","reasons":reasons,"missing":missing,"quality_score":quality.score,"quality_coverage":quality.coverage}
@@ -176,15 +179,25 @@ def evaluate_t2(row:pd.Series,state:T1State|None,sessions_since_t1:int|None,cfg:
     bw=_first_float(row,"bb_bandwidth","bandwidth")
     if bw is None or state.bandwidth<=0: missing.append("BANDWIDTH_T1_LINK")
     elif bw/state.bandwidth<t2["bandwidth_expansion_ratio_min"]: reasons.append("BANDWIDTH_EXPANSION_FAIL")
+    bw_expanding=_b(row,"bb_bandwidth_expanding_flag")
+    if bw_expanding is None: missing.append("BANDWIDTH_CURRENT_EXPANSION_PROOF")
+    elif not bw_expanding: reasons.append("BANDWIDTH_NOT_STILL_EXPANDING")
     hist=_f(row,"macd_hist")
-    if hist is None: missing.append("MACD")
-    elif hist<=0: reasons.append("MACD_NOT_POSITIVE")
+    macd_cross=_b(row,"macd_bull_cross_flag")
+    if hist is None or macd_cross is None: missing.append("MACD_CROSS_PROOF")
+    elif hist<=0 or not macd_cross: reasons.append("MACD_FRESH_CROSS_FAIL")
     rvol=_first_float(row,"vol_ratio_exact","vol_ratio","rvol20")
     if rvol is None: missing.append("RVOL")
     elif rvol<t2["rvol_min"]: reasons.append("VOLUME_PERSISTENCE_FAIL")
+    volume_increasing=_b(row,"volume_increase_flag")
+    if volume_increasing is None: missing.append("VOLUME_INCREASE_PROOF")
+    elif not volume_increasing: reasons.append("VOLUME_NOT_INCREASING")
     close=_first_float(row,"last_close","close"); bb=_first_float(row,"bb_upper","bb_high"); atr=_first_float(row,"atr14","atr_14")
-    if close is None or bb is None or atr is None or atr<=0: missing.append("T2_PRICE_RISK")
+    k=_f(row,"stoch_k"); d=_f(row,"stoch_d"); sar=_f(row,"sar"); mm50=_f(row,"mm50")
+    if close is None or bb is None or atr is None or atr<=0 or any(value is None for value in (k,d,sar,mm50)): missing.append("T2_PRICE_RISK")
     else:
+        assert k is not None and d is not None and sar is not None and mm50 is not None
+        if not (close>bb and k>d and close>sar and close>mm50): reasons.append("T2_TECHNICAL_HOLD_FAIL")
         floor=max(bb*t2["hold_floor_bb_factor"],state.price*t2["hold_floor_t1_factor"])
         if close<floor: reasons.append("BREAKOUT_HOLD_FAIL")
         move_pct=(close/state.price-1.0) if state.price else np.inf; move_atr=(close-state.price)/state.atr if state.atr else np.inf
@@ -200,7 +213,7 @@ def evaluate_t2(row:pd.Series,state:T1State|None,sessions_since_t1:int|None,cfg:
 def tct_shadow_snapshot(actions:pd.DataFrame,cfg:dict)->pd.DataFrame:
     """Legacy row fallback; production Committee uses exact OHLCV timing engine."""
     if actions.empty or "tct_baseline_rank" not in actions.columns or "tct_baseline_coverage" not in actions.columns:
-        return pd.DataFrame([{"asset_class":"ACTION","horizon":"TCT","isin":"","name":"ACTION TCT V24.1.7","sector":"TRANSVERSAL","score":np.nan,"coverage_pct":0.0,"status":"SHADOW_BASELINE_REQUIRED","decision":"SHADOW_BASELINE_REQUIRED","active_criteria":0,"available_criteria":0,"score_source":cfg.get("version","V24.1.7"),"backtest_attribution":"V2 NOT_YET_BACKTESTED; prior T1/T2 OOS failed promotion gates.","notes":"Exact baseline must be computed before T1/T2; live execution forbidden."}])
+        return pd.DataFrame([{"asset_class":"ACTION","horizon":"TCT","isin":"","name":"ACTION TCT V24.1.7","sector":"TRANSVERSAL","score":np.nan,"coverage_pct":0.0,"status":"SHADOW_BASELINE_REQUIRED","decision":"SHADOW_BASELINE_REQUIRED","active_criteria":0,"available_criteria":0,"score_source":cfg.get("version","V24.1.7"),"backtest_attribution":"V3 strict sequence is shadow-only and not yet backtested.","notes":"Exact baseline must be computed before the linked T1/T2 sequence; live execution forbidden."}])
     rows=[]
     for _,row in actions.iterrows():
         evaluation=evaluate_t1(row,cfg)

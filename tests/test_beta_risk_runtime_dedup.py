@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from v182.risk import beta_portfolio
 
@@ -22,21 +23,36 @@ def test_economic_overlap_reuses_duplicate_horizon_work(monkeypatch):
         ]
     )
 
-    original_concat = beta_portfolio.pd.concat
+    original_corr = beta_portfolio._series_corr
     calls = 0
 
-    def counted_concat(*args, **kwargs):
+    def counted_corr(*args, **kwargs):
         nonlocal calls
         calls += 1
-        return original_concat(*args, **kwargs)
+        return original_corr(*args, **kwargs)
 
-    monkeypatch.setattr(beta_portfolio.pd, "concat", counted_concat)
+    monkeypatch.setattr(beta_portfolio, "_series_corr", counted_corr)
     scores = beta_portfolio.economic_overlap_scores(rows, returns_by_isin)
 
     assert scores[0] == scores[1] == 100.0
     assert scores[2] == scores[3] == 100.0
     assert scores[4] == 0.0
     assert calls == 3
+
+
+def test_series_corr_matches_pairwise_pandas_semantics_and_handles_constant_series():
+    idx = pd.date_range("2025-01-01", periods=150, freq="B")
+    left = pd.Series(np.sin(np.linspace(0, 9, len(idx))), index=idx)
+    right = pd.Series(np.cos(np.linspace(0, 11, len(idx))), index=idx)
+    left.iloc[2:8] = np.nan
+    right.iloc[15:21] = np.nan
+    expected_pair = pd.concat([left, right], axis=1).dropna().tail(126)
+
+    actual = beta_portfolio._series_corr(left, right, min_obs=40, window=126)
+
+    assert actual is not None
+    assert actual == pytest.approx(expected_pair.iloc[:, 0].corr(expected_pair.iloc[:, 1]))
+    assert beta_portfolio._series_corr(left, pd.Series(1.0, index=idx), 40, 126) is None
 
 
 def test_economic_overlap_keeps_missing_history_semantics():

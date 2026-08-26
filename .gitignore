@@ -9,14 +9,18 @@ venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest_tmp*/
 .mypy_cache/
 .ruff_cache/
+.pip-cache/
+.artifact_read/
 .coverage
 htmlcov/
 *.egg-info/
 build/
 dist/
 dist-*/
+/work/
 
 # Runtime data and generated artifacts
 /data/cache/

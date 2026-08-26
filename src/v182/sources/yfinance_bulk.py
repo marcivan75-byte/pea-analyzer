@@ -560,6 +560,14 @@ def download_history(
     clean = sorted({t.strip() for t in tickers if t and t.strip()})
     cache = Path(cache_dir)
     cache.mkdir(parents=True, exist_ok=True)
+    # yfinance otherwise writes its SQLite cookie/timezone/ISIN databases to
+    # the OS user cache, which is not guaranteed writable in CI or sandboxed
+    # weekly runs. Keep the provider cache beside the governed OHLCV caches.
+    set_cache = getattr(yf, "set_tz_cache_location", None)
+    if callable(set_cache):
+        provider_cache = cache.resolve().parent / ".yfinance-runtime"
+        provider_cache.mkdir(parents=True, exist_ok=True)
+        set_cache(str(provider_cache))
     actions_requested = _resolve_actions_requested(cache_dir, include_actions)
     force_full = os.environ.get("PEA_YF_FORCE_FULL_HISTORY", "").strip() == "1"
     force_refresh = os.environ.get("PEA_YF_FORCE_REFRESH", "").strip() == "1"

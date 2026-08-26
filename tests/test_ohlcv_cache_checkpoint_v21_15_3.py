@@ -26,12 +26,12 @@ def _assert_validated_checkpoint(workflow: str, collection_step: str) -> None:
 def test_daily_ohlcv_cache_survives_downstream_failure_only_after_validated_collection() -> None:
     _assert_validated_checkpoint(
         _workflow("committee_tct_ct_daily.yml"),
-        "Daily collection and enrichment",
+        "Daily consolidated optimized V21.15.7",
     )
 
 
 def test_weekly_ohlcv_cache_survives_downstream_failure_only_after_validated_collection() -> None:
     _assert_validated_checkpoint(
         _workflow("committee_master_daily.yml"),
-        "Run weekly unified Committee pipeline",
+        "Run optimized weekly unified Committee DAG V21.16.2",
     )

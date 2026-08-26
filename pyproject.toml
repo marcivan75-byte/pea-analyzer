@@ -22,7 +22,7 @@ dependencies = [
 test = ["pytest>=8", "pytest-cov", "ruff", "mypy"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 testpaths = ["tests"]
 
 [tool.ruff]

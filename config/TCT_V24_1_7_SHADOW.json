@@ -1,7 +1,7 @@
 {
-  "version": "V24.1.7_T1_T2_V2_SHADOW",
-  "formula_version": "T1T2_V2_2026_08",
-  "formula_source": "KIT_TCT_V24_1_7_T1_T2_V2_SHADOW_PROCESS_REFERENTIAL/src/signals/t1_t2.py",
+  "version": "V24.1.7_T1_T2_V3_STRICT_SEQUENCE_SHADOW",
+  "formula_version": "T1T2_V3_2026_08_STRICT_SEQUENCE",
+  "formula_source": "USER_CLARIFIED_T1_T2_STRICT_SEQUENCE_2026_08_25",
   "indicator_source": "KIT_TCT_V24_1_7_T1_T2_V2_SHADOW_PROCESS_REFERENTIAL/src/data/features.py",
   "asset_class": "ACTION",
   "horizon": "TCT",
@@ -30,8 +30,9 @@
   "squeeze": {
     "percentile": 0.15,
     "lookback_sessions": 100,
-    "window_sessions": 8,
-    "minimum_fraction_below_threshold": 0.80
+    "window_sessions": 5,
+    "minimum_consecutive_sessions": 5,
+    "minimum_fraction_below_threshold": 1.0
   },
   "t1": {
     "quality_threshold": 70.0,
@@ -59,13 +60,13 @@
       "risk_control": "t1_component_risk_control"
     },
     "gates": [
-      "compression_fraction_ge_0_80_on_prior_8_sessions",
-      "rvol_ge_1_20_vs_prior_20_sessions",
+      "continuous_squeeze_on_each_of_prior_5_business_sessions",
+      "rvol_ge_1_20_vs_prior_20_sessions_and_volume_gt_previous_session",
       "bb_upper_cross",
       "bandwidth_expanding_current_vs_previous",
       "non_extension_le_10pct_and_1_5atr",
       "macd_hist_negative_and_rising_share_ge_0_50_over_3",
-      "stoch_k_gt_d_rsi_lt_70_k_lt_70_close_gt_sar_and_close_gt_mm50",
+      "stoch_fresh_cross_k_above_d_rsi_lt_70_k_lt_70_close_gt_sar_and_close_gt_mm50",
       "quality_coverage_ge_0_80",
       "quality_ge_70",
       "baseline_top20"
@@ -99,10 +100,11 @@
     "gates": [
       "exact_linked_t1_eligible",
       "ttl_le_10_business_sessions",
-      "bandwidth_current_over_t1_ge_1_15",
-      "macd_hist_positive",
-      "rvol_ge_1_20",
-      "close_ge_max_bb_0_995_t1_0_98",
+      "bandwidth_current_over_t1_ge_1_15_and_current_gt_previous",
+      "macd_fresh_cross_above_signal",
+      "rvol_ge_1_20_and_volume_gt_previous_session",
+      "close_gt_bb_upper_and_close_gt_sar_and_close_gt_mm50",
+      "stoch_k_remains_above_d",
       "relative_strength_continuation_is_quality_component_not_binary_gate",
       "non_extension_le_10pct_and_1_5atr",
       "quality_coverage_ge_0_80",

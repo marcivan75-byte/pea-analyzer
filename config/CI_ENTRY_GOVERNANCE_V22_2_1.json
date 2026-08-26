@@ -1,0 +1,38 @@
+{
+  "version": "V22.2.1",
+  "market_entry_gate": {
+    "enabled": true,
+    "selection_score_influence": false,
+    "selection_decision_influence": false,
+    "risk_off_blocks_entry_review": true,
+    "neutral_allows_review": true,
+    "risk_on_allows_review": true,
+    "cnn_extreme_greed_threshold": 75.0,
+    "cnn_extreme_fear_threshold": 25.0,
+    "extreme_greed_requires_strong_technical_trigger": true,
+    "minimum_confidence_for_caution_review": 70.0,
+    "action_market_scope": "EUROPE",
+    "etf_default_market_scope": "GLOBAL"
+  },
+  "confidence_adjustment": {
+    "risk_on_points": 5.0,
+    "neutral_points": 0.0,
+    "risk_off_points": -15.0,
+    "extreme_greed_points": -5.0,
+    "min": 0.0,
+    "max": 100.0
+  },
+  "potential": {
+    "action_priority": ["upside_pct", "upside_pct_yf", "target_price_vs_last_close", "target_mean_yf_vs_last_close", "high_52w_vs_last_close"],
+    "etf_priority": ["high_52w_vs_last_close"],
+    "plausible_min_pct": -100.0,
+    "plausible_max_pct": 300.0
+  },
+  "governance": {
+    "wave09_reintroduced": false,
+    "real_orders_enabled": false,
+    "t1_t2_scope": "ACTION_TCT_ONLY",
+    "criteria_weights_changed": false,
+    "selection_thresholds_changed": false
+  }
+}

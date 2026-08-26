@@ -128,13 +128,15 @@ def test_friday_runner_has_no_duplicate_score_tct_or_v21_8_execution() -> None:
     assert '"temporal_state_advanced_second_time": False' in source
 
 
-def test_existing_workflow_entry_point_dispatches_weekly_but_daily_profile_forces_full_path() -> None:
+def test_weekly_super_runner_uses_friday_reuse_while_daily_uses_full_consolidated_path() -> None:
     weekly = (ROOT / ".github" / "workflows" / "committee_master_daily.yml").read_text(encoding="utf-8")
     daily_workflow = (ROOT / ".github" / "workflows" / "committee_tct_ct_daily.yml").read_text(encoding="utf-8")
+    weekly_tail = (ROOT / "src" / "v182" / "reporting" / "weekly_tail_super_runner_v21_16_0.py").read_text(encoding="utf-8")
     runner = (ROOT / "src" / "v182" / "reporting" / "daily_tct_ct_runner.py").read_text(encoding="utf-8")
 
-    assert "python -m v182.reporting.daily_tct_ct_runner" in weekly
-    assert "python -m v182.reporting.daily_tct_ct_runner" in daily_workflow
+    assert "python -m v182.reporting.weekly_tail_super_runner_v21_16_0" in weekly
+    assert "friday_tactical_reuse_runner as friday_reuse" in weekly_tail
+    assert "python -m v182.reporting.daily_consolidated_runner_v21_15_4" in daily_workflow
     assert "PEA_RUN_PROFILE: DAILY_TACTICAL" in daily_workflow
     assert "_current_committee_reuse_available(root)" in runner
     assert "return friday_tactical_reuse_runner.run(root)" in runner

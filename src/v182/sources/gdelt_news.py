@@ -17,6 +17,7 @@ GDELT_MIN_START_INTERVAL_SECONDS = 1.0
 GDELT_RETRY_BACKOFF_SECONDS = (2.0, 5.0)
 _GDELT_GLOBAL_LIMITER = StartRateLimiter(GDELT_MIN_START_INTERVAL_SECONDS)
 _GDELT_HTTP_LOCAL = threading.local()
+_REQUESTS_GET_ORIGINAL = requests.get
 
 POSITIVE_TERMS = {
     "beat", "beats", "growth", "upgrade", "upgraded", "record", "profit", "profits",
@@ -63,7 +64,14 @@ def _retryable_gdelt_error(exc: Exception) -> bool:
 
 
 def _http_get(url: str, **kwargs):
-    """Reuse one requests.Session per worker without sharing sessions across threads."""
+    """Reuse one Session per worker while keeping requests.get injectable in tests.
+
+    Production uses connection pooling. If a caller/test explicitly replaces the
+    module-level requests.get hook, honor that injected transport instead of
+    silently bypassing it through Session.get.
+    """
+    if requests.get is not _REQUESTS_GET_ORIGINAL:
+        return requests.get(url, **kwargs)
     session = getattr(_GDELT_HTTP_LOCAL, "session", None)
     if session is None:
         session = requests.Session()
@@ -82,9 +90,9 @@ def fetch_articles(
     """Fetch recent GDELT articles with provider-safe cadence and bounded retries.
 
     GDELT is a shared public endpoint and can return HTTP 429 when callers start
-    requests too aggressively.  A process-wide limiter enforces a conservative
+    requests too aggressively. A process-wide limiter enforces a conservative
     one-request-per-second start cadence even when callers use several workers.
-    Transient 429/time-out/connection failures receive two bounded retries.  All
+    Transient 429/time-out/connection failures receive two bounded retries. All
     final failures remain explicit and are never imputed. HTTP connections are
     reused per worker; query set, request cadence and freshness are unchanged.
     """
