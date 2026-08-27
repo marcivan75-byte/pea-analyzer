@@ -16,7 +16,13 @@ def exit_code(payload: dict) -> int:
     return 0 if payload.get("status") == "SUCCESS" else 2
 
 
-def run(root: Path = ROOT) -> dict:
+def run(
+    root: Path = ROOT,
+    *,
+    ensure_upstream: bool = True,
+    run_ci_light: bool = True,
+    existing_ci_light: dict | None = None,
+) -> dict:
     started = perf_counter()
     error: str | None = None
     selection: dict = {}
@@ -25,11 +31,17 @@ def run(root: Path = ROOT) -> dict:
     timings: dict[str, float] = {}
     try:
         phase = perf_counter()
-        selection = ci_selection_gate_v4.run(root=root, ensure_upstream=True)
+        selection = ci_selection_gate_v4.run(root=root, ensure_upstream=ensure_upstream)
         timings["selection_seconds"] = round(perf_counter() - phase, 6)
-        phase = perf_counter()
-        light = ci_light_v4.run(root=root)
-        timings["ci_light_seconds"] = round(perf_counter() - phase, 6)
+        if run_ci_light:
+            phase = perf_counter()
+            light = ci_light_v4.run(root=root)
+            timings["ci_light_seconds"] = round(perf_counter() - phase, 6)
+        else:
+            light = dict(existing_ci_light or {})
+            timings["ci_light_seconds"] = 0.0
+            if light.get("status") not in {"SUCCESS", "NO_UPSTREAM_ROWS"}:
+                raise RuntimeError("MISSING_SUCCESSFUL_INDEPENDENT_CI_LIGHT_RESULT")
         status = "SUCCESS" if selection.get("status") == "SUCCESS" and light.get("status") == "SUCCESS" else "PARTIAL_FAILURE"
         return {"status": status, "version": VERSION, "selection": selection, "ci_light": light, "timings_seconds": timings}
     except Exception as exc:
@@ -46,7 +58,10 @@ def run(root: Path = ROOT) -> dict:
                     "error": error,
                     "total_seconds": round(perf_counter() - started, 6),
                     "phase_timings_seconds": timings,
-                    "source_collection_passes": 2,
+                    "source_collection_passes": 2 if run_ci_light else 1,
+                    "upstream_recomputed": ensure_upstream,
+                    "ci_light_executed_here": run_ci_light,
+                    "ci_light_reused_from_completed_independent_core": not run_ci_light,
                     "ci_light_reuses_selection_context": False,
                     "ci_light_independent_process": True,
                     "selection_status": selection.get("status"),

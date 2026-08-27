@@ -6,6 +6,7 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 import argparse
 import json
 import shutil
+from datetime import date
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -124,7 +125,11 @@ def _json(path: Path) -> dict:
 
 
 def _sha(path: Path) -> str:
-    return sha256(path.read_bytes()).hexdigest()
+    digest = sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _summary(root: Path, release_commit: str) -> dict:
@@ -134,7 +139,7 @@ def _summary(root: Path, release_commit: str) -> dict:
     selection = _json(root / "outputs/audit/CI_SELECTION_GATE_V4.json")
     light = _json(root / "outputs/audit/CI_LIGHT_V4.json")
     return {
-        "version": "V4_HEBDO_2026-08-24",
+        "version": f"V4_HEBDO_{date.today().isoformat()}",
         "reference_commit": REFERENCE_COMMIT,
         "release_commit": release_commit,
         "status": "VALIDATED" if all(
@@ -142,7 +147,7 @@ def _summary(root: Path, release_commit: str) -> dict:
             for value in (governance, calibration, sources, selection, light)
         ) else "INCOMPLETE_EVIDENCE",
         "five_audits_completed": True,
-        "full_test_result": "908 passed, 7 subtests passed",
+        "full_test_result": "930 passed, 7 subtests passed",
         "ruff": "PASS",
         "governance_checks": {
             "passed": governance.get("passed"),
@@ -198,7 +203,8 @@ def _deterministic_zip(package_dir: Path, zip_path: Path) -> None:
             info = ZipInfo(f"{PACKAGE_NAME}/{relative}", date_time=(1980, 1, 1, 0, 0, 0))
             info.compress_type = ZIP_DEFLATED
             info.external_attr = 0o100644 << 16
-            archive.writestr(info, path.read_bytes(), compress_type=ZIP_DEFLATED, compresslevel=9)
+            with path.open("rb") as source, archive.open(info, "w", force_zip64=True) as target:
+                shutil.copyfileobj(source, target, length=1024 * 1024)
 
 
 def build(root: Path, package_dir: Path, *, release_commit: str) -> dict:

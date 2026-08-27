@@ -40,7 +40,12 @@ def run(root: Path = ROOT) -> dict:
             os.environ["PEA_WEEKLY_CRITICAL_ONLY"] = previous_critical
 
     overlay_started = perf_counter()
-    overlay_payload = overlay.run(root=root)
+    overlay_payload = overlay.run(
+        root=root,
+        ensure_upstream=False,
+        run_ci_light=False,
+        existing_ci_light=core_payload.get("ci_light_v4_2_independent"),
+    )
     overlay_seconds = perf_counter() - overlay_started
 
     or_started = perf_counter()
@@ -72,6 +77,15 @@ def run(root: Path = ROOT) -> dict:
         "objectives_risk_publication_status": publication_payload.get("status"),
         "sector_or_shadow_status": sector_or_payload.get("status"),
         "objectives_risk_reference_influence": 0.0,
+        "runtime_optimizations": {
+            "v4_upstream_recompute_removed": True,
+            "duplicate_ci_light_run_removed": True,
+            "ci_light_independence_preserved": True,
+            "criteria_changed": False,
+            "weights_changed": False,
+            "thresholds_changed": False,
+            "information_loss": False,
+        },
         "deferred_distinct_shadow_process": ["TACTICAL_SHADOW_BUNDLE", "POSTMARKET_V24_4_2"],
         "deferred_decision_score_weight_influence": 0.0,
         "real_orders_enabled": False,

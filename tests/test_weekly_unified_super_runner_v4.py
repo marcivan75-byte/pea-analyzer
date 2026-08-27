@@ -22,3 +22,29 @@ def test_runner_invariants_are_explicit(monkeypatch, tmp_path):
     assert '"ci_light_reuses_selection_context": false' in audit
     assert '"ci_light_independent_process": true' in audit
     assert '"source_collection_passes": 2' in audit
+
+
+def test_operational_reuse_skips_only_completed_duplicate_work(monkeypatch, tmp_path):
+    seen = {}
+
+    def selection_run(**kwargs):
+        seen["selection"] = kwargs
+        return {"status": "SUCCESS"}
+
+    monkeypatch.setattr(runner.ci_selection_gate_v4, "run", selection_run)
+    monkeypatch.setattr(
+        runner.ci_light_v4,
+        "run",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("duplicate CI LIGHT run")),
+    )
+    payload = runner.run(
+        tmp_path,
+        ensure_upstream=False,
+        run_ci_light=False,
+        existing_ci_light={"status": "SUCCESS", "selected": 1},
+    )
+    assert payload["status"] == "SUCCESS"
+    assert seen["selection"] == {"root": tmp_path, "ensure_upstream": False}
+    audit = (tmp_path / runner.AUDIT).read_text(encoding="utf-8")
+    assert '"ci_light_reused_from_completed_independent_core": true' in audit
+    assert '"source_collection_passes": 1' in audit
