@@ -25,6 +25,8 @@ def _merge(base: pd.DataFrame, challenger: pd.DataFrame) -> pd.DataFrame:
         "OR_DATA_CONTRACT_STATUS", "OR_ENTRY_ACTION_SHADOW", "OR_HEBDO_GATE_REASON",
         "OR_ETF_MT_DATA_STATUS", "OR_ETF_MT_TECHNICAL_QUALITY", "OR_ETF_MT_DATA_RELIABILITY",
         "OR_ETF_SECONDARY_CONTEXT_COVERAGE",
+        "OR_VALID_SOURCE_COUNT", "OR_CRITICAL_SOURCE_FAILURE_COUNT", "OR_WEEKLY_SOURCE_GATE",
+        "OR_SOURCE_RELIABILITY_0_100", "OR_SOURCE_RELIABILITY_INFLUENCE",
     ]
     available = [field for field in fields if field in challenger]
     return base.merge(challenger[available].drop_duplicates("isin"), on="isin", how="left")
@@ -49,6 +51,9 @@ def _table(frame: pd.DataFrame) -> list[str]:
 
 def run(root: Path = ROOT) -> dict:
     generated = datetime.now(timezone.utc).isoformat()
+    config_path = root / "config/OBJECTIVES_RISK_CHALLENGER_V2.json"
+    config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+    weekly_gate = config.get("weekly_source_gate", {})
     challenger = _read(root, "outputs/committee_master/OBJECTIVES_RISK_CHALLENGER_V2.csv")
     portfolio = _read(root, "outputs/committee_master/PORTFOLIO_BUDGET_CHALLENGER_V2.csv")
     ci = _merge(_read(root, "outputs/committee_master/CI_SELECTION_ALL_V4.csv"), challenger)
@@ -77,6 +82,8 @@ def run(root: Path = ROOT) -> dict:
         "OR_ENTRY_ACTION_SHADOW", "OR_HEBDO_GATE_REASON", "OR_ETF_MT_DATA_STATUS",
         "OR_ETF_MT_TECHNICAL_QUALITY", "OR_ETF_MT_DATA_RELIABILITY",
         "OR_ETF_SECONDARY_CONTEXT_COVERAGE", "SIM_SELECTION_SOURCE",
+        "OR_VALID_SOURCE_COUNT", "OR_CRITICAL_SOURCE_FAILURE_COUNT", "OR_WEEKLY_SOURCE_GATE",
+        "OR_SOURCE_RELIABILITY_0_100",
     ]
     or_combined = challenger.sort_values("OR_COMPOSITE_SHADOW", ascending=False, na_position="last") if "OR_COMPOSITE_SHADOW" in challenger else challenger
     or_etf = or_combined[or_combined.get("asset_class", pd.Series("", index=or_combined.index)).astype(str).str.upper().eq("ETF")]
@@ -89,15 +96,51 @@ def run(root: Path = ROOT) -> dict:
     or_etf_path = root / f"outputs/committee_master/OR_RANKING_HEBDO_SHADOW_ETF_ONLY_{publication_date}.csv"
     or_action_path = root / f"outputs/committee_master/OR_RANKING_HEBDO_SHADOW_ACTION_CT_ONLY_{publication_date}.csv"
     or_etf_mt_path = root / f"outputs/committee_master/OR_RANKING_ETF_MT_SHADOW_{publication_date}.csv"
+    eligible = or_combined[or_combined.get("OR_WEEKLY_SOURCE_GATE", pd.Series("AUDIT_ONLY_FAIL_CLOSED", index=or_combined.index)).eq("PASS")]
+    top_n = int(weekly_gate.get("top_n_per_asset_class", 15))
+    forward_sessions = tuple(int(value) for value in weekly_gate.get("forward_validation_sessions", [5, 10, 20]))
+    top_action = eligible[eligible.get("asset_class", pd.Series("", index=eligible.index)).astype(str).str.upper().eq("ACTION")].head(top_n)
+    top_etf = eligible[eligible.get("asset_class", pd.Series("", index=eligible.index)).astype(str).str.upper().eq("ETF")].head(top_n)
+    top_action_path = root / f"outputs/committee_master/OR_RANKING_HEBDO_SHADOW_TOP{top_n}_ACTION_{publication_date}.csv"
+    top_etf_path = root / f"outputs/committee_master/OR_RANKING_HEBDO_SHADOW_TOP{top_n}_ETF_{publication_date}.csv"
     _publish_csv(or_combined, or_path, or_fields)
     _publish_csv(or_combined, or_combined_path, or_fields)
     _publish_csv(or_etf, or_etf_path, or_fields)
     _publish_csv(or_action_ct, or_action_path, or_fields)
     _publish_csv(or_etf, or_etf_mt_path, or_fields)
+    _publish_csv(top_action, top_action_path, or_fields)
+    _publish_csv(top_etf, top_etf_path, or_fields)
+    forward_path = root / "state/objectives_risk/OR_HEBDO_FORWARD_VALIDATION_SCHEDULE.csv"
+    forward_path.parent.mkdir(parents=True, exist_ok=True)
+    schedule_rows = []
+    generated_day = pd.Timestamp(publication_date)
+    forward_universe = pd.concat([top_action, top_etf], ignore_index=True, sort=False)
+    for _, row in forward_universe.iterrows():
+        for sessions in forward_sessions:
+            schedule_rows.append({
+                "snapshot_date": publication_date, "isin": row.get("isin"), "asset_class": row.get("asset_class"),
+                "or_composite_shadow": row.get("OR_COMPOSITE_SHADOW"), "entry_price": row.get("SIM_CURRENT_PRICE"),
+                "forward_sessions": sessions, "evaluation_not_before": (generated_day + pd.offsets.BDay(sessions)).date().isoformat(),
+                "status": "PENDING", "research_only": True,
+            })
+    schedule_columns = [
+        "snapshot_date", "isin", "asset_class", "or_composite_shadow", "entry_price",
+        "forward_sessions", "evaluation_not_before", "status", "research_only",
+    ]
+    schedule = pd.DataFrame(schedule_rows, columns=schedule_columns)
+    if forward_path.exists() and forward_path.stat().st_size:
+        try:
+            previous_schedule = pd.read_csv(forward_path, sep=";")
+        except pd.errors.EmptyDataError:
+            previous_schedule = pd.DataFrame(columns=schedule_columns)
+        schedule = pd.concat([previous_schedule, schedule], ignore_index=True, sort=False)
+    if not schedule.empty:
+        schedule = schedule.drop_duplicates(["snapshot_date", "isin", "forward_sessions"], keep="first")
+    schedule.to_csv(forward_path, sep=";", index=False, encoding="utf-8-sig")
     md = root / "outputs/mobile/CI_AND_CI_LIGHT_CHALLENGER_V2.md"
     md.parent.mkdir(parents=True, exist_ok=True)
     md.write_text("\n".join(["# Publication CI et CI LIGHT — approche Objectif/Risque challenger", "", f"Généré: {generated}", "", "La référence est inchangée; aucun ordre réel n'est autorisé.", "", "## CI", "", *_table(ci), "", "## CI LIGHT (processus autonome)", "", *_table(light), ""]), encoding="utf-8")
-    payload = {"status": "SUCCESS", "generated_at_utc": generated, "ci_rows": len(ci), "ci_reference_selected": int(ci.get("CI_SELECTION_GATE_STATUS_V4", pd.Series(dtype=str)).eq("SELECTED").sum()), "ci_light_selected": len(light), "or_rows": len(or_combined), "or_etf_rows": len(or_etf), "or_action_ct_rows": len(or_action_ct), "reference_modified": False, "real_orders_enabled": False, "outputs": [str(path.relative_to(root)) for path in (ci_path, light_path, md, or_path, or_combined_path, or_etf_path, or_action_path, or_etf_mt_path)]}
+    payload = {"status": "SUCCESS", "generated_at_utc": generated, "ci_rows": len(ci), "ci_reference_selected": int(ci.get("CI_SELECTION_GATE_STATUS_V4", pd.Series(dtype=str)).eq("SELECTED").sum()), "ci_light_selected": len(light), "or_rows": len(or_combined), "or_etf_rows": len(or_etf), "or_action_ct_rows": len(or_action_ct), "or_source_gate_pass": len(eligible), "or_top15_action_rows": len(top_action), "or_top15_etf_rows": len(top_etf), "forward_validation_pending": len(schedule), "reference_modified": False, "real_orders_enabled": False, "outputs": [str(path.relative_to(root)) for path in (ci_path, light_path, md, or_path, or_combined_path, or_etf_path, or_action_path, or_etf_mt_path, top_action_path, top_etf_path, forward_path)]}
     audit = root / "outputs/audit/CI_AND_CI_LIGHT_CHALLENGER_V2.json"
     audit.parent.mkdir(parents=True, exist_ok=True)
     audit.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

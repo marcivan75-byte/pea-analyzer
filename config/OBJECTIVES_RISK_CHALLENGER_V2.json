@@ -43,6 +43,13 @@
     "block_data_reopening_allowed": false,
     "score_influence": 0.0
   },
+  "weekly_source_gate": {
+    "minimum_valid_sources": 3,
+    "critical_failure_reasons": ["NO_DETERMINISTIC_CODE", "STALE", "VALIDATION_FAILED", "BLOCK_DATA"],
+    "top_n_per_asset_class": 15,
+    "forward_validation_sessions": [5, 10, 20],
+    "source_reliability_influence": 0.0
+  },
   "risk_soft_multiplier": {"GREEN": 1.0, "AMBER": 0.85, "ORANGE": 0.70, "MISSING": 0.55, "RED": 0.40},
   "buy_candidate_minimum_confidence": 66.0,
   "entry_confidence_challenger": {"RISK_ON": 60.0, "NEUTRAL": 62.0, "RISK_OFF": 70.0},

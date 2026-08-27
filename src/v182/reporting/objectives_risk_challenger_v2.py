@@ -132,10 +132,56 @@ def _attach_etf_mt_context(frame: pd.DataFrame, root: Path, cfg: dict) -> pd.Dat
     return frame
 
 
+def _attach_weekly_source_gate(frame: pd.DataFrame, root: Path, cfg: dict) -> pd.DataFrame:
+    gate = cfg.get("weekly_source_gate", {})
+    minimum_valid_sources = int(gate.get("minimum_valid_sources", 3))
+    observations = []
+    failures = []
+    for prefix in ("WEEKLY_V4", "CI_V22_2_2", "CI_LIGHT_V4_INDEPENDENT"):
+        observed = root / f"outputs/source_context/{prefix}_SOURCE_OBSERVATIONS.csv"
+        failed = root / f"outputs/source_context/{prefix}_SOURCE_FAILURES.csv"
+        if observed.exists() and observed.stat().st_size:
+            observations.append(pd.read_csv(observed, sep=";", encoding="utf-8-sig", low_memory=False))
+        if failed.exists() and failed.stat().st_size:
+            failures.append(pd.read_csv(failed, sep=";", encoding="utf-8-sig", low_memory=False))
+    result = frame.copy()
+    valid_counts = pd.Series(dtype=float)
+    if observations:
+        observed = pd.concat(observations, ignore_index=True, sort=False)
+        valid = observed.get("validation_status", pd.Series("VALID", index=observed.index)).astype(str).str.upper().ne("FAILED")
+        observed = observed[valid & observed["isin"].notna() & observed["source"].notna()].copy()
+        valid_counts = observed.groupby("isin")["source"].nunique()
+    critical_counts = pd.Series(dtype=float)
+    critical_reasons = "|".join(gate.get(
+        "critical_failure_reasons",
+        ["NO_DETERMINISTIC_CODE", "STALE", "VALIDATION_FAILED", "BLOCK_DATA"],
+    ))
+    if failures:
+        failed = pd.concat(failures, ignore_index=True, sort=False)
+        reason = failed.get("reason", pd.Series("", index=failed.index)).astype(str).str.upper()
+        critical = failed[reason.str.contains(critical_reasons, regex=True, na=False)]
+        if not critical.empty:
+            critical_counts = critical.groupby("isin").size()
+    result["OR_VALID_SOURCE_COUNT"] = result["isin"].map(valid_counts).fillna(0).astype(int)
+    result["OR_CRITICAL_SOURCE_FAILURE_COUNT"] = result["isin"].map(critical_counts).fillna(0).astype(int)
+    result["OR_WEEKLY_SOURCE_GATE"] = np.where(
+        result["OR_VALID_SOURCE_COUNT"].ge(minimum_valid_sources)
+        & result["OR_CRITICAL_SOURCE_FAILURE_COUNT"].eq(0),
+        "PASS",
+        "AUDIT_ONLY_FAIL_CLOSED",
+    )
+    result["OR_SOURCE_RELIABILITY_0_100"] = (
+        result["OR_VALID_SOURCE_COUNT"].div(max(1, minimum_valid_sources)).clip(0, 1).mul(100.0)
+    ).round(1)
+    result["OR_SOURCE_RELIABILITY_INFLUENCE"] = float(gate.get("source_reliability_influence", 0.0))
+    return result
+
+
 def run(root: Path = ROOT) -> dict:
     cfg = json.loads((root / CONFIG).read_text(encoding="utf-8"))
     frame = pd.read_csv(root / INPUT, sep=";", encoding="utf-8-sig", low_memory=False)
     frame = _attach_etf_mt_context(frame, root, cfg)
+    frame = _attach_weekly_source_gate(frame, root, cfg)
     rr = _num(frame, "SIM_REWARD_RISK_AT_OPTIMAL_ENTRY")
     simulation_reliability = _num(frame, "SIM_RELIABILITY")
     confidence = _num(frame, "CI_CONFIDENCE_SCORE_0_100", "CI_CONFIDENCE_SCORE_V22_2_1", "entry_confidence")
@@ -210,7 +256,8 @@ def run(root: Path = ROOT) -> dict:
     frame["OR_AS_OF_CLOSE"] = as_of
     frame["OR_PROVENANCE_QUALITY"] = frame["CHALLENGER_SOURCE_CONFIDENCE"]
     frame["OR_DATA_CONTRACT_STATUS"] = np.where(
-        selection.notna() & rr.notna() & confidence.notna() & risk_verdict.ne("MISSING"),
+        selection.notna() & rr.notna() & confidence.notna() & risk_verdict.ne("MISSING")
+        & frame["OR_WEEKLY_SOURCE_GATE"].eq("PASS"),
         "COMPLETE",
         "INCOMPLETE_FAIL_CLOSED",
     )
@@ -285,6 +332,7 @@ def run(root: Path = ROOT) -> dict:
         "entry_action_distribution": frame["OR_ENTRY_ACTION_SHADOW"].value_counts(dropna=False).to_dict(),
         "data_contract_distribution": frame["OR_DATA_CONTRACT_STATUS"].value_counts(dropna=False).to_dict(),
         "etf_mt_data_distribution": frame["OR_ETF_MT_DATA_STATUS"].value_counts(dropna=False).to_dict(),
+        "weekly_source_gate_distribution": frame["OR_WEEKLY_SOURCE_GATE"].value_counts(dropna=False).to_dict(),
         "reference_modified": False,
         "ranking_formula_version": cfg["ranking_formula_version"],
         "risk_soft_multiplier": cfg["risk_soft_multiplier"],

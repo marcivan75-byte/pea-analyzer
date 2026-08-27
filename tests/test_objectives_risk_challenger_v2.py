@@ -133,3 +133,27 @@ def test_reward_risk_mapping_hits_documented_anchors():
     rr = pd.Series([0.0, 2.0, 4.0, 8.0])
     mapping = {"target_ratio": 2.0, "target_score": 70.0, "cap_ratio": 4.0, "cap_score": 100.0}
     assert challenger._reward_risk_score(rr, mapping).tolist() == [0.0, 70.0, 100.0, 100.0]
+
+
+def test_weekly_source_gate_requires_three_valid_sources_and_no_critical_failure(tmp_path):
+    source_dir = tmp_path / "outputs/source_context"
+    source_dir.mkdir(parents=True)
+    pd.DataFrame([
+        {"isin": "PASS", "source": "BOURSORAMA", "validation_status": "VALID"},
+        {"isin": "PASS", "source": "TRADINGVIEW", "validation_status": "VALID"},
+        {"isin": "PASS", "source": "MORNINGSTAR", "validation_status": "VALID"},
+        {"isin": "BLOCKED", "source": "BOURSORAMA", "validation_status": "VALID"},
+        {"isin": "BLOCKED", "source": "TRADINGVIEW", "validation_status": "VALID"},
+        {"isin": "BLOCKED", "source": "MORNINGSTAR", "validation_status": "VALID"},
+    ]).to_csv(source_dir / "WEEKLY_V4_SOURCE_OBSERVATIONS.csv", sep=";", index=False)
+    pd.DataFrame([
+        {"isin": "BLOCKED", "reason": "STALE"},
+    ]).to_csv(source_dir / "WEEKLY_V4_SOURCE_FAILURES.csv", sep=";", index=False)
+    result = challenger._attach_weekly_source_gate(
+        pd.DataFrame({"isin": ["PASS", "BLOCKED", "MISSING"]}),
+        tmp_path,
+        {"weekly_source_gate": {"minimum_valid_sources": 3}},
+    ).set_index("isin")
+    assert result.loc["PASS", "OR_WEEKLY_SOURCE_GATE"] == "PASS"
+    assert result.loc["BLOCKED", "OR_WEEKLY_SOURCE_GATE"] == "AUDIT_ONLY_FAIL_CLOSED"
+    assert result.loc["MISSING", "OR_WEEKLY_SOURCE_GATE"] == "AUDIT_ONLY_FAIL_CLOSED"
