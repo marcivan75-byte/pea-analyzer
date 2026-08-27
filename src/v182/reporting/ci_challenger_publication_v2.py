@@ -21,7 +21,8 @@ def _merge(base: pd.DataFrame, challenger: pd.DataFrame) -> pd.DataFrame:
         "CHALLENGER_DOWNSIDE_SCORE", "CHALLENGER_RANK_SCORE_RISK_ADJUSTED", "CHALLENGER_SOURCE_CONFIDENCE",
         "OR_SELECTION_SCORE_0_100", "OR_RR_SCORE_0_100", "OR_RELIABILITY_0_100", "OR_RISK_VERDICT",
         "OR_RISK_SOFT_MULT", "OR_COMPOSITE_SHADOW", "OR_FORMULA_VERSION", "OR_HEBDO_LABEL",
-        "OR_BUY_CONFIDENCE_GATE", "OR_AS_OF_UTC", "OR_PROVENANCE_QUALITY",
+        "OR_BUY_CONFIDENCE_GATE", "OR_AS_OF_UTC", "OR_AS_OF_CLOSE", "OR_PROVENANCE_QUALITY",
+        "OR_DATA_CONTRACT_STATUS",
     ]
     available = [field for field in fields if field in challenger]
     return base.merge(challenger[available].drop_duplicates("isin"), on="isin", how="left")
@@ -58,7 +59,7 @@ def run(root: Path = ROOT) -> dict:
         ci = ci.sort_values("CHALLENGER_RANK_SCORE", ascending=False, na_position="last")
     if "CHALLENGER_RANK_SCORE" in light:
         light = light.sort_values("CHALLENGER_RANK_SCORE", ascending=False, na_position="last")
-    common = ["name", "isin", "asset_class", "horizon", "score", "CI_CONFIDENCE_SCORE_V22_2_1", "CI_MARKET_ORIENTATION_EUROPE", "CI_SELECTION_GATE_STATUS_V4", "CI_SELECTION_GATE_REASON_V4", "CI_LIGHT_REASON", "CI_LIGHT_TRADINGVIEW_DAILY", "CI_LIGHT_TRADINGVIEW_WEEKLY", "CI_LIGHT_TRADINGVIEW_MONTHLY", "SIM_CURRENT_PRICE", "SIM_ENTRY_OPTIMAL", "SIM_TARGET_CENTRAL", "SIM_INVALIDATION", "SIM_CENTRAL_POTENTIAL_PCT_FROM_CURRENT", "SIM_REWARD_RISK_AT_OPTIMAL_ENTRY", "SIM_RELIABILITY", "CHALLENGER_RR_GATE", "CHALLENGER_RANK_SCORE", "CHALLENGER_DOWNSIDE_SCORE", "CHALLENGER_RANK_SCORE_RISK_ADJUSTED", "CHALLENGER_SOURCE_CONFIDENCE", "CHALLENGER_ENTRY_THRESHOLD", "CHALLENGER_ENTRY_STATE", "OR_SELECTION_SCORE_0_100", "OR_RR_SCORE_0_100", "OR_RELIABILITY_0_100", "OR_RISK_VERDICT", "OR_RISK_SOFT_MULT", "OR_COMPOSITE_SHADOW", "OR_FORMULA_VERSION", "OR_HEBDO_LABEL", "OR_BUY_CONFIDENCE_GATE", "OR_AS_OF_UTC", "OR_PROVENANCE_QUALITY", "PORTFOLIO_BUDGET_DECISION", "PORTFOLIO_MAX_PAIR_CORRELATION", "PORTFOLIO_MAX_THEME_WEIGHT_PCT"]
+    common = ["name", "isin", "asset_class", "horizon", "score", "CI_CONFIDENCE_SCORE_V22_2_1", "CI_MARKET_ORIENTATION_EUROPE", "CI_SELECTION_GATE_STATUS_V4", "CI_SELECTION_GATE_REASON_V4", "CI_LIGHT_REASON", "CI_LIGHT_TRADINGVIEW_DAILY", "CI_LIGHT_TRADINGVIEW_WEEKLY", "CI_LIGHT_TRADINGVIEW_MONTHLY", "SIM_CURRENT_PRICE", "SIM_ENTRY_OPTIMAL", "SIM_TARGET_CENTRAL", "SIM_INVALIDATION", "SIM_CENTRAL_POTENTIAL_PCT_FROM_CURRENT", "SIM_REWARD_RISK_AT_OPTIMAL_ENTRY", "SIM_RELIABILITY", "CHALLENGER_RR_GATE", "CHALLENGER_RANK_SCORE", "CHALLENGER_DOWNSIDE_SCORE", "CHALLENGER_RANK_SCORE_RISK_ADJUSTED", "CHALLENGER_SOURCE_CONFIDENCE", "CHALLENGER_ENTRY_THRESHOLD", "CHALLENGER_ENTRY_STATE", "OR_SELECTION_SCORE_0_100", "OR_RR_SCORE_0_100", "OR_RELIABILITY_0_100", "OR_RISK_VERDICT", "OR_RISK_SOFT_MULT", "OR_COMPOSITE_SHADOW", "OR_FORMULA_VERSION", "OR_HEBDO_LABEL", "OR_BUY_CONFIDENCE_GATE", "OR_AS_OF_UTC", "OR_AS_OF_CLOSE", "OR_PROVENANCE_QUALITY", "OR_DATA_CONTRACT_STATUS", "PORTFOLIO_BUDGET_DECISION", "PORTFOLIO_MAX_PAIR_CORRELATION", "PORTFOLIO_MAX_THEME_WEIGHT_PCT"]
     ci_path = root / "outputs/committee_master/CI_RESULTS_CHALLENGER_V2.csv"
     light_path = root / "outputs/committee_master/CI_LIGHT_RESULTS_CHALLENGER_V2.csv"
     _publish_csv(ci, ci_path, common)
@@ -70,20 +71,27 @@ def run(root: Path = ROOT) -> dict:
         "CI_CONFIDENCE_SCORE_0_100", "CI_CONFIDENCE_SCORE_V22_2_1", "OR_SELECTION_SCORE_0_100",
         "OR_RR_SCORE_0_100", "OR_RELIABILITY_0_100", "OR_RISK_VERDICT", "OR_RISK_SOFT_MULT",
         "OR_COMPOSITE_SHADOW", "OR_HEBDO_LABEL", "OR_BUY_CONFIDENCE_GATE", "OR_FORMULA_VERSION",
-        "OR_AS_OF_UTC", "OR_PROVENANCE_QUALITY", "SIM_SELECTION_SOURCE",
+        "OR_AS_OF_UTC", "OR_AS_OF_CLOSE", "OR_PROVENANCE_QUALITY", "OR_DATA_CONTRACT_STATUS",
+        "SIM_SELECTION_SOURCE",
     ]
     or_combined = challenger.sort_values("OR_COMPOSITE_SHADOW", ascending=False, na_position="last") if "OR_COMPOSITE_SHADOW" in challenger else challenger
     or_etf = or_combined[or_combined.get("asset_class", pd.Series("", index=or_combined.index)).astype(str).str.upper().eq("ETF")]
+    or_action_ct = or_combined[
+        or_combined.get("asset_class", pd.Series("", index=or_combined.index)).astype(str).str.upper().eq("ACTION")
+        & or_combined.get("horizon", or_combined.get("SIM_HORIZON", pd.Series("", index=or_combined.index))).astype(str).str.upper().eq("CT")
+    ]
     or_path = root / f"outputs/committee_master/OR_RANKING_HEBDO_SHADOW_{publication_date}.csv"
     or_combined_path = root / f"outputs/committee_master/OR_RANKING_HEBDO_SHADOW_COMBINED_{publication_date}.csv"
     or_etf_path = root / f"outputs/committee_master/OR_RANKING_HEBDO_SHADOW_ETF_ONLY_{publication_date}.csv"
+    or_action_path = root / f"outputs/committee_master/OR_RANKING_HEBDO_SHADOW_ACTION_CT_ONLY_{publication_date}.csv"
     _publish_csv(or_combined, or_path, or_fields)
     _publish_csv(or_combined, or_combined_path, or_fields)
     _publish_csv(or_etf, or_etf_path, or_fields)
+    _publish_csv(or_action_ct, or_action_path, or_fields)
     md = root / "outputs/mobile/CI_AND_CI_LIGHT_CHALLENGER_V2.md"
     md.parent.mkdir(parents=True, exist_ok=True)
     md.write_text("\n".join(["# Publication CI et CI LIGHT — approche Objectif/Risque challenger", "", f"Généré: {generated}", "", "La référence est inchangée; aucun ordre réel n'est autorisé.", "", "## CI", "", *_table(ci), "", "## CI LIGHT (processus autonome)", "", *_table(light), ""]), encoding="utf-8")
-    payload = {"status": "SUCCESS", "generated_at_utc": generated, "ci_rows": len(ci), "ci_reference_selected": int(ci.get("CI_SELECTION_GATE_STATUS_V4", pd.Series(dtype=str)).eq("SELECTED").sum()), "ci_light_selected": len(light), "or_rows": len(or_combined), "or_etf_rows": len(or_etf), "reference_modified": False, "real_orders_enabled": False, "outputs": [str(path.relative_to(root)) for path in (ci_path, light_path, md, or_path, or_combined_path, or_etf_path)]}
+    payload = {"status": "SUCCESS", "generated_at_utc": generated, "ci_rows": len(ci), "ci_reference_selected": int(ci.get("CI_SELECTION_GATE_STATUS_V4", pd.Series(dtype=str)).eq("SELECTED").sum()), "ci_light_selected": len(light), "or_rows": len(or_combined), "or_etf_rows": len(or_etf), "or_action_ct_rows": len(or_action_ct), "reference_modified": False, "real_orders_enabled": False, "outputs": [str(path.relative_to(root)) for path in (ci_path, light_path, md, or_path, or_combined_path, or_etf_path, or_action_path)]}
     audit = root / "outputs/audit/CI_AND_CI_LIGHT_CHALLENGER_V2.json"
     audit.parent.mkdir(parents=True, exist_ok=True)
     audit.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

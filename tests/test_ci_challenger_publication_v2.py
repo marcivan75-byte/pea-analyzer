@@ -13,7 +13,7 @@ def _write(root, relative, rows):
 
 def test_publishes_dated_combined_and_etf_shadow_rankings(tmp_path):
     rows = [
-        {"name": "Action A", "isin": "A", "asset_class": "ACTION", "OR_COMPOSITE_SHADOW": 70},
+        {"name": "Action A", "isin": "A", "asset_class": "ACTION", "horizon": "CT", "OR_COMPOSITE_SHADOW": 70},
         {"name": "ETF B", "isin": "B", "asset_class": "ETF", "OR_COMPOSITE_SHADOW": 80},
     ]
     _write(tmp_path, "outputs/committee_master/OBJECTIVES_RISK_CHALLENGER_V2.csv", rows)
@@ -23,8 +23,10 @@ def test_publishes_dated_combined_and_etf_shadow_rankings(tmp_path):
     date = datetime.now(timezone.utc).date().isoformat()
     combined = tmp_path / f"outputs/committee_master/OR_RANKING_HEBDO_SHADOW_COMBINED_{date}.csv"
     etf = tmp_path / f"outputs/committee_master/OR_RANKING_HEBDO_SHADOW_ETF_ONLY_{date}.csv"
-    assert combined.exists() and etf.exists()
+    action = tmp_path / f"outputs/committee_master/OR_RANKING_HEBDO_SHADOW_ACTION_CT_ONLY_{date}.csv"
+    assert combined.exists() and etf.exists() and action.exists()
     assert pd.read_csv(combined, sep=";")["isin"].tolist() == ["B", "A"]
     assert pd.read_csv(etf, sep=";")["isin"].tolist() == ["B"]
+    assert pd.read_csv(action, sep=";")["isin"].tolist() == ["A"]
     assert payload["reference_modified"] is False
     assert payload["real_orders_enabled"] is False

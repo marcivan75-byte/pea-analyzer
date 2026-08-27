@@ -1,5 +1,5 @@
 {
-  "version": "OBJECTIVES_RISK_CHALLENGER_V2_1_SHADOW_OR_HEBDO",
+  "version": "OBJECTIVES_RISK_CHALLENGER_V2_2_SHADOW_OR_HEBDO",
   "shadow_only": true,
   "real_orders_enabled": false,
   "action_reward_risk_gate": {"TCT": 2.0, "CT": 2.5, "MT": 3.0},
@@ -7,7 +7,14 @@
   "ranking_formula_version": "OR_HEBDO_V2_1_50_30_20_RISK_MULT",
   "ranking_formula": "(0.50*selection_score + 0.30*rr_score_0_100 + 0.20*reliability) * risk_soft_multiplier",
   "ranking_weights": {"selection": 0.50, "reward_risk": 0.30, "reliability": 0.20},
-  "reward_risk_score_cap": 5.0,
+  "reward_risk_mapping": {"target_ratio": 2.0, "target_score": 70.0, "cap_ratio": 4.0, "cap_score": 100.0},
+  "labels": {
+    "ready_minimum_rr": 2.0,
+    "ready_minimum_confidence": 65.0,
+    "watch_priority_minimum_rr": 1.5,
+    "watch_priority_minimum_confidence": 55.0,
+    "watch_minimum_confidence": 45.0
+  },
   "risk_soft_multiplier": {"GREEN": 1.0, "AMBER": 0.85, "ORANGE": 0.70, "MISSING": 0.55, "RED": 0.40},
   "buy_candidate_minimum_confidence": 66.0,
   "entry_confidence_challenger": {"RISK_ON": 60.0, "NEUTRAL": 62.0, "RISK_OFF": 70.0},

@@ -52,6 +52,16 @@ def _source_confidence(frame: pd.DataFrame) -> pd.Series:
     return pd.concat(evidence, axis=1).mean(axis=1).mul(100.0)
 
 
+def _reward_risk_score(rr: pd.Series, mapping: dict) -> pd.Series:
+    target_ratio = float(mapping["target_ratio"])
+    target_score = float(mapping["target_score"])
+    cap_ratio = float(mapping["cap_ratio"])
+    cap_score = float(mapping["cap_score"])
+    lower = rr.mul(target_score / target_ratio)
+    upper = target_score + (rr - target_ratio).mul((cap_score - target_score) / (cap_ratio - target_ratio))
+    return lower.where(rr.le(target_ratio), upper).clip(0, cap_score)
+
+
 def _risk_verdict(frame: pd.DataFrame, downside_score: pd.Series) -> pd.Series:
     verdict = pd.Series(pd.NA, index=frame.index, dtype="object")
     for name in ("RISK_VERDICT", "CI_RISK_VERDICT", "risk_verdict", "risk_state"):
@@ -74,15 +84,16 @@ def run(root: Path = ROOT) -> dict:
     cfg = json.loads((root / CONFIG).read_text(encoding="utf-8"))
     frame = pd.read_csv(root / INPUT, sep=";", encoding="utf-8-sig", low_memory=False)
     rr = _num(frame, "SIM_REWARD_RISK_AT_OPTIMAL_ENTRY")
-    reliability = _num(frame, "SIM_RELIABILITY")
+    simulation_reliability = _num(frame, "SIM_RELIABILITY")
+    confidence = _num(frame, "CI_CONFIDENCE_SCORE_0_100", "CI_CONFIDENCE_SCORE_V22_2_1", "entry_confidence")
+    reliability = confidence
     selection = _num(frame, "HYPER_SCORE", "BALANCED_SCORE", "score", "score_effectif")
-    light_pass = frame.get("SIM_SELECTION_SOURCE", pd.Series("", index=frame.index)).astype(str).str.contains("CI_LIGHT")
-    selection = selection.where(selection.notna(), light_pass.map({True: 100.0, False: 50.0})).clip(0, 100)
+    selection = selection.clip(0, 100)
     horizons = frame.get("horizon", frame.get("SIM_HORIZON", pd.Series("CT", index=frame.index))).astype(str).str.upper()
     thresholds = horizons.map(cfg["action_reward_risk_gate"]).fillna(cfg["action_reward_risk_gate"]["CT"])
     action = frame.get("asset_class", pd.Series("", index=frame.index)).astype(str).str.upper().eq("ACTION")
-    frame["CHALLENGER_RR_GATE"] = (~action) | ((rr >= thresholds) & (reliability >= float(cfg["minimum_reliability"])))
-    rr_score = (100.0 * rr / float(cfg["reward_risk_score_cap"])).clip(0, 100)
+    frame["CHALLENGER_RR_GATE"] = (~action) | ((rr >= thresholds) & (simulation_reliability >= float(cfg["minimum_reliability"])))
+    rr_score = _reward_risk_score(rr, cfg["reward_risk_mapping"])
     weights = cfg["ranking_weights"]
     frame["OR_SELECTION_SCORE_0_100"] = selection.round(2)
     frame["OR_RR_SCORE_0_100"] = rr_score.round(2)
@@ -108,7 +119,6 @@ def run(root: Path = ROOT) -> dict:
     frame["CHALLENGER_SOURCE_CONFIDENCE"] = _source_confidence(frame).round(1)
     orientation = _orientation(frame)
     entry_threshold = orientation.map(cfg["entry_confidence_challenger"]).fillna(62.0)
-    confidence = _num(frame, "CI_CONFIDENCE_SCORE_0_100", "entry_confidence")
     reference_state = frame.get("v22_2_entry_state", pd.Series(pd.NA, index=frame.index)).replace("", pd.NA)
     reference_state = reference_state.combine_first(frame.get("V22_2_1_ENTRY_STATE", pd.Series(pd.NA, index=frame.index)).replace("", pd.NA))
     reference_state = reference_state.combine_first(frame.get("SIM_STATUS", pd.Series("WAIT", index=frame.index))).fillna("WAIT").astype(str)
@@ -116,21 +126,40 @@ def run(root: Path = ROOT) -> dict:
     frame["CHALLENGER_ENTRY_THRESHOLD"] = entry_threshold
     frame["CHALLENGER_ENTRY_STATE"] = np.where(watch, "WATCH_WITH_TRIGGER", reference_state)
     minimum_confidence = float(cfg["buy_candidate_minimum_confidence"])
+    labels = cfg["labels"]
     ready = (
-        frame["CHALLENGER_RR_GATE"]
-        & confidence.ge(minimum_confidence)
+        rr.ge(float(labels["ready_minimum_rr"]))
+        & confidence.ge(float(labels["ready_minimum_confidence"]))
         & orientation.ne("RISK_OFF")
         & reference_state.eq("READY_FOR_REVIEW")
+        & risk_verdict.isin({"GREEN", "AMBER"})
     )
-    priority_watch = frame["CHALLENGER_RR_GATE"] & confidence.ge(entry_threshold) & orientation.ne("RISK_OFF")
+    priority_watch = (
+        ~reference_state.eq("READY_FOR_REVIEW")
+        & rr.ge(float(labels["watch_priority_minimum_rr"]))
+        & confidence.ge(float(labels["watch_priority_minimum_confidence"]))
+        & orientation.ne("RISK_OFF")
+    )
+    upside = _num(frame, "SIM_CENTRAL_POTENTIAL_PCT_FROM_CURRENT", "CI_POTENTIAL_UPSIDE_PCT", "HYPER_POTENTIAL_PCT")
+    watch = upside.gt(0) & confidence.ge(float(labels["watch_minimum_confidence"]))
     frame["OR_HEBDO_LABEL"] = np.select(
-        [ready, priority_watch, frame["CHALLENGER_RR_GATE"]],
-        ["READY_SHADOW", "WATCH_PRIORITY", "WATCH"],
-        default="HOLD",
+        [ready, priority_watch, watch],
+        ["OR_READY_SHADOW", "OR_WATCH_PRIORITY", "OR_WATCH"],
+        default="OR_HOLD_INSUFFICIENT",
     )
     frame["OR_BUY_CONFIDENCE_GATE"] = confidence.ge(minimum_confidence)
     frame["OR_AS_OF_UTC"] = datetime.now(timezone.utc).isoformat()
+    as_of = pd.Series(pd.NA, index=frame.index, dtype="object")
+    for field in ("as_of_close", "price_as_of", "market_data_as_of", "source_as_of"):
+        if field in frame:
+            as_of = as_of.combine_first(frame[field].replace("", pd.NA))
+    frame["OR_AS_OF_CLOSE"] = as_of
     frame["OR_PROVENANCE_QUALITY"] = frame["CHALLENGER_SOURCE_CONFIDENCE"]
+    frame["OR_DATA_CONTRACT_STATUS"] = np.where(
+        selection.notna() & rr.notna() & confidence.notna() & risk_verdict.ne("MISSING"),
+        "COMPLETE",
+        "INCOMPLETE_FAIL_CLOSED",
+    )
     frame["CHALLENGER_DOWNSIDE_RISK_STATUS"] = np.where(downside.notna(), "OBSERVED_RISK_ADJUSTMENT", "MISSING_NEUTRAL")
     frame["CHALLENGER_PORTFOLIO_BUDGET_STATUS"] = "POST_SELECTION_REQUIRED"
     frame["CHALLENGER_SHADOW_ONLY"] = True
