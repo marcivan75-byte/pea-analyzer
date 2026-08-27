@@ -139,12 +139,16 @@ jobs:
           assert 'tct_trader.run(root=root)' in tactical
           assert 'setattr(pd, "read_parquet", parquet_cache)' in tactical
           assert 'setattr(pd, "read_parquet", original_read_parquet)' in tactical
-          for workflow_path in (
-              '.github/workflows/committee_tct_ct_daily.yml',
-              '.github/workflows/committee_master_daily.yml',
-          ):
+          workflow_contracts = {
+              '.github/workflows/committee_tct_ct_daily.yml':
+                  'python -m v182.reporting.daily_consolidated_runner_v21_15_4',
+              '.github/workflows/committee_master_daily.yml':
+                  'python -m v182.reporting.weekly_tail_super_runner_v21_16_0',
+          }
+          for workflow_path, consolidated_command in workflow_contracts.items():
               workflow=Path(workflow_path).read_text()
-              assert workflow.count('python -m v182.reporting.tactical_shadow_bundle_run') == 1
+              assert workflow.count(consolidated_command) == 1
+              assert 'python -m v182.reporting.tactical_shadow_bundle_run' not in workflow
               assert 'python -m v182.reporting.action_ct_shadow_bundle_run' not in workflow
               assert 'python -m v182.reporting.action_ct_shadow_run_v22_0' not in workflow
               assert 'python -m v182.reporting.action_ct_shadow_run_v22_1' not in workflow

@@ -199,7 +199,7 @@ def detect_exact(tech:pd.DataFrame,state:Mapping[str,Any]|None,cfg:dict)->dict:
     k=_finite(k_series.iloc[-1]); d=_finite(d_series.iloc[-1]); pk=_finite(k_series.iloc[-2]); pd_=_finite(d_series.iloc[-2])
     rsi=_finite(_num(tech,"rsi").iloc[-1]); sar=_finite(_num(tech,"sar").iloc[-1]); mm50=_finite(_num(tech,"mm50").iloc[-1])
     stoch_cross=bool(k is not None and d is not None and pk is not None and pd_ is not None and pk<=pd_ and k>d)
-    tech_gate=bool(stoch_cross and rsi is not None and sar is not None and mm50 is not None and rsi<70 and k<70 and c_close>sar and c_close>mm50)
+    tech_gate=bool(stoch_cross and k is not None and rsi is not None and sar is not None and mm50 is not None and rsi<70 and k<70 and c_close>sar and c_close>mm50)
     squeeze_sessions=int(sq.get("minimum_consecutive_sessions",5))
     squeeze_segment=bandwidth.iloc[-(squeeze_sessions+1):-1]
     squeeze_continuous=bool(
