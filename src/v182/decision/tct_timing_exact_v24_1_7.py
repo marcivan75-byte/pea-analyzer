@@ -15,7 +15,7 @@ import pandas as pd
 from v182.features.tct_v24_1_7_exact import compute_technical_indicators
 
 logger=logging.getLogger(__name__)
-FORMULA_VERSION="T1T2_V2_2026_08"
+FORMULA_VERSION="T1T2_V3_2026_08_STRICT_SEQUENCE"
 
 T1_WEIGHTS={
     "compression":0.25,"volume_acceleration":0.20,"breakout_quality":0.20,
@@ -144,6 +144,10 @@ def _compression_metrics(bandwidth:pd.Series,percentile:float,lookback:int,windo
     return 0.60*fraction_score+0.40*depth_score,fraction,threshold_f
 
 
+def _strictly_increasing(current:float|None,previous:float|None)->bool:
+    return bool(current is not None and previous is not None and current>previous)
+
+
 def _macd_acceleration(macd_hist:pd.Series,lookback:int)->tuple[float,float]:
     recent=macd_hist.iloc[-max(int(lookback),2):].dropna().to_numpy(dtype=float)
     if len(recent)<2:
@@ -157,7 +161,7 @@ def _macd_acceleration(macd_hist:pd.Series,lookback:int)->tuple[float,float]:
 
 
 def detect_exact(tech:pd.DataFrame,state:Mapping[str,Any]|None,cfg:dict)->dict:
-    """Port of the exact executable detector shipped in the V24.1.7 source kit."""
+    """Strict, state-linked T1/T2 detector based on completed daily sessions."""
     state=dict(state or {})
     sq=cfg["squeeze"]; t1=cfg["t1"]; t2=cfg["t2"]
     empty1={k:None for k in T1_WEIGHTS}; empty2={k:None for k in T2_WEIGHTS}
@@ -179,7 +183,7 @@ def detect_exact(tech:pd.DataFrame,state:Mapping[str,Any]|None,cfg:dict)->dict:
     pc=_finite(close.iloc[-2]); pbb=_finite(bb.iloc[-2])
     breakout_cross=bool(pc is not None and pbb is not None and pc<=pbb and c_close>c_bb)
     prev_bw=_finite(bandwidth.iloc[-2]); expanding=bool(prev_bw is not None and c_bw>prev_bw)
-    vol_ma20=_finite(volume.shift(1).rolling(20,min_periods=20).mean().iloc[-1]); cv=_finite(volume.iloc[-1])
+    vol_ma20=_finite(volume.shift(1).rolling(20,min_periods=20).mean().iloc[-1]); cv=_finite(volume.iloc[-1]); pv=_finite(volume.iloc[-2])
     volume_ratio=cv/vol_ma20 if cv is not None and vol_ma20 and vol_ma20>0 else None
     volume_score=_volume_score(volume_ratio,float(t1["rvol_min"]))
     distance_atr=(c_close-c_bb)/c_atr if c_atr is not None and c_atr>0 else None
@@ -191,12 +195,25 @@ def detect_exact(tech:pd.DataFrame,state:Mapping[str,Any]|None,cfg:dict)->dict:
     t1_components={"compression":comp_score,"volume_acceleration":volume_score,"breakout_quality":breakout_quality,"momentum_acceleration":momentum,"relative_strength":rs_score,"risk_control":risk}
     t1_quality,t1_cov,t1_count=_weighted_quality(t1_components,T1_WEIGHTS)
 
-    k=_finite(_num(tech,"stoch_k").iloc[-1]); d=_finite(_num(tech,"stoch_d").iloc[-1]); rsi=_finite(_num(tech,"rsi").iloc[-1]); sar=_finite(_num(tech,"sar").iloc[-1]); mm50=_finite(_num(tech,"mm50").iloc[-1])
-    tech_gate=bool(k is not None and d is not None and rsi is not None and sar is not None and mm50 is not None and k>d and rsi<70 and k<70 and c_close>sar and c_close>mm50)
+    k_series=_num(tech,"stoch_k"); d_series=_num(tech,"stoch_d")
+    k=_finite(k_series.iloc[-1]); d=_finite(d_series.iloc[-1]); pk=_finite(k_series.iloc[-2]); pd_=_finite(d_series.iloc[-2])
+    rsi=_finite(_num(tech,"rsi").iloc[-1]); sar=_finite(_num(tech,"sar").iloc[-1]); mm50=_finite(_num(tech,"mm50").iloc[-1])
+    stoch_cross=bool(k is not None and d is not None and pk is not None and pd_ is not None and pk<=pd_ and k>d)
+    tech_gate=bool(stoch_cross and k is not None and rsi is not None and sar is not None and mm50 is not None and rsi<70 and k<70 and c_close>sar and c_close>mm50)
+    squeeze_sessions=int(sq.get("minimum_consecutive_sessions",5))
+    squeeze_segment=bandwidth.iloc[-(squeeze_sessions+1):-1]
+    squeeze_continuous=bool(
+        squeeze_threshold is not None
+        and len(squeeze_segment)==squeeze_sessions
+        and squeeze_segment.notna().all()
+        and bool((squeeze_segment<squeeze_threshold).all())
+    )
+    volume_increasing=_strictly_increasing(cv,pv)
     t1_gate=all([
         comp_score is not None,
+        squeeze_continuous,
         comp_fraction>=float(sq["minimum_fraction_below_threshold"]),
-        volume_ratio is not None and volume_ratio>=float(t1["rvol_min"]),
+        volume_ratio is not None and volume_ratio>=float(t1["rvol_min"]),volume_increasing,
         breakout_cross,expanding,c_hist<0,rising_share>=0.50,tech_gate,
         t1_cov>=float(t1["quality_component_min_coverage"]),t1_quality>=float(t1["quality_threshold"]),
         distance_atr is not None and distance_atr<=float(t1["max_extension_atr"]),
@@ -205,7 +222,8 @@ def detect_exact(tech:pd.DataFrame,state:Mapping[str,Any]|None,cfg:dict)->dict:
     if t1_gate:
         return {
             "setup":"T1","reason":None,"current_bandwidth":c_bw,"squeeze_threshold":squeeze_threshold,
-            "volume_ratio":volume_ratio,"t1_quality":t1_quality,"t1_coverage":t1_cov,"t1_count":t1_count,
+            "volume_ratio":volume_ratio,"volume_increasing":volume_increasing,"stoch_cross":stoch_cross,"squeeze_continuous":squeeze_continuous,
+            "t1_quality":t1_quality,"t1_coverage":t1_cov,"t1_count":t1_count,
             "t2_quality":0.0,"t2_coverage":0.0,"t2_count":0,"t1_components":t1_components,"t2_components":empty2,
             "state_update":{"bandwidth":c_bw,"breakout_price":c_close,"atr_at_t1":c_atr,"rs_10d_at_t1":c_rs,"t1_quality_score":t1_quality},
             "overextended":False,"source_event_id":None,"age_sessions":0,
@@ -217,7 +235,8 @@ def detect_exact(tech:pd.DataFrame,state:Mapping[str,Any]|None,cfg:dict)->dict:
     if ratio is not None:
         span=max(1.30-float(t2["bandwidth_expansion_ratio_min"]),0.05)
         expansion=_clip(50.0+(ratio-float(t2["bandwidth_expansion_ratio_min"]))/span*50.0)
-    macd_confirmation=_clip(65.0+35.0*rising_share) if c_hist>0 else 0.0
+    p_hist=_finite(hist.iloc[-2]); macd_cross=bool(p_hist is not None and p_hist<=0 and c_hist>0)
+    macd_confirmation=_clip(65.0+35.0*rising_share) if macd_cross else 0.0
     low_now=_finite(_num(tech,"low").iloc[-1]); floor=max(c_bb*float(t2["hold_floor_bb_factor"]),source_price*float(t2["hold_floor_t1_factor"])) if source_price is not None else c_bb*float(t2["hold_floor_bb_factor"])
     hold=0.0 if c_close<floor else 100.0 if low_now is not None and low_now<=c_bb*1.01 else 85.0
     if c_rs is None:
@@ -238,12 +257,13 @@ def detect_exact(tech:pd.DataFrame,state:Mapping[str,Any]|None,cfg:dict)->dict:
     t2_components={"bandwidth_expansion":expansion,"macd_confirmation":macd_confirmation,"volume_persistence":volume_score,"breakout_hold":hold,"relative_strength_continuation":rs_cont,"non_extension":nonext}
     t2_quality,t2_cov,t2_count=_weighted_quality(t2_components,T2_WEIGHTS)
     source_link_ok=bool(state.get("event_id")) and _state_bool(state.get("baseline_eligible_at_t1",False))
+    t2_technical_hold=bool(k is not None and d is not None and k>d and sar is not None and mm50 is not None and c_close>c_bb and c_close>sar and c_close>mm50)
     t2_gate=all([
         source_bw is not None,source_price is not None,source_link_ok,
         age is not None and age<=int(t1["ttl_sessions"]),
-        ratio is not None and ratio>=float(t2["bandwidth_expansion_ratio_min"]),
-        volume_ratio is not None and volume_ratio>=float(t2["rvol_min"]),
-        c_hist>0,c_close>=floor,not overextended,
+        ratio is not None and ratio>=float(t2["bandwidth_expansion_ratio_min"]),expanding,
+        volume_ratio is not None and volume_ratio>=float(t2["rvol_min"]),volume_increasing,
+        macd_cross,t2_technical_hold,c_close>=floor,not overextended,
         t2_cov>=float(t2["quality_component_min_coverage"]),t2_quality>=float(t2["quality_threshold"]),
     ])
     reason=None
@@ -255,7 +275,8 @@ def detect_exact(tech:pd.DataFrame,state:Mapping[str,Any]|None,cfg:dict)->dict:
         reason="T2_QUALITY_BELOW_THRESHOLD"
     return {
         "setup":"T2_CONFIRMATION" if t2_gate else None,"reason":reason,"current_bandwidth":c_bw,"squeeze_threshold":squeeze_threshold,
-        "volume_ratio":volume_ratio,"t1_quality":t1_quality,"t1_coverage":t1_cov,"t1_count":t1_count,
+        "volume_ratio":volume_ratio,"volume_increasing":volume_increasing,"macd_cross":macd_cross,"t2_technical_hold":t2_technical_hold,
+        "t1_quality":t1_quality,"t1_coverage":t1_cov,"t1_count":t1_count,
         "t2_quality":t2_quality,"t2_coverage":t2_cov,"t2_count":t2_count,"t1_components":t1_components,"t2_components":t2_components,
         "state_update":None,"overextended":overextended,"source_event_id":state.get("event_id"),"age_sessions":age,
         "bandwidth_ratio":ratio,"hold_floor":floor,
@@ -297,6 +318,9 @@ def load_state(path:Path,ttl_sessions:int,as_of:date|None=None)->tuple[dict[str,
             continue
         age=_business_sessions_since(detected,as_of)
         if age>ttl_sessions:
+            expired+=1
+            continue
+        if str(record.get("formula_version") or "") != FORMULA_VERSION:
             expired+=1
             continue
         clean[str(isin).upper()]={
@@ -466,8 +490,8 @@ def _snapshot_row(base:pd.Series,status:str,decision:str,score:float|None,covera
         "sector":str(base.get("sector_yf",base.get("sector_v21","NON CLASSE")) or "NON CLASSE"),
         "score":round(float(score),4) if score is not None else np.nan,"coverage_pct":round(float(coverage)*100.0,2),
         "status":status,"decision":decision,"active_criteria":6,"available_criteria":observed,
-        "score_source":"V24.1.7_T1T2_V2_EXACT_OHLCV","backtest_attribution":"V2 exact source formula is SHADOW/RESEARCH_ONLY; prior T1/T2 promotion failed OOS gates.",
-        "notes":"Exact V24.1.7 source-kit timing; baseline Top20 computed first; T1/T2 score influence=0; live execution forbidden.",
+        "score_source":"V24.1.7_T1T2_V3_STRICT_SEQUENCE_OHLCV","backtest_attribution":"V3 strict sequence is SHADOW/RESEARCH_ONLY and has no performance attribution.",
+        "notes":"Strict linked T1/T2 sequence; baseline Top20 computed first; score influence=0; live execution forbidden.",
         "setup":det.get("setup"),"t1_t2_formula_version":FORMULA_VERSION,"tct_baseline_rank":base.get("tct_baseline_rank"),"tct_baseline_coverage":base.get("tct_baseline_coverage"),"baseline_eligible_without_t1_t2":baseline_ok,
         "t1_quality_score":det.get("t1_quality"),"t1_quality_coverage":det.get("t1_coverage"),"t2_quality_score":det.get("t2_quality"),"t2_quality_coverage":det.get("t2_coverage"),
         "t1_source_event_id":det.get("source_event_id"),"t1_age_sessions":det.get("age_sessions"),"t1_t2_overextended":bool(det.get("overextended",False)),"t1_t2_rejection_reason":reason,

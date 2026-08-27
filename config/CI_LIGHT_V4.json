@@ -1,0 +1,60 @@
+{
+  "version": "CI_LIGHT_V4_2_INDEPENDENT",
+  "universe": {
+    "path": "inputs/CI_LIGHT_UNIVERSE_V4.csv",
+    "maximum_unique_instruments": 40,
+    "source": "DEDICATED_CI_LIGHT_REFERENCE",
+    "ci_output_dependency_forbidden": true
+  },
+  "boursorama": {
+    "actions": {
+      "accepted_recommendations": ["BUY", "STRONG_BUY"],
+      "minimum_analysts_exclusive": 10,
+      "minimum_upside_pct_exclusive": 20.0
+    },
+    "etfs": {
+      "exact_public_fiche_required": true,
+      "pea_eligibility_displayed_required": true,
+      "equity_analyst_consensus_not_applicable": true
+    },
+    "dynamic_ttl_hours": 8,
+    "deep_ttl_hours": 168,
+    "refresh_budget": 40,
+    "request_start_interval_seconds": 1.0,
+    "provider_max_inflight": 4
+  },
+  "tradingview": {
+    "accepted_signals": ["BUY", "STRONG_BUY"],
+    "etf_monthly_required_signal": "STRONG_BUY",
+    "ttl_hours": 6,
+    "refresh_budget": 40,
+    "request_start_interval_seconds": 1.0,
+    "provider_max_inflight": 8,
+    "etf_missing_medium_long_fallback": {
+      "enabled": true,
+      "medium_field": "tradingview_weekly_signal",
+      "long_field": "tradingview_monthly_signal",
+      "morningstar_minimum_stars": 4.0,
+      "only_when_signal_missing": true,
+      "neutral_or_negative_must_not_be_overridden": true
+    }
+  },
+  "etf_overlap": {
+    "enabled": true,
+    "returns_correlation_threshold": 0.90,
+    "lookback_sessions": 126,
+    "minimum_common_observations": 60,
+    "maximum_per_explicit_economic_family": 1,
+    "selection_priority": ["TRADINGVIEW_MT", "TRADINGVIEW_LT", "TRADINGVIEW_CT", "MORNINGSTAR", "ISIN"],
+    "exact_holdings_overlap_available": false,
+    "method": "EXPLICIT_FAMILY_THEN_RETURN_CORRELATION_PROXY"
+  },
+  "governance": {
+    "investing_enabled": false,
+    "ci_scores_allowed": false,
+    "ci_decisions_allowed": false,
+    "source_can_create_ci_light_candidate": true,
+    "source_can_create_ci_candidate": false,
+    "real_orders_enabled": false
+  }
+}

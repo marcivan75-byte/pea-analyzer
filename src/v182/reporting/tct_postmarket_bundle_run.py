@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from time import perf_counter
-from typing import Callable
+from typing import Any, Callable
 import json
 import traceback
 
@@ -41,11 +41,24 @@ def _run_lineage_dtype_safe(root: Path) -> dict:
     """
     original_apply = lineage.apply_lineage
 
-    def compatible_apply(catalyst_ledger, ohlc_ledger_frame, **kwargs):
+    def compatible_apply(
+        catalyst_ledger: Any,
+        ohlc_ledger: Any,
+        *,
+        minimum_snapshot_coverage: float,
+        labeled_at_utc: str,
+        cfg: dict,
+    ) -> tuple[Any, dict]:
         ledger = catalyst_ledger.copy()
         if "pit_label_evaluable" in ledger.columns:
             ledger["pit_label_evaluable"] = ledger["pit_label_evaluable"].astype(object)
-        return original_apply(ledger, ohlc_ledger_frame, **kwargs)
+        return original_apply(
+            ledger,
+            ohlc_ledger,
+            minimum_snapshot_coverage=minimum_snapshot_coverage,
+            labeled_at_utc=labeled_at_utc,
+            cfg=cfg,
+        )
 
     lineage.apply_lineage = compatible_apply
     try:

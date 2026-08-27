@@ -12,7 +12,7 @@ def _cfg():
     return {
         "formula_version":FORMULA_VERSION,
         "scope":{"baseline_top_n":20,"baseline_min_coverage":0.60},
-        "squeeze":{"percentile":0.15,"lookback_sessions":100,"window_sessions":8,"minimum_fraction_below_threshold":0.80},
+        "squeeze":{"percentile":0.15,"lookback_sessions":100,"window_sessions":5,"minimum_consecutive_sessions":5,"minimum_fraction_below_threshold":1.0},
         "t1":{"quality_threshold":70.0,"starter_threshold":80.0,"quality_component_min_coverage":0.80,"ttl_sessions":10,"rvol_min":1.20,"max_extension_atr":1.5,"max_extension_pct":0.10},
         "t2":{"quality_threshold":75.0,"quality_component_min_coverage":0.80,"bandwidth_expansion_ratio_min":1.15,"rvol_min":1.20,"max_extension_atr":1.5,"max_extension_pct":0.10,"hold_floor_bb_factor":0.995,"hold_floor_t1_factor":0.98},
     }
@@ -31,6 +31,7 @@ def _history(macd_tail=(-0.30,-0.20,-0.05),current_close=10.30,current_bb=10.20,
     frame["volume"]=100.0; frame.loc[frame.index[-1],"volume"]=220.0
     frame["bb_high"]=10.10; frame.loc[frame.index[-1],"bb_high"]=current_bb
     frame["stoch_k"]=60.0; frame["stoch_d"]=50.0
+    frame.loc[frame.index[-2],"stoch_k"]=45.0
     frame["macd"]=-0.30; frame["macd_signal"]=0.0
     frame.loc[frame.index[-3:],"macd"]=list(macd_tail)
     frame["macd_hist"]=frame["macd"]-frame["macd_signal"]
@@ -65,7 +66,7 @@ def test_source_scenario_detects_t1_and_linked_t2():
     assert t1["setup"]=="T1"
     assert t1["t1_quality"]>=80.0
     state={**t1["state_update"],"event_id":"T1_TEST","baseline_eligible_at_t1":True,"age_sessions":5}
-    t2=detect_exact(_history((-0.05,0.01,0.08),10.45,10.35,0.024,rs=0.04),state,_cfg())
+    t2=detect_exact(_history((-0.05,-0.01,0.08),10.45,10.35,0.024,rs=0.04),state,_cfg())
     assert t2["setup"]=="T2_CONFIRMATION"
     assert t2["t2_quality"]>=75.0
     assert t2["source_event_id"]=="T1_TEST"
@@ -74,7 +75,7 @@ def test_source_scenario_detects_t1_and_linked_t2():
 def test_string_false_state_cannot_authorize_t2():
     t1=detect_exact(_history(),{},_cfg())
     state={**t1["state_update"],"event_id":"T1_TEST","baseline_eligible_at_t1":"false","age_sessions":5}
-    t2=detect_exact(_history((-0.05,0.01,0.08),10.45,10.35,0.024,rs=0.04),state,_cfg())
+    t2=detect_exact(_history((-0.05,-0.01,0.08),10.45,10.35,0.024,rs=0.04),state,_cfg())
     assert t2["setup"] is None
     assert t2["reason"]=="SOURCE_T1_NOT_BASELINE_ELIGIBLE"
 
@@ -88,12 +89,36 @@ def test_t1_technical_gate_requires_both_sar_and_mm50_and_bandwidth_expansion():
     assert detect_exact(hist,{},_cfg())["setup"] is None
 
 
+def test_t1_requires_continuous_week_squeeze_fresh_stoch_cross_and_rising_volume():
+    hist=_history(); hist.loc[hist.index[-4],"bandwidth"]=0.05
+    assert detect_exact(hist,{},_cfg())["setup"] is None
+    hist=_history(); hist.loc[hist.index[-2],"stoch_k"]=55.0
+    assert detect_exact(hist,{},_cfg())["setup"] is None
+    hist=_history(); hist.loc[hist.index[-2],"volume"]=230.0
+    assert detect_exact(hist,{},_cfg())["setup"] is None
+
+
 def test_relative_strength_degradation_is_t2_quality_component_not_binary_gate():
     t1=detect_exact(_history(),{},_cfg())
     state={**t1["state_update"],"event_id":"T1_TEST","baseline_eligible_at_t1":True,"age_sessions":5,"rs_10d_at_t1":0.05}
-    t2=detect_exact(_history((-0.05,0.01,0.08),10.45,10.35,0.024,rs=0.02),state,_cfg())
+    t2=detect_exact(_history((-0.05,-0.01,0.08),10.45,10.35,0.024,rs=0.02),state,_cfg())
     assert t2["t2_components"]["relative_strength_continuation"] < 70.0
     assert t2["setup"]=="T2_CONFIRMATION"
+
+
+def test_t2_requires_fresh_macd_cross_bb_hold_stoch_sar_mm50_and_rising_volume():
+    t1=detect_exact(_history(),{},_cfg())
+    state={**t1["state_update"],"event_id":"T1_TEST","baseline_eligible_at_t1":True,"age_sessions":5}
+    hist=_history((-0.05,0.01,0.08),10.45,10.35,0.024)
+    assert detect_exact(hist,state,_cfg())["setup"] is None
+    hist=_history((-0.05,-0.01,0.08),10.34,10.35,0.024)
+    assert detect_exact(hist,state,_cfg())["setup"] is None
+    hist=_history((-0.05,-0.01,0.08),10.45,10.35,0.024); hist.loc[hist.index[-1],"stoch_k"]=45.0
+    assert detect_exact(hist,state,_cfg())["setup"] is None
+    hist=_history((-0.05,-0.01,0.08),10.45,10.35,0.024); hist.loc[hist.index[-1],"sar"]=10.50
+    assert detect_exact(hist,state,_cfg())["setup"] is None
+    hist=_history((-0.05,-0.01,0.08),10.45,10.35,0.024); hist.loc[hist.index[-2],"volume"]=230.0
+    assert detect_exact(hist,state,_cfg())["setup"] is None
 
 
 def test_t1_is_persisted_only_after_current_baseline_top20(monkeypatch,tmp_path):
@@ -119,7 +144,7 @@ def test_t2_requires_persisted_eligible_t1_and_consumes_only_when_current_baseli
     cache=tmp_path/"cache"; state_path=tmp_path/"state.json"; _write_history(cache,_history())
     build_exact_timing_snapshot(_actions(top20=True),cache,state_path,_cfg())
 
-    _write_history(cache,_history((-0.05,0.01,0.08),10.45,10.35,0.024))
+    _write_history(cache,_history((-0.05,-0.01,0.08),10.45,10.35,0.024))
     blocked,audit=build_exact_timing_snapshot(_actions(top20=False),cache,state_path,_cfg())
     assert blocked.iloc[0]["status"]=="BLOCKED_BASELINE"
     assert blocked.iloc[0]["available_criteria"]<=6
@@ -142,7 +167,7 @@ def test_snapshot_ttl_is_anchored_to_pit_market_date_not_wall_clock(monkeypatch,
         "breakout_price":10.30,"atr_at_t1":0.40,"rs_10d_at_t1":0.04,
         "t1_quality_score":85.0,"baseline_eligible_at_t1":True,"formula_version":FORMULA_VERSION,
     }}))
-    _write_history(cache,_history((-0.05,0.01,0.08),10.45,10.35,0.024))
+    _write_history(cache,_history((-0.05,-0.01,0.08),10.45,10.35,0.024))
     out,audit=build_exact_timing_snapshot(_actions(top20=True),cache,state_path,_cfg())
     assert audit.expired_state_records==0
     assert out.iloc[0]["status"]=="T2_CONFIRM_75_SHADOW"

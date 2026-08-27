@@ -25,11 +25,11 @@ def _t1_row():
     row={
         "isin":"FRTEST000001","name":"TEST","asset_class":"ACTION","pea_eligible":"true",
         "tct_baseline_rank":5,"tct_baseline_coverage":0.84,
-        "bb_squeeze_fraction_8":0.875,"rvol20":1.5,"bb_breakout_cross_flag":True,
+        "bb_squeeze_consecutive_sessions":5,"rvol20":1.5,"volume_increase_flag":True,"bb_breakout_cross_flag":True,
         "bb_bandwidth_expansion_ratio":1.10,
         "last_close":101.0,"bb_upper":100.0,"atr14":2.0,
         "macd_hist":-0.04,"macd_hist_rising_share_3":0.50,
-        "stoch_k":60.0,"stoch_d":55.0,"rsi14":60.0,"mm50":95.0,"sar":96.0,
+        "stoch_k":60.0,"stoch_d":55.0,"stoch_bull_cross_flag":True,"rsi14":60.0,"mm50":95.0,"sar":96.0,
         "bb_bandwidth":1.0,"relative_strength_10d":0.02,
     }
     for field in CFG["t1"]["component_fields"].values(): row[field]=80.0
@@ -64,7 +64,7 @@ def test_t2_requires_exact_t1_and_confirms_valid_state():
     state=make_t1_state(_t1_row(),t1_eval,"2026-08-12")
     assert state is not None
     row=_t1_row().copy()
-    row["bb_bandwidth"]=1.20; row["macd_hist"]=0.05; row["rvol20"]=1.4
+    row["bb_bandwidth"]=1.20; row["bb_bandwidth_expanding_flag"]=True; row["macd_hist"]=0.05; row["macd_bull_cross_flag"]=True; row["rvol20"]=1.4
     row["last_close"]=103.0; row["bb_upper"]=102.0; row["atr14"]=3.0; row["relative_strength_10d"]=-0.02
     for field in CFG["t2"]["component_fields"].values(): row[field]=80.0
     result=evaluate_t2(row,state,5,CFG)
@@ -77,7 +77,7 @@ def test_t2_requires_exact_t1_and_confirms_valid_state():
 
 def test_t2_ttl_source_semantics_allow_age_zero_but_reject_gt_10():
     t1_eval=evaluate_t1(_t1_row(),CFG); state=make_t1_state(_t1_row(),t1_eval,"2026-08-12")
-    row=_t1_row().copy(); row["bb_bandwidth"]=1.20; row["macd_hist"]=0.05; row["rvol20"]=1.4; row["last_close"]=103.0; row["bb_upper"]=102.0; row["atr14"]=3.0
+    row=_t1_row().copy(); row["bb_bandwidth"]=1.20; row["bb_bandwidth_expanding_flag"]=True; row["macd_hist"]=0.05; row["macd_bull_cross_flag"]=True; row["rvol20"]=1.4; row["last_close"]=103.0; row["bb_upper"]=102.0; row["atr14"]=3.0
     for field in CFG["t2"]["component_fields"].values(): row[field]=80.0
     assert evaluate_t2(row,state,0,CFG)["status"] == "SHADOW_T2_CONFIRMED"
     assert "T1_TTL_FAIL" in evaluate_t2(row,state,11,CFG)["reasons"]

@@ -125,12 +125,7 @@ def _pivot(observations: list[dict]) -> pd.DataFrame:
 
 
 def _shared_boursorama_fetcher(limiter: StartRateLimiter, max_inflight: int):
-    """Return one bounded HTTP fetcher shared by Action/ETF branches.
-
-    Every request passes through both the provider-wide start limiter and one
-    provider-wide in-flight semaphore. This lets response latency overlap while
-    preserving the pre-existing start cadence and total concurrency ceiling.
-    """
+    """Return one bounded HTTP fetcher shared by Action/ETF branches."""
     inflight_gate = BoundedSemaphore(max(1, int(max_inflight)))
 
     def fetch(url: str, *, timeout: float):
@@ -152,6 +147,7 @@ def enrich_selected_rows(
     root: Path = ROOT,
     *,
     profile: str = "SELECTED",
+    investing_enabled: bool = True,
 ) -> tuple[pd.DataFrame, dict]:
     contract = _read_contract(root)
     scope = contract["scope"]
@@ -165,8 +161,10 @@ def enrich_selected_rows(
             "status": "NO_PRESELECTED_ROWS",
             "profile": profile,
             "selected_rows": 0,
-            "decision_influence": False,
-            "score_influence": 0.0,
+            "collector_decision_influence": False,
+            "reference_score_influence": 0.0,
+            "post_selection_gate_consumer_enabled": True,
+            "can_create_buy": False,
         }
 
     bcfg = contract["boursorama"]
@@ -176,7 +174,6 @@ def enrich_selected_rows(
     etf_selected = selected[asset_upper.eq("ETF")].copy()
 
     def run_boursorama() -> tuple[object | None, object | None]:
-        """Overlap Action/ETF response waits under one provider-wide safety envelope."""
         action_enabled = not action_selected.empty and bool(bcfg.get("priority_for_selected_actions", True))
         etf_enabled = not etf_selected.empty and bool(bcfg.get("priority_for_selected_etfs", False))
         if not action_enabled and not etf_enabled:
@@ -236,7 +233,9 @@ def enrich_selected_rows(
     i_result = None
     branch_errors: list[dict] = []
     with ThreadPoolExecutor(max_workers=2, thread_name_prefix="selected-source") as pool:
-        futures = {"boursorama": pool.submit(run_boursorama), "investing": pool.submit(run_investing)}
+        futures = {"boursorama": pool.submit(run_boursorama)}
+        if investing_enabled:
+            futures["investing"] = pool.submit(run_investing)
         for name, future in futures.items():
             try:
                 result = future.result()
@@ -277,18 +276,19 @@ def enrich_selected_rows(
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "selected_rows": int(len(selected)),
         "selected_unique_isins": int(selected["isin"].nunique()),
-        "boursorama_actions": (
-            b_action_result.metrics if b_action_result is not None else {"status": "NO_ACTION_SELECTED_OR_BRANCH_FAILED"}
+        "boursorama_actions": b_action_result.metrics if b_action_result is not None else {"status": "NO_ACTION_SELECTED_OR_BRANCH_FAILED"},
+        "boursorama_etfs": b_etf_result.metrics if b_etf_result is not None else {"status": "NO_ETF_SELECTED_OR_BRANCH_FAILED"},
+        "investing": (
+            i_result.metrics
+            if i_result is not None
+            else {"status": "BRANCH_FAILED" if investing_enabled else "DISABLED_FOR_PROFILE"}
         ),
-        "boursorama_etfs": (
-            b_etf_result.metrics if b_etf_result is not None else {"status": "NO_ETF_SELECTED_OR_BRANCH_FAILED"}
-        ),
-        "investing": i_result.metrics if i_result is not None else {"status": "BRANCH_FAILED"},
         "failures": int(len(failures)),
         "weights_unchanged": True,
         "thresholds_unchanged": True,
-        "decision_influence": False,
-        "score_influence": 0.0,
+        "collector_decision_influence": False,
+        "reference_score_influence": 0.0,
+        "post_selection_gate_consumer_enabled": bool(contract.get("governance", {}).get("post_selection_decision_support_gate_influence", False)),
         "can_create_buy": False,
         "functional_contract": "config/SOURCE_FUNCTIONAL_CONTRACT_V21_15.json",
         "boursorama_asset_overlap": True,

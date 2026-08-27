@@ -1,0 +1,20 @@
+{
+  "version": "OBJECTIVES_RISK_SHADOW_V1",
+  "shadow_only": true,
+  "real_orders_enabled": false,
+  "minimum_reward_risk": {"TCT": 1.5, "CT": 2.0, "MT": 2.0},
+  "forecast_sessions": {"TCT": 10, "CT": 30, "MT": 63},
+  "history_minimum_observations": 126,
+  "atr_invalidation_multiple": {"ACTION": 1.5, "ETF": 1.25},
+  "entry_support_atr_buffer": 0.25,
+  "action_output_gate": {
+    "minimum_reward_risk_exclusive": 13.0,
+    "minimum_reliability_exclusive": 62.0
+  },
+  "reliability": {
+    "history_weight": 30,
+    "target_source_weight": 30,
+    "technical_coverage_weight": 25,
+    "selection_evidence_weight": 15
+  }
+}

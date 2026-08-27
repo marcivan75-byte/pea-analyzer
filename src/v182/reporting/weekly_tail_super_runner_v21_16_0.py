@@ -5,6 +5,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Callable
 import json
+import os
 import traceback
 
 from v182.reporting import decision_brief
@@ -118,6 +119,8 @@ def run(root: Path = ROOT) -> dict:
             + str(steps["friday_tactical_reuse"].get("error"))
         )
 
+    critical_only = os.environ.get("PEA_WEEKLY_CRITICAL_ONLY", "0").strip() == "1"
+
     # Start Postmarket as soon as TCT completes, while Action CT may still run.
     # tactical_shadow_bundle_run explicitly exposes this callback for that purpose.
     postmarket_holder: dict[str, dict] = {}
@@ -128,18 +131,36 @@ def run(root: Path = ROOT) -> dict:
             lambda: postmarket.run(root=root),
         )
 
-    steps["tactical_shadow"] = _capture(
-        "TACTICAL_SHADOW_BUNDLE",
-        lambda: tactical.run(root=root, tct_complete_callback=_start_postmarket),
-    )
+    if critical_only:
+        steps["tactical_shadow"] = {
+            "step": "TACTICAL_SHADOW_BUNDLE",
+            "status": "DEFERRED_DISTINCT_SHADOW_PROCESS",
+            "runtime_seconds": 0.0,
+            "result": {},
+            "error": None,
+        }
+    else:
+        steps["tactical_shadow"] = _capture(
+            "TACTICAL_SHADOW_BUNDLE",
+            lambda: tactical.run(root=root, tct_complete_callback=_start_postmarket),
+        )
     # If TCT failed before callback invocation for any unexpected reason, preserve
     # the historical independent Postmarket attempt instead of silently skipping it.
-    if "step" not in postmarket_holder:
+    if not critical_only and "step" not in postmarket_holder:
         postmarket_holder["step"] = _capture(
             "POSTMARKET_V24.4.2",
             lambda: postmarket.run(root=root),
         )
-    steps["postmarket"] = postmarket_holder["step"]
+    steps["postmarket"] = postmarket_holder.get(
+        "step",
+        {
+            "step": "POSTMARKET_V24.4.2",
+            "status": "DEFERRED_DISTINCT_SHADOW_PROCESS",
+            "runtime_seconds": 0.0,
+            "result": {},
+            "error": None,
+        },
+    )
 
     # Decision Brief requires Postmarket catalyst context when available, so this
     # overlap begins only after Postmarket has completed. Weekly Post-Decision does
@@ -156,7 +177,7 @@ def run(root: Path = ROOT) -> dict:
     advisory_failures = [
         name
         for name in ("etf_structure_replay", "tactical_shadow", "postmarket")
-        if steps[name]["status"] != "SUCCESS"
+        if steps[name]["status"] not in {"SUCCESS", "DEFERRED_DISTINCT_SHADOW_PROCESS"}
     ]
     status = (
         "SUCCESS_WEEKLY_TAIL_OPTIMIZED"
@@ -183,6 +204,9 @@ def run(root: Path = ROOT) -> dict:
             "provider_freshness_policy_changed": False,
             "external_provider_concurrency_added_by_finalization": False,
             "python_processes_consolidated": True,
+            "critical_path_only": critical_only,
+            "shadow_diagnostics_deferred_to_distinct_process": critical_only,
+            "deferred_modules_decision_influence": 0.0,
         },
         "decision_logic_changed": False,
         "criteria_changed": False,

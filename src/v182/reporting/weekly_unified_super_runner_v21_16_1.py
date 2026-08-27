@@ -19,7 +19,11 @@ from v182.sources import yfinance_bulk
 ROOT = Path(__file__).resolve().parents[3]
 VERSION = "WEEKLY_UNIFIED_SUPER_RUNTIME_V21_16_1"
 AUDIT_NAME = "WEEKLY_UNIFIED_SUPER_RUNTIME_V21_16_1.json"
-COMMITTEE_WORKERS = 2
+# The Committee branches are memory-bandwidth bound on the full 1829 x 633
+# referential. Two Python threads duplicate large Series/DataFrame traversals and
+# regress wall time on the production Windows runner. Deterministic serial horizon
+# scheduling is faster there and retains the exact scoring functions and order.
+COMMITTEE_WORKERS = 1
 logger = logging.getLogger(__name__)
 
 

@@ -1,6 +1,6 @@
 {
   "version": "V21.15.2",
-  "purpose": "Restore and lock previously validated source functions while allowing safe runtime overlap under provider-wide rate limits.",
+  "purpose": "Preserve validated selected-only source functions and govern their post-selection decision-support use under provider-wide rate limits.",
   "scope": {
     "selected_only_max_unique_instruments": 40,
     "preselection_statuses": ["BUY_CANDIDATE", "WATCH", "REVIEW", "SHADOW_CANDIDATE"],
@@ -8,7 +8,7 @@
     "asset_classes": ["ACTION", "ETF"]
   },
   "boursorama": {
-    "required_function": "POST_SELECTION_PRIORITY_ENRICHMENT",
+    "required_function": "POST_SELECTION_PRIORITY_ENRICHMENT_AND_ACTION_SELECTION_QUALITY_GATE",
     "priority_for_selected_actions": true,
     "priority_for_selected_etfs": true,
     "full_universe_daily_scrape_forbidden": true,
@@ -19,6 +19,14 @@
     "max_workers": 4,
     "provider_max_inflight": 4,
     "asset_branches_overlap_under_shared_limiter": true,
+    "action_selection_quality_gate": true,
+    "action_consensus_entry_eligible": ["BUY", "STRONG_BUY"],
+    "action_consensus_wait": ["HOLD"],
+    "action_consensus_reject": ["SELL", "STRONG_SELL"],
+    "missing_consensus_policy": "REVIEW_NOT_ENTRY_READY_NEVER_BEARISH",
+    "analyst_count_is_context_only": true,
+    "target_upside_is_context_only": true,
+    "revisions_are_context_only": true,
     "required_action_context_families": [
       "quote_volume_market_cap_sector_pea",
       "consensus_analyst_count_target_upside_revisions",
@@ -34,10 +42,11 @@
       "replication_management_fee",
       "volatility_alpha_r2_beta_when_publicly_displayed"
     ],
+    "etf_action_consensus_gate_applies": false,
     "raw_html_persisted": false
   },
   "investing": {
-    "required_function": "POST_SELECTION_MULTI_HORIZON_TECHNICAL_CONFIRMATION",
+    "required_function": "POST_SELECTION_MULTI_HORIZON_ENTRY_EXIT_TIMING_GATE",
     "public_pages_only": true,
     "selected_only": true,
     "timeframes": ["DAILY", "WEEKLY", "MONTHLY"],
@@ -47,19 +56,31 @@
       "CT": "WEEKLY",
       "MT": "MONTHLY"
     },
+    "entry_confirmation_states": ["BUY", "STRONG_BUY"],
+    "wait_states": ["NEUTRAL"],
+    "exit_review_states": ["SELL", "STRONG_SELL"],
+    "sell_blocks_new_entry": true,
+    "missing_signal_policy": "WAIT_SOURCE_MISSING_NEVER_SELL",
     "ttl_hours": 6,
     "refresh_budget": 40,
     "request_start_interval_seconds": 1.0,
-    "max_workers": 4,
+    "max_workers": 8,
     "raw_html_persisted": false
   },
   "governance": {
     "post_selection_only": true,
+    "post_selection_decision_support_gate_influence": true,
+    "boursorama_selection_quality_gate": true,
+    "investing_entry_exit_timing_gate": true,
     "changes_reference_scores": false,
+    "reference_score_influence": 0.0,
     "changes_weights": false,
     "changes_thresholds": false,
     "can_create_buy": false,
+    "investing_signal_cannot_create_candidate": true,
+    "boursorama_signal_cannot_create_candidate": true,
     "can_trigger_real_order": false,
+    "source_missing_never_interpreted_as_negative_signal": true,
     "missing_source_data_policy": "EXPLICIT_NA_WITH_FAILURE_AUDIT_NO_IMPUTATION",
     "source_contract_must_be_tested_in_ci": true,
     "silent_function_removal_forbidden": true

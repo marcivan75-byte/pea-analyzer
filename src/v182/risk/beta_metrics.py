@@ -221,6 +221,15 @@ def _beta(pair: pd.DataFrame, min_obs: int) -> float | None:
 def _corr(pair: pd.DataFrame, min_obs: int) -> float | None:
     if len(pair) < min_obs:
         return None
+    asset_std = float(pair["asset"].std())
+    benchmark_std = float(pair["benchmark"].std())
+    if (
+        not math.isfinite(asset_std)
+        or not math.isfinite(benchmark_std)
+        or asset_std <= 0
+        or benchmark_std <= 0
+    ):
+        return None
     value = float(pair["asset"].corr(pair["benchmark"]))
     return value if math.isfinite(value) else None
 
@@ -263,26 +272,68 @@ def compute_beta_metrics(
     stress_quantile: float = 0.10,
     min_stress_obs: int = 12,
 ) -> dict:
-    pairs = {window: _pair(asset_returns, benchmark_returns, window) for window in windows}
+    aligned_asset, aligned_benchmark = asset_returns.align(benchmark_returns, join="inner")
+    valid_mask = aligned_asset.notna() & aligned_benchmark.notna()
+    asset_values = aligned_asset[valid_mask].to_numpy(dtype=float, copy=False)
+    benchmark_values = aligned_benchmark[valid_mask].to_numpy(dtype=float, copy=False)
+
+    def array_beta(asset: np.ndarray, benchmark: np.ndarray, required: int) -> float | None:
+        if len(asset) < required:
+            return None
+        benchmark_centered = benchmark - benchmark.mean()
+        denominator = float(np.dot(benchmark_centered, benchmark_centered))
+        if not math.isfinite(denominator) or denominator <= 0:
+            return None
+        value = float(np.dot(asset - asset.mean(), benchmark_centered) / denominator)
+        return value if math.isfinite(value) else None
+
+    def array_corr(asset: np.ndarray, benchmark: np.ndarray, required: int) -> float | None:
+        if len(asset) < required:
+            return None
+        asset_centered = asset - asset.mean()
+        benchmark_centered = benchmark - benchmark.mean()
+        denominator = float(
+            np.sqrt(
+                np.dot(asset_centered, asset_centered)
+                * np.dot(benchmark_centered, benchmark_centered)
+            )
+        )
+        if not math.isfinite(denominator) or denominator <= 0:
+            return None
+        value = float(np.dot(asset_centered, benchmark_centered) / denominator)
+        return value if math.isfinite(value) else None
+
     result: dict[str, object] = {}
-    for window, pair in pairs.items():
-        result[f"beta_{window}d"] = _beta(pair, min(min_obs, max(12, window // 2)))
+    for window in windows:
+        result[f"beta_{window}d"] = array_beta(
+            asset_values[-window:],
+            benchmark_values[-window:],
+            min(min_obs, max(12, window // 2)),
+        )
     long_window = windows[-1]
-    long_pair = pairs[long_window]
-    correlation = _corr(long_pair, min(min_obs, 40))
+    long_asset = asset_values[-long_window:]
+    long_benchmark = benchmark_values[-long_window:]
+    correlation = array_corr(long_asset, long_benchmark, min(min_obs, 40))
     result["correlation_252d"] = correlation
     result["r2_252d"] = correlation**2 if correlation is not None else None
-    result["upside_beta_252d"] = _beta(long_pair[long_pair["benchmark"] > 0], min_directional_obs)
-    result["downside_beta_252d"] = _beta(long_pair[long_pair["benchmark"] < 0], min_directional_obs)
+    result["upside_beta_252d"] = array_beta(
+        long_asset[long_benchmark > 0], long_benchmark[long_benchmark > 0], min_directional_obs
+    )
+    result["downside_beta_252d"] = array_beta(
+        long_asset[long_benchmark < 0], long_benchmark[long_benchmark < 0], min_directional_obs
+    )
     upside = num(result["upside_beta_252d"])
     downside = num(result["downside_beta_252d"])
     result["downside_upside_beta_ratio"] = (
         downside / upside if upside is not None and downside is not None and upside > 0.05 else None
     )
     stress_corr = None
-    if len(long_pair) >= max(30, min_stress_obs):
-        threshold = float(long_pair["benchmark"].quantile(stress_quantile))
-        stress_corr = _corr(long_pair[long_pair["benchmark"] <= threshold], min_stress_obs)
+    if len(long_asset) >= max(30, min_stress_obs):
+        threshold = float(np.quantile(long_benchmark, stress_quantile))
+        stress_mask = long_benchmark <= threshold
+        stress_corr = array_corr(
+            long_asset[stress_mask], long_benchmark[stress_mask], min_stress_obs
+        )
     result["stress_correlation_252d"] = stress_corr
     betas = [num(result.get(f"beta_{window}d")) for window in windows]
     valid = [value for value in betas if value is not None]
@@ -291,7 +342,7 @@ def compute_beta_metrics(
     result["beta_class"] = _beta_class(beta_long)
     reliability = _reliability(num(result["r2_252d"]))
     result["beta_reliability"] = reliability
-    result["sessions_252d"] = int(len(long_pair))
+    result["sessions_252d"] = int(len(long_asset))
 
     # A beta with R² < 0.15 is mathematically computable but too weakly linked to
     # the common market factor to support a risk verdict, portfolio beta or stress

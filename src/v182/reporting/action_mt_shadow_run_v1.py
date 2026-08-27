@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 import argparse
 import json
 
+import numpy as np
 import pandas as pd
 
 from v182.decision.action_mt_decision_v1 import ActionCandidate, MarketRegime, select_action_mt_candidates
@@ -90,6 +91,59 @@ def _attach_selected_source_context(frame: pd.DataFrame, master: pd.DataFrame) -
     return frame.merge(context_rows, on="isin", how="left"), context
 
 
+def _attach_objectives_risk_shadow(frame: pd.DataFrame, histories: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Publish MT objective/risk diagnostics without changing score or decision."""
+    records: list[dict[str, object]] = []
+    for _, row in frame.iterrows():
+        isin = str(row.get("isin", ""))
+        history = histories.get(isin, pd.DataFrame())
+        close = pd.to_numeric(history.get("close"), errors="coerce").dropna() if not history.empty else pd.Series(dtype=float)
+        current = float(close.iloc[-1]) if not close.empty else pd.to_numeric(row.get("reference_close"), errors="coerce")
+        if not pd.notna(current) or current <= 0 or len(history) < 127:
+            records.append({
+                "rr_indicative": None, "invalidation_atr": None, "optimal_entry_shadow": None,
+                "or_target_central_shadow": None, "or_reliability_shadow": 0.0,
+                "or_data_status": "INCOMPLETE_FAIL_CLOSED",
+            })
+            continue
+        high = pd.to_numeric(history.get("high"), errors="coerce")
+        low = pd.to_numeric(history.get("low"), errors="coerce")
+        prior = close.shift(1)
+        true_range = pd.concat([(high - low).abs(), (high - prior).abs(), (low - prior).abs()], axis=1).max(axis=1)
+        atr = float(true_range.tail(14).mean())
+        invalidation_distance = min(0.15, max(0.02, (2.0 * atr) / current))
+        invalidation = current * (1.0 - invalidation_distance)
+        analyst_upside = pd.to_numeric(row.get("boursorama_target_upside_pct"), errors="coerce")
+        returns_126 = close.pct_change(126).dropna().tail(504)
+        empirical = float(returns_126.median()) if not returns_126.empty else np.nan
+        central_return = float(analyst_upside) / 100.0 if pd.notna(analyst_upside) else empirical
+        central_return = min(0.60, max(-0.10, central_return)) if pd.notna(central_return) else np.nan
+        target = current * (1.0 + central_return) if pd.notna(central_return) else np.nan
+        risk = current - invalidation
+        rr = (target - current) / risk if pd.notna(target) and risk > 0 else np.nan
+        minimum_rr = 2.0
+        maximum_entry = (target + minimum_rr * invalidation) / (1.0 + minimum_rr) if pd.notna(target) else np.nan
+        optimal_entry = min(current, maximum_entry) if pd.notna(maximum_entry) and maximum_entry > invalidation else np.nan
+        coverage = pd.to_numeric(row.get("score_coverage"), errors="coerce")
+        history_quality = min(1.0, len(close) / 252.0)
+        reliability = 100.0 * (0.60 * (float(coverage) if pd.notna(coverage) else 0.0) + 0.40 * history_quality)
+        records.append({
+            "rr_indicative": round(float(rr), 2) if pd.notna(rr) else None,
+            "invalidation_atr": round(float(invalidation), 4),
+            "optimal_entry_shadow": round(float(optimal_entry), 4) if pd.notna(optimal_entry) else None,
+            "or_target_central_shadow": round(float(target), 4) if pd.notna(target) else None,
+            "or_reliability_shadow": round(min(100.0, reliability), 1),
+            "or_data_status": "COMPLETE" if pd.notna(rr) and pd.notna(optimal_entry) else "INCOMPLETE_FAIL_CLOSED",
+        })
+    diagnostics = pd.DataFrame(records, index=frame.index)
+    result = pd.concat([frame, diagnostics], axis=1)
+    result["or_score_influence"] = 0.0
+    result["or_decision_influence"] = 0.0
+    result["or_real_order_allowed"] = False
+    result["or_horizon_sessions"] = 126
+    return result
+
+
 def run(master: pd.DataFrame, cfg: dict, cache: ActionMTHistoryCache, output_dir: Path, now: datetime | None = None) -> dict:
     started = perf_counter()
     now = now or datetime.now(timezone.utc)
@@ -136,6 +190,7 @@ def run(master: pd.DataFrame, cfg: dict, cache: ActionMTHistoryCache, output_dir
     selected = {candidate.isin: rank for rank, candidate in enumerate(committee.selected, start=1)}
     frame["selected_rank"] = frame["isin"].map(selected)
     frame, source_context = _attach_selected_source_context(frame, master)
+    frame = _attach_objectives_risk_shadow(frame, histories)
     frame["version_engine"] = frame.get("version_engine", ENGINE_VERSION)
     frame["config_sha256"] = config_fingerprint(cfg)
     frame["snapshot_fingerprint"] = frame.apply(lambda row: snapshot_fingerprint(row.to_dict()), axis=1)
@@ -164,6 +219,12 @@ def run(master: pd.DataFrame, cfg: dict, cache: ActionMTHistoryCache, output_dir
         "weights_unchanged": True,
         "thresholds_unchanged": True,
         "source_context_score_influence": 0.0,
+        "objectives_risk_fields_published": [
+            "rr_indicative", "invalidation_atr", "optimal_entry_shadow",
+            "or_target_central_shadow", "or_reliability_shadow", "or_data_status",
+        ],
+        "objectives_risk_score_influence": 0.0,
+        "objectives_risk_decision_influence": 0.0,
     }
     (output_dir / "ACTION_MT_RUN_REPORT.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (output_dir / "ACTION_MT_COMMITTEE.txt").write_text(

@@ -317,7 +317,7 @@ def overlay_etf_mt(etf_frame: pd.DataFrame, mt_ranking: pd.DataFrame | None) -> 
 def tct_adapter(tct_shadow: pd.DataFrame | None = None) -> pd.DataFrame:
     if tct_shadow is not None and not tct_shadow.empty:
         return tct_shadow.copy()
-    return pd.DataFrame([{"asset_class":"ACTION","horizon":"TCT","isin":"","name":"ACTION TCT / T1-T2 MODULE","sector":"TRANSVERSAL","score":np.nan,"coverage_pct":0.0,"status":"SHADOW_BASELINE_REQUIRED","decision":"SHADOW_BASELINE_REQUIRED","active_criteria":0,"available_criteria":0,"score_source":"V24.1.7_T1_T2_V2","backtest_attribution":"V24.1.7 V2 timing overlay not yet promoted; prior T1/T2 OOS failed promotion gates.","notes":"T1/T2 ACTION TCT only; timing overlay; 0 influence on base score; no ETF/non-TCT use; live execution forbidden."}])
+    return pd.DataFrame([{"asset_class":"ACTION","horizon":"TCT","isin":"","name":"ACTION TCT / T1-T2 MODULE","sector":"TRANSVERSAL","score":np.nan,"coverage_pct":0.0,"status":"SHADOW_BASELINE_REQUIRED","decision":"SHADOW_BASELINE_REQUIRED","active_criteria":0,"available_criteria":0,"score_source":"V24.1.7_T1_T2_V3_STRICT_SEQUENCE","backtest_attribution":"V3 strict sequence is shadow-only and has no historical performance attribution.","notes":"T1/T2 ACTION TCT only; linked strict timing sequence; 0 influence on base score; no ETF/non-TCT use; live execution forbidden."}])
 
 
 def sector_ranking(decisions: pd.DataFrame) -> pd.DataFrame:

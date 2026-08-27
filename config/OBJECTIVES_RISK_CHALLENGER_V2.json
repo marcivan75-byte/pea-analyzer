@@ -1,0 +1,77 @@
+{
+  "version": "OBJECTIVES_RISK_CHALLENGER_V2_3_SHADOW_HEBDO_GATES",
+  "shadow_only": true,
+  "real_orders_enabled": false,
+  "action_reward_risk_gate": {"TCT": 2.0, "CT": 2.5, "MT": 3.0},
+  "minimum_reliability": 65.0,
+  "ranking_formula_version": "OR_HEBDO_V2_1_50_30_20_RISK_MULT",
+  "ranking_formula": "(0.50*selection_score + 0.30*rr_score_0_100 + 0.20*reliability) * risk_soft_multiplier",
+  "ranking_weights": {"selection": 0.50, "reward_risk": 0.30, "reliability": 0.20},
+  "reward_risk_mapping": {"target_ratio": 2.0, "target_score": 70.0, "cap_ratio": 4.0, "cap_score": 100.0},
+  "labels": {
+    "ready_minimum_rr": 2.0,
+    "ready_minimum_confidence": 65.0,
+    "watch_priority_minimum_rr": 1.5,
+    "watch_priority_minimum_confidence": 55.0,
+    "watch_minimum_confidence": 45.0
+  },
+  "hebdo_entry_action": {
+    "ready_minimum_rr": 2.0,
+    "ready_minimum_confidence": 60.0,
+    "watch_minimum_rr": 1.0,
+    "non_actionable_maximum_rr": 0.5,
+    "minimum_confidence": 45.0,
+    "ready_risk_verdicts": ["GREEN"],
+    "pullback_risk_verdicts": ["AMBER", "ORANGE"],
+    "etf_required_regime": "MOMO_RISK_ON"
+  },
+  "etf_mt_shadow": {
+    "minimum_history_sessions": 500,
+    "maximum_staleness_days": 7,
+    "reliability_history_cap_sessions": 930,
+    "technical_quality_fields": ["sharpe_126", "sortino_126", "calmar_252", "gain_to_pain_126", "efficiency_63"],
+    "maximum_drawdown_fields": ["maxdd_6m", "max_drawdown_6m", "max_drawdown_1y"],
+    "backtest_required_before_influence": true
+  },
+  "sector_or_shadow": {
+    "top_instruments_per_sector": 5,
+    "excluded_horizons": ["SHORT"],
+    "coverage_multipliers": {"FULL_75_PLUS": 1.0, "AMBER_70_75": 0.85, "ORANGE_60_70": 0.70, "RED_BELOW_60": 0.40},
+    "risk_caution_share_threshold": 0.40,
+    "risk_caution_multiplier": 0.85,
+    "rotation_action_multipliers": {"BUY": 1.0, "ACCUMULATE": 1.0, "WATCH": 0.90, "HOLD": 0.75, "HOLD_MONITOR": 0.75, "REJECT": 0.55, "BLOCK_DATA": 0.55, "MISSING": 0.70},
+    "block_data_reopening_allowed": false,
+    "score_influence": 0.0
+  },
+  "weekly_source_gate": {
+    "minimum_valid_sources": 3,
+    "critical_failure_reasons": ["NO_DETERMINISTIC_CODE", "STALE", "VALIDATION_FAILED", "BLOCK_DATA"],
+    "top_n_per_asset_class": 15,
+    "forward_validation_sessions": [5, 10, 20],
+    "source_reliability_influence": 0.0
+  },
+  "risk_soft_multiplier": {"GREEN": 1.0, "AMBER": 0.85, "ORANGE": 0.70, "MISSING": 0.55, "RED": 0.40},
+  "buy_candidate_minimum_confidence": 66.0,
+  "entry_confidence_challenger": {"RISK_ON": 60.0, "NEUTRAL": 62.0, "RISK_OFF": 70.0},
+  "downside_risk_challenger": {
+    "weight": 0.10,
+    "fields": ["risk_downside_beta_252d", "max_drawdown_1y", "volatility_60d"],
+    "missing_is_neutral": true
+  },
+  "portfolio_budget": {
+    "maximum_per_economic_family": 1,
+    "target_beta_min": 0.7,
+    "target_beta_max": 1.0,
+    "maximum_mean_correlation": 0.65,
+    "maximum_theme_weight": 0.30,
+    "minimum_pair_observations": 60,
+    "correlation_lookback_sessions": 126
+  },
+  "promotion": {
+    "automatic": false,
+    "minimum_shadow_weeks": 8,
+    "pit_oos_required": true,
+    "comparison": "TOP5_OR_VS_TOP5_SELECTION_PURE_NET_OF_COSTS"
+  },
+  "reference_score_influence": 0.0
+}

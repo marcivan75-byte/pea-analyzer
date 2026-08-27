@@ -23,7 +23,7 @@
         "baseline_engine": "v182.decision.tct_baseline_v24_1_8",
         "baseline_version": "V24.1.8_DYNAMIC_NORMALIZATION_SHADOW",
         "exact_timing_engine": "v182.decision.tct_timing_exact_v24_1_7",
-        "formula_version": "T1T2_V2_2026_08",
+        "formula_version": "T1T2_V3_2026_08_STRICT_SEQUENCE",
         "baseline_top_n": 20,
         "baseline_min_coverage": 0.60,
         "baseline_missing_weight_policy": "ACTIVE_AVAILABLE_PILLARS_RENORMALIZED_TO_100_SETUP_EXCLUDED",

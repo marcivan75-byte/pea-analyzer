@@ -113,4 +113,58 @@ def test_selected_boursorama_uses_short_and_deep_ttl_and_never_persists_html(tmp
     assert len(calls) == call_count == 2
     assert any(row["field"] == "boursorama_consensus_score" for row in second.observations)
     assert any(row["field"] == "boursorama_operating_margin_pct" for row in second.observations)
+    assert all(len(row["page_sha256"]) == 64 for row in second.observations)
     assert "<html>" not in cache.read_text(encoding="utf-8")
+
+
+def test_stale_dynamic_consensus_is_removed_when_refresh_fails(tmp_path: Path):
+    rows = pd.DataFrame(
+        [{"isin": "FR0000120073", "asset_class": "ACTION", "horizon": "CT", "yahoo_ticker": "AI.PA"}]
+    )
+    cache = tmp_path / "boursorama_selected.json"
+    first_now = datetime(2026, 8, 22, 20, 0, tzinfo=timezone.utc)
+
+    def first_fetch(url, timeout):
+        return FakeResponse(DEEP_HTML if "chiffres-cles" in url else QUOTE_HTML)
+
+    def dynamic_failure(url, timeout):
+        if "consensus" in url:
+            raise TimeoutError("consensus unavailable")
+        return FakeResponse(DEEP_HTML)
+
+    collect_selected_action_context_cached(
+        rows, cache, request_start_interval_seconds=0, fetcher=first_fetch, now=first_now
+    )
+    result = collect_selected_action_context_cached(
+        rows,
+        cache,
+        request_start_interval_seconds=0,
+        fetcher=dynamic_failure,
+        now=datetime(2026, 8, 23, 5, 0, tzinfo=timezone.utc),
+    )
+    fields = {row["field"] for row in result.observations}
+    assert "boursorama_consensus" not in fields
+    assert "boursorama_operating_margin_pct" in fields
+    assert any(row["reason"] == "TimeoutError" for row in result.failures)
+
+
+def test_cache_is_invalidated_when_boursorama_code_changes(tmp_path: Path):
+    cache = tmp_path / "boursorama_selected.json"
+    now = datetime(2026, 8, 22, 20, 0, tzinfo=timezone.utc)
+
+    def fetcher(url, timeout):
+        return FakeResponse(DEEP_HTML if "chiffres-cles" in url else QUOTE_HTML)
+
+    first_rows = pd.DataFrame(
+        [{"isin": "FR0000000001", "asset_class": "ACTION", "horizon": "CT", "yahoo_ticker": "AI.PA"}]
+    )
+    changed_rows = first_rows.assign(yahoo_ticker="OR.PA")
+    collect_selected_action_context_cached(
+        first_rows, cache, request_start_interval_seconds=0, fetcher=fetcher, now=now
+    )
+    result = collect_selected_action_context_cached(
+        changed_rows, cache, request_start_interval_seconds=0, fetcher=fetcher, now=now
+    )
+    assert result.metrics["refresh_requested"] == 1
+    assert any(row["reason"] == "CACHE_IDENTITY_CHANGED_REFRESH_REQUIRED" for row in result.failures)
+    assert all("/1rPOR/" in row["source_url"] for row in result.observations)

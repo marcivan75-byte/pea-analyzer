@@ -6,7 +6,7 @@ from v182.reporting import daily_consolidated_runner_v21_15_7 as impl
 
 
 # Compatibility entrypoint retained because the deployed workflow historically
-# invokes V21.15.4. Runtime authority now lives in finalized V21.15.7.
+# invokes V21.15.4. Runtime authority lives in finalized V21.15.7.
 ROOT = impl.ROOT
 VERSION = impl.VERSION
 run = impl.run
