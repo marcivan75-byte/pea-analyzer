@@ -1,11 +1,15 @@
 {
-  "version": "OBJECTIVES_RISK_CHALLENGER_V2_SHADOW",
+  "version": "OBJECTIVES_RISK_CHALLENGER_V2_1_SHADOW_OR_HEBDO",
   "shadow_only": true,
   "real_orders_enabled": false,
   "action_reward_risk_gate": {"TCT": 2.0, "CT": 2.5, "MT": 3.0},
   "minimum_reliability": 65.0,
-  "ranking_weights": {"selection": 0.55, "reward_risk": 0.30, "reliability": 0.15},
+  "ranking_formula_version": "OR_HEBDO_V2_1_50_30_20_RISK_MULT",
+  "ranking_formula": "(0.50*selection_score + 0.30*rr_score_0_100 + 0.20*reliability) * risk_soft_multiplier",
+  "ranking_weights": {"selection": 0.50, "reward_risk": 0.30, "reliability": 0.20},
   "reward_risk_score_cap": 5.0,
+  "risk_soft_multiplier": {"GREEN": 1.0, "AMBER": 0.85, "ORANGE": 0.70, "MISSING": 0.55, "RED": 0.40},
+  "buy_candidate_minimum_confidence": 66.0,
   "entry_confidence_challenger": {"RISK_ON": 60.0, "NEUTRAL": 62.0, "RISK_OFF": 70.0},
   "downside_risk_challenger": {
     "weight": 0.10,
@@ -21,5 +25,11 @@
     "minimum_pair_observations": 60,
     "correlation_lookback_sessions": 126
   },
-  "promotion": {"automatic": false, "minimum_shadow_weeks": 8, "pit_oos_required": true}
+  "promotion": {
+    "automatic": false,
+    "minimum_shadow_weeks": 8,
+    "pit_oos_required": true,
+    "comparison": "TOP5_OR_VS_TOP5_SELECTION_PURE_NET_OF_COSTS"
+  },
+  "reference_score_influence": 0.0
 }

@@ -9,6 +9,10 @@ import os
 from v182.reporting import weekly_tail_super_runner_v21_16_0 as tail
 from v182.reporting import weekly_unified_super_runner_v22_2_3 as core
 from v182.reporting import weekly_unified_super_runner_v4 as overlay
+from v182.reporting import objectives_risk_shadow_v1 as objectives_risk
+from v182.reporting import objectives_risk_challenger_v2 as objectives_risk_challenger
+from v182.reporting import portfolio_budget_challenger_v2 as portfolio_budget
+from v182.reporting import ci_challenger_publication_v2 as challenger_publication
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -37,6 +41,13 @@ def run(root: Path = ROOT) -> dict:
     overlay_started = perf_counter()
     overlay_payload = overlay.run(root=root)
     overlay_seconds = perf_counter() - overlay_started
+
+    or_started = perf_counter()
+    objectives_risk.run(root=root)
+    or_payload = objectives_risk_challenger.run(root=root)
+    portfolio_budget.run(root=root)
+    publication_payload = challenger_publication.run(root=root)
+    or_seconds = perf_counter() - or_started
     total_seconds = perf_counter() - started
     under_target = total_seconds < TARGET_SECONDS
     payload = {
@@ -50,10 +61,14 @@ def run(root: Path = ROOT) -> dict:
             "core": round(core_seconds, 6),
             "critical_tail": round(tail_seconds, 6),
             "v4_overlay": round(overlay_seconds, 6),
+            "objectives_risk_shadow_publication": round(or_seconds, 6),
         },
         "core_status": core_payload.get("status"),
         "tail_status": tail_payload.get("status"),
         "overlay_status": overlay_payload.get("status"),
+        "objectives_risk_status": or_payload.get("status"),
+        "objectives_risk_publication_status": publication_payload.get("status"),
+        "objectives_risk_reference_influence": 0.0,
         "deferred_distinct_shadow_process": ["TACTICAL_SHADOW_BUNDLE", "POSTMARKET_V24_4_2"],
         "deferred_decision_score_weight_influence": 0.0,
         "real_orders_enabled": False,
