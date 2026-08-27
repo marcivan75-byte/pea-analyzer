@@ -13,6 +13,7 @@ from v182.reporting import objectives_risk_shadow_v1 as objectives_risk
 from v182.reporting import objectives_risk_challenger_v2 as objectives_risk_challenger
 from v182.reporting import portfolio_budget_challenger_v2 as portfolio_budget
 from v182.reporting import ci_challenger_publication_v2 as challenger_publication
+from v182.reporting import sector_or_shadow_v1 as sector_or_shadow
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -45,6 +46,7 @@ def run(root: Path = ROOT) -> dict:
     or_started = perf_counter()
     objectives_risk.run(root=root)
     or_payload = objectives_risk_challenger.run(root=root)
+    sector_or_payload = sector_or_shadow.run(root=root)
     portfolio_budget.run(root=root)
     publication_payload = challenger_publication.run(root=root)
     or_seconds = perf_counter() - or_started
@@ -68,6 +70,7 @@ def run(root: Path = ROOT) -> dict:
         "overlay_status": overlay_payload.get("status"),
         "objectives_risk_status": or_payload.get("status"),
         "objectives_risk_publication_status": publication_payload.get("status"),
+        "sector_or_shadow_status": sector_or_payload.get("status"),
         "objectives_risk_reference_influence": 0.0,
         "deferred_distinct_shadow_process": ["TACTICAL_SHADOW_BUNDLE", "POSTMARKET_V24_4_2"],
         "deferred_decision_score_weight_influence": 0.0,

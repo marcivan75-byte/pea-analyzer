@@ -33,6 +33,16 @@
     "maximum_drawdown_fields": ["maxdd_6m", "max_drawdown_6m", "max_drawdown_1y"],
     "backtest_required_before_influence": true
   },
+  "sector_or_shadow": {
+    "top_instruments_per_sector": 5,
+    "excluded_horizons": ["SHORT"],
+    "coverage_multipliers": {"FULL_75_PLUS": 1.0, "AMBER_70_75": 0.85, "ORANGE_60_70": 0.70, "RED_BELOW_60": 0.40},
+    "risk_caution_share_threshold": 0.40,
+    "risk_caution_multiplier": 0.85,
+    "rotation_action_multipliers": {"BUY": 1.0, "ACCUMULATE": 1.0, "WATCH": 0.90, "HOLD": 0.75, "HOLD_MONITOR": 0.75, "REJECT": 0.55, "BLOCK_DATA": 0.55, "MISSING": 0.70},
+    "block_data_reopening_allowed": false,
+    "score_influence": 0.0
+  },
   "risk_soft_multiplier": {"GREEN": 1.0, "AMBER": 0.85, "ORANGE": 0.70, "MISSING": 0.55, "RED": 0.40},
   "buy_candidate_minimum_confidence": 66.0,
   "entry_confidence_challenger": {"RISK_ON": 60.0, "NEUTRAL": 62.0, "RISK_OFF": 70.0},
