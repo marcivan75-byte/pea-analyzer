@@ -78,6 +78,33 @@ def _instrument_detail(root: Path, cfg: dict) -> pd.DataFrame:
     )
     detail["SECTOR_OR_CAN_REOPEN_BLOCK_DATA"] = False
     detail["SECTOR_OR_SHORT_EXCLUDED"] = False
+    rotation = _read(root / ROTATION_INPUT)
+    detail["SECTOR_ROTATION_NEW_POSITION_ACTION"] = "MISSING"
+    detail["SECTOR_ROTATION_CORRECTION_ALERT"] = False
+    if not rotation.empty and "sector" in rotation:
+        context = rotation.copy()
+        context["_sector_key"] = _key(context["sector"])
+        fields = ["_sector_key"] + [
+            field for field in ("new_position_action", "correction_alert", "RARS", "DQS", "AVCR") if field in context
+        ]
+        context = context[fields].drop_duplicates("_sector_key")
+        detail["_sector_key"] = _key(detail.get("sector", pd.Series("MISSING", index=detail.index)))
+        detail = detail.merge(context, on="_sector_key", how="left")
+        detail["SECTOR_ROTATION_NEW_POSITION_ACTION"] = _key(
+            detail.get("new_position_action", pd.Series("MISSING", index=detail.index))
+        )
+        detail["SECTOR_ROTATION_CORRECTION_ALERT"] = detail.get(
+            "correction_alert", pd.Series(False, index=detail.index)
+        ).fillna(False).astype(bool)
+    no_chase = detail["SECTOR_ROTATION_NEW_POSITION_ACTION"].str.contains("NO_CHASE", regex=False)
+    correction = detail["SECTOR_ROTATION_CORRECTION_ALERT"]
+    detail["SECTOR_OR_COMMITTEE_CONFLICT_CAP_SHADOW"] = np.where(
+        no_chase | correction, "ATTENDRE_REPLI_SHADOW", "NONE"
+    )
+    detail["SECTOR_OR_CONFLICT_REASON"] = np.select(
+        [correction, no_chase], ["CORRECTION_ALERT", "NO_CHASE"], default="NONE"
+    )
+    detail["SECTOR_OR_CONFLICT_DECISION_INFLUENCE"] = 0.0
     return detail.sort_values("SECTOR_OR_INSTRUMENT_SCORE", ascending=False, na_position="last")
 
 

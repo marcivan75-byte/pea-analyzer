@@ -41,7 +41,7 @@ def test_sector_shadow_excludes_short_and_never_reopens_block_data(tmp_path):
         {"isin": "B", "score": 75, "coverage_pct": 65, "decision": "BLOCK_DATA"},
     ])
     _write(tmp_path, sector_or.ROTATION_INPUT, [
-        {"sector": "Energy", "new_position_action": "WATCH", "RARS": 60},
+        {"sector": "Energy", "new_position_action": "WATCH", "correction_alert": True, "RARS": 60},
     ])
     payload = sector_or.run(tmp_path)
     detail = pd.read_csv(tmp_path / payload["outputs"][0], sep=";")
@@ -50,6 +50,8 @@ def test_sector_shadow_excludes_short_and_never_reopens_block_data(tmp_path):
     assert detail.set_index("isin").loc["B", "SECTOR_OR_ELIGIBILITY"] == "AUDIT_ONLY_FAIL_CLOSED"
     assert bool(detail.set_index("isin").loc["B", "SECTOR_OR_CAN_REOPEN_BLOCK_DATA"]) is False
     assert detail.set_index("isin").loc["M", "SECTOR_OR_GATE_REASON"] == "SECTOR_MISSING"
+    assert detail.set_index("isin").loc["A", "SECTOR_OR_COMMITTEE_CONFLICT_CAP_SHADOW"] == "ATTENDRE_REPLI_SHADOW"
+    assert detail.set_index("isin").loc["A", "SECTOR_OR_CONFLICT_REASON"] == "CORRECTION_ALERT"
     assert aggregate.iloc[0]["SECTOR_OR_TOP_COUNT"] == 1
     assert aggregate.iloc[0]["SECTOR_OR_AGGREGATE_SCORE"] == 72.0
     assert payload["score_influence"] == 0.0

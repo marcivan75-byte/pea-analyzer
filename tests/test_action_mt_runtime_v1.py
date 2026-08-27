@@ -73,6 +73,12 @@ def test_complete_runner_publishes_governed_package_outputs(tmp_path: Path):
     report = run(master, _cfg(), ActionMTHistoryCache(cache_dir, 7), output_dir, datetime(2026, 8, 21, 19, tzinfo=ZoneInfo("Europe/Paris")))
     assert report["status"] == "SUCCESS_SHADOW"
     assert report["cache"]["hits"] == 2
+    latest = pd.read_csv(output_dir / "ACTION_MT_LATEST.csv")
+    for field in ("rr_indicative", "invalidation_atr", "optimal_entry_shadow", "or_reliability_shadow"):
+        assert field in latest
+    assert latest["or_score_influence"].eq(0.0).all()
+    assert latest["or_decision_influence"].eq(0.0).all()
+    assert latest["or_real_order_allowed"].astype(str).str.lower().eq("false").all()
     for name in (
         "ACTION_MT_LATEST.csv", "ACTION_MT_PIT_LEDGER.csv", "ACTION_MT_EXCLUSIONS.csv",
         "ACTION_MT_CACHE_MANIFEST.json", "ACTION_MT_RUN_REPORT.json", "ACTION_MT_COMMITTEE.txt",
