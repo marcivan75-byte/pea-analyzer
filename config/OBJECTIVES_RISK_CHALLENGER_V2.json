@@ -1,5 +1,5 @@
 {
-  "version": "OBJECTIVES_RISK_CHALLENGER_V2_2_SHADOW_OR_HEBDO",
+  "version": "OBJECTIVES_RISK_CHALLENGER_V2_3_SHADOW_HEBDO_GATES",
   "shadow_only": true,
   "real_orders_enabled": false,
   "action_reward_risk_gate": {"TCT": 2.0, "CT": 2.5, "MT": 3.0},
@@ -14,6 +14,24 @@
     "watch_priority_minimum_rr": 1.5,
     "watch_priority_minimum_confidence": 55.0,
     "watch_minimum_confidence": 45.0
+  },
+  "hebdo_entry_action": {
+    "ready_minimum_rr": 2.0,
+    "ready_minimum_confidence": 60.0,
+    "watch_minimum_rr": 1.0,
+    "non_actionable_maximum_rr": 0.5,
+    "minimum_confidence": 45.0,
+    "ready_risk_verdicts": ["GREEN"],
+    "pullback_risk_verdicts": ["AMBER", "ORANGE"],
+    "etf_required_regime": "MOMO_RISK_ON"
+  },
+  "etf_mt_shadow": {
+    "minimum_history_sessions": 500,
+    "maximum_staleness_days": 7,
+    "reliability_history_cap_sessions": 930,
+    "technical_quality_fields": ["sharpe_126", "sortino_126", "calmar_252", "gain_to_pain_126", "efficiency_63"],
+    "maximum_drawdown_fields": ["maxdd_6m", "max_drawdown_6m", "max_drawdown_1y"],
+    "backtest_required_before_influence": true
   },
   "risk_soft_multiplier": {"GREEN": 1.0, "AMBER": 0.85, "ORANGE": 0.70, "MISSING": 0.55, "RED": 0.40},
   "buy_candidate_minimum_confidence": 66.0,

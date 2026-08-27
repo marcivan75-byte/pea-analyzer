@@ -24,7 +24,8 @@ def test_publishes_dated_combined_and_etf_shadow_rankings(tmp_path):
     combined = tmp_path / f"outputs/committee_master/OR_RANKING_HEBDO_SHADOW_COMBINED_{date}.csv"
     etf = tmp_path / f"outputs/committee_master/OR_RANKING_HEBDO_SHADOW_ETF_ONLY_{date}.csv"
     action = tmp_path / f"outputs/committee_master/OR_RANKING_HEBDO_SHADOW_ACTION_CT_ONLY_{date}.csv"
-    assert combined.exists() and etf.exists() and action.exists()
+    etf_mt = tmp_path / f"outputs/committee_master/OR_RANKING_ETF_MT_SHADOW_{date}.csv"
+    assert combined.exists() and etf.exists() and action.exists() and etf_mt.exists()
     assert pd.read_csv(combined, sep=";")["isin"].tolist() == ["B", "A"]
     assert pd.read_csv(etf, sep=";")["isin"].tolist() == ["B"]
     assert pd.read_csv(action, sep=";")["isin"].tolist() == ["A"]
