@@ -128,48 +128,24 @@ jobs:
         if: always()
         run: |
           if [ -f outputs/audit/WEEKLY_OPERATIONAL_RUNTIME_V4_4.json ]; then cat outputs/audit/WEEKLY_OPERATIONAL_RUNTIME_V4_4.json; fi
+          if [ -f outputs/audit/WEEKLY_UNIFIED_SUPER_RUNTIME_V22_2_3.json ]; then cat outputs/audit/WEEKLY_UNIFIED_SUPER_RUNTIME_V22_2_3.json; fi
+          if [ -f outputs/audit/WEEKLY_RUN_SYNTHESIS.json ]; then cat outputs/audit/WEEKLY_RUN_SYNTHESIS.json; fi
           if [ -f outputs/audit/WEEKLY_TAIL_SUPER_RUNTIME_V21_16_0.json ]; then cat outputs/audit/WEEKLY_TAIL_SUPER_RUNTIME_V21_16_0.json; fi
 
-      - name: Show automated O/R reports
+      - name: Publish CI, CI LIGHT and online synthesis
         if: always()
         run: |
-          if [ -f outputs/audit/OR_HEBDO_REPORT_V1.json ]; then cat outputs/audit/OR_HEBDO_REPORT_V1.json; fi
-          if [ -f outputs/audit/OBJECTIVES_RISK_CHALLENGER_V2.json ]; then cat outputs/audit/OBJECTIVES_RISK_CHALLENGER_V2.json; fi
-          if [ -f outputs/audit/SECTOR_OR_SHADOW_V1.json ]; then cat outputs/audit/SECTOR_OR_SHADOW_V1.json; fi
-          if [ -f outputs/audit/OR_RANKING_DAILY_SHADOW_V1.json ]; then cat outputs/audit/OR_RANKING_DAILY_SHADOW_V1.json; fi
-          if [ -f outputs/committee_master/SUMMARY.json ]; then cat outputs/committee_master/SUMMARY.json; fi
-
-      - name: Show V21.8 Entry/Exit governance
-        if: always()
-        run: |
-          if [ -f outputs/audit/V21_8_ENTRY_EXIT_GOVERNANCE.json ]; then cat outputs/audit/V21_8_ENTRY_EXIT_GOVERNANCE.json; fi
-
-      - name: Show criteria governance audit
-        if: always()
-        run: |
-          if [ -f outputs/audit/CRITERIA_GOVERNANCE_AUDIT.json ]; then cat outputs/audit/CRITERIA_GOVERNANCE_AUDIT.json; fi
-
-      - name: Show Sector Rotation V2 shadow summary
-        if: always()
-        run: |
-          if [ -f outputs/audit/V2_SECTOR_ROTATION_SHADOW.json ]; then cat outputs/audit/V2_SECTOR_ROTATION_SHADOW.json; fi
-
-      - name: Show ETF Fund Flows V1 shadow audit
-        if: always()
-        run: |
-          if [ -f outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json ]; then cat outputs/audit/ETF_FUND_FLOW_V1_SHADOW.json; fi
-
-      - name: Publish synthetic decision brief
-        if: always()
-        run: |
-          if [ -f outputs/decision_brief/DECISION_BRIEF.md ]; then
-            cat outputs/decision_brief/DECISION_BRIEF.md >> "$GITHUB_STEP_SUMMARY"
-          fi
+          for f in outputs/mobile/WEEKLY_RUN_SYNTHESIS.md outputs/mobile/CI_AND_CI_LIGHT_CHALLENGER_V2.md outputs/mobile/ANDROID_CI_CONTROL_CENTER.md outputs/decision_brief/DECISION_BRIEF.md; do
+            if [ -f "$f" ]; then
+              printf '\n\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+              cat "$f" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
 
       - name: Publish O/R HEBDO reports
         if: always()
         run: |
-          for f in outputs/mobile/OR_HEBDO_REPORT.md outputs/mobile/ANDROID_OR_HEBDO_SHADOW.md outputs/mobile/CI_AND_CI_LIGHT_CHALLENGER_V2.md outputs/mobile/ANDROID_OBJECTIVES_RISK_SHADOW_V1.md outputs/mobile/ANDROID_CI_CONTROL_CENTER.md outputs/mobile/ETF_FUND_FLOWS_SHADOW.md; do
+          for f in outputs/mobile/OR_HEBDO_REPORT.md outputs/mobile/ANDROID_OR_HEBDO_SHADOW.md outputs/mobile/ANDROID_OBJECTIVES_RISK_SHADOW_V1.md outputs/mobile/ETF_FUND_FLOWS_SHADOW.md; do
             if [ -f "$f" ]; then
               printf '\n\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
               cat "$f" >> "$GITHUB_STEP_SUMMARY"
