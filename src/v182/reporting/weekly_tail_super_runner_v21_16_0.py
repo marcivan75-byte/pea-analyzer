@@ -47,13 +47,7 @@ def _capture(name: str, runner: Callable[[], dict]) -> dict:
 
 
 def _brief_and_post_decision_parallel(root: Path) -> tuple[dict, dict]:
-    """Overlap local CI brief generation with the independent weekly post bundle.
-
-    The decision brief consumes the already-completed Committee/Postmarket outputs.
-    The weekly post-decision bundle reads enriched masters while its Fund Flow and
-    governance branches retain their own existing safety contract. The two branches
-    have disjoint required outputs and neither mutates Committee scores/decisions.
-    """
+    """Overlap local CI brief generation with the independent weekly post bundle."""
     with ThreadPoolExecutor(max_workers=2, thread_name_prefix="weekly-finalize") as pool:
         brief_future = pool.submit(
             _capture,
@@ -68,31 +62,31 @@ def _brief_and_post_decision_parallel(root: Path) -> tuple[dict, dict]:
         return brief_future.result(), post_future.result()
 
 
+def _deferred(step: str) -> dict:
+    return {
+        "step": step,
+        "status": "DEFERRED_DISTINCT_SHADOW_PROCESS",
+        "runtime_seconds": 0.0,
+        "result": {},
+        "error": None,
+    }
+
+
 def run(root: Path = ROOT) -> dict:
-    """Optimized Friday tail with same decisions and strictly bounded overlap.
-
-    Historical workflow semantics retained:
-    - ETF structural replay is best-effort.
-    - Friday tactical reuse is required and replaces duplicate Committee/TCT/CT scoring.
-    - Tactical shadow and Postmarket remain best-effort diagnostics.
-    - Decision Brief and Weekly Post-Decision bundle are required final gates.
-
-    Scheduling changes only. No criteria, weights, thresholds, PIT rules, candidate
-    scope, provider freshness policy or live-order policy is changed here.
-    """
     started = perf_counter()
     auditdir = root / "outputs" / "audit"
     auditdir.mkdir(parents=True, exist_ok=True)
     steps: dict[str, dict] = {}
+    critical_only = os.environ.get("PEA_WEEKLY_CRITICAL_ONLY", "0").strip() == "1"
 
-    # Existing workflow marked replay continue-on-error. Keep that contract.
-    steps["etf_structure_replay"] = _capture(
-        "ETF_STRUCTURE_STATE_REPLAY",
-        lambda: etf_replay.run(root=root),
-    )
+    if critical_only:
+        steps["etf_structure_replay"] = _deferred("ETF_STRUCTURE_STATE_REPLAY")
+    else:
+        steps["etf_structure_replay"] = _capture(
+            "ETF_STRUCTURE_STATE_REPLAY",
+            lambda: etf_replay.run(root=root),
+        )
 
-    # Required replacement for daily_tct_ct_runner on Friday: reuse the current
-    # Committee scores/governance rather than recomputing them minutes later.
     steps["friday_tactical_reuse"] = _capture(
         "FRIDAY_TACTICAL_REUSE",
         lambda: friday_reuse.run(root=root),
@@ -119,10 +113,6 @@ def run(root: Path = ROOT) -> dict:
             + str(steps["friday_tactical_reuse"].get("error"))
         )
 
-    critical_only = os.environ.get("PEA_WEEKLY_CRITICAL_ONLY", "0").strip() == "1"
-
-    # Start Postmarket as soon as TCT completes, while Action CT may still run.
-    # tactical_shadow_bundle_run explicitly exposes this callback for that purpose.
     postmarket_holder: dict[str, dict] = {}
 
     def _start_postmarket(_tct_payload: dict, _tct_error: dict | None) -> None:
@@ -132,39 +122,19 @@ def run(root: Path = ROOT) -> dict:
         )
 
     if critical_only:
-        steps["tactical_shadow"] = {
-            "step": "TACTICAL_SHADOW_BUNDLE",
-            "status": "DEFERRED_DISTINCT_SHADOW_PROCESS",
-            "runtime_seconds": 0.0,
-            "result": {},
-            "error": None,
-        }
+        steps["tactical_shadow"] = _deferred("TACTICAL_SHADOW_BUNDLE")
     else:
         steps["tactical_shadow"] = _capture(
             "TACTICAL_SHADOW_BUNDLE",
             lambda: tactical.run(root=root, tct_complete_callback=_start_postmarket),
         )
-    # If TCT failed before callback invocation for any unexpected reason, preserve
-    # the historical independent Postmarket attempt instead of silently skipping it.
     if not critical_only and "step" not in postmarket_holder:
         postmarket_holder["step"] = _capture(
             "POSTMARKET_V24.4.2",
             lambda: postmarket.run(root=root),
         )
-    steps["postmarket"] = postmarket_holder.get(
-        "step",
-        {
-            "step": "POSTMARKET_V24.4.2",
-            "status": "DEFERRED_DISTINCT_SHADOW_PROCESS",
-            "runtime_seconds": 0.0,
-            "result": {},
-            "error": None,
-        },
-    )
+    steps["postmarket"] = postmarket_holder.get("step", _deferred("POSTMARKET_V24.4.2"))
 
-    # Decision Brief requires Postmarket catalyst context when available, so this
-    # overlap begins only after Postmarket has completed. Weekly Post-Decision does
-    # not depend on the brief and can safely execute beside it.
     brief, weekly_post_result = _brief_and_post_decision_parallel(root)
     steps["decision_brief"] = brief
     steps["weekly_post_decision"] = weekly_post_result
@@ -206,6 +176,7 @@ def run(root: Path = ROOT) -> dict:
             "python_processes_consolidated": True,
             "critical_path_only": critical_only,
             "shadow_diagnostics_deferred_to_distinct_process": critical_only,
+            "etf_structure_replay_deferred_on_critical_path": critical_only,
             "deferred_modules_decision_influence": 0.0,
         },
         "decision_logic_changed": False,
