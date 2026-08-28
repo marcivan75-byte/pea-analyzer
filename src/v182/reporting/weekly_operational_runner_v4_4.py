@@ -23,6 +23,7 @@ from v182.reporting import ci_challenger_publication_v2 as challenger_publicatio
 from v182.reporting import sector_or_shadow_v1 as sector_or_shadow
 from v182.reporting import or_ranking_daily_shadow_v1 as daily_or_shadow
 from v182.reporting import or_hebdo_report_v1 as or_hebdo_report
+from v182.reporting import weekly_run_synthesis_v1 as run_synthesis
 from v182.sources.ohlcv_incremental_policy import write_audit as write_ohlcv_policy
 
 
@@ -38,7 +39,6 @@ DAILY_OR_INPUTS = (
 
 
 def _prepare_runtime_dirs(root: Path) -> dict[str, str]:
-    """Force un cache yfinance local inscriptible avant toute collecte."""
     yf_runtime = root / "data" / "cache" / ".yfinance-runtime"
     yf_runtime.mkdir(parents=True, exist_ok=True)
     tmp_runtime = root / "state" / "runtime_tmp"
@@ -72,6 +72,12 @@ def _timed(name: str, fn):
 
 def _has_daily_input(root: Path) -> bool:
     return any((root / path).exists() and (root / path).stat().st_size for path in DAILY_OR_INPUTS)
+
+
+def _write_runtime(root: Path, payload: dict) -> None:
+    audit = root / "outputs/audit/WEEKLY_OPERATIONAL_RUNTIME_V4_4.json"
+    audit.parent.mkdir(parents=True, exist_ok=True)
+    audit.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def run(root: Path = ROOT) -> dict:
@@ -161,6 +167,8 @@ def run(root: Path = ROOT) -> dict:
         "total_seconds": round(total_seconds, 6),
         "under_target": under_target,
         "steps_seconds": {
+            "ci": core_payload.get("ci_seconds"),
+            "ci_light": core_payload.get("ci_light_seconds"),
             "core": round(core_seconds, 6),
             "critical_tail": round(tail_seconds, 6),
             "v4_overlay": round(overlay_seconds, 6),
@@ -190,6 +198,8 @@ def run(root: Path = ROOT) -> dict:
             "daily_or_skipped_without_input": skip_daily,
             "blas_threads_capped": True,
             "ohlcv_incremental_period_10d": True,
+            "step_timings_published": True,
+            "ci_ci_light_synthesis_published": True,
             "criteria_changed": False,
             "weights_changed": False,
             "thresholds_changed": False,
@@ -199,9 +209,16 @@ def run(root: Path = ROOT) -> dict:
         "deferred_decision_score_weight_influence": 0.0,
         "real_orders_enabled": False,
     }
-    audit = root / "outputs/audit/WEEKLY_OPERATIONAL_RUNTIME_V4_4.json"
-    audit.parent.mkdir(parents=True, exist_ok=True)
-    audit.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_runtime(root, payload)
+    try:
+        synthesis_payload = run_synthesis.run(root=root)
+        payload["synthesis_status"] = synthesis_payload.get("status")
+        payload["synthesis_ci_rows"] = synthesis_payload.get("ci_rows")
+        payload["synthesis_ci_light_rows"] = synthesis_payload.get("ci_light_rows")
+        _write_runtime(root, payload)
+    except Exception as exc:
+        payload["synthesis_status"] = f"FAILED:{type(exc).__name__}"
+        _write_runtime(root, payload)
     if not under_target:
         raise RuntimeError(
             f"WEEKLY_RUNTIME_TARGET_EXCEEDED:{total_seconds:.3f}>={TARGET_SECONDS:.3f}"
