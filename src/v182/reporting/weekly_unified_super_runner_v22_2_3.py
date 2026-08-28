@@ -22,28 +22,29 @@ def run(root: Path = ROOT) -> dict:
     payload: dict = {}
     light_payload: dict = {}
     error = None
+    ci_seconds = 0.0
+    light_seconds = 0.0
     previous_slow_source_mode = os.environ.get("PEA_SLOW_SOURCE_MODE")
     previous_run_id = os.environ.get("V182_RUN_ID")
-    # The ordinary Weekly is a governed delta run. Slow fundamentals retain their
-    # exact cached values/timestamps and refresh only missing or hard-stale entries;
-    # a maintenance FULL run can still opt in explicitly with PEA_SLOW_SOURCE_MODE=LIVE.
     os.environ.setdefault("PEA_SLOW_SOURCE_MODE", "CACHE_PREFERRED")
-    # A date-only checkpoint is unsafe for a same-day rerun: DONE waves would be
-    # skipped while the pipeline has just reloaded the raw 1486-row legacy master.
-    # Give every Weekly invocation its own checkpoint scope; persistent provider
-    # caches still make the collection incremental.
     os.environ.setdefault(
         "V182_RUN_ID", datetime.now(timezone.utc).strftime("weekly-%Y%m%dT%H%M%SZ")
     )
     effective_slow_source_mode = os.environ["PEA_SLOW_SOURCE_MODE"].strip().upper()
     effective_run_id = os.environ["V182_RUN_ID"]
     try:
+        ci_started = perf_counter()
         payload = previous.run(root=root)
+        ci_seconds = perf_counter() - ci_started
+        light_started = perf_counter()
         light_payload = ci_light_v4.run(root=root)
+        light_seconds = perf_counter() - light_started
         if light_payload.get("status") not in {"SUCCESS", "NO_UPSTREAM_ROWS"}:
             raise RuntimeError(f"CI_LIGHT_V4_2_FAILED:{light_payload.get('status')}")
         payload = dict(payload)
         payload["ci_light_v4_2_independent"] = light_payload
+        payload["ci_seconds"] = round(ci_seconds, 6)
+        payload["ci_light_seconds"] = round(light_seconds, 6)
         return payload
     except Exception as exc:
         error = f"{type(exc).__name__}: {str(exc)[:700]}"
@@ -62,6 +63,8 @@ def run(root: Path = ROOT) -> dict:
             "status": payload.get("status") if payload else "FAILED_EXCEPTION",
             "error": error,
             "total_seconds": round(float(perf_counter() - started), 6),
+            "ci_seconds": round(ci_seconds, 6),
+            "ci_light_seconds": round(light_seconds, 6),
             "weekly_runtime_target_seconds": 1200,
             "slow_source_mode": effective_slow_source_mode,
             "checkpoint_run_id": effective_run_id,
