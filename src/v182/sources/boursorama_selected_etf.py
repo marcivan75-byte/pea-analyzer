@@ -149,3 +149,7 @@ def parse_etf_morningstar_sri_html(html: str) -> dict[str, object]:
     else:
         fields["boursorama_etf_sri_parse_status"] = "ICONS_UNRESOLVED"
     return fields
+
+
+from v182.sources.boursorama_etf_sheet import parse_etf_risk_html, parse_etf_sheet_html
+from v182.sources.boursorama_etf_collect import collect_selected_etf_context_cached
