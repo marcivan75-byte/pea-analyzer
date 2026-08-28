@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 _STAR_OK = {1.0, 2.0, 3.0, 4.0, 5.0}
+_SRI_OK = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0}
 
 
 def _series(frame: pd.DataFrame, column: str) -> pd.Series:
@@ -11,27 +12,48 @@ def _series(frame: pd.DataFrame, column: str) -> pd.Series:
     return pd.Series(pd.NA, index=frame.index)
 
 
-def hydrate_etf_morningstar_from_boursorama(frame: pd.DataFrame) -> pd.DataFrame:
-    """Fill morningstar_rating from a verified Boursorama star count only.
+def _as_series(value, index) -> pd.Series:
+    if isinstance(value, pd.Series):
+        return value
+    return pd.Series(value, index=index)
 
-    Does not invent ratings. Unparsed or non-OK rows stay missing and remain fail-closed.
-    """
+
+def hydrate_etf_morningstar_from_boursorama(frame: pd.DataFrame) -> pd.DataFrame:
     if frame is None or frame.empty:
         return frame
     result = frame.copy()
     if "morningstar_rating" not in result:
         result["morningstar_rating"] = pd.NA
     asset = result.get("asset_class", pd.Series("", index=result.index)).astype(str).str.upper()
-    stars = pd.to_numeric(_series(result, "boursorama_etf_morningstar_stars"), errors="coerce")
-    if not isinstance(stars, pd.Series):
-        stars = pd.Series(stars, index=result.index)
+    stars = _as_series(pd.to_numeric(_series(result, "boursorama_etf_morningstar_stars"), errors="coerce"), result.index)
     status = _series(result, "boursorama_etf_morningstar_parse_status").astype(str)
-    missing = pd.to_numeric(result["morningstar_rating"], errors="coerce").isna()
-    if not isinstance(missing, pd.Series):
-        missing = pd.Series(missing, index=result.index)
+    missing = _as_series(pd.to_numeric(result["morningstar_rating"], errors="coerce").isna(), result.index)
     eligible = asset.eq("ETF") & missing & status.eq("OK") & stars.isin(list(_STAR_OK))
     result.loc[eligible, "morningstar_rating"] = stars.loc[eligible]
     if "morningstar_rating_source" not in result:
         result["morningstar_rating_source"] = pd.NA
     result.loc[eligible, "morningstar_rating_source"] = "BOURSORAMA_ETF_STARS_OK"
     return result
+
+
+def hydrate_etf_sri_from_boursorama(frame: pd.DataFrame) -> pd.DataFrame:
+    """Fill risk_indicator from a verified Boursorama PRIIPs SRI 1-7 only."""
+    if frame is None or frame.empty:
+        return frame
+    result = frame.copy()
+    if "risk_indicator" not in result:
+        result["risk_indicator"] = pd.NA
+    asset = result.get("asset_class", pd.Series("", index=result.index)).astype(str).str.upper()
+    sri = _as_series(pd.to_numeric(_series(result, "boursorama_etf_sri_risk"), errors="coerce"), result.index)
+    status = _series(result, "boursorama_etf_sri_parse_status").astype(str)
+    missing = _as_series(pd.to_numeric(result["risk_indicator"], errors="coerce").isna(), result.index)
+    eligible = asset.eq("ETF") & missing & status.eq("OK") & sri.isin(list(_SRI_OK))
+    result.loc[eligible, "risk_indicator"] = sri.loc[eligible]
+    if "risk_indicator_source" not in result:
+        result["risk_indicator_source"] = pd.NA
+    result.loc[eligible, "risk_indicator_source"] = "BOURSORAMA_ETF_SRI_OK"
+    return result
+
+
+def hydrate_etf_boursorama_quality(frame: pd.DataFrame) -> pd.DataFrame:
+    return hydrate_etf_sri_from_boursorama(hydrate_etf_morningstar_from_boursorama(frame))
