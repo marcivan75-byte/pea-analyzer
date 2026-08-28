@@ -1,0 +1,30 @@
+{
+  "version": "V22.3_CI_PAYOFF_SHADOW",
+  "mode": "SHADOW_ONLY_NO_REFERENCE_CHANGE",
+  "rr_field": "SIM_REWARD_RISK_AT_OPTIMAL_ENTRY",
+  "payoff_breakpoints": [
+    {"min_rr": 3.0, "score": 100.0},
+    {"min_rr": 2.0, "score": 70.0},
+    {"min_rr": 1.5, "score": 40.0},
+    {"min_rr": 0.0, "score": 0.0}
+  ],
+  "exclude_below_rr": 1.5,
+  "shadow_selected_min_rr": 2.0,
+  "reliability_cap": {"min_reliability": 80.0, "max_payoff_if_below": 70.0},
+  "shadow_weights": {
+    "reward_risk": 0.35,
+    "entry_timing": 0.20,
+    "trend_momentum": 0.15,
+    "selection_coverage": 0.15,
+    "temporal_stability": 0.10,
+    "provenance_quality": 0.05
+  },
+  "governance": {
+    "changes_official_confidence": false,
+    "changes_ci_v4_gate": false,
+    "weights_changed_reference": false,
+    "thresholds_changed_reference": false,
+    "real_orders_enabled": false,
+    "shadow_until_pit_oos_validation": true
+  }
+}
