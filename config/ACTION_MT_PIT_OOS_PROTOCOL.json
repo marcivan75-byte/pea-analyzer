@@ -1,0 +1,49 @@
+{
+  "version": "ACTION_MT_PIT_OOS_1_0_2026_08_28",
+  "locked_before_results": true,
+  "scope": "ACTION_MT_SHADOW",
+  "model_version_lock": "ACTION_MT_V1_SHADOW",
+  "primary_horizon_days": 60,
+  "secondary_horizons_days": [20, 120],
+  "periods": {
+    "VALIDATION_OOS": {"start": "2026-09-01", "end": "2026-12-31"},
+    "DIAGNOSTIC_OOS": {"start": "2027-01-01", "end": "2027-04-30"},
+    "final_holdout_start": "2027-05-01"
+  },
+  "eligibility": {
+    "asset_class": "ACTION",
+    "horizon": "MT",
+    "minimum_history_sessions": 250,
+    "minimum_instruments_per_snapshot": 15,
+    "minimum_forward_return_coverage": 0.8,
+    "minimum_snapshot_spacing_days": 10
+  },
+  "ranking": {
+    "top_k": 10,
+    "signal_column": "ACTION_MT_SCORE",
+    "fallback_signal_column": "OR_COMPOSITE_SHADOW",
+    "baseline_equal_weight": "EQUAL_WEIGHT_ALL_ELIGIBLE_ACTION_MT"
+  },
+  "promotion_gates": {
+    "minimum_independent_snapshots_each_period": 8,
+    "minimum_signal_vs_equal_weight_mean_return_pp": 0.5,
+    "maximum_positive_rate_degradation_pp": 5.0,
+    "maximum_p10_return_degradation_pp": 1.0
+  },
+  "outcomes": {
+    "entry_rule": "FIRST_TRADING_SESSION_STRICTLY_AFTER_SIGNAL_DATE",
+    "price_source": "YFINANCE_AUTO_ADJUSTED_OHLCV_CACHE",
+    "same_day_close_execution_forbidden": true
+  },
+  "governance": {
+    "final_holdout_locked": true,
+    "no_parameter_optimization_after_results": true,
+    "no_score_weight_changes": true,
+    "no_threshold_retuning": true,
+    "no_real_orders": true,
+    "decision_influence": 0.0,
+    "t1_t2_forbidden": true,
+    "promotion_requires_followup_final_holdout_protocol": true,
+    "current_universe_reconstruction_not_promotion_eligible": true
+  }
+}
