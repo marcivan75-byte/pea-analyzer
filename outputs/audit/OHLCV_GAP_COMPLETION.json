@@ -1,0 +1,31 @@
+{
+  "status": "NO_SYNTHETIC_BARS",
+  "source_cache": "HEBDO_V4_TRES_COMPLET_AUDITE_OPTIMISE_FINAL_2026-08-27.zip",
+  "window": {"start": "2023-01-02", "end": "2026-08-24", "union_sessions": 930},
+  "policy": {
+    "invented_bars": false,
+    "forward_fill_forbidden": true,
+    "weekend_fill_forbidden": true,
+    "pre_listing_fill_forbidden": true,
+    "live_yahoo_attempted": true
+  },
+  "ACTION": {
+    "tickers": 1790,
+    "union_missing_ratio": 0.0536,
+    "internal_gap_after_first_last_valid": 0.0106,
+    "empty_tickers": 7,
+    "yahoo_new_bars_on_union_index": 0
+  },
+  "ETF": {
+    "tickers": 102,
+    "union_missing_ratio": 0.1598,
+    "internal_gap_after_first_last_valid": 0.0030,
+    "empty_tickers": 0,
+    "yahoo_new_bars_on_union_index": 0,
+    "late_listing_p90_days": 784.2
+  },
+  "unfillable_invalid_or_delisted": ["2ANTIN", "2EAPI", "2OVH", "4UBI", "4VLA", "ALVER.PA", "RYA.L", "LCEZ.PA"],
+  "why_union_missing_is_not_a_hole": "L'index union mélange toutes les places (PA/DE/AS/OL/MI/ST/HE/BR/MC/L). Un titre Paris n'a pas de séance un jour uniquement ouvert à Oslo. Yahoo n'a renvoyé aucune barre supplémentaire sur ces dates.",
+  "real_orders_enabled": false,
+  "decision_influence": 0.0
+}
