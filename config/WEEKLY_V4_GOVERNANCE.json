@@ -21,7 +21,9 @@
     "criteria_changed": false,
     "weights_changed": false,
     "thresholds_changed": false,
-    "artifact_name_prefix": "committee-weekly-v4-4"
+    "artifact_name_prefix": "committee-weekly-v4-4",
+    "ohlcv_cache_key_prefix": "ohlcv-v4",
+    "ohlcv_incremental_period_default": "10d"
   },
   "audits": {
     "required_iterations": 5,
