@@ -7,6 +7,7 @@ import pandas as pd
 
 from v182.reporting import ci_selection_gate_v22_2_2 as base
 from v182.reporting import selected_source_enrichment
+from v182.reporting.etf_morningstar_hydration import hydrate_etf_morningstar_from_boursorama
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -33,7 +34,7 @@ def _num(value: object) -> float | None:
 def _attach_master_identity_with_morningstar(selected, actions, etfs, original):
     result = original(selected, actions, etfs)
     if result.empty or etfs is None or etfs.empty or "isin" not in etfs or "morningstar_rating" not in etfs:
-        return result
+        return hydrate_etf_morningstar_from_boursorama(result)
     source = etfs[["isin", "morningstar_rating"]].copy()
     source["isin"] = source["isin"].map(_text)
     source = source[source["isin"].ne("")].drop_duplicates("isin", keep="last")
@@ -45,7 +46,7 @@ def _attach_master_identity_with_morningstar(selected, actions, etfs, original):
     result.loc[missing, "morningstar_rating"] = result.loc[missing, "isin"].map(
         lambda value: mapping.get(_text(value), pd.NA)
     )
-    return result
+    return hydrate_etf_morningstar_from_boursorama(result)
 
 
 def _gate_row_with_etf_morningstar(row: pd.Series, cfg: dict, original):
@@ -57,6 +58,8 @@ def _gate_row_with_etf_morningstar(row: pd.Series, cfg: dict, original):
         if bool(policy.get("enabled", True)):
             minimum = float(policy.get("minimum_stars", cfg.get("selection_gate", {}).get("etf_minimum_morningstar_stars", 3.0)))
             rating = _num(row.get(str(policy.get("field", "morningstar_rating"))))
+            if rating is None and _text(row.get("boursorama_etf_morningstar_parse_status")).upper() == "OK":
+                rating = _num(row.get("boursorama_etf_morningstar_stars"))
             if rating is None:
                 reasons.append("ETF_MORNINGSTAR_RATING_MISSING")
             elif rating < minimum:
@@ -86,6 +89,7 @@ def run(root: Path = ROOT, *, ensure_upstream: bool = True) -> dict:
     payload["etf_analyst_consensus_required"] = False
     payload["etf_minimum_morningstar_stars"] = 3.0
     payload["etf_missing_morningstar_policy"] = "EXCLUDE_FAIL_CLOSED"
+    payload["etf_morningstar_hydrated_from_boursorama_ok_stars"] = True
 
     audit_path = root / base.AUDIT
     if audit_path.exists():
@@ -97,6 +101,7 @@ def run(root: Path = ROOT, *, ensure_upstream: bool = True) -> dict:
         audit["etf_minimum_morningstar_stars"] = 3.0
         audit["etf_missing_morningstar_policy"] = "EXCLUDE_FAIL_CLOSED"
         audit["etf_morningstar_replaces_analyst_consensus"] = True
+        audit["etf_morningstar_hydrated_from_boursorama_ok_stars"] = True
         audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2), encoding="utf-8")
     return payload
 
