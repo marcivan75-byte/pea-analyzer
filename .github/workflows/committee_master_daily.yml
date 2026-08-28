@@ -1,10 +1,15 @@
-name: PEA Weekly Heavy Committee V21.16.2
+name: PEA Weekly Heavy Committee V4.4
 
 on:
   workflow_dispatch:
     inputs:
       run_validation:
         description: "Run compile, static and referential validation already covered by CI"
+        required: false
+        type: boolean
+        default: false
+      maintenance_full_refresh:
+        description: "LIVE refresh of slow fundamentals (maintenance only)"
         required: false
         type: boolean
         default: false
@@ -25,12 +30,13 @@ env:
 jobs:
   committee-master:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 45
     env:
       PYTHONUNBUFFERED: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       PYTHONPATH: ${{ github.workspace }}/src
-      PEA_SLOW_SOURCE_MODE: LIVE
+      PEA_SLOW_SOURCE_MODE: ${{ inputs.maintenance_full_refresh == true && 'LIVE' || 'CACHE_PREFERRED' }}
+      PEA_WEEKLY_CRITICAL_ONLY: "1"
       PEA_PROVENANCE_PATH: state/provenance/OBSERVATION_PROVENANCE.csv
       FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
       FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -49,7 +55,6 @@ jobs:
             ohlcv-v3-
 
       - name: Restore consolidated tactical decision state
-        id: decision-state
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
@@ -62,58 +67,7 @@ jobs:
           restore-keys: |
             decision-state-v1-
 
-      - name: Restore legacy TCT state during cache migration
-        if: steps.decision-state.outputs.cache-matched-key == ''
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/TCT_V24_1_7_T1_STATE.json
-          key: tct-v2417-state-${{ github.run_id }}
-          restore-keys: |
-            daily-tct-state-
-            tct-v2417-state-
-
-      - name: Restore legacy next-session catalyst state during cache migration
-        if: steps.decision-state.outputs.cache-matched-key == ''
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/tct_context/
-          key: tct-context-${{ github.run_id }}
-          restore-keys: |
-            tct-context-
-
-      - name: Restore legacy Action CT V22.0 state during cache migration
-        if: steps.decision-state.outputs.cache-matched-key == ''
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/action_ct/
-          key: action-ct-v22-${{ github.run_id }}
-          restore-keys: |
-            action-ct-v22-
-
-      - name: Restore legacy Action CT V22.1 state during cache migration
-        if: steps.decision-state.outputs.cache-matched-key == ''
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/action_ct_v22_1/
-          key: action-ct-v221-${{ github.run_id }}
-          restore-keys: |
-            action-ct-v221-
-
-      - name: Restore legacy provenance state during cache migration
-        if: steps.decision-state.outputs.cache-matched-key == ''
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/provenance/
-          key: provenance-v2181-${{ github.run_id }}
-          restore-keys: |
-            daily-provenance-v2181-
-            provenance-v2161-
-            provenance-v216-
-            provenance-v215-
-            provenance-v214-
-
       - name: Restore consolidated weekly research state
-        id: weekly-research-state
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
@@ -123,24 +77,6 @@ jobs:
           restore-keys: |
             weekly-research-state-v1-
 
-      - name: Restore legacy Sector Rotation V2 state during cache migration
-        if: steps.weekly-research-state.outputs.cache-matched-key == ''
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/sector_rotation_v2/
-          key: sector-rotation-v2-${{ github.run_id }}
-          restore-keys: |
-            sector-rotation-v2-
-
-      - name: Restore legacy ETF Fund Flow V1 state during cache migration
-        if: steps.weekly-research-state.outputs.cache-matched-key == ''
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: state/etf_fund_flows/
-          key: etf-fund-flow-v1-${{ github.run_id }}
-          restore-keys: |
-            etf-fund-flow-v1-
-
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
@@ -149,6 +85,13 @@ jobs:
 
       - name: Install production runtime
         run: pip install --prefer-binary -r requirements-runtime.txt
+
+      - name: Prepare writable yfinance runtime
+        run: |
+          mkdir -p data/cache/.yfinance-runtime state/runtime_tmp
+          echo "YF_CACHE=$GITHUB_WORKSPACE/data/cache/.yfinance-runtime" >> "$GITHUB_ENV"
+          echo "XDG_CACHE_HOME=$GITHUB_WORKSPACE/data/cache/.yfinance-runtime" >> "$GITHUB_ENV"
+          echo "TMPDIR=$GITHUB_WORKSPACE/state/runtime_tmp" >> "$GITHUB_ENV"
 
       - name: Full Python compile and static safety gate
         if: ${{ inputs.run_validation }}
@@ -244,17 +187,15 @@ jobs:
       - name: Publish Action identity hydration worklist
         run: python -m v182.audit.identity_hydration
 
-      - name: Run optimized weekly unified Committee DAG V21.16.2
-        run: python -m v182.reporting.weekly_unified_super_runner_v21_16_2
-
-      - name: Run optimized Friday tactical, Postmarket and weekly finalization DAG V21.16.0
-        run: python -m v182.reporting.weekly_tail_super_runner_v21_16_0
+      - name: Run unified weekly operational runner V4.4
+        run: python -m v182.reporting.weekly_operational_runner_v4_4
 
       - name: Show unified summary
         if: always()
         run: |
           if [ -f outputs/unified/UNIFIED_SUMMARY_LATEST.json ]; then cat outputs/unified/UNIFIED_SUMMARY_LATEST.json; fi
           if [ -f outputs/audit/UNIFIED_RUNTIME_V21_13_7.json ]; then cat outputs/audit/UNIFIED_RUNTIME_V21_13_7.json; fi
+          if [ -f outputs/audit/WEEKLY_OPERATIONAL_RUNTIME_V4_4.json ]; then cat outputs/audit/WEEKLY_OPERATIONAL_RUNTIME_V4_4.json; fi
           if [ -f outputs/audit/WEEKLY_UNIFIED_SUPER_RUNTIME_V21_16_2.json ]; then cat outputs/audit/WEEKLY_UNIFIED_SUPER_RUNTIME_V21_16_2.json; fi
           if [ -f outputs/audit/WEEKLY_TAIL_SUPER_RUNTIME_V21_16_0.json ]; then cat outputs/audit/WEEKLY_TAIL_SUPER_RUNTIME_V21_16_0.json; fi
           if [ -f outputs/audit/ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json ]; then cat outputs/audit/ACTION_CT_SHARED_HISTORY_RUNTIME_V21_13_10.json; fi
