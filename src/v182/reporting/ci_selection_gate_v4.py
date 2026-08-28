@@ -10,6 +10,7 @@ import pandas as pd
 
 from v182.reporting import ci_entry_watch_v22_2_1 as upstream
 from v182.reporting import selected_source_enrichment as identity
+from v182.reporting.etf_morningstar_hydration import hydrate_etf_morningstar_from_boursorama
 from v182.reporting.selected_source_enrichment_v4 import enrich_selected_rows_v4
 from v182.risk.beta_metrics import load_cached_prices, to_returns
 
@@ -157,6 +158,15 @@ def _apply_etf_overlap_gate(
     return filtered, removed, decisions
 
 
+def _etf_morningstar_rating(row: pd.Series) -> float | None:
+    rating = _num(row.get("morningstar_rating"))
+    if rating is not None:
+        return rating
+    if _text(row.get("boursorama_etf_morningstar_parse_status")).upper() == "OK":
+        return _num(row.get("boursorama_etf_morningstar_stars"))
+    return None
+
+
 def _base_gate(row: pd.Series, selection: dict) -> tuple[bool, list[str]]:
     reasons: list[str] = []
     score = _num(row.get("score"))
@@ -179,7 +189,7 @@ def _base_gate(row: pd.Series, selection: dict) -> tuple[bool, list[str]]:
         elif upside < float(selection["action_minimum_consensus_upside_pct"]):
             reasons.append("ACTION_ANALYST_CONSENSUS_UPSIDE_LT_20")
     elif asset == "ETF":
-        rating = _num(row.get("morningstar_rating"))
+        rating = _etf_morningstar_rating(row)
         if rating is None:
             reasons.append("ETF_MORNINGSTAR_RATING_MISSING")
         elif rating < float(selection["etf_minimum_morningstar_stars"]):
@@ -317,6 +327,7 @@ def run(root: Path = ROOT, *, ensure_upstream: bool = True) -> dict:
     timings["master_context_seconds"] = round(perf_counter() - phase, 6)
     phase = perf_counter()
     frame, source_payload = enrich_selected_rows_v4(frame, root=root, profile="WEEKLY_V4")
+    frame = hydrate_etf_morningstar_from_boursorama(frame)
     timings["source_collection_seconds"] = round(perf_counter() - phase, 6)
     if set(frame["isin"].astype(str)) != input_isins or len(frame) != len(_read_csv(upstream_path)):
         raise RuntimeError("SOURCE_LAYER_CHANGED_CANDIDATE_SET")
@@ -410,6 +421,7 @@ def run(root: Path = ROOT, *, ensure_upstream: bool = True) -> dict:
             "source_can_create_candidate": False,
             "missing_source_interpreted_as_negative": False,
             "etf_analyst_consensus_required": False,
+            "etf_morningstar_hydrated_from_boursorama_ok_stars": True,
             "real_orders_enabled": False,
         },
         "outputs": {
