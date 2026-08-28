@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,16 +25,15 @@ def test_workflow_points_to_v4_4_only():
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "name: PEA Weekly Heavy Committee V4.4" in text
     assert "python -m v182.reporting.weekly_operational_runner_v4_4" in text
-    assert "committee-weekly-v4-4-" in text
+    assert text.count("python -m v182.reporting.") == 1
     assert "PEA_SLOW_SOURCE_MODE:" in text
     assert "PEA_WEEKLY_CRITICAL_ONLY: \"1\"" in text
     assert "maintenance_full_refresh:" in text
     assert "WEEKLY_OPERATIONAL_RUNTIME_V4_4.json" in text
-    assert "OBJECTIVES_RISK_CHALLENGER_V2.json" in text
+    assert "weekly_unified_super_runner_v21_16_2" not in text.split("Show unified summary", 1)[0]
 
 
 def test_governance_keeps_selection_frozen_and_exposes_v4_4_orchestration():
-    import json
     cfg = json.loads(GOVERNANCE.read_text(encoding="utf-8"))
     assert cfg["selection"]["minimum_selection_score"] == 77.0
     assert cfg["selection"]["minimum_confidence_score"] == 66.0
