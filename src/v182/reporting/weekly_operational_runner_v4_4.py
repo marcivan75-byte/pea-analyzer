@@ -21,6 +21,7 @@ from v182.reporting import portfolio_budget_challenger_v2 as portfolio_budget
 from v182.reporting import ci_challenger_publication_v2 as challenger_publication
 from v182.reporting import sector_or_shadow_v1 as sector_or_shadow
 from v182.reporting import or_ranking_daily_shadow_v1 as daily_or_shadow
+from v182.reporting import or_hebdo_report_v1 as or_hebdo_report
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -80,6 +81,7 @@ def run(root: Path = ROOT) -> dict:
     portfolio_budget.run(root=root)
     publication_payload = challenger_publication.run(root=root)
     daily_or_payload = daily_or_shadow.run(root=root)
+    or_report_payload = or_hebdo_report.run(root=root)
     or_seconds = perf_counter() - or_started
 
     total_seconds = perf_counter() - started
@@ -104,6 +106,7 @@ def run(root: Path = ROOT) -> dict:
         "objectives_risk_publication_status": publication_payload.get("status"),
         "sector_or_shadow_status": sector_or_payload.get("status"),
         "daily_or_shadow_status": daily_or_payload.get("status"),
+        "or_hebdo_report_status": or_report_payload.get("status"),
         "objectives_risk_reference_influence": 0.0,
         "runtime_dirs": runtime_dirs,
         "slow_source_mode": os.environ.get("PEA_SLOW_SOURCE_MODE", "CACHE_PREFERRED"),
