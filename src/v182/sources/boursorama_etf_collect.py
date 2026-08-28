@@ -16,6 +16,10 @@ from v182.sources.boursorama_selected_etf import (
     BoursoramaSelectedETFResult,
     _age_hours,
     _now_utc,
+    merge_ms_sri_fields,
+    palmares_search_url,
+    parse_etf_morningstar_sri_html,
+    parse_etf_palmares_rows,
 )
 from v182.sources.rate_limit import StartRateLimiter
 
@@ -46,6 +50,12 @@ def _default_fetcher(url: str, *, timeout: float):
         headers={"User-Agent": "Mozilla/5.0 (compatible; PEA-Analyzer/21.15; selected-public-context)"},
         timeout=timeout,
     )
+
+
+def _ms_incomplete(fields: dict) -> bool:
+    return fields.get("boursorama_etf_morningstar_parse_status") != "OK" or fields.get(
+        "boursorama_etf_sri_parse_status"
+    ) != "OK"
 
 
 def collect_selected_etf_context_cached(
@@ -106,7 +116,8 @@ def collect_selected_etf_context_cached(
                 html = str(getattr(response, "text", "") or "")
                 dynamic = parse_etf_sheet_html(html)
                 if dynamic:
-                    fields.update(dynamic)
+                    fields = merge_ms_sri_fields(fields, dynamic)
+                    fields.update({k: v for k, v in dynamic.items() if not str(k).startswith(("boursorama_etf_morningstar", "boursorama_etf_sri"))})
                     entry["dynamic_fields"] = sorted(dynamic)
                     entry["dynamic_fetched_at_utc"] = current.isoformat()
                     entry["course_url"] = urls["course"]
@@ -120,7 +131,8 @@ def collect_selected_etf_context_cached(
                 local_failures.append({"isin": isin, "source": "Boursorama ETF", "reason": type(exc).__name__, "detail": str(exc)[:160], "url": urls["course"]})
         if deep_due:
             for name in set(entry.get("deep_fields") or []):
-                fields.pop(name, None)
+                if not str(name).startswith(("boursorama_etf_morningstar", "boursorama_etf_sri")):
+                    fields.pop(name, None)
             entry["deep_fields"] = []
             try:
                 limiter.wait()
@@ -131,7 +143,8 @@ def collect_selected_etf_context_cached(
                 deep = parse_etf_sheet_html(html)
                 deep.update(parse_etf_risk_html(html))
                 if deep:
-                    fields.update(deep)
+                    fields = merge_ms_sri_fields(fields, parse_etf_morningstar_sri_html(html))
+                    fields.update({k: v for k, v in deep.items() if not str(k).startswith(("boursorama_etf_morningstar", "boursorama_etf_sri"))})
                     entry["deep_fields"] = sorted(deep)
                     entry["deep_fetched_at_utc"] = current.isoformat()
                     entry["risk_url"] = urls["risk"]
@@ -140,6 +153,24 @@ def collect_selected_etf_context_cached(
                     local_failures.append({"isin": isin, "source": "Boursorama ETF", "reason": "NO_DEEP_FIELDS", "url": urls["risk"]})
             except Exception as exc:
                 local_failures.append({"isin": isin, "source": "Boursorama ETF", "reason": type(exc).__name__, "detail": str(exc)[:160], "url": urls["risk"]})
+        if _ms_incomplete(fields):
+            palmares_url = palmares_search_url(isin)
+            try:
+                limiter.wait()
+                response = fetch(palmares_url, timeout=timeout_seconds)
+                if hasattr(response, "raise_for_status"):
+                    response.raise_for_status()
+                html = str(getattr(response, "text", "") or "")
+                mapped = parse_etf_palmares_rows(html)
+                hit = mapped.get(code) or next(iter(mapped.values()), None) if len(mapped) == 1 else mapped.get(code)
+                if hit:
+                    fields = merge_ms_sri_fields(fields, hit)
+                    entry["palmares_url"] = palmares_url
+                    entry["palmares_sha256"] = sha256(html.encode("utf-8", errors="replace")).hexdigest()
+                else:
+                    local_failures.append({"isin": isin, "source": "Boursorama ETF palmares", "reason": "NO_PALMARES_ROW", "url": palmares_url})
+            except Exception as exc:
+                local_failures.append({"isin": isin, "source": "Boursorama ETF palmares", "reason": type(exc).__name__, "detail": str(exc)[:160], "url": palmares_url})
         entry["status"] = "OK" if fields else "EMPTY"
         entry["boursorama_code"] = code
         entry["fields"] = fields
@@ -168,6 +199,7 @@ def collect_selected_etf_context_cached(
         "priority_source": True,
         "morningstar_rating_promoted": False,
         "shadow_ms_sri": True,
+        "palmares_fallback": True,
     }
     _save(cache_file, payload)
     observations: list[dict] = []
@@ -186,8 +218,8 @@ def collect_selected_etf_context_cached(
             is_dynamic = field in dynamic_fields
             collected_at = entry.get("dynamic_fetched_at_utc") if is_dynamic else entry.get("deep_fetched_at_utc")
             if str(field).startswith("boursorama_etf_morningstar") or str(field).startswith("boursorama_etf_sri"):
-                source_url = entry.get("course_url") or entry.get("composition_url")
-                page_sha256 = entry.get("course_sha256") or entry.get("composition_sha256")
+                source_url = entry.get("palmares_url") or entry.get("course_url") or entry.get("composition_url")
+                page_sha256 = entry.get("palmares_sha256") or entry.get("course_sha256") or entry.get("composition_sha256")
             else:
                 source_url = entry.get("composition_url") if is_dynamic else entry.get("risk_url")
                 page_sha256 = entry.get("composition_sha256") if is_dynamic else entry.get("risk_sha256")
@@ -219,5 +251,6 @@ def collect_selected_etf_context_cached(
             "decision_influence": False,
             "score_influence": 0.0,
             "morningstar_rating_promoted": False,
+            "palmares_fallback": True,
         },
     )
