@@ -17,11 +17,4 @@ import pandas as pd
 from v182.sources.boursorama_public import boursorama_code, etf_urls
 from v182.sources.rate_limit import StartRateLimiter
 
-CACHE_VERSION = "BOURSORAMA_SELECTED_ETF_V1_1_MS_SRI_SHADOW"
-
-
-@dataclass(frozen=True)
-class BoursoramaSelectedETFResult:
-    observations: list[dict]
-    failures: list[dict]
-    metrics: dict
+CACHE_VERSION = "BOURSORAMA_SELECTED_ETF_V1"
