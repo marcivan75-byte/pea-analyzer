@@ -50,3 +50,9 @@ def test_existing_master_rating_is_not_overwritten():
     )
     out = hydrate_etf_morningstar_from_boursorama(frame)
     assert float(out.loc[0, "morningstar_rating"]) == 3.0
+
+
+def test_missing_boursorama_columns_do_not_crash():
+    frame = pd.DataFrame([{"asset_class": "ETF", "isin": "LU1615090864", "morningstar_rating": pd.NA}])
+    out = hydrate_etf_morningstar_from_boursorama(frame)
+    assert pd.isna(out.loc[0, "morningstar_rating"])
