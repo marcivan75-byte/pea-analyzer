@@ -33,14 +33,23 @@ def test_daily_workflow_runs_only_consolidated_tactical_runtime():
 def test_heavy_committee_is_weekly_and_not_push_triggered():
     source = _text("committee_master_daily.yml")
     tail = (ROOT / "src/v182/reporting/weekly_tail_super_runner_v21_16_0.py").read_text(encoding="utf-8")
+    operational = (ROOT / "src/v182/reporting/weekly_operational_runner_v4_4.py").read_text(encoding="utf-8")
 
-    assert "name: PEA Weekly Heavy Committee V21.16.2" in source
+    assert "name: PEA Weekly Heavy Committee V4.4" in source
     assert 'cron: "30 18 * * 5"' in source
     assert 'timezone: "Europe/Paris"' in source
-    assert "PEA_SLOW_SOURCE_MODE: LIVE" in source
+    assert "CACHE_PREFERRED" in source
+    assert "PEA_WEEKLY_CRITICAL_ONLY: \"1\"" in source
+    assert "maintenance_full_refresh:" in source
     assert "push:" not in source.split("jobs:", 1)[0]
-    assert "python -m v182.reporting.weekly_unified_super_runner_v21_16_2" in source
-    assert "python -m v182.reporting.weekly_tail_super_runner_v21_16_0" in source
+    assert "python -m v182.reporting.weekly_operational_runner_v4_4" in source
+    assert source.count("python -m v182.reporting.") == 1
+    assert "weekly_unified_super_runner_v21_16_2" not in source
+    assert "python -m v182.reporting.weekly_tail_super_runner_v21_16_0" not in source
+    assert "weekly_unified_super_runner_v22_2_3 as core" in operational
+    assert "weekly_tail_super_runner_v21_16_0 as tail" in operational
+    assert "ensure_upstream=False" in operational
+    assert "run_ci_light=False" in operational
     assert "friday_tactical_reuse_runner as friday_reuse" in tail
     assert "tactical_shadow_bundle_run as tactical" in tail
     assert "tct_postmarket_bundle_run as postmarket" in tail
@@ -52,6 +61,7 @@ def test_heavy_committee_is_weekly_and_not_push_triggered():
     assert source.count("if: ${{ inputs.run_validation }}") >= 2
     assert "ANDROID_CI_CONTROL_CENTER.md" in source
     assert "retention-days: 14" in source
+    assert "Restore legacy" not in source
 
 
 def test_standalone_etf_mt_is_manual_only():
@@ -99,6 +109,7 @@ def test_postmarket_catalyst_is_consolidated_into_main_super_runners():
     daily_v6 = (ROOT / "src/v182/reporting/daily_tactical_super_runner_v21_15_6.py").read_text(encoding="utf-8")
     daily_v5 = (ROOT / "src/v182/reporting/daily_tactical_super_runner_v21_15_5.py").read_text(encoding="utf-8")
     weekly_tail = (ROOT / "src/v182/reporting/weekly_tail_super_runner_v21_16_0.py").read_text(encoding="utf-8")
+    operational = (ROOT / "src/v182/reporting/weekly_operational_runner_v4_4.py").read_text(encoding="utf-8")
     bundle = (ROOT / "src/v182/reporting/tct_postmarket_bundle_run.py").read_text(encoding="utf-8")
 
     assert 'cron: "15 21 * * 1-5"' not in catalyst
@@ -106,7 +117,8 @@ def test_postmarket_catalyst_is_consolidated_into_main_super_runners():
     assert "python -m v182.reporting.daily_consolidated_runner_v21_15_4" in daily
     assert "daily_tactical_super_runner_v21_15_5 as base" in daily_v6
     assert "base.postmarket.run" in daily_v5
-    assert "python -m v182.reporting.weekly_tail_super_runner_v21_16_0" in weekly
+    assert "python -m v182.reporting.weekly_operational_runner_v4_4" in weekly
+    assert "weekly_tail_super_runner_v21_16_0 as tail" in operational
     assert "tct_postmarket_bundle_run as postmarket" in weekly_tail
     for workflow in (daily, weekly):
         assert "TCT_CATALYST_PHASE: POSTMARKET" not in workflow
