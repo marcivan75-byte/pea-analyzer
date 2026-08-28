@@ -6,6 +6,7 @@ déjà audités le 27/08/2026.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
@@ -27,6 +28,12 @@ from v182.reporting import or_hebdo_report_v1 as or_hebdo_report
 ROOT = Path(__file__).resolve().parents[3]
 VERSION = "WEEKLY_OPERATIONAL_V4_4_UNIFIED"
 TARGET_SECONDS = 1200.0
+DAILY_OR_INPUTS = (
+    Path("outputs/action_ct/ACTION_CT_V22_1_0_DAILY_LATEST.csv"),
+    Path("outputs/committee_master/ACTION_CT_V22_1_0_DAILY_LATEST.csv"),
+    Path("outputs/action_ct/ACTION_CT_V22_0_0_DAILY_LATEST.csv"),
+    Path("outputs/tct/TCT_DAILY_TRADER_LATEST.csv"),
+)
 
 
 def _prepare_runtime_dirs(root: Path) -> dict[str, str]:
@@ -38,6 +45,13 @@ def _prepare_runtime_dirs(root: Path) -> dict[str, str]:
     os.environ.setdefault("YF_CACHE", str(yf_runtime))
     os.environ.setdefault("XDG_CACHE_HOME", str(yf_runtime))
     os.environ.setdefault("TMPDIR", str(tmp_runtime))
+    os.environ.setdefault("PEA_SLOW_SOURCE_MODE", "CACHE_PREFERRED")
+    os.environ.setdefault("PEA_WEEKLY_CRITICAL_ONLY", "1")
+    os.environ.setdefault("OMP_NUM_THREADS", "2")
+    os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
+    os.environ.setdefault("MKL_NUM_THREADS", "2")
+    os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
+    os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "2")
     return {
         "yf_cache": str(yf_runtime),
         "tmpdir": str(tmp_runtime),
@@ -45,9 +59,20 @@ def _prepare_runtime_dirs(root: Path) -> dict[str, str]:
     }
 
 
+def _timed(name: str, fn):
+    started = perf_counter()
+    payload = fn()
+    return name, payload, round(perf_counter() - started, 6)
+
+
+def _has_daily_input(root: Path) -> bool:
+    return any((root / path).exists() and (root / path).stat().st_size for path in DAILY_OR_INPUTS)
+
+
 def run(root: Path = ROOT) -> dict:
     started = perf_counter()
     runtime_dirs = _prepare_runtime_dirs(root)
+    or_timings: dict[str, float] = {}
 
     core_started = perf_counter()
     core_payload = core.run(root=root)
@@ -75,13 +100,49 @@ def run(root: Path = ROOT) -> dict:
     overlay_seconds = perf_counter() - overlay_started
 
     or_started = perf_counter()
-    objectives_risk.run(root=root)
-    or_payload = objectives_risk_challenger.run(root=root)
-    sector_or_payload = sector_or_shadow.run(root=root)
-    portfolio_budget.run(root=root)
-    publication_payload = challenger_publication.run(root=root)
-    daily_or_payload = daily_or_shadow.run(root=root)
-    or_report_payload = or_hebdo_report.run(root=root)
+    _, _, or_timings["objectives_risk_v1"] = _timed(
+        "objectives_risk_v1", lambda: objectives_risk.run(root=root)
+    )
+
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="or-shadow") as pool:
+        challenger_future = pool.submit(
+            _timed, "objectives_risk_challenger", lambda: objectives_risk_challenger.run(root=root)
+        )
+        sector_future = pool.submit(
+            _timed, "sector_or_shadow", lambda: sector_or_shadow.run(root=root)
+        )
+        _, or_payload, or_timings["objectives_risk_challenger"] = challenger_future.result()
+        _, sector_or_payload, or_timings["sector_or_shadow"] = sector_future.result()
+
+    _, _, or_timings["portfolio_budget"] = _timed(
+        "portfolio_budget", lambda: portfolio_budget.run(root=root)
+    )
+
+    skip_daily = not _has_daily_input(root)
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="or-publish") as pool:
+        publication_future = pool.submit(
+            _timed, "challenger_publication", lambda: challenger_publication.run(root=root)
+        )
+        if skip_daily:
+            daily_or_payload = {
+                "status": "SKIPPED_NO_DAILY_INPUT",
+                "shadow_only": True,
+                "real_orders_enabled": False,
+                "score_influence": 0.0,
+                "rows": 0,
+            }
+            or_timings["daily_or_shadow"] = 0.0
+            _, publication_payload, or_timings["challenger_publication"] = publication_future.result()
+        else:
+            daily_future = pool.submit(
+                _timed, "daily_or_shadow", lambda: daily_or_shadow.run(root=root)
+            )
+            _, publication_payload, or_timings["challenger_publication"] = publication_future.result()
+            _, daily_or_payload, or_timings["daily_or_shadow"] = daily_future.result()
+
+    _, or_report_payload, or_timings["or_hebdo_report"] = _timed(
+        "or_hebdo_report", lambda: or_hebdo_report.run(root=root)
+    )
     or_seconds = perf_counter() - or_started
 
     total_seconds = perf_counter() - started
@@ -98,6 +159,7 @@ def run(root: Path = ROOT) -> dict:
             "critical_tail": round(tail_seconds, 6),
             "v4_overlay": round(overlay_seconds, 6),
             "objectives_risk_shadow_publication": round(or_seconds, 6),
+            **{f"or_{name}": value for name, value in or_timings.items()},
         },
         "core_status": core_payload.get("status"),
         "tail_status": tail_payload.get("status"),
@@ -117,12 +179,15 @@ def run(root: Path = ROOT) -> dict:
             "yfinance_runtime_dir_forced": True,
             "critical_tail_only_on_friday_path": True,
             "github_live_default_removed": True,
+            "or_independent_steps_overlapped": True,
+            "daily_or_skipped_without_input": skip_daily,
+            "blas_threads_capped": True,
             "criteria_changed": False,
             "weights_changed": False,
             "thresholds_changed": False,
             "information_loss": False,
         },
-        "deferred_distinct_shadow_process": ["TACTICAL_SHADOW_BUNDLE", "POSTMARKET_V24_4_2"],
+        "deferred_distinct_shadow_process": ["TACTICAL_SHADOW_BUNDLE", "POSTMARKET_V24_4_2", "ETF_STRUCTURE_STATE_REPLAY"],
         "deferred_decision_score_weight_influence": 0.0,
         "real_orders_enabled": False,
     }
