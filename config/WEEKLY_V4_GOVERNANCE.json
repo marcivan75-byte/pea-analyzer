@@ -6,6 +6,23 @@
     "runtime": "WEEKLY_UNIFIED_SUPER_RUNTIME_V22_2_3",
     "reference_is_immutable": true
   },
+  "operational_orchestration": {
+    "runner_module": "v182.reporting.weekly_operational_runner_v4_4",
+    "runner_version": "WEEKLY_OPERATIONAL_V4_4_UNIFIED",
+    "workflow": ".github/workflows/committee_master_daily.yml",
+    "workflow_name": "PEA Weekly Heavy Committee V4.4",
+    "schedule": "30 18 * * 5 Europe/Paris",
+    "slow_source_mode_default": "CACHE_PREFERRED",
+    "maintenance_live_input": "maintenance_full_refresh",
+    "critical_tail_only": true,
+    "objectives_risk_shadow_enabled": true,
+    "objectives_risk_decision_influence": 0.0,
+    "real_orders_enabled": false,
+    "criteria_changed": false,
+    "weights_changed": false,
+    "thresholds_changed": false,
+    "artifact_name_prefix": "committee-weekly-v4-4"
+  },
   "audits": {
     "required_iterations": 5,
     "domains": [
