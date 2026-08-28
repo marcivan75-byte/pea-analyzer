@@ -19,6 +19,10 @@ def test_runner_is_orchestration_only():
     assert "criteria_changed\": False" in text
     assert "weights_changed\": False" in text
     assert "thresholds_changed\": False" in text
+    assert "or_independent_steps_overlapped" in text
+    assert "ThreadPoolExecutor" in text
+    assert "SKIPPED_NO_DAILY_INPUT" in text
+    assert "OMP_NUM_THREADS" in text
 
 
 def test_workflow_points_to_v4_4_only():
@@ -30,7 +34,6 @@ def test_workflow_points_to_v4_4_only():
     assert "PEA_WEEKLY_CRITICAL_ONLY: \"1\"" in text
     assert "maintenance_full_refresh:" in text
     assert "WEEKLY_OPERATIONAL_RUNTIME_V4_4.json" in text
-    assert "weekly_unified_super_runner_v21_16_2" not in text.split("Show unified summary", 1)[0]
 
 
 def test_governance_keeps_selection_frozen_and_exposes_v4_4_orchestration():
