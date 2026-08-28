@@ -23,6 +23,7 @@ from v182.reporting import ci_challenger_publication_v2 as challenger_publicatio
 from v182.reporting import sector_or_shadow_v1 as sector_or_shadow
 from v182.reporting import or_ranking_daily_shadow_v1 as daily_or_shadow
 from v182.reporting import or_hebdo_report_v1 as or_hebdo_report
+from v182.sources.ohlcv_incremental_policy import write_audit as write_ohlcv_policy
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -47,6 +48,9 @@ def _prepare_runtime_dirs(root: Path) -> dict[str, str]:
     os.environ.setdefault("TMPDIR", str(tmp_runtime))
     os.environ.setdefault("PEA_SLOW_SOURCE_MODE", "CACHE_PREFERRED")
     os.environ.setdefault("PEA_WEEKLY_CRITICAL_ONLY", "1")
+    os.environ.setdefault("PEA_YF_INCREMENTAL_PERIOD", "10d")
+    os.environ.setdefault("PEA_YF_FORCE_FULL_HISTORY", "0")
+    os.environ.setdefault("PEA_YF_FORCE_REFRESH", "0")
     os.environ.setdefault("OMP_NUM_THREADS", "2")
     os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
     os.environ.setdefault("MKL_NUM_THREADS", "2")
@@ -56,6 +60,7 @@ def _prepare_runtime_dirs(root: Path) -> dict[str, str]:
         "yf_cache": str(yf_runtime),
         "tmpdir": str(tmp_runtime),
         "yf_cache_writable": str(os.access(yf_runtime, os.W_OK)).lower(),
+        "incremental_period": os.environ.get("PEA_YF_INCREMENTAL_PERIOD", "10d"),
     }
 
 
@@ -72,6 +77,7 @@ def _has_daily_input(root: Path) -> bool:
 def run(root: Path = ROOT) -> dict:
     started = perf_counter()
     runtime_dirs = _prepare_runtime_dirs(root)
+    ohlcv_policy = write_ohlcv_policy(root)
     or_timings: dict[str, float] = {}
 
     core_started = perf_counter()
@@ -171,6 +177,7 @@ def run(root: Path = ROOT) -> dict:
         "or_hebdo_report_status": or_report_payload.get("status"),
         "objectives_risk_reference_influence": 0.0,
         "runtime_dirs": runtime_dirs,
+        "ohlcv_incremental_policy": ohlcv_policy.get("policy"),
         "slow_source_mode": os.environ.get("PEA_SLOW_SOURCE_MODE", "CACHE_PREFERRED"),
         "runtime_optimizations": {
             "v4_upstream_recompute_removed": True,
@@ -182,6 +189,7 @@ def run(root: Path = ROOT) -> dict:
             "or_independent_steps_overlapped": True,
             "daily_or_skipped_without_input": skip_daily,
             "blas_threads_capped": True,
+            "ohlcv_incremental_period_10d": True,
             "criteria_changed": False,
             "weights_changed": False,
             "thresholds_changed": False,
