@@ -14,6 +14,7 @@ from v182.reporting import objectives_risk_shadow_v1 as objectives_risk
 from v182.reporting import objectives_risk_challenger_v2 as objectives_risk_challenger
 from v182.reporting import portfolio_budget_challenger_v2 as portfolio_budget
 from v182.reporting import ci_challenger_publication_v2 as challenger_publication
+from v182.reporting import ci_payoff_shadow_v22_3 as payoff_shadow
 from v182.reporting import sector_or_shadow_v1 as sector_or_shadow
 from v182.reporting import or_ranking_daily_shadow_v1 as daily_or_shadow
 from v182.reporting import or_hebdo_report_v1 as or_hebdo_report
@@ -117,6 +118,7 @@ def run(root: Path = ROOT) -> dict:
         sector_or_payload = _safe_step("sector_or_shadow", lambda: sector_or_shadow.run(root=root), or_timings)
         _safe_step("portfolio_budget", lambda: portfolio_budget.run(root=root), or_timings)
         publication_payload = _safe_step("challenger_publication", lambda: challenger_publication.run(root=root), or_timings)
+        payoff_payload = _safe_step("ci_payoff_shadow", lambda: payoff_shadow.run(root=root), or_timings)
         skip_daily = not _has_daily_input(root)
         if skip_daily:
             daily_or_payload = {"status": "SKIPPED_NO_DAILY_INPUT", "shadow_only": True, "rows": 0}
@@ -150,6 +152,7 @@ def run(root: Path = ROOT) -> dict:
             "overlay_status": overlay_payload.get("status"),
             "objectives_risk_status": or_payload.get("status"),
             "objectives_risk_publication_status": publication_payload.get("status"),
+            "ci_payoff_shadow_status": payoff_payload.get("status"),
             "sector_or_shadow_status": sector_or_payload.get("status"),
             "daily_or_shadow_status": daily_or_payload.get("status"),
             "or_hebdo_report_status": or_report_payload.get("status"),
