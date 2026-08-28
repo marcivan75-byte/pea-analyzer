@@ -20,7 +20,10 @@ AUDIT = Path("outputs/audit/SECTOR_OR_SHADOW_V1.json")
 def _read(path: Path) -> pd.DataFrame:
     if not path.exists() or not path.stat().st_size:
         return pd.DataFrame()
-    return pd.read_csv(path, sep=";", encoding="utf-8-sig", low_memory=False)
+    try:
+        return pd.read_csv(path, sep=";", encoding="utf-8-sig", low_memory=False)
+    except Exception:
+        return pd.DataFrame()
 
 
 def _key(series: pd.Series) -> pd.Series:
@@ -146,24 +149,42 @@ def _aggregate(detail: pd.DataFrame, rotation: pd.DataFrame, cfg: dict) -> pd.Da
 
 
 def run(root: Path = ROOT) -> dict:
-    config = json.loads((root / CONFIG).read_text(encoding="utf-8"))["sector_or_shadow"]
-    detail = _instrument_detail(root, config)
-    aggregate = _aggregate(detail, _read(root / ROTATION_INPUT), config)
-    date = datetime.now(timezone.utc).date().isoformat()
-    detail_path = root / f"outputs/committee_master/SECTOR_OR_RANKING_SHADOW_{date}.csv"
-    aggregate_path = root / f"outputs/committee_master/SECTOR_OR_AGGREGATE_{date}.csv"
-    for path in (detail_path, aggregate_path, root / AUDIT):
-        path.parent.mkdir(parents=True, exist_ok=True)
-    detail.to_csv(detail_path, sep=";", index=False, encoding="utf-8-sig")
-    aggregate.to_csv(aggregate_path, sep=";", index=False, encoding="utf-8-sig")
-    payload = {
-        "status": "SUCCESS", "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "instrument_rows": len(detail), "eligible_rows": int(detail.get("SECTOR_OR_ELIGIBILITY", pd.Series(dtype=str)).eq("ELIGIBLE_SHADOW").sum()),
-        "audit_only_rows": int(detail.get("SECTOR_OR_ELIGIBILITY", pd.Series(dtype=str)).eq("AUDIT_ONLY_FAIL_CLOSED").sum()),
-        "sector_rows": len(aggregate), "short_excluded": True, "block_data_reopening_allowed": False,
-        "reference_modified": False, "score_influence": 0.0, "real_orders_enabled": False,
-        "outputs": [str(detail_path.relative_to(root)), str(aggregate_path.relative_to(root))],
-    }
+    try:
+        config = json.loads((root / CONFIG).read_text(encoding="utf-8"))["sector_or_shadow"]
+        detail = _instrument_detail(root, config)
+        aggregate = _aggregate(detail, _read(root / ROTATION_INPUT), config)
+        date = datetime.now(timezone.utc).date().isoformat()
+        detail_path = root / f"outputs/committee_master/SECTOR_OR_RANKING_SHADOW_{date}.csv"
+        aggregate_path = root / f"outputs/committee_master/SECTOR_OR_AGGREGATE_{date}.csv"
+        for path in (detail_path, aggregate_path, root / AUDIT):
+            path.parent.mkdir(parents=True, exist_ok=True)
+        detail.to_csv(detail_path, sep=";", index=False, encoding="utf-8-sig")
+        aggregate.to_csv(aggregate_path, sep=";", index=False, encoding="utf-8-sig")
+        payload = {
+            "status": "SUCCESS", "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "instrument_rows": len(detail), "eligible_rows": int(detail.get("SECTOR_OR_ELIGIBILITY", pd.Series(dtype=str)).eq("ELIGIBLE_SHADOW").sum()),
+            "audit_only_rows": int(detail.get("SECTOR_OR_ELIGIBILITY", pd.Series(dtype=str)).eq("AUDIT_ONLY_FAIL_CLOSED").sum()),
+            "sector_rows": len(aggregate), "short_excluded": True, "block_data_reopening_allowed": False,
+            "reference_modified": False, "score_influence": 0.0, "real_orders_enabled": False,
+            "outputs": [str(detail_path.relative_to(root)), str(aggregate_path.relative_to(root))],
+        }
+    except Exception as exc:
+        payload = {
+            "status": f"SHADOW_FAILED:{type(exc).__name__}",
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "instrument_rows": 0,
+            "eligible_rows": 0,
+            "audit_only_rows": 0,
+            "sector_rows": 0,
+            "short_excluded": True,
+            "block_data_reopening_allowed": False,
+            "reference_modified": False,
+            "score_influence": 0.0,
+            "real_orders_enabled": False,
+            "error": str(exc)[:400],
+            "outputs": [],
+        }
+    (root / AUDIT).parent.mkdir(parents=True, exist_ok=True)
     (root / AUDIT).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return payload
 
