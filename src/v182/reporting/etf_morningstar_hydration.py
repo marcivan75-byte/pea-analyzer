@@ -5,6 +5,12 @@ import pandas as pd
 _STAR_OK = {1.0, 2.0, 3.0, 4.0, 5.0}
 
 
+def _series(frame: pd.DataFrame, column: str) -> pd.Series:
+    if column in frame:
+        return frame[column]
+    return pd.Series(pd.NA, index=frame.index)
+
+
 def hydrate_etf_morningstar_from_boursorama(frame: pd.DataFrame) -> pd.DataFrame:
     """Fill morningstar_rating from a verified Boursorama star count only.
 
@@ -16,9 +22,13 @@ def hydrate_etf_morningstar_from_boursorama(frame: pd.DataFrame) -> pd.DataFrame
     if "morningstar_rating" not in result:
         result["morningstar_rating"] = pd.NA
     asset = result.get("asset_class", pd.Series("", index=result.index)).astype(str).str.upper()
-    stars = pd.to_numeric(result.get("boursorama_etf_morningstar_stars"), errors="coerce")
-    status = result.get("boursorama_etf_morningstar_parse_status", pd.Series("", index=result.index)).astype(str)
+    stars = pd.to_numeric(_series(result, "boursorama_etf_morningstar_stars"), errors="coerce")
+    if not isinstance(stars, pd.Series):
+        stars = pd.Series(stars, index=result.index)
+    status = _series(result, "boursorama_etf_morningstar_parse_status").astype(str)
     missing = pd.to_numeric(result["morningstar_rating"], errors="coerce").isna()
+    if not isinstance(missing, pd.Series):
+        missing = pd.Series(missing, index=result.index)
     eligible = asset.eq("ETF") & missing & status.eq("OK") & stars.isin(list(_STAR_OK))
     result.loc[eligible, "morningstar_rating"] = stars.loc[eligible]
     if "morningstar_rating_source" not in result:
