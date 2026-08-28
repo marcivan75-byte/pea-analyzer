@@ -1,46 +1,28 @@
 # Backtests futurs — ETF MT et Actions MT
 
 Date de verrouillage : 2026-08-28
-Statut : protocoles lockés **avant résultats**. Research only. Influence décision = 0.
+Statut protocoles : lockés **avant résultats**.
+Statut données : cache OHLCV du ZIP 2026-08-27 réutilisé ; observations reconstruites **non promotion-eligible**.
 
-## Périmètre
+## Ce qui a été complété depuis le fichier existant
 
-| Univers | Protocole | Signal | Top K | Horizon primaire |
-|---|---|---|---|---|
-| ETF MT | `config/ETF_MT_PIT_OOS_PROTOCOL.json` | `ETF_MT_SCORE` (fallback O/R shadow) | 5 | 60 séances |
-| Actions MT | `config/ACTION_MT_PIT_OOS_PROTOCOL.json` | `ACTION_MT_SCORE` (fallback O/R shadow) | 10 | 60 séances |
+Cache ZIP `data/cache/actions` + `data/cache/etf` :
+- 2023-01-02 → 2026-08-24, 930 séances
+- Actions : 1790 tickers, 94,6 % de closes non nuls
+- ETF : 102 tickers, 84,0 % de closes non nuls
 
-Secondaires : 20 et 120 séances. T1/T2 interdits sur les deux univers MT.
+Reconstruction PIT (prix only) :
+- signal = momentum 126 séances **≤ as_of**
+- forward 60 séances **strictement après as_of**
+- 105 dates, pas de 10 jours, jusqu’à as_of ≤ cache_end - 90j
+- 173 436 lignes Actions / 8 588 lignes ETF
 
-## Fenêtres (identiques au Sector Rotation V2)
+Ce n’est **pas** le score MT de production. `promotion_eligible = false`.
+Les fenêtres officielles OOS commencent le 2026-09-01 : cette reconstruction est du diagnostic pré-OOS.
 
-- VALIDATION_OOS : 2026-09-01 → 2026-12-31
-- DIAGNOSTIC_OOS : 2027-01-01 → 2027-04-30
-- Holdout final : à partir du 2027-05-01 (**fermé**, ignoré)
+## Protocoles
 
-## Exécution PIT
-
-- Entrée = première séance **strictement après** la date de signal
-- Interdit : close du jour du signal
-- Prix = cache OHLCV yfinance auto-adjust
-- Baseline = equipondéré de l’univers éligible du snapshot
-- Espacement mini des snapshots : 10 jours
-- Historique mini : 250 séances
-
-## Promotion (aucun auto-retuning)
-
-8 snapshots indépendants **par** période OOS, edge vs équipondéré ≥ 0,5 pp, taux positif et P10 non dégradés au-delà des seuils lockés. Même si les gates OOS passent : `promotion_ready = false` tant que le holdout n’a pas son propre protocole de suivi.
-
-## Données à constituer (pas encore là)
-
-Déposer plus tard, sans changer les JSON de protocole :
-
-- `state/backtest/ETF_MT_PIT_OBSERVATIONS.csv`
-- `state/backtest/ACTION_MT_PIT_OBSERVATIONS.csv`
-
-Colonnes mini : `isin;as_of;ETF_MT_SCORE|ACTION_MT_SCORE;forward_return_pct_60d`
+`config/ETF_MT_PIT_OOS_PROTOCOL.json` et `config/ACTION_MT_PIT_OOS_PROTOCOL.json`
 
 Harnais : `python -m v182.backtest.mt_pit_oos`
-Sorties : `outputs/audit/ETF_MT_PIT_OOS_STATUS.json` et `ACTION_MT_PIT_OOS_STATUS.json`.
-
-Tant que les CSV sont absents, le statut reste `WAIT_FOR_PIT_HISTORY`.
+Reconstructeur : `python -m v182.backtest.reconstruct_mt_pit_from_ohlcv` (si le cache local est présent).

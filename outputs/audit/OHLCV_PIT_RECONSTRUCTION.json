@@ -1,0 +1,28 @@
+{
+  "status": "RECONSTRUCTED_NOT_PROMOTION_ELIGIBLE",
+  "source_zip": "HEBDO_V4_TRES_COMPLET_AUDITE_OPTIMISE_FINAL_2026-08-27.zip",
+  "ohlcv_bootstrap_start": "2023-01-01",
+  "ohlcv_end": "2026-08-24",
+  "signal": "126-session PIT momentum from existing cache only",
+  "forward": "60 sessions strictly after as_of",
+  "official_oos_starts": "2026-09-01",
+  "decision_influence": 0.0,
+  "coverage": {
+    "ACTION": {
+      "tickers": 1790,
+      "sessions": 930,
+      "non_null_ratio": 0.9464,
+      "observation_rows": 173436,
+      "unique_isins": 1750,
+      "unique_as_of": 105
+    },
+    "ETF": {
+      "tickers": 102,
+      "sessions": 930,
+      "non_null_ratio": 0.8402,
+      "observation_rows": 8588,
+      "unique_isins": 100,
+      "unique_as_of": 105
+    }
+  }
+}
