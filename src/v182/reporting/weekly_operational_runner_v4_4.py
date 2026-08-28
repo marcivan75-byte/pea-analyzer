@@ -1,9 +1,4 @@
-"""Façade opérationnelle V4.4 — orchestration only.
-
-Ne change aucun critère, poids, seuil, univers ou contrat PIT.
-Réutilise le cœur V22.2.3, le tail critique V21.16.0 et l'overlay V4
-déjà audités le 27/08/2026.
-"""
+"""Façade opérationnelle V4.4 — orchestration only."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -11,7 +6,6 @@ from pathlib import Path
 from time import perf_counter
 import json
 import os
-import traceback
 
 from v182.reporting import weekly_tail_super_runner_v21_16_0 as tail
 from v182.reporting import weekly_unified_super_runner_v22_2_3 as core
@@ -24,6 +18,7 @@ from v182.reporting import sector_or_shadow_v1 as sector_or_shadow
 from v182.reporting import or_ranking_daily_shadow_v1 as daily_or_shadow
 from v182.reporting import or_hebdo_report_v1 as or_hebdo_report
 from v182.reporting import weekly_run_synthesis_v1 as run_synthesis
+from v182.backtest import weekly_pit_snapshot_v1 as pit_snapshot
 from v182.sources.ohlcv_incremental_policy import write_audit as write_ohlcv_policy
 
 
@@ -55,13 +50,23 @@ def _prepare_runtime_dirs(root: Path) -> dict[str, str]:
     os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
     os.environ.setdefault("MKL_NUM_THREADS", "2")
     os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
-    os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "2")
     return {
         "yf_cache": str(yf_runtime),
         "tmpdir": str(tmp_runtime),
-        "yf_cache_writable": str(os.access(yf_runtime, os.W_OK)).lower(),
         "incremental_period": os.environ.get("PEA_YF_INCREMENTAL_PERIOD", "10d"),
     }
+
+
+def _safe_step(name: str, fn, timings: dict[str, float]):
+    started = perf_counter()
+    try:
+        payload = fn()
+        if not isinstance(payload, dict):
+            payload = {"status": "SUCCESS"}
+    except Exception as exc:
+        payload = {"status": f"SHADOW_FAILED:{type(exc).__name__}", "error": str(exc)[:400], "shadow_only": True}
+    timings[name] = round(perf_counter() - started, 6)
+    return payload
 
 
 def _has_daily_input(root: Path) -> bool:
@@ -74,187 +79,113 @@ def _write_runtime(root: Path, payload: dict) -> None:
     audit.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _shadow_step(name: str, fn) -> tuple[str, dict, float]:
-    """Shadow-only: never raise. Fail-closed payload + timing."""
-    started = perf_counter()
-    try:
-        payload = fn()
-        if not isinstance(payload, dict):
-            payload = {"status": "SUCCESS", "shadow_only": True, "real_orders_enabled": False}
-        payload.setdefault("shadow_only", True)
-        payload.setdefault("real_orders_enabled", False)
-        payload.setdefault("score_influence", 0.0)
-        return name, payload, round(perf_counter() - started, 6)
-    except Exception as exc:
-        return name, {
-            "status": f"SHADOW_FAILED:{type(exc).__name__}",
-            "shadow_only": True,
-            "real_orders_enabled": False,
-            "score_influence": 0.0,
-            "error_type": type(exc).__name__,
-            "error": str(exc)[:500],
-            "traceback": traceback.format_exc(limit=6),
-        }, round(perf_counter() - started, 6)
-
-
 def run(root: Path = ROOT) -> dict:
     started = perf_counter()
     runtime_dirs = _prepare_runtime_dirs(root)
     ohlcv_policy = write_ohlcv_policy(root)
     or_timings: dict[str, float] = {}
-
-    core_started = perf_counter()
-    core_payload = core.run(root=root)
-    core_seconds = perf_counter() - core_started
-
-    previous_critical = os.environ.get("PEA_WEEKLY_CRITICAL_ONLY")
-    os.environ["PEA_WEEKLY_CRITICAL_ONLY"] = "1"
+    payload: dict = {"status": "RUNNING", "version": VERSION}
     try:
-        tail_started = perf_counter()
-        tail_payload = tail.run(root=root)
-        tail_seconds = perf_counter() - tail_started
-    finally:
-        if previous_critical is None:
-            os.environ.pop("PEA_WEEKLY_CRITICAL_ONLY", None)
+        core_started = perf_counter()
+        core_payload = core.run(root=root)
+        core_seconds = perf_counter() - core_started
+
+        previous_critical = os.environ.get("PEA_WEEKLY_CRITICAL_ONLY")
+        os.environ["PEA_WEEKLY_CRITICAL_ONLY"] = "1"
+        try:
+            tail_started = perf_counter()
+            tail_payload = tail.run(root=root)
+            tail_seconds = perf_counter() - tail_started
+        finally:
+            if previous_critical is None:
+                os.environ.pop("PEA_WEEKLY_CRITICAL_ONLY", None)
+            else:
+                os.environ["PEA_WEEKLY_CRITICAL_ONLY"] = previous_critical
+
+        overlay_started = perf_counter()
+        overlay_payload = overlay.run(
+            root=root,
+            ensure_upstream=False,
+            run_ci_light=False,
+            existing_ci_light=core_payload.get("ci_light_v4_2_independent"),
+        )
+        overlay_seconds = perf_counter() - overlay_started
+
+        or_started = perf_counter()
+        _safe_step("objectives_risk_v1", lambda: objectives_risk.run(root=root), or_timings)
+        or_payload = _safe_step("objectives_risk_challenger", lambda: objectives_risk_challenger.run(root=root), or_timings)
+        sector_or_payload = _safe_step("sector_or_shadow", lambda: sector_or_shadow.run(root=root), or_timings)
+        _safe_step("portfolio_budget", lambda: portfolio_budget.run(root=root), or_timings)
+        publication_payload = _safe_step("challenger_publication", lambda: challenger_publication.run(root=root), or_timings)
+        skip_daily = not _has_daily_input(root)
+        if skip_daily:
+            daily_or_payload = {"status": "SKIPPED_NO_DAILY_INPUT", "shadow_only": True, "rows": 0}
+            or_timings["daily_or_shadow"] = 0.0
         else:
-            os.environ["PEA_WEEKLY_CRITICAL_ONLY"] = previous_critical
+            daily_or_payload = _safe_step("daily_or_shadow", lambda: daily_or_shadow.run(root=root), or_timings)
+        or_report_payload = _safe_step("or_hebdo_report", lambda: or_hebdo_report.run(root=root), or_timings)
+        snapshot_payload = _safe_step("weekly_pit_snapshot", lambda: pit_snapshot.run(root=root), or_timings)
+        or_seconds = perf_counter() - or_started
 
-    overlay_started = perf_counter()
-    overlay_payload = overlay.run(
-        root=root,
-        ensure_upstream=False,
-        run_ci_light=False,
-        existing_ci_light=core_payload.get("ci_light_v4_2_independent"),
-    )
-    overlay_seconds = perf_counter() - overlay_started
-
-    # Sequential OR — challenger CSV must be fully written before sector/portfolio readers.
-    or_started = perf_counter()
-    _, _, or_timings["objectives_risk_v1"] = _shadow_step(
-        "objectives_risk_v1", lambda: objectives_risk.run(root=root)
-    )
-    _, or_payload, or_timings["objectives_risk_challenger"] = _shadow_step(
-        "objectives_risk_challenger", lambda: objectives_risk_challenger.run(root=root)
-    )
-    _, sector_or_payload, or_timings["sector_or_shadow"] = _shadow_step(
-        "sector_or_shadow", lambda: sector_or_shadow.run(root=root)
-    )
-    _, _, or_timings["portfolio_budget"] = _shadow_step(
-        "portfolio_budget", lambda: portfolio_budget.run(root=root)
-    )
-    _, publication_payload, or_timings["challenger_publication"] = _shadow_step(
-        "challenger_publication", lambda: challenger_publication.run(root=root)
-    )
-
-    skip_daily = not _has_daily_input(root)
-    if skip_daily:
-        daily_or_payload = {
-            "status": "SKIPPED_NO_DAILY_INPUT",
-            "shadow_only": True,
+        total_seconds = perf_counter() - started
+        under_target = total_seconds < TARGET_SECONDS
+        payload = {
+            "status": "SUCCESS_UNDER_20_MINUTES" if under_target else "FAILED_RUNTIME_TARGET",
+            "version": VERSION,
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "target_seconds": TARGET_SECONDS,
+            "total_seconds": round(total_seconds, 6),
+            "under_target": under_target,
+            "steps_seconds": {
+                "ci": core_payload.get("ci_seconds"),
+                "ci_light": core_payload.get("ci_light_seconds"),
+                "core": round(core_seconds, 6),
+                "critical_tail": round(tail_seconds, 6),
+                "v4_overlay": round(overlay_seconds, 6),
+                "objectives_risk_shadow_publication": round(or_seconds, 6),
+                **{f"or_{name}": value for name, value in or_timings.items()},
+            },
+            "core_status": core_payload.get("status"),
+            "tail_status": tail_payload.get("status"),
+            "overlay_status": overlay_payload.get("status"),
+            "objectives_risk_status": or_payload.get("status"),
+            "objectives_risk_publication_status": publication_payload.get("status"),
+            "sector_or_shadow_status": sector_or_payload.get("status"),
+            "daily_or_shadow_status": daily_or_payload.get("status"),
+            "or_hebdo_report_status": or_report_payload.get("status"),
+            "weekly_pit_snapshot_status": snapshot_payload.get("status"),
+            "objectives_risk_reference_influence": 0.0,
+            "runtime_dirs": runtime_dirs,
+            "ohlcv_incremental_policy": ohlcv_policy.get("policy"),
+            "runtime_optimizations": {
+                "or_steps_sequential": True,
+                "shadow_failures_isolated": True,
+                "weekly_pit_snapshot_enabled": True,
+                "criteria_changed": False,
+                "weights_changed": False,
+                "thresholds_changed": False,
+            },
             "real_orders_enabled": False,
-            "score_influence": 0.0,
-            "rows": 0,
         }
-        or_timings["daily_or_shadow"] = 0.0
-    else:
-        _, daily_or_payload, or_timings["daily_or_shadow"] = _shadow_step(
-            "daily_or_shadow", lambda: daily_or_shadow.run(root=root)
-        )
-
-    _, or_report_payload, or_timings["or_hebdo_report"] = _shadow_step(
-        "or_hebdo_report", lambda: or_hebdo_report.run(root=root)
-    )
-    or_seconds = perf_counter() - or_started
-
-    shadow_statuses = {
-        "objectives_risk_challenger": or_payload.get("status"),
-        "sector_or_shadow": sector_or_payload.get("status"),
-        "challenger_publication": publication_payload.get("status"),
-        "daily_or_shadow": daily_or_payload.get("status"),
-        "or_hebdo_report": or_report_payload.get("status"),
-    }
-    shadow_failures = [
-        name for name, status in shadow_statuses.items()
-        if str(status or "").startswith("SHADOW_FAILED") or str(status or "").startswith("FAILED")
-    ]
-
-    total_seconds = perf_counter() - started
-    under_target = total_seconds < TARGET_SECONDS
-    if not under_target:
-        status = "FAILED_RUNTIME_TARGET"
-    elif shadow_failures:
-        status = "SUCCESS_UNDER_20_MINUTES_PARTIAL_SHADOW"
-    else:
-        status = "SUCCESS_UNDER_20_MINUTES"
-
-    payload = {
-        "status": status,
-        "version": VERSION,
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "target_seconds": TARGET_SECONDS,
-        "total_seconds": round(total_seconds, 6),
-        "under_target": under_target,
-        "steps_seconds": {
-            "ci": core_payload.get("ci_seconds"),
-            "ci_light": core_payload.get("ci_light_seconds"),
-            "core": round(core_seconds, 6),
-            "critical_tail": round(tail_seconds, 6),
-            "v4_overlay": round(overlay_seconds, 6),
-            "objectives_risk_shadow_publication": round(or_seconds, 6),
-            **{f"or_{name}": value for name, value in or_timings.items()},
-        },
-        "core_status": core_payload.get("status"),
-        "tail_status": tail_payload.get("status"),
-        "overlay_status": overlay_payload.get("status"),
-        "objectives_risk_status": or_payload.get("status"),
-        "objectives_risk_publication_status": publication_payload.get("status"),
-        "sector_or_shadow_status": sector_or_payload.get("status"),
-        "daily_or_shadow_status": daily_or_payload.get("status"),
-        "or_hebdo_report_status": or_report_payload.get("status"),
-        "shadow_failures": shadow_failures,
-        "objectives_risk_reference_influence": 0.0,
-        "runtime_dirs": runtime_dirs,
-        "ohlcv_incremental_policy": ohlcv_policy.get("policy"),
-        "slow_source_mode": os.environ.get("PEA_SLOW_SOURCE_MODE", "CACHE_PREFERRED"),
-        "runtime_optimizations": {
-            "v4_upstream_recompute_removed": True,
-            "duplicate_ci_light_run_removed": True,
-            "ci_light_independence_preserved": True,
-            "yfinance_runtime_dir_forced": True,
-            "critical_tail_only_on_friday_path": True,
-            "github_live_default_removed": True,
-            "or_steps_sequential_no_race": True,
-            "or_shadow_exceptions_isolated": True,
-            "daily_or_skipped_without_input": skip_daily,
-            "blas_threads_capped": True,
-            "ohlcv_incremental_period_10d": True,
-            "step_timings_published": True,
-            "ci_ci_light_synthesis_published": True,
-            "criteria_changed": False,
-            "weights_changed": False,
-            "thresholds_changed": False,
-            "information_loss": False,
-        },
-        "deferred_distinct_shadow_process": ["TACTICAL_SHADOW_BUNDLE", "POSTMARKET_V24_4_2", "ETF_STRUCTURE_STATE_REPLAY"],
-        "deferred_decision_score_weight_influence": 0.0,
-        "real_orders_enabled": False,
-    }
-    _write_runtime(root, payload)
-    try:
-        synthesis_payload = run_synthesis.run(root=root)
-        payload["synthesis_status"] = synthesis_payload.get("status")
-        payload["synthesis_ci_rows"] = synthesis_payload.get("ci_rows")
-        payload["synthesis_ci_light_rows"] = synthesis_payload.get("ci_light_rows")
         _write_runtime(root, payload)
-    except Exception as exc:
-        payload["synthesis_status"] = f"FAILED:{type(exc).__name__}"
-        payload["synthesis_error"] = str(exc)[:400]
+        try:
+            synthesis_payload = run_synthesis.run(root=root)
+            payload["synthesis_status"] = synthesis_payload.get("status")
+            _write_runtime(root, payload)
+        except Exception as exc:
+            payload["synthesis_status"] = f"FAILED:{type(exc).__name__}"
+            _write_runtime(root, payload)
+        if not under_target:
+            raise RuntimeError(
+                f"WEEKLY_RUNTIME_TARGET_EXCEEDED:{total_seconds:.3f}>={TARGET_SECONDS:.3f}"
+            )
+        return payload
+    except Exception:
+        if payload.get("status") == "RUNNING":
+            payload["status"] = "FAILED_EXCEPTION"
+            payload["total_seconds"] = round(perf_counter() - started, 6)
         _write_runtime(root, payload)
-    if not under_target:
-        raise RuntimeError(
-            f"WEEKLY_RUNTIME_TARGET_EXCEEDED:{total_seconds:.3f}>={TARGET_SECONDS:.3f}"
-        )
-    return payload
+        raise
 
 
 def main() -> None:
