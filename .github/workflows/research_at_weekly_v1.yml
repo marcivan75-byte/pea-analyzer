@@ -5,10 +5,7 @@ on:
     branches:
       - research/at-weekly-v1-20260829
     paths:
-      - src/v182/backtest/at_weekly_v1.py
-      - src/v182/backtest/at_weekly_v1_fixed.py
-      - src/v182/backtest/at_weekly_entry_filters_v1.py
-      - src/v182/backtest/at_weekly_adx_filter_v1.py
+      - src/v182/backtest/at_weekly_trend_entry_filter_v1.py
       - .github/workflows/research_at_weekly_v1.yml
 
 permissions:
@@ -17,7 +14,7 @@ permissions:
 jobs:
   at-weekly-v1:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     env:
       PYTHONPATH: ${{ github.workspace }}/src
     steps:
@@ -43,54 +40,35 @@ jobs:
           echo "Parquet blocks: $(find data/cache -type f -name '*.parquet' 2>/dev/null | wc -l)"
           du -sh data/cache 2>/dev/null || true
 
-      - name: Run corrected AT Weekly V1 baseline
-        run: python -m v182.backtest.at_weekly_v1_fixed
+      - name: Run trend entry-filter comparison
+        run: python -m v182.backtest.at_weekly_trend_entry_filter_v1
 
-      - name: Run action entry-filter comparison
-        run: python -m v182.backtest.at_weekly_entry_filters_v1
-
-      - name: Run ADX entry-filter comparison
-        run: python -m v182.backtest.at_weekly_adx_filter_v1
-
-      - name: Validate backtests actually used data
+      - name: Validate backtest actually used data
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          p=json.loads(Path('outputs/backtest/AT_WEEKLY_V1_SUMMARY.json').read_text())
-          q=json.loads(Path('outputs/backtest/AT_WEEKLY_ENTRY_FILTERS_V1.json').read_text())
-          a=json.loads(Path('outputs/backtest/AT_WEEKLY_ADX_FILTER_V1.json').read_text())
-          assert p['status']=='SUCCESS' and p['scopes']['TOTAL']['valid_instruments'] > 0
-          assert q['status']=='SUCCESS' and q['valid_actions'] > 0
-          assert q['results']['BASELINE']['ALL']['trades'] > 0
-          assert a['status']=='SUCCESS' and a['valid_actions'] > 0
-          assert a['results']['BASELINE']['ALL']['trades'] > 0
-          print('VALID_INSTRUMENTS',p['scopes']['TOTAL']['valid_instruments'])
-          print('ACTION_FILTER_TESTS',q['valid_actions'])
-          print('ADX_FILTER_TESTS',a['valid_actions'])
-          print('BASELINE_TRADES',a['results']['BASELINE']['ALL']['trades'])
-          print('ADX20_TRADES',a['results']['ADX_GE_20']['ALL']['trades'])
-          print('ADX25_TRADES',a['results']['ADX_GE_25']['ALL']['trades'])
-          print('ADX30_TRADES',a['results']['ADX_GE_30']['ALL']['trades'])
+          x=json.loads(Path('outputs/backtest/AT_WEEKLY_TREND_ENTRY_FILTER_V1.json').read_text())
+          assert x['status']=='SUCCESS' and x['valid_actions'] > 0
+          assert x['results']['BASELINE']['ALL']['trades'] > 0
+          assert x['exit_rules_changed'] is False
+          print('VALID_ACTIONS',x['valid_actions'])
+          for k in ['BASELINE','MA20_GT_MA50','MA20_SLOPE_POS','TREND_DOUBLE']:
+              print(k,x['results'][k]['ALL'])
           PY
 
-      - name: Show ADX summary
+      - name: Show trend summary
         if: always()
-        run: cat outputs/backtest/AT_WEEKLY_ADX_FILTER_V1.json || true
+        run: cat outputs/backtest/AT_WEEKLY_TREND_ENTRY_FILTER_V1.json || true
 
-      - name: Upload AT Weekly research results
+      - name: Upload AT Weekly trend research results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: at-weekly-v1-${{ github.run_id }}
+          name: at-weekly-trend-v1-${{ github.run_id }}
           path: |
-            outputs/backtest/AT_WEEKLY_V1_SUMMARY.json
-            outputs/backtest/AT_WEEKLY_V1_SUMMARY.md
-            outputs/backtest/AT_WEEKLY_V1_TRADES.csv
-            outputs/backtest/AT_WEEKLY_ENTRY_FILTERS_V1.json
-            outputs/backtest/AT_WEEKLY_ENTRY_FILTERS_V1_TRADES.csv
-            outputs/backtest/AT_WEEKLY_ADX_FILTER_V1.json
-            outputs/backtest/AT_WEEKLY_ADX_FILTER_V1_TRADES.csv
+            outputs/backtest/AT_WEEKLY_TREND_ENTRY_FILTER_V1.json
+            outputs/backtest/AT_WEEKLY_TREND_ENTRY_FILTER_V1_TRADES.csv
           if-no-files-found: warn
           compression-level: 1
           retention-days: 7
