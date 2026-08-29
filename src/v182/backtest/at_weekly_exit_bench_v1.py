@@ -1,5 +1,6 @@
 """Research-only weekly exit test bench for the two retained optimized entry models.
-Completed-week signals only; all exits execute at next-week open. No production impact.
+Completed-week signals only; all rule-based exits execute at next-week open. No production impact.
+Open positions at the sample endpoint are marked to the final completed-week close for unbiased evaluation.
 """
 from __future__ import annotations
 from datetime import datetime, timezone
@@ -23,7 +24,7 @@ ENTRIES=[
 def C(h=None,t=None,heat='none',trend='none',lock=None,baseline=False):
  return {'hard_stop_pct':h,'trail_pct':t,'heat':heat,'trend':trend,'profit_lock_pct':lock,'baseline':baseline}
 
-# Broad but deliberately non-cartesian screen: 53 structurally distinct exit models.
+# Broad, deliberately non-cartesian structural screen.
 CONFIGS=[C(baseline=True)]
 CONFIGS += [C(h=x) for x in [3,4,5,6,7,9]]
 CONFIGS += [C(t=x) for x in [3,4,5,6,7,9]]
@@ -34,7 +35,6 @@ CONFIGS += [C(t=t,heat=heat) for t in [4,5,7] for heat in ['rsi','stoch','both']
 CONFIGS += [C(h=h,heat='both',trend='psar') for h in [4,5,6,7]]
 CONFIGS += [C(h=h,t=5,heat='both',trend=trend) for h in [4,5,6,7] for trend in ['psar','psar_sma20']]
 CONFIGS += [C(h=5,t=5,heat='both',trend='psar',lock=p) for p in [5,8,10,12]]
-# de-duplicate while preserving order
 _seen=set(); CONFIGS=[x for x in CONFIGS if not ((k:=tuple(sorted(x.items()))) in _seen or _seen.add(k))]
 
 def arrays(b):
@@ -43,6 +43,12 @@ def arrays(b):
   'k':b.stoch_k.to_numpy(float),'d':b.stoch_d.to_numpy(float),'psar':b.psar.to_numpy(float),
   'sma20':b.sma20.to_numpy(float),'sma50':b.sma50.to_numpy(float),
  }
+
+def _trade(sym,entry_label,cfg_id,b,pos_idx,price,exit_idx,exit_price,reasons,endpoint=False):
+ return {'symbol':sym,'entry_model':entry_label,'exit_model':cfg_id,
+         'entry_date':b.index[pos_idx].date().isoformat(),'exit_date':b.index[exit_idx].date().isoformat(),
+         'return_pct':(exit_price/price-1)*100,'holding_weeks':max(0,exit_idx-pos_idx),
+         'exit_reasons':'|'.join(reasons),'endpoint_mark':bool(endpoint)}
 
 def simulate(sym,b,a,sig,entry_label,cfg,cfg_id):
  o,c,rsi,k,d,psar,s20,s50=(a[x] for x in ['open','close','rsi','k','d','psar','sma20','sma50'])
@@ -73,17 +79,21 @@ def simulate(sym,b,a,sig,entry_label,cfg,cfg_id):
     if lock is not None and ret>=lock and close<prev and ((np.isfinite(rsi[i]) and rsi[i]>70) or (np.isfinite(k[i]) and k[i]>75)):
      reasons.append(f'PROFIT_LOCK_{lock}_REV')
    if reasons and np.isfinite(nxt) and nxt>0:
-    out.append({'symbol':sym,'entry_model':entry_label,'exit_model':cfg_id,'entry_date':b.index[pos_idx].date().isoformat(),'exit_date':b.index[i+1].date().isoformat(),'return_pct':(nxt/price-1)*100,'holding_weeks':i+1-pos_idx,'exit_reasons':'|'.join(reasons)})
+    out.append(_trade(sym,entry_label,cfg_id,b,pos_idx,price,i+1,float(nxt),reasons))
     pos_idx=-1; price=0.0; peak=0.0; continue
   if pos_idx<0 and sig[i] and np.isfinite(nxt) and nxt>0:
-   pos_idx=i+1; price=nxt; peak=nxt
+   pos_idx=i+1; price=float(nxt); peak=price
+ # End-of-sample accounting: do not silently discard unresolved positions.
+ if pos_idx>=0 and np.isfinite(c[-1]) and c[-1]>0:
+  out.append(_trade(sym,entry_label,cfg_id,b,pos_idx,price,len(c)-1,float(c[-1]),['ENDPOINT_MARK'],endpoint=True))
  return out
 
 def metric(df):
- if df.empty: return {'trades':0,'win_rate_pct':None,'mean_return_pct':None,'profit_factor':None,'reward_risk':None,'p10_return_pct':None,'avg_loss_pct':None,'avg_win_pct':None,'max_loss_pct':None}
+ if df.empty: return {'trades':0,'endpoint_marks':0,'win_rate_pct':None,'mean_return_pct':None,'profit_factor':None,'reward_risk':None,'p10_return_pct':None,'avg_loss_pct':None,'avg_win_pct':None,'max_loss_pct':None}
  r=df.return_pct.to_numpy(float); w=r[r>0]; l=r[r<0]; aw=float(w.mean()) if len(w) else 0; al=float(l.mean()) if len(l) else 0
  pf=float(w.sum()/(-l.sum())) if len(l) and -l.sum()>0 else 99.0; rr=float(aw/abs(al)) if al<0 else 99.0
- return {'trades':len(r),'win_rate_pct':round(float((r>0).mean()*100),2),'mean_return_pct':round(float(r.mean()),3),'profit_factor':round(pf,3),'reward_risk':round(rr,3),'p10_return_pct':round(float(np.quantile(r,.10)),3),'avg_loss_pct':round(al,3),'avg_win_pct':round(aw,3),'max_loss_pct':round(float(r.min()),3)}
+ marks=int(df.endpoint_mark.fillna(False).sum()) if 'endpoint_mark' in df else 0
+ return {'trades':len(r),'endpoint_marks':marks,'win_rate_pct':round(float((r>0).mean()*100),2),'mean_return_pct':round(float(r.mean()),3),'profit_factor':round(pf,3),'reward_risk':round(rr,3),'p10_return_pct':round(float(np.quantile(r,.10)),3),'avg_loss_pct':round(al,3),'avg_win_pct':round(aw,3),'max_loss_pct':round(float(r.min()),3)}
 
 def summarize(df,end):
  res={'ALL':metric(df)}; dates=pd.to_datetime(df.entry_date,errors='coerce') if not df.empty else pd.Series(dtype='datetime64[ns]')
@@ -115,6 +125,6 @@ def run():
   weak_rr=min(by[e['label']]['selection_key'][0] for e in ENTRIES); weak_pf=min(by[e['label']]['selection_key'][1] for e in ENTRIES)
   results.append({'exit_model':cid,'config':cfg,'eligible_sample':eligible,'by_entry':by,'combined':comb,'rank_key':[1 if eligible else 0,weak_rr,weak_pf,*comb['selection_key']]})
  results.sort(key=lambda z:tuple(z['rank_key']),reverse=True)
- payload={'status':'SUCCESS','version':'AT_WEEKLY_EXIT_BENCH_V1','generated_at_utc':datetime.now(timezone.utc).isoformat(),'runtime_seconds':round(time.perf_counter()-st,3),'valid_actions':len(bars),'data_window':{'first_week':min(first).date().isoformat(),'last_week':max(last).date().isoformat()},'entries_fixed':ENTRIES,'exit_models_tested':len(CONFIGS),'top_exit_models':results[:15],'best_exit_model':results[0] if results else None,'selection_rule':'Sample safeguard >=50 trades for each entry family; maximize weakest robust reward/risk then weakest robust PF, combined P10/mean/win rate.','trailing_definition':'Completed-week close drawdown from peak completed-week close plus weekly reversal; next-week-open execution.','lookahead_controls':{'signals':'completed_week_only','execution':'next_week_open','intrabar_stop_assumption':False},'limitations':['CURRENT_CACHE_UNIVERSE_NOT_PIT_MEMBERSHIP','SURVIVORSHIP_BIAS_POSSIBLE','NO_FEES_SLIPPAGE','WEEKLY_CLOSE_CONFIRMED_STOPS_NOT_INTRABAR','RESEARCH_ONLY']}
+ payload={'status':'SUCCESS','version':'AT_WEEKLY_EXIT_BENCH_V1','generated_at_utc':datetime.now(timezone.utc).isoformat(),'runtime_seconds':round(time.perf_counter()-st,3),'valid_actions':len(bars),'data_window':{'first_week':min(first).date().isoformat(),'last_week':max(last).date().isoformat()},'entries_fixed':ENTRIES,'exit_models_tested':len(CONFIGS),'top_exit_models':results[:15],'best_exit_model':results[0] if results else None,'selection_rule':'Sample safeguard >=50 trades for each entry family; maximize weakest robust reward/risk then weakest robust PF, combined P10/mean/win rate.','trailing_definition':'Completed-week close drawdown from peak completed-week close plus weekly reversal; next-week-open execution.','endpoint_accounting':'Unresolved positions are included at final completed-week close as ENDPOINT_MARK valuation; this is evaluation accounting, not an executable exit signal.','lookahead_controls':{'signals':'completed_week_only','execution':'next_week_open','intrabar_stop_assumption':False,'endpoint_mark_is_execution':False},'limitations':['CURRENT_CACHE_UNIVERSE_NOT_PIT_MEMBERSHIP','SURVIVORSHIP_BIAS_POSSIBLE','NO_FEES_SLIPPAGE','WEEKLY_CLOSE_CONFIRMED_STOPS_NOT_INTRABAR','ENDPOINT_MARK_TO_MARKET_FOR_CENSORING_CONTROL','RESEARCH_ONLY']}
  OUT.write_text(json.dumps(payload,indent=2,ensure_ascii=False)+'\n',encoding='utf-8'); print(json.dumps(payload,indent=2,ensure_ascii=False)); return payload
 if __name__=='__main__': run()
