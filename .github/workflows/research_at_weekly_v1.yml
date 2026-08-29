@@ -5,7 +5,7 @@ on:
     branches:
       - research/at-weekly-v1-20260829
     paths:
-      - src/v182/backtest/at_weekly_weight_bank_v3_continuous.py
+      - src/v182/backtest/at_weekly_weight_bank_v3_local_opt.py
       - .github/workflows/research_at_weekly_v1.yml
 
 permissions:
@@ -35,38 +35,36 @@ jobs:
       - name: Install backtest runtime
         run: python -m pip install --disable-pip-version-check pandas numpy pyarrow
 
-      - name: Run continuous-strength entry bank
-        run: python -m v182.backtest.at_weekly_weight_bank_v3_continuous
+      - name: Run retained-entry local optimisation
+        run: python -m v182.backtest.at_weekly_weight_bank_v3_local_opt
 
-      - name: Validate continuous bank
+      - name: Validate retained-entry optimisation
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          x=json.loads(Path('outputs/backtest/AT_WEEKLY_WEIGHT_BANK_V3_CONTINUOUS.json').read_text())
+          x=json.loads(Path('outputs/backtest/AT_WEEKLY_V3_LOCAL_OPT.json').read_text())
           assert x['status']=='SUCCESS'
           assert x['valid_actions'] > 0 and x['event_rows'] > 0
           assert x['exit_rules_changed'] is False
           assert len(x['final_two_models']) == 2
-          assert x['lookahead_controls']['breakout_highs']=='prior_completed_weeks_only'
+          assert {m['parent'] for m in x['final_two_models']} == {'CONT_07','CONT_15'}
+          assert x['lookahead_controls']['execution']=='next_week_open'
           print('VALID_ACTIONS',x['valid_actions'],'EVENT_ROWS',x['event_rows'])
           for i,m in enumerate(x['final_two_models'],1):
-              print('FINAL',i,m['label'],m['weights'],m['threshold_ratio'],m['full'])
+              print('FINAL',i,m['label'],m['parent'],m['weights'],m['threshold_ratio'],m['full'])
           PY
 
-      - name: Show continuous summary
+      - name: Show optimisation summary
         if: always()
-        run: cat outputs/backtest/AT_WEEKLY_WEIGHT_BANK_V3_CONTINUOUS.json || true
+        run: cat outputs/backtest/AT_WEEKLY_V3_LOCAL_OPT.json || true
 
-      - name: Upload continuous research results
+      - name: Upload entry optimisation results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: at-weekly-weight-bank-v3-continuous-${{ github.run_id }}
-          path: |
-            outputs/backtest/AT_WEEKLY_WEIGHT_BANK_V3_CONTINUOUS.json
-            outputs/backtest/AT_WEEKLY_WEIGHT_BANK_V3_CONTINUOUS_TOP.csv
-            outputs/backtest/AT_WEEKLY_WEIGHT_BANK_V3_CONTINUOUS_TRADES.csv
+          name: at-weekly-v3-local-opt-${{ github.run_id }}
+          path: outputs/backtest/AT_WEEKLY_V3_LOCAL_OPT.json
           if-no-files-found: warn
           compression-level: 1
           retention-days: 7
