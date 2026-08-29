@@ -5,7 +5,7 @@ on:
     branches:
       - research/at-weekly-v1-20260829
     paths:
-      - src/v182/backtest/at_weekly_weighted_entry_v1.py
+      - src/v182/backtest/at_weekly_weight_bank_v1.py
       - .github/workflows/research_at_weekly_v1.yml
 
 permissions:
@@ -14,7 +14,7 @@ permissions:
 jobs:
   at-weekly-v1:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       PYTHONPATH: ${{ github.workspace }}/src
     steps:
@@ -35,37 +35,39 @@ jobs:
       - name: Install backtest runtime
         run: python -m pip install --disable-pip-version-check pandas numpy pyarrow
 
-      - name: Run weighted entry score simulations
-        run: python -m v182.backtest.at_weekly_weighted_entry_v1
+      - name: Run comprehensive entry weight bank
+        run: python -m v182.backtest.at_weekly_weight_bank_v1
 
-      - name: Validate weighted backtest
+      - name: Validate weight bank
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          x=json.loads(Path('outputs/backtest/AT_WEEKLY_WEIGHTED_ENTRY_V1.json').read_text())
-          assert x['status']=='SUCCESS' and x['valid_actions'] > 0
-          assert x['results']['REFERENCE_CURRENT']['ALL']['trades'] > 0
+          x=json.loads(Path('outputs/backtest/AT_WEEKLY_WEIGHT_BANK_V1.json').read_text())
+          assert x['status']=='SUCCESS'
+          assert x['valid_actions'] > 0 and x['event_rows'] > 0
           assert x['exit_rules_changed'] is False
-          assert x['core_entry_remains_mandatory'] is True
+          assert len(x['two_parent_models_before_local_optimisation']) == 2
+          assert len(x['final_two_models']) == 2
           assert x['lookahead_controls']['breakout_highs']=='prior_completed_weeks_only'
-          print('VALID_ACTIONS',x['valid_actions'])
-          for k in x['variants']:
-              print(k,x['results'][k]['ALL'])
+          print('VALID_ACTIONS',x['valid_actions'],'EVENT_ROWS',x['event_rows'])
+          for i,m in enumerate(x['final_two_models'],1):
+              print('FINAL',i,m['label'],m['weights'],m['threshold_ratio'],m['full'])
           PY
 
-      - name: Show weighted summary
+      - name: Show bank summary
         if: always()
-        run: cat outputs/backtest/AT_WEEKLY_WEIGHTED_ENTRY_V1.json || true
+        run: cat outputs/backtest/AT_WEEKLY_WEIGHT_BANK_V1.json || true
 
-      - name: Upload weighted research results
+      - name: Upload bank research results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: at-weekly-weighted-v1-${{ github.run_id }}
+          name: at-weekly-weight-bank-v1-${{ github.run_id }}
           path: |
-            outputs/backtest/AT_WEEKLY_WEIGHTED_ENTRY_V1.json
-            outputs/backtest/AT_WEEKLY_WEIGHTED_ENTRY_V1_TRADES.csv
+            outputs/backtest/AT_WEEKLY_WEIGHT_BANK_V1.json
+            outputs/backtest/AT_WEEKLY_WEIGHT_BANK_V1_TOP.csv
+            outputs/backtest/AT_WEEKLY_WEIGHT_BANK_V1_FINAL_TRADES.csv
           if-no-files-found: warn
           compression-level: 1
           retention-days: 7
