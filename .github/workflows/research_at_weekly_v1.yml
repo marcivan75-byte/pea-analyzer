@@ -5,7 +5,7 @@ on:
     branches:
       - research/at-weekly-v1-20260829
     paths:
-      - src/v182/backtest/at_weekly_close_location_filter_v1.py
+      - src/v182/backtest/at_weekly_range_filter_v1.py
       - .github/workflows/research_at_weekly_v1.yml
 
 permissions:
@@ -14,7 +14,7 @@ permissions:
 jobs:
   at-weekly-v1:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     env:
       PYTHONPATH: ${{ github.workspace }}/src
     steps:
@@ -35,35 +35,35 @@ jobs:
       - name: Install backtest runtime
         run: python -m pip install --disable-pip-version-check pandas numpy pyarrow
 
-      - name: Run close-location entry-filter comparison
-        run: python -m v182.backtest.at_weekly_close_location_filter_v1
+      - name: Run weekly range entry-filter comparison
+        run: python -m v182.backtest.at_weekly_range_filter_v1
 
       - name: Validate backtest actually used data
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          x=json.loads(Path('outputs/backtest/AT_WEEKLY_CLOSE_LOCATION_FILTER_V1.json').read_text())
+          x=json.loads(Path('outputs/backtest/AT_WEEKLY_RANGE_FILTER_V1.json').read_text())
           assert x['status']=='SUCCESS' and x['valid_actions'] > 0
           assert x['results']['BASELINE']['ALL']['trades'] > 0
           assert x['exit_rules_changed'] is False
           print('VALID_ACTIONS',x['valid_actions'])
-          for k in ['BASELINE','CLOSE_LOC_GE_060','MA20_GT_MA50','MA20_GT_MA50_CLOSE_LOC_GE_060']:
+          for k in ['BASELINE','BEST_CURRENT','RANGE_LE_8','RANGE_LE_10','BEST_PLUS_RANGE_LE_8','BEST_PLUS_RANGE_LE_10']:
               print(k,x['results'][k]['ALL'])
           PY
 
-      - name: Show close-location summary
+      - name: Show range summary
         if: always()
-        run: cat outputs/backtest/AT_WEEKLY_CLOSE_LOCATION_FILTER_V1.json || true
+        run: cat outputs/backtest/AT_WEEKLY_RANGE_FILTER_V1.json || true
 
-      - name: Upload AT Weekly close-location research results
+      - name: Upload AT Weekly range research results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: at-weekly-close-location-v1-${{ github.run_id }}
+          name: at-weekly-range-v1-${{ github.run_id }}
           path: |
-            outputs/backtest/AT_WEEKLY_CLOSE_LOCATION_FILTER_V1.json
-            outputs/backtest/AT_WEEKLY_CLOSE_LOCATION_FILTER_V1_TRADES.csv
+            outputs/backtest/AT_WEEKLY_RANGE_FILTER_V1.json
+            outputs/backtest/AT_WEEKLY_RANGE_FILTER_V1_TRADES.csv
           if-no-files-found: warn
           compression-level: 1
           retention-days: 7
