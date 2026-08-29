@@ -37,28 +37,45 @@ jobs:
 
       - name: Audit restored cache schema
         run: |
-          echo "=== CACHE FILES ==="
-          find data/cache -maxdepth 3 -type f -printf '%p\t%s bytes\n' 2>/dev/null | sort | head -80
-          echo "=== CACHE SCHEMAS ==="
+          mkdir -p outputs/backtest
           python - <<'PY'
           from pathlib import Path
+          import json
           import pandas as pd
+
+          def scalar(v):
+              if v is None:
+                  return None
+              if isinstance(v, (str, int, float, bool)):
+                  return v
+              return str(v)
+
+          records=[]
           for p in sorted(Path('data/cache').rglob('*')):
               if not p.is_file() or p.suffix.lower() not in {'.parquet','.csv'}:
                   continue
-              print(f'FILE={p} SIZE={p.stat().st_size}')
+              rec={'path':str(p),'size_bytes':p.stat().st_size,'suffix':p.suffix.lower()}
               try:
                   if p.suffix.lower()=='.parquet':
                       df=pd.read_parquet(p)
                   else:
-                      df=pd.read_csv(p, nrows=5)
-                  print('SHAPE', df.shape)
-                  print('INDEX', type(df.index).__name__, getattr(df.index,'name',None))
-                  print('COLS', [str(c) for c in df.columns[:30]])
-                  print('DTYPES', {str(k):str(v) for k,v in df.dtypes.head(12).items()})
-                  print('HEAD', df.head(2).to_dict(orient='records'))
+                      df=pd.read_csv(p, nrows=8)
+                  rec['shape']=[int(df.shape[0]),int(df.shape[1])]
+                  rec['index_type']=type(df.index).__name__
+                  rec['index_name']=scalar(getattr(df.index,'name',None))
+                  rec['columns']=[str(c) for c in df.columns[:50]]
+                  rec['dtypes']={str(k):str(v) for k,v in df.dtypes.head(20).items()}
+                  rec['head']=[{str(k):scalar(v) for k,v in row.items()} for row in df.head(3).to_dict(orient='records')]
+                  if isinstance(df.columns,pd.MultiIndex):
+                      rec['multiindex_levels']=[[scalar(x) for x in level[:20]] for level in df.columns.levels]
+                  rec['status']='OK'
               except Exception as e:
-                  print('ERROR', type(e).__name__, str(e)[:300])
+                  rec['status']='ERROR'
+                  rec['error']=f'{type(e).__name__}: {str(e)[:500]}'
+              records.append(rec)
+          payload={'file_count':len(records),'records':records}
+          Path('outputs/backtest/AT_CACHE_SCHEMA_AUDIT.json').write_text(json.dumps(payload,indent=2,ensure_ascii=False,default=str)+'\n',encoding='utf-8')
+          print(json.dumps({'file_count':len(records),'paths':[r['path'] for r in records]},indent=2))
           PY
 
       - name: Run AT Weekly V1 backtest
@@ -74,6 +91,7 @@ jobs:
         with:
           name: at-weekly-v1-${{ github.run_id }}
           path: |
+            outputs/backtest/AT_CACHE_SCHEMA_AUDIT.json
             outputs/backtest/AT_WEEKLY_V1_SUMMARY.json
             outputs/backtest/AT_WEEKLY_V1_SUMMARY.md
             outputs/backtest/AT_WEEKLY_V1_TRADES.csv
