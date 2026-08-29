@@ -35,11 +35,31 @@ jobs:
       - name: Install backtest runtime
         run: python -m pip install --disable-pip-version-check pandas numpy pyarrow
 
-      - name: Audit restored cache
+      - name: Audit restored cache schema
         run: |
-          echo "ACTION cache files: $(find data/cache/actions -maxdepth 1 -type f 2>/dev/null | wc -l)"
-          echo "ETF cache files: $(find data/cache/etf -maxdepth 1 -type f 2>/dev/null | wc -l)"
-          du -sh data/cache 2>/dev/null || true
+          echo "=== CACHE FILES ==="
+          find data/cache -maxdepth 3 -type f -printf '%p\t%s bytes\n' 2>/dev/null | sort | head -80
+          echo "=== CACHE SCHEMAS ==="
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+          for p in sorted(Path('data/cache').rglob('*')):
+              if not p.is_file() or p.suffix.lower() not in {'.parquet','.csv'}:
+                  continue
+              print(f'FILE={p} SIZE={p.stat().st_size}')
+              try:
+                  if p.suffix.lower()=='.parquet':
+                      df=pd.read_parquet(p)
+                  else:
+                      df=pd.read_csv(p, nrows=5)
+                  print('SHAPE', df.shape)
+                  print('INDEX', type(df.index).__name__, getattr(df.index,'name',None))
+                  print('COLS', [str(c) for c in df.columns[:30]])
+                  print('DTYPES', {str(k):str(v) for k,v in df.dtypes.head(12).items()})
+                  print('HEAD', df.head(2).to_dict(orient='records'))
+              except Exception as e:
+                  print('ERROR', type(e).__name__, str(e)[:300])
+          PY
 
       - name: Run AT Weekly V1 backtest
         run: python -m v182.backtest.at_weekly_v1
