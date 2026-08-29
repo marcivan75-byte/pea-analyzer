@@ -8,6 +8,7 @@ on:
       - src/v182/backtest/at_weekly_v1.py
       - src/v182/backtest/at_weekly_v1_fixed.py
       - src/v182/backtest/at_weekly_entry_filters_v1.py
+      - src/v182/backtest/at_weekly_adx_filter_v1.py
       - .github/workflows/research_at_weekly_v1.yml
 
 permissions:
@@ -48,6 +49,9 @@ jobs:
       - name: Run action entry-filter comparison
         run: python -m v182.backtest.at_weekly_entry_filters_v1
 
+      - name: Run ADX entry-filter comparison
+        run: python -m v182.backtest.at_weekly_adx_filter_v1
+
       - name: Validate backtests actually used data
         run: |
           python - <<'PY'
@@ -55,18 +59,24 @@ jobs:
           from pathlib import Path
           p=json.loads(Path('outputs/backtest/AT_WEEKLY_V1_SUMMARY.json').read_text())
           q=json.loads(Path('outputs/backtest/AT_WEEKLY_ENTRY_FILTERS_V1.json').read_text())
+          a=json.loads(Path('outputs/backtest/AT_WEEKLY_ADX_FILTER_V1.json').read_text())
           assert p['status']=='SUCCESS' and p['scopes']['TOTAL']['valid_instruments'] > 0
           assert q['status']=='SUCCESS' and q['valid_actions'] > 0
           assert q['results']['BASELINE']['ALL']['trades'] > 0
+          assert a['status']=='SUCCESS' and a['valid_actions'] > 0
+          assert a['results']['BASELINE']['ALL']['trades'] > 0
           print('VALID_INSTRUMENTS',p['scopes']['TOTAL']['valid_instruments'])
           print('ACTION_FILTER_TESTS',q['valid_actions'])
-          print('BASELINE_TRADES',q['results']['BASELINE']['ALL']['trades'])
-          print('DOUBLE_VOLUME_TRADES',q['results']['VOL_DOUBLE']['ALL']['trades'])
+          print('ADX_FILTER_TESTS',a['valid_actions'])
+          print('BASELINE_TRADES',a['results']['BASELINE']['ALL']['trades'])
+          print('ADX20_TRADES',a['results']['ADX_GE_20']['ALL']['trades'])
+          print('ADX25_TRADES',a['results']['ADX_GE_25']['ALL']['trades'])
+          print('ADX30_TRADES',a['results']['ADX_GE_30']['ALL']['trades'])
           PY
 
-      - name: Show entry-filter summary
+      - name: Show ADX summary
         if: always()
-        run: cat outputs/backtest/AT_WEEKLY_ENTRY_FILTERS_V1.json || true
+        run: cat outputs/backtest/AT_WEEKLY_ADX_FILTER_V1.json || true
 
       - name: Upload AT Weekly research results
         if: always()
@@ -79,6 +89,8 @@ jobs:
             outputs/backtest/AT_WEEKLY_V1_TRADES.csv
             outputs/backtest/AT_WEEKLY_ENTRY_FILTERS_V1.json
             outputs/backtest/AT_WEEKLY_ENTRY_FILTERS_V1_TRADES.csv
+            outputs/backtest/AT_WEEKLY_ADX_FILTER_V1.json
+            outputs/backtest/AT_WEEKLY_ADX_FILTER_V1_TRADES.csv
           if-no-files-found: warn
           compression-level: 1
           retention-days: 7
