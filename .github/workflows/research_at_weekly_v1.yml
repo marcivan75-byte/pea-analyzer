@@ -6,6 +6,7 @@ on:
       - research/at-weekly-v1-20260829
     paths:
       - src/v182/backtest/at_weekly_v1.py
+      - src/v182/backtest/at_weekly_v1_fixed.py
       - .github/workflows/research_at_weekly_v1.yml
 
 permissions:
@@ -35,51 +36,27 @@ jobs:
       - name: Install backtest runtime
         run: python -m pip install --disable-pip-version-check pandas numpy pyarrow
 
-      - name: Audit restored cache schema
+      - name: Audit restored cache
         run: |
-          mkdir -p outputs/backtest
+          echo "Parquet blocks: $(find data/cache -type f -name '*.parquet' 2>/dev/null | wc -l)"
+          du -sh data/cache 2>/dev/null || true
+
+      - name: Run corrected AT Weekly V1 backtest
+        run: python -m v182.backtest.at_weekly_v1_fixed
+
+      - name: Validate backtest actually used data
+        run: |
           python - <<'PY'
-          from pathlib import Path
           import json
-          import pandas as pd
-
-          def scalar(v):
-              if v is None:
-                  return None
-              if isinstance(v, (str, int, float, bool)):
-                  return v
-              return str(v)
-
-          records=[]
-          for p in sorted(Path('data/cache').rglob('*')):
-              if not p.is_file() or p.suffix.lower() not in {'.parquet','.csv'}:
-                  continue
-              rec={'path':str(p),'size_bytes':p.stat().st_size,'suffix':p.suffix.lower()}
-              try:
-                  if p.suffix.lower()=='.parquet':
-                      df=pd.read_parquet(p)
-                  else:
-                      df=pd.read_csv(p, nrows=8)
-                  rec['shape']=[int(df.shape[0]),int(df.shape[1])]
-                  rec['index_type']=type(df.index).__name__
-                  rec['index_name']=scalar(getattr(df.index,'name',None))
-                  rec['columns']=[str(c) for c in df.columns[:50]]
-                  rec['dtypes']={str(k):str(v) for k,v in df.dtypes.head(20).items()}
-                  rec['head']=[{str(k):scalar(v) for k,v in row.items()} for row in df.head(3).to_dict(orient='records')]
-                  if isinstance(df.columns,pd.MultiIndex):
-                      rec['multiindex_levels']=[[scalar(x) for x in level[:20]] for level in df.columns.levels]
-                  rec['status']='OK'
-              except Exception as e:
-                  rec['status']='ERROR'
-                  rec['error']=f'{type(e).__name__}: {str(e)[:500]}'
-              records.append(rec)
-          payload={'file_count':len(records),'records':records}
-          Path('outputs/backtest/AT_CACHE_SCHEMA_AUDIT.json').write_text(json.dumps(payload,indent=2,ensure_ascii=False,default=str)+'\n',encoding='utf-8')
-          print(json.dumps({'file_count':len(records),'paths':[r['path'] for r in records]},indent=2))
+          from pathlib import Path
+          p=json.loads(Path('outputs/backtest/AT_WEEKLY_V1_SUMMARY.json').read_text())
+          assert p['status']=='SUCCESS', p
+          assert p['scopes']['TOTAL']['valid_instruments'] > 0, p['scopes']['TOTAL']
+          assert p['data_window']['first_completed_week'], p['data_window']
+          print('VALID_INSTRUMENTS',p['scopes']['TOTAL']['valid_instruments'])
+          print('TRADES',p['scopes']['TOTAL']['completed_trades'])
+          print('RUNTIME_SECONDS',p['runtime_seconds'])
           PY
-
-      - name: Run AT Weekly V1 backtest
-        run: python -m v182.backtest.at_weekly_v1
 
       - name: Show summary
         if: always()
@@ -91,7 +68,6 @@ jobs:
         with:
           name: at-weekly-v1-${{ github.run_id }}
           path: |
-            outputs/backtest/AT_CACHE_SCHEMA_AUDIT.json
             outputs/backtest/AT_WEEKLY_V1_SUMMARY.json
             outputs/backtest/AT_WEEKLY_V1_SUMMARY.md
             outputs/backtest/AT_WEEKLY_V1_TRADES.csv
