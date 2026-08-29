@@ -7,6 +7,7 @@ on:
     paths:
       - src/v182/backtest/at_weekly_v1.py
       - src/v182/backtest/at_weekly_v1_fixed.py
+      - src/v182/backtest/at_weekly_entry_filters_v1.py
       - .github/workflows/research_at_weekly_v1.yml
 
 permissions:
@@ -41,28 +42,33 @@ jobs:
           echo "Parquet blocks: $(find data/cache -type f -name '*.parquet' 2>/dev/null | wc -l)"
           du -sh data/cache 2>/dev/null || true
 
-      - name: Run corrected AT Weekly V1 backtest
+      - name: Run corrected AT Weekly V1 baseline
         run: python -m v182.backtest.at_weekly_v1_fixed
 
-      - name: Validate backtest actually used data
+      - name: Run action entry-filter comparison
+        run: python -m v182.backtest.at_weekly_entry_filters_v1
+
+      - name: Validate backtests actually used data
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
           p=json.loads(Path('outputs/backtest/AT_WEEKLY_V1_SUMMARY.json').read_text())
-          assert p['status']=='SUCCESS', p
-          assert p['scopes']['TOTAL']['valid_instruments'] > 0, p['scopes']['TOTAL']
-          assert p['data_window']['first_completed_week'], p['data_window']
+          q=json.loads(Path('outputs/backtest/AT_WEEKLY_ENTRY_FILTERS_V1.json').read_text())
+          assert p['status']=='SUCCESS' and p['scopes']['TOTAL']['valid_instruments'] > 0
+          assert q['status']=='SUCCESS' and q['valid_actions'] > 0
+          assert q['results']['BASELINE']['ALL']['trades'] > 0
           print('VALID_INSTRUMENTS',p['scopes']['TOTAL']['valid_instruments'])
-          print('TRADES',p['scopes']['TOTAL']['completed_trades'])
-          print('RUNTIME_SECONDS',p['runtime_seconds'])
+          print('ACTION_FILTER_TESTS',q['valid_actions'])
+          print('BASELINE_TRADES',q['results']['BASELINE']['ALL']['trades'])
+          print('DOUBLE_VOLUME_TRADES',q['results']['VOL_DOUBLE']['ALL']['trades'])
           PY
 
-      - name: Show summary
+      - name: Show entry-filter summary
         if: always()
-        run: cat outputs/backtest/AT_WEEKLY_V1_SUMMARY.json || true
+        run: cat outputs/backtest/AT_WEEKLY_ENTRY_FILTERS_V1.json || true
 
-      - name: Upload AT Weekly V1 results
+      - name: Upload AT Weekly research results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -71,6 +77,8 @@ jobs:
             outputs/backtest/AT_WEEKLY_V1_SUMMARY.json
             outputs/backtest/AT_WEEKLY_V1_SUMMARY.md
             outputs/backtest/AT_WEEKLY_V1_TRADES.csv
+            outputs/backtest/AT_WEEKLY_ENTRY_FILTERS_V1.json
+            outputs/backtest/AT_WEEKLY_ENTRY_FILTERS_V1_TRADES.csv
           if-no-files-found: warn
           compression-level: 1
           retention-days: 7
