@@ -5,7 +5,7 @@ on:
     branches:
       - research/at-weekly-v1-20260829
     paths:
-      - src/v182/backtest/at_weekly_trend_entry_filter_v1.py
+      - src/v182/backtest/at_weekly_entry_profile_v1.py
       - .github/workflows/research_at_weekly_v1.yml
 
 permissions:
@@ -14,7 +14,7 @@ permissions:
 jobs:
   at-weekly-v1:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 8
     env:
       PYTHONPATH: ${{ github.workspace }}/src
     steps:
@@ -35,40 +35,35 @@ jobs:
       - name: Install backtest runtime
         run: python -m pip install --disable-pip-version-check pandas numpy pyarrow
 
-      - name: Audit restored cache
-        run: |
-          echo "Parquet blocks: $(find data/cache -type f -name '*.parquet' 2>/dev/null | wc -l)"
-          du -sh data/cache 2>/dev/null || true
+      - name: Run entry profile diagnostic
+        run: python -m v182.backtest.at_weekly_entry_profile_v1
 
-      - name: Run trend entry-filter comparison
-        run: python -m v182.backtest.at_weekly_trend_entry_filter_v1
-
-      - name: Validate backtest actually used data
+      - name: Validate diagnostic
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          x=json.loads(Path('outputs/backtest/AT_WEEKLY_TREND_ENTRY_FILTER_V1.json').read_text())
+          x=json.loads(Path('outputs/backtest/AT_WEEKLY_ENTRY_PROFILE_V1.json').read_text())
           assert x['status']=='SUCCESS' and x['valid_actions'] > 0
-          assert x['results']['BASELINE']['ALL']['trades'] > 0
-          assert x['exit_rules_changed'] is False
+          assert x['baseline']['trades'] > 0
+          assert x['rules_changed'] is False
           print('VALID_ACTIONS',x['valid_actions'])
-          for k in ['BASELINE','MA20_GT_MA50','MA20_SLOPE_POS','TREND_DOUBLE']:
-              print(k,x['results'][k]['ALL'])
+          print('BASELINE',x['baseline'])
+          print('GATES',x['diagnostic_gates_on_baseline_trades'])
           PY
 
-      - name: Show trend summary
+      - name: Show entry profile
         if: always()
-        run: cat outputs/backtest/AT_WEEKLY_TREND_ENTRY_FILTER_V1.json || true
+        run: cat outputs/backtest/AT_WEEKLY_ENTRY_PROFILE_V1.json || true
 
-      - name: Upload AT Weekly trend research results
+      - name: Upload entry profile
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: at-weekly-trend-v1-${{ github.run_id }}
+          name: at-weekly-entry-profile-v1-${{ github.run_id }}
           path: |
-            outputs/backtest/AT_WEEKLY_TREND_ENTRY_FILTER_V1.json
-            outputs/backtest/AT_WEEKLY_TREND_ENTRY_FILTER_V1_TRADES.csv
+            outputs/backtest/AT_WEEKLY_ENTRY_PROFILE_V1.json
+            outputs/backtest/AT_WEEKLY_ENTRY_PROFILE_V1_TRADES.csv
           if-no-files-found: warn
           compression-level: 1
           retention-days: 7
