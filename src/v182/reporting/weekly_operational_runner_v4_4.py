@@ -19,6 +19,7 @@ from v182.reporting import sector_or_shadow_v1 as sector_or_shadow
 from v182.reporting import or_ranking_daily_shadow_v1 as daily_or_shadow
 from v182.reporting import or_hebdo_report_v1 as or_hebdo_report
 from v182.reporting import weekly_run_synthesis_v1 as run_synthesis
+from v182.reporting import entry_exit_shadow_v1 as entry_exit_shadow
 from v182.backtest import weekly_pit_snapshot_v1 as pit_snapshot
 from v182.sources.ohlcv_incremental_policy import write_audit as write_ohlcv_policy
 
@@ -127,6 +128,7 @@ def run(root: Path = ROOT) -> dict:
             daily_or_payload = _safe_step("daily_or_shadow", lambda: daily_or_shadow.run(root=root), or_timings)
         or_report_payload = _safe_step("or_hebdo_report", lambda: or_hebdo_report.run(root=root), or_timings)
         snapshot_payload = _safe_step("weekly_pit_snapshot", lambda: pit_snapshot.run(root=root), or_timings)
+        entry_exit_payload = _safe_step("entry_exit_shadow", lambda: entry_exit_shadow.run(root=root), or_timings)
         or_seconds = perf_counter() - or_started
 
         total_seconds = perf_counter() - started
@@ -157,6 +159,7 @@ def run(root: Path = ROOT) -> dict:
             "daily_or_shadow_status": daily_or_payload.get("status"),
             "or_hebdo_report_status": or_report_payload.get("status"),
             "weekly_pit_snapshot_status": snapshot_payload.get("status"),
+            "entry_exit_shadow_status": entry_exit_payload.get("status"),
             "objectives_risk_reference_influence": 0.0,
             "runtime_dirs": runtime_dirs,
             "ohlcv_incremental_policy": ohlcv_policy.get("policy"),
@@ -164,6 +167,7 @@ def run(root: Path = ROOT) -> dict:
                 "or_steps_sequential": True,
                 "shadow_failures_isolated": True,
                 "weekly_pit_snapshot_enabled": True,
+                "entry_exit_shadow_enabled": True,
                 "runtime_target_is_warning_only": True,
                 "criteria_changed": False,
                 "weights_changed": False,
