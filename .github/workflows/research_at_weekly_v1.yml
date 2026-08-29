@@ -5,7 +5,7 @@ on:
     branches:
       - research/at-weekly-v1-20260829
     paths:
-      - src/v182/backtest/at_weekly_strength_breakout_filter_v1.py
+      - src/v182/backtest/at_weekly_weighted_entry_v1.py
       - .github/workflows/research_at_weekly_v1.yml
 
 permissions:
@@ -35,36 +35,37 @@ jobs:
       - name: Install backtest runtime
         run: python -m pip install --disable-pip-version-check pandas numpy pyarrow
 
-      - name: Run relative-strength and breakout entry comparison
-        run: python -m v182.backtest.at_weekly_strength_breakout_filter_v1
+      - name: Run weighted entry score simulations
+        run: python -m v182.backtest.at_weekly_weighted_entry_v1
 
-      - name: Validate strength-breakout backtest
+      - name: Validate weighted backtest
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          x=json.loads(Path('outputs/backtest/AT_WEEKLY_STRENGTH_BREAKOUT_FILTER_V1.json').read_text())
+          x=json.loads(Path('outputs/backtest/AT_WEEKLY_WEIGHTED_ENTRY_V1.json').read_text())
           assert x['status']=='SUCCESS' and x['valid_actions'] > 0
-          assert x['results']['REFERENCE_BEST_R1_MACD']['ALL']['trades'] > 0
+          assert x['results']['REFERENCE_CURRENT']['ALL']['trades'] > 0
           assert x['exit_rules_changed'] is False
+          assert x['core_entry_remains_mandatory'] is True
           assert x['lookahead_controls']['breakout_highs']=='prior_completed_weeks_only'
           print('VALID_ACTIONS',x['valid_actions'])
-          for k in ['REFERENCE_BEST_R1_MACD','PLUS_NEAR_HIGH_10W','PLUS_BREAKOUT_10W','PLUS_NEAR_HIGH_20W','PLUS_BREAKOUT_20W','PLUS_RS12','PLUS_RS4_RS12','PLUS_RS12_NEAR_HIGH_10W','PLUS_RS12_BREAKOUT_10W']:
+          for k in x['variants']:
               print(k,x['results'][k]['ALL'])
           PY
 
-      - name: Show strength-breakout summary
+      - name: Show weighted summary
         if: always()
-        run: cat outputs/backtest/AT_WEEKLY_STRENGTH_BREAKOUT_FILTER_V1.json || true
+        run: cat outputs/backtest/AT_WEEKLY_WEIGHTED_ENTRY_V1.json || true
 
-      - name: Upload strength-breakout research results
+      - name: Upload weighted research results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: at-weekly-strength-breakout-v1-${{ github.run_id }}
+          name: at-weekly-weighted-v1-${{ github.run_id }}
           path: |
-            outputs/backtest/AT_WEEKLY_STRENGTH_BREAKOUT_FILTER_V1.json
-            outputs/backtest/AT_WEEKLY_STRENGTH_BREAKOUT_FILTER_V1_TRADES.csv
+            outputs/backtest/AT_WEEKLY_WEIGHTED_ENTRY_V1.json
+            outputs/backtest/AT_WEEKLY_WEIGHTED_ENTRY_V1_TRADES.csv
           if-no-files-found: warn
           compression-level: 1
           retention-days: 7
