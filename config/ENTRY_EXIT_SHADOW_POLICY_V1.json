@@ -1,6 +1,6 @@
 {
-  "version": "ENTRY_EXIT_SHADOW_V1",
-  "locked_at_utc": "2026-08-29T06:52:00Z",
+  "version": "ENTRY_EXIT_SHADOW_V1_1_DYNAMIC",
+  "locked_at_utc": "2026-08-29T07:01:00Z",
   "oos_start": "2026-09-01",
   "holdout_closed_until": "2027-05-01",
   "production_gates_unchanged": true,
@@ -12,20 +12,20 @@
     "action_upside_min_pct": 20.0,
     "etf_uses_ci_selection_gate": true
   },
-  "challenger_B": {
-    "name": "CONFIDENCE_SOFT_WATCH",
-    "action_confidence_min": 55.0,
-    "upside_is_context_only": true,
-    "require_rr_min": 2.0
+  "dynamic_confidence": {
+    "enabled": true,
+    "quantile": 0.70,
+    "floor": 58.0,
+    "cap": 72.0,
+    "smoothing": 0.5,
+    "min_sample": 4,
+    "require_rr_min": 2.0,
+    "separate_action_etf": true
   },
   "challenger_C": {
     "name": "OR_AND_RR",
     "or_composite_min": 42.0,
-    "require_rr_min": 2.0,
-    "confidence_is_weight_only": true
-  },
-  "exit_invalidation": {
-    "use_sim_invalidation": true
+    "require_rr_min": 2.0
   },
   "exit_hysteresis": {
     "confidence_buffer_pts": 8.0,
