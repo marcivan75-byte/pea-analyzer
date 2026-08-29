@@ -122,7 +122,14 @@ jobs:
         run: python -m v182.audit.identity_hydration
 
       - name: Run unified weekly operational runner V4.4
+        id: weekly_runner
+        continue-on-error: true
         run: python -m v182.reporting.weekly_operational_runner_v4_4
+
+      - name: Rebuild CI / CI LIGHT online synthesis
+        if: always()
+        run: |
+          python -c "from v182.reporting.weekly_run_synthesis_v1 import run; print(run())"
 
       - name: Show unified summary
         if: always()
@@ -135,6 +142,13 @@ jobs:
       - name: Publish CI, CI LIGHT and online synthesis
         if: always()
         run: |
+          {
+            echo "# Publication automatique HEBDO"
+            echo
+            echo "Run: ${{ github.run_id }} — ${{ github.event_name }} — conclusion runner: ${{ steps.weekly_runner.outcome }}"
+            echo "Cadence: vendredi 18:30 Europe/Paris + workflow_dispatch"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
           for f in outputs/mobile/WEEKLY_RUN_SYNTHESIS.md outputs/mobile/CI_AND_CI_LIGHT_CHALLENGER_V2.md outputs/mobile/ANDROID_CI_CONTROL_CENTER.md outputs/decision_brief/DECISION_BRIEF.md; do
             if [ -f "$f" ]; then
               printf '\n\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
@@ -219,6 +233,7 @@ jobs:
             outputs/mobile/
             outputs/data_audit/
             outputs/audit/
+            outputs/backtest/
             outputs/gaps/
             outputs/V21_3_SECTOR_ROTATION.csv
             outputs/V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv
