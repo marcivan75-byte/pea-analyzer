@@ -7,11 +7,13 @@ import json
 
 import pandas as pd
 
-from v182.reporting.entry_exit_shadow_v1 import CI_PATHS, _num
-
 
 ROOT = Path(__file__).resolve().parents[3]
 POLICY_PATH = Path("config/RR_RISK_SHADOW_POLICY_V1.json")
+CI_PATHS = (
+    Path("outputs/committee_master/CI_RESULTS_CHALLENGER_V2.csv"),
+    Path("outputs/committee_master/CI_SELECTION_ALL_V4.csv"),
+)
 OUT_CSV = Path("outputs/committee_master/RR_RISK_SHADOW_V1.csv")
 OUT_MD = Path("outputs/mobile/RR_RISK_SHADOW_V1.md")
 OUT_AUDIT = Path("outputs/audit/RR_RISK_SHADOW_V1.json")
@@ -32,6 +34,18 @@ def _read_ci(root: Path) -> pd.DataFrame:
     return pd.DataFrame()
 
 
+def _num(value) -> float | None:
+    try:
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return None
+        text = str(value).replace(",", ".").strip()
+        if text in {"", "nan", "None"}:
+            return None
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
 def _rr(reward_px: float | None, risk_px: float | None) -> float | None:
     if reward_px is None or risk_px is None or risk_px <= 0:
         return None
@@ -46,9 +60,16 @@ def _size(rr: float | None, spec: dict) -> float:
     return float(spec.get("rr_ge_3", 1.0))
 
 
+def _above_optimal(price: float | None, entry: float | None, tolerance_pct: float) -> bool:
+    if price is None or entry is None or entry <= 0:
+        return False
+    return price > entry * (1.0 + tolerance_pct / 100.0)
+
+
 def run(root: Path = ROOT) -> dict:
     policy = _policy(root)
     frame = _read_ci(root)
+    tolerance = float(policy.get("overshoot_tolerance_pct", 0.5))
     if frame.empty:
         payload = {"status": "SKIPPED_NO_CI", "rows": 0, "decision_influence": 0.0}
     else:
@@ -64,9 +85,14 @@ def run(root: Path = ROOT) -> dict:
             rr_now = None
             if target is not None and price is not None and invalid is not None:
                 rr_now = _rr(target - price, price - invalid)
-            above_opt = bool(price is not None and entry is not None and price > entry)
+            above_opt = _above_optimal(price, entry, tolerance)
             invalid_hit = bool(price is not None and invalid is not None and price < invalid)
-            entry_ok = bool(rr_opt is not None and rr_opt >= float(policy.get("entry_rr_min", 2)) and not above_opt)
+            entry_ok = bool(
+                rr_opt is not None
+                and rr_opt >= float(policy.get("entry_rr_min", 2))
+                and not above_opt
+                and not invalid_hit
+            )
             exit_rr = bool(
                 rr_now is not None and rr_now < float(policy.get("exit_rr_from_current_min", 1))
             )
@@ -84,6 +110,7 @@ def run(root: Path = ROOT) -> dict:
             rec["RR_AT_OPTIMAL"] = rr_opt
             rec["RR_AT_CURRENT"] = rr_now
             rec["RR_PRICE_ABOVE_OPTIMAL"] = above_opt
+            rec["RR_OVERSHOOT_TOLERANCE_PCT"] = tolerance
             rec["RR_ENTRY_OK"] = entry_ok
             rec["RR_SOFT_SIZE"] = _size(rr_opt if not above_opt else rr_now, policy.get("size_soft") or {})
             rec["RR_RISK_ACTION"] = action
@@ -95,7 +122,7 @@ def run(root: Path = ROOT) -> dict:
         lines = [
             "# Risque R:R SHADOW",
             "",
-            "Entrée si R:R à l'optimal ≥ 2 et prix ≤ entrée optimale.",
+            f"Entrée si R:R à l'optimal ≥ {policy.get('entry_rr_min', 2)} et prix ≤ optimale + {tolerance} %.",
             "Taille shadow: 0 / 0.5 / 1.0 selon R:R <2, 2–3, ≥3.",
             "Sortie: invalidation ou R:R spot < 1. Pas de take-profit fixe.",
             "",
@@ -123,6 +150,7 @@ def run(root: Path = ROOT) -> dict:
             "rows": int(len(out)),
             "eligible": int(out["RR_ENTRY_OK"].sum()) if "RR_ENTRY_OK" in out else 0,
             "wait_above_optimal": int(out["RR_PRICE_ABOVE_OPTIMAL"].sum()) if "RR_PRICE_ABOVE_OPTIMAL" in out else 0,
+            "overshoot_tolerance_pct": tolerance,
             "decision_influence": 0.0,
             "real_orders_enabled": False,
         }

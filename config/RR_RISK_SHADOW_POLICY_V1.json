@@ -1,11 +1,12 @@
 {
-  "version": "RR_RISK_SHADOW_V1",
-  "locked_at_utc": "2026-08-29T07:02:00Z",
+  "version": "RR_RISK_SHADOW_V1_1",
+  "locked_at_utc": "2026-08-29T07:07:00Z",
   "decision_influence": 0.0,
   "real_orders_enabled": false,
   "entry_rr_min": 2.0,
   "preferred_rr": 3.0,
   "exit_rr_from_current_min": 1.0,
+  "overshoot_tolerance_pct": 0.5,
   "size_soft": {
     "rr_lt_2": 0.0,
     "rr_2_to_3": 0.5,
