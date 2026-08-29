@@ -1,0 +1,35 @@
+{
+  "version": "ENTRY_EXIT_SHADOW_V1",
+  "locked_at_utc": "2026-08-29T06:52:00Z",
+  "oos_start": "2026-09-01",
+  "holdout_closed_until": "2027-05-01",
+  "production_gates_unchanged": true,
+  "decision_influence": 0.0,
+  "real_orders_enabled": false,
+  "baseline_A": {
+    "name": "PRODUCTION_MIRROR",
+    "action_confidence_min": 66.0,
+    "action_upside_min_pct": 20.0,
+    "etf_uses_ci_selection_gate": true
+  },
+  "challenger_B": {
+    "name": "CONFIDENCE_SOFT_WATCH",
+    "action_confidence_min": 55.0,
+    "upside_is_context_only": true,
+    "require_rr_min": 2.0
+  },
+  "challenger_C": {
+    "name": "OR_AND_RR",
+    "or_composite_min": 42.0,
+    "require_rr_min": 2.0,
+    "confidence_is_weight_only": true
+  },
+  "exit_invalidation": {
+    "use_sim_invalidation": true
+  },
+  "exit_hysteresis": {
+    "confidence_buffer_pts": 8.0,
+    "weeks_below": 2,
+    "horizon_sessions_mt": 60
+  }
+}
