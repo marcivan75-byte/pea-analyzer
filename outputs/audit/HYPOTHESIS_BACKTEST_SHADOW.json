@@ -1,0 +1,25 @@
+{
+  "status": "DIAGNOSTIC_PROXY_ONLY",
+  "generated_at_utc": "2026-08-29T07:11:18Z",
+  "horizon_days": 60,
+  "spacing_days": 21,
+  "first": "2023-07-13",
+  "last": "2026-05-18",
+  "oos_official_start": "2026-09-01",
+  "signal_source": "PIT_126D_PRICE_MOMENTUM",
+  "promotion_ready": false,
+  "decision_influence": 0.0,
+  "real_orders_enabled": false,
+  "ACTION_MT": {
+    "snapshots": 44,
+    "equal_weight": {"mean": 27.349, "median": 5.413, "p10": -2.143, "hit_rate": 79.5},
+    "static_top_10pct": {"mean": 16.866, "median": 4.361, "p10": -3.764, "hit_rate": 70.5},
+    "dynamic_p70": {"mean": 8.357, "median": 5.248, "p10": -1.829, "hit_rate": 86.4}
+  },
+  "ETF_MT": {
+    "snapshots": 44,
+    "equal_weight": {"mean": 4.419, "median": 4.141, "p10": 0.394, "hit_rate": 93.2},
+    "static_top_10pct": {"mean": 4.762, "median": 5.471, "p10": -1.841, "hit_rate": 79.5},
+    "dynamic_p70": {"mean": 4.579, "median": 4.715, "p10": -0.659, "hit_rate": 88.6}
+  }
+}
