@@ -19,7 +19,6 @@ OUT_BANK=ROOT/'outputs/backtest/AT_WEEKLY_WEIGHT_BANK_V1_TOP.csv'
 OUT_TRADES=ROOT/'outputs/backtest/AT_WEEKLY_WEIGHT_BANK_V1_FINAL_TRADES.csv'
 SEED=20260829
 FEATURES=['rsi','stoch','sma20','sma50','psar','ma_trend','close_loc','r1','macd','breakout']
-# ranges are deliberately broad; strong prior ranges for R1/MACD/breakout reflect prior diagnostics.
 RANGES={
  'rsi':(1,8),'stoch':(1,12),'sma20':(1,8),'sma50':(1,10),'psar':(1,10),
  'ma_trend':(2,14),'close_loc':(2,14),'r1':(4,20),'macd':(4,20),'breakout':(8,28),
@@ -67,7 +66,6 @@ def feature_frame(b):
     x['close_loc']=(b.close_location>=.60).fillna(False).astype(float)
     x['r1']=(b.close>b.r1_prev).fillna(False).astype(float)
     x['macd']=(b.macd>b.macd_signal).fillna(False).astype(float)
-    # hierarchical 0..1 breakout strength; strongest condition replaces weaker nested states.
     state=np.zeros(len(b),dtype=float)
     near10=(b.close>=.97*b.h10).fillna(False).to_numpy(); near20=(b.close>=.97*b.h20).fillna(False).to_numpy()
     br10=(b.close>b.h10).fillna(False).to_numpy(); br20=(b.close>b.h20).fillna(False).to_numpy()
@@ -77,7 +75,6 @@ def feature_frame(b):
 
 
 def future_outcomes(symbol,b,x):
-    # Independent-event outcomes for broad ranking. Full finalists are re-simulated with one-position logic later.
     n=len(b); next_exit=np.full(n,-1,dtype=int); nxt=-1
     for i in range(n-2,-1,-1):
         if _exit_reasons(b.iloc[i]): nxt=i
@@ -107,7 +104,6 @@ def diag_rank(X,ret,dates,w,thr):
     r12=rr[dsel>=cutoff12]; r24=rr[dsel>=cutoff24]
     wr12=float((r12>0).mean()*100) if len(r12)>=15 else 0.0; wr24=float((r24>0).mean()*100) if len(r24)>=30 else 0.0
     robust=min(wr,wr12,wr24)
-    # false-positive objective dominates; PF/mean/p10 are tie-breakers; sample-size reward is capped.
     score=robust*3 + wr + min(pf,4)*3 + max(-5,min(5,mean))*1.5 + max(-10,p10)*.2 + min(n,250)/100
     return {'diag_score':round(score,4),'diag_trades':n,'diag_win_rate_pct':round(wr,2),'diag_wr12':round(wr12,2),'diag_wr24':round(wr24,2),
       'diag_mean':round(mean,3),'diag_median':round(med,3),'diag_pf':round(pf,3),'diag_p10':round(p10,3),'threshold_ratio':thr,'weights':w}
@@ -154,6 +150,7 @@ def local_models(parent,rng):
 
 
 def run():
+    OUT.parent.mkdir(parents=True,exist_ok=True)
     st=time.perf_counter(); rng=random.Random(SEED); bars_map={}; event_rows=[]; first=[]; last=[]
     for path in _cache_files(ROOT/CACHE_DIRS['ACTION']):
         for symbol,hist,error in _iter_consolidated(path):
@@ -165,7 +162,6 @@ def run():
     cols=['symbol','signal_ns','entry_ns','return_pct','holding_weeks']+FEATURES
     ev=pd.DataFrame(event_rows,columns=cols); X=ev[FEATURES].to_numpy(dtype=float); ret=ev.return_pct.to_numpy(dtype=float); dates=ev.signal_ns.to_numpy(dtype='datetime64[ns]')
     bank=[]
-    # Include two interpretable anchors then broad deterministic random search.
     anchors=[
       {'rsi':3,'stoch':7,'sma20':3,'sma50':4,'psar':4,'ma_trend':7,'close_loc':7,'r1':12,'macd':12,'breakout':22},
       {'rsi':2,'stoch':6,'sma20':2,'sma50':3,'psar':3,'ma_trend':6,'close_loc':8,'r1':14,'macd':14,'breakout':28},
@@ -176,7 +172,6 @@ def run():
             z=diag_rank(X,ret,dates,w,th)
             if z: bank.append(z)
     bank=sorted(bank,key=lambda z:z['diag_score'],reverse=True)
-    # Deduplicate by weights+threshold and take broad finalists.
     seen=set(); finalists=[]
     for z in bank:
         key=(tuple(z['weights'][k] for k in FEATURES),z['threshold_ratio'])
@@ -189,7 +184,6 @@ def run():
         for sym,b in bars_map.items(): tr.extend(full_sim(sym,b,m,label))
         df=pd.DataFrame(tr); sm=summarize_full(df,end); full.append({'label':label,**m,'full':sm}); all_tr.extend(tr)
     full=sorted(full,key=lambda z:z['full']['selection_score'],reverse=True); parents=full[:2]
-    # Local optimisation around each of the two strongest full-resimulated parents.
     local_full=[]
     for pidx,p in enumerate(parents,1):
         local=[]
@@ -202,7 +196,6 @@ def run():
             for sym,b in bars_map.items(): tr.extend(full_sim(sym,b,m,label))
             df=pd.DataFrame(tr); sm=summarize_full(df,end); local_full.append({'label':label,**m,'full':sm}); all_tr.extend(tr)
     combined=sorted(full+local_full,key=lambda z:z['full']['selection_score'],reverse=True)
-    # Keep two final models structurally distinct if possible.
     winners=[]
     for z in combined:
         if z['full']['ALL']['trades']<50: continue
@@ -225,6 +218,6 @@ def run():
       'selection_rule':'False-positive reduction dominates via worst win-rate across ALL/12M/18M/24M; PF and sample size are secondary. Minimum 50 trades for final preference.',
       'lookahead_controls':{'pivot_r1':'previous_completed_week_only','breakout_highs':'prior_completed_weeks_only','macd':'signal_week_close_only','execution':'next_week_open'},
       'limitations':['CURRENT_CACHE_UNIVERSE_NOT_PIT_MEMBERSHIP','SURVIVORSHIP_BIAS_POSSIBLE','BROAD_STAGE_USES_INDEPENDENT_EVENT_OUTCOMES','FINALISTS_FULLY_RESIMULATED_ONE_POSITION_PER_SYMBOL','NO_FEES_SLIPPAGE','RESEARCH_ONLY','NO_EXIT_OPTIMISATION']}
-    OUT.parent.mkdir(parents=True,exist_ok=True); OUT.write_text(json.dumps(payload,indent=2,ensure_ascii=False)+'\n',encoding='utf-8'); print(json.dumps(payload,indent=2,ensure_ascii=False)); return payload
+    OUT.write_text(json.dumps(payload,indent=2,ensure_ascii=False)+'\n',encoding='utf-8'); print(json.dumps(payload,indent=2,ensure_ascii=False)); return payload
 
 if __name__=='__main__': run()
