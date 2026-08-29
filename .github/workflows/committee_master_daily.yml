@@ -138,6 +138,7 @@ jobs:
           if [ -f outputs/audit/WEEKLY_UNIFIED_SUPER_RUNTIME_V22_2_3.json ]; then cat outputs/audit/WEEKLY_UNIFIED_SUPER_RUNTIME_V22_2_3.json; fi
           if [ -f outputs/audit/WEEKLY_RUN_SYNTHESIS.json ]; then cat outputs/audit/WEEKLY_RUN_SYNTHESIS.json; fi
           if [ -f outputs/audit/ENTRY_EXIT_SHADOW_V1.json ]; then cat outputs/audit/ENTRY_EXIT_SHADOW_V1.json; fi
+          if [ -f outputs/audit/RR_RISK_SHADOW_V1.json ]; then cat outputs/audit/RR_RISK_SHADOW_V1.json; fi
           if [ -f outputs/audit/WEEKLY_TAIL_SUPER_RUNTIME_V21_16_0.json ]; then cat outputs/audit/WEEKLY_TAIL_SUPER_RUNTIME_V21_16_0.json; fi
 
       - name: Publish CI, CI LIGHT and online synthesis
@@ -150,7 +151,7 @@ jobs:
             echo "Cadence: vendredi 18:30 Europe/Paris + workflow_dispatch"
             echo
           } >> "$GITHUB_STEP_SUMMARY"
-          for f in outputs/mobile/WEEKLY_RUN_SYNTHESIS.md outputs/mobile/CI_AND_CI_LIGHT_CHALLENGER_V2.md outputs/mobile/ENTRY_EXIT_SHADOW_V1.md outputs/mobile/ANDROID_CI_CONTROL_CENTER.md outputs/decision_brief/DECISION_BRIEF.md; do
+          for f in outputs/mobile/WEEKLY_RUN_SYNTHESIS.md outputs/mobile/CI_AND_CI_LIGHT_CHALLENGER_V2.md outputs/mobile/ENTRY_EXIT_SHADOW_V1.md outputs/mobile/RR_RISK_SHADOW_V1.md outputs/mobile/ANDROID_CI_CONTROL_CENTER.md outputs/decision_brief/DECISION_BRIEF.md; do
             if [ -f "$f" ]; then
               printf '\n\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
               cat "$f" >> "$GITHUB_STEP_SUMMARY"
