@@ -21,7 +21,6 @@ class HebdoV221Blocked(RuntimeError):
 
 
 def apply_quality_filter(frame: pd.DataFrame) -> pd.DataFrame:
-    """ROE<5% and debt/equity>1.5 => EXCLU_QUALITE; missing fundamentals block."""
     out = frame.copy()
     required = ("roe", "debt_to_equity")
     if any(name not in out.columns for name in required):
@@ -36,7 +35,7 @@ def apply_quality_filter(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def double_sector_selection(frame: pd.DataFrame, max_tct: int, max_ct: int = 20) -> pd.DataFrame:
-    """Top-2 per sector, then global sector-neutral ranking; bounded TCT/CT output."""
+    """Top-2/secteur puis allocation bornée TCT/CT sans duplication."""
     if max_tct < 0 or max_ct < 0:
         raise ValueError("max_tct/max_ct must be >= 0")
     required = {"sector", "governed_score", "mom_26w_sector", "selection_status", "quality_status"}
@@ -65,22 +64,24 @@ def double_sector_selection(frame: pd.DataFrame, max_tct: int, max_ct: int = 20)
 
 
 def volatility_target_weights(frame: pd.DataFrame, regime: MarketRegime) -> pd.Series:
-    """Inverse-ATR sizing. NORMAL gross=100%; CRASH gross=80% (20% cash)."""
+    """Inverse ATR sur l'ensemble des positions sélectionnées; 20% cash en CRASH."""
     if frame.empty:
         return pd.Series(dtype=float, index=frame.index)
     if "atr_14_pct" not in frame.columns:
         raise HebdoV221Blocked("BLOCK_DATA_SIZING: atr_14_pct missing")
     atr = pd.to_numeric(frame["atr_14_pct"], errors="coerce")
-    valid = atr.notna() & (atr > 0)
+    valid = atr.notna() & np.isfinite(atr) & (atr > 0)
     if not bool(valid.all()):
         raise HebdoV221Blocked("BLOCK_DATA_SIZING: ATR missing/non-positive; no imputation allowed")
     inv = 1.0 / atr
     gross = 0.8 if regime.name == "CRASH" else 1.0
-    return inv / float(inv.sum()) * gross
+    denom = float(inv.sum())
+    if not np.isfinite(denom) or denom <= 0:
+        raise HebdoV221Blocked("BLOCK_DATA_SIZING: invalid inverse ATR denominator")
+    return inv / denom * gross
 
 
 def apply_four_week_exit(frame: pd.DataFrame) -> pd.DataFrame:
-    """After four trading weeks, cut TCT if sector-neutral momentum is negative."""
     out = frame.copy()
     if "holding_days" not in out.columns or "mom_26w_sector" not in out.columns:
         out["exit_4w_signal"] = False
@@ -92,7 +93,7 @@ def apply_four_week_exit(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def compute_ic_decay(frame: pd.DataFrame, score_col: str = "governed_score") -> dict[str, float | int | None]:
-    """Spearman IC on true forward-return columns only; missing horizons stay null."""
+    """IC cross-sectionnel sur univers scoreable; jamais sur seuls gagnants/positions."""
     result: dict[str, float | int | None] = {}
     if score_col not in frame.columns:
         for horizon in HORIZONS:
@@ -134,26 +135,34 @@ def build_dashboard(
     *,
     turnover: float | None = None,
 ) -> dict[str, object]:
-    """Friday committee dashboard; reports facts, not target values as achieved results."""
+    """Dashboard: IC sur univers, P&L/MAE/stops uniquement sur portefeuille sélectionné."""
+    portfolio = frame[frame.get("hebdo_bucket", pd.Series(index=frame.index, dtype="object")).isin(["TCT", "CT"])].copy()
     dashboard: dict[str, object] = {
         "version": "V22.1",
         "regime_cac": regime.name,
         "cac40_2w_return": regime.two_week_return,
         "tct_multiplier": regime.tct_multiplier,
-        "rows": int(len(frame)),
+        "rows_universe": int(len(frame)),
+        "rows_portfolio": int(len(portfolio)),
         "turnover": turnover,
-        "hit_rate_5d_true": _rate_true(frame, "forward_ret_true_1w"),
-        "hit_rate_26w_true": _rate_true(frame, "forward_ret_true_26w"),
-        "mae_mean": _mean_numeric(frame, "mae"),
-        "expectancy_26w_true": _mean_numeric(frame, "forward_ret_true_26w"),
+        "hit_rate_5d_true": _rate_true(portfolio, "forward_ret_true_1w"),
+        "hit_rate_26w_true": _rate_true(portfolio, "forward_ret_true_26w"),
+        "mae_mean": _mean_numeric(portfolio, "mae"),
+        "expectancy_26w_true": _mean_numeric(portfolio, "forward_ret_true_26w"),
     }
     dashboard.update(compute_ic_decay(frame))
 
-    if "hit_stop" in frame.columns:
-        stop = frame["hit_stop"].dropna().astype(bool)
+    if "hit_stop" in portfolio.columns:
+        stop = portfolio["hit_stop"].dropna().astype(bool)
         dashboard["stop_rate"] = float(stop.mean()) if not stop.empty else None
     else:
         dashboard["stop_rate"] = None
+
+    if "portfolio_weight" in portfolio.columns:
+        w = pd.to_numeric(portfolio["portfolio_weight"], errors="coerce").dropna()
+        dashboard["gross_exposure"] = float(w.sum()) if not w.empty else None
+    else:
+        dashboard["gross_exposure"] = None
 
     for column in ("selection_status", "quality_status", "mae_status", "hebdo_bucket"):
         if column in frame.columns:
@@ -190,9 +199,9 @@ def run_v22_1(
     selected = double_sector_selection(scored, max_tct=max_tct, max_ct=20)
 
     selected["portfolio_weight"] = 0.0
-    tct_mask = selected["hebdo_bucket"].eq("TCT")
-    if bool(tct_mask.any()):
-        selected.loc[tct_mask, "portfolio_weight"] = volatility_target_weights(selected.loc[tct_mask], regime)
+    portfolio_mask = selected["hebdo_bucket"].isin(["TCT", "CT"])
+    if bool(portfolio_mask.any()):
+        selected.loc[portfolio_mask, "portfolio_weight"] = volatility_target_weights(selected.loc[portfolio_mask], regime)
     selected = apply_four_week_exit(selected)
     dashboard = build_dashboard(selected, regime, turnover=turnover)
     return selected, dashboard
