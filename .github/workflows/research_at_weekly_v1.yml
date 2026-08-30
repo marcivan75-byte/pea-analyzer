@@ -9,6 +9,7 @@ on:
       - src/v182/backtest/at_weekly_exit_opt_v8_profit_reversal_blocks.py
       - src/v182/backtest/at_weekly_exit_opt_v9_overheat_block_e.py
       - src/v182/backtest/at_weekly_exit_opt_v10_overheat_weight_bank.py
+      - src/v182/backtest/at_weekly_exit_opt_v11_overheat_core_refine.py
       - tests/test_at_weekly_protective_stop_contract.py
       - docs/research/AT_WEEKLY_BACKTEST_CONTRACT_V1.md
       - docs/research/AT_WEEKLY_DECISION_REGISTRY_V1.md
@@ -25,7 +26,6 @@ jobs:
       PYTHONPATH: ${{ github.workspace }}/src
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-
       - name: Restore persistent OHLCV cache
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
         with:
@@ -33,87 +33,60 @@ jobs:
           key: ohlcv-v3-at-weekly-v1-${{ github.run_id }}
           restore-keys: |
             ohlcv-v3-
-
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
-
       - name: Install backtest runtime
         run: python -m pip install --disable-pip-version-check pandas numpy pyarrow
-
       - name: Validate locked protective stop contract
         run: python -m unittest tests.test_at_weekly_protective_stop_contract -v
-
-      - name: Validate locked A-D decisions before E optimisation
+      - name: Validate locked A-D decisions
         run: |
           python - <<'PY'
           from pathlib import Path
-          from v182.backtest.at_weekly_exit_opt_v10_overheat_weight_bank import STOP_PCT,D_CFG
-          reg=Path('docs/research/AT_WEEKLY_DECISION_REGISTRY_V1.md').read_text(encoding='utf-8')
-          assert STOP_PCT == 9.0
-          assert D_CFG['activation_pct'] == 5.0
-          assert D_CFG['score'] == 1
-          assert D_CFG['daily_drop_pct'] == 4.0
-          assert 'ENTRY-01 | LOCKED' in reg
-          assert 'STOP-01 | LOCKED' in reg
-          assert 'D-01 | LOCKED-ANCHOR-FOR-E-STUDY' in reg
-          assert 'E-01 | ACTIVE WIP' in reg
+          from v182.backtest.at_weekly_exit_opt_v11_overheat_core_refine import STOP_PCT,D_CFG
+          reg=Path('docs/research/AT_WEEKLY_DECISION_REGISTRY_V1.md').read_text()
+          assert STOP_PCT==9.0
+          assert D_CFG['activation_pct']==5.0 and D_CFG['score']==1 and D_CFG['daily_drop_pct']==4.0
+          assert 'ENTRY-01 | LOCKED' in reg and 'STOP-01 | LOCKED' in reg and 'E-01 | ACTIVE WIP' in reg
           print('LOCKED_DECISIONS_OK')
           PY
-
-      - name: Run V10 Block E criterion and weight bank
-        run: python -m v182.backtest.at_weekly_exit_opt_v10_overheat_weight_bank
-
-      - name: Validate V10 robustness and no-lookahead controls
+      - name: Run V11 Block E focused refinement
+        run: python -m v182.backtest.at_weekly_exit_opt_v11_overheat_core_refine
+      - name: Validate V11 robustness and controls
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          x=json.loads(Path('outputs/backtest/AT_WEEKLY_EXIT_OPT_V10_OVERHEAT_WEIGHT_BANK.json').read_text())
-          assert x['status']=='SUCCESS'
-          assert x['valid_actions'] > 0
-          assert x['locked']['entries_fixed'] is True
-          assert x['locked']['protective_stop_pct'] == 9.0
-          assert x['locked']['false_positive_block_fixed'] is True
-          assert x['locked']['D01_anchor_fixed']['activation_pct'] == 5.0
-          assert x['locked']['D01_anchor_fixed']['score'] == 1
-          assert x['locked']['D01_anchor_fixed']['daily_drop_pct'] == 4.0
-          assert x['models_tested'] >= 200
-          assert x['eligible_models'] > 0
-          assert x['best_risk_robust'] is not None
-          assert len(x['single_criterion_ranking']) > 0
+          x=json.loads(Path('outputs/backtest/AT_WEEKLY_EXIT_OPT_V11_OVERHEAT_CORE_REFINE.json').read_text())
+          assert x['status']=='SUCCESS' and x['valid_actions']>0
+          assert x['models_tested']>=500 and x['eligible_models']>0 and x['best_guarded'] is not None
+          assert x['locked']['protective_stop_pct']==9.0 and x['locked']['entries_fixed'] is True
           c=x['lookahead_controls']
-          assert c['completed_week_signals_only'] is True
-          assert c['strategic_execution']=='next_week_open'
-          assert c['high52_uses_prior_window_only'] is True
-          assert c['fixed_stop_known_before_bar'] is True
-          assert c['endpoint_mark_is_execution'] is False
-          b=x['best_risk_robust']
-          print('MODELS',x['models_tested'],'ELIGIBLE',x['eligible_models'],'RR4_GUARDED',x['robust_rr4_guarded_count'])
-          print('BEST',b['exit_model'],b['config'],b['combined']['ALL'],b['robust'],b['e_metrics'],b['cost_sensitivity'],b['delta_vs_D01'])
-          print('SINGLES')
-          for z in x['single_criterion_ranking'][:9]:
-              print(z['config']['hypothesis'],z['config']['profile']['name'],z['combined']['ALL'],z['robust'],z['delta_vs_D01'])
+          assert c['completed_week_signals_only'] and c['strategic_execution']=='next_week_open'
+          assert c['high52_uses_prior_window_only'] and c['fixed_stop_known_before_bar'] and not c['endpoint_mark_is_execution']
+          b=x['best_guarded']
+          assert b['passes_all_guards'] is True
+          print('MODELS',x['models_tested'],'ELIGIBLE',x['eligible_models'],'RR4',x['robust_rr4_guarded_count'])
+          print('BEST',b['exit_model'],b['config'],b['combined']['ALL'],b['robust'],b['delta_vs_D01'])
           PY
-
-      - name: Show V10 concise summary
+      - name: Show V11 concise summary
         if: always()
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          p=Path('outputs/backtest/AT_WEEKLY_EXIT_OPT_V10_OVERHEAT_WEIGHT_BANK.json')
+          p=Path('outputs/backtest/AT_WEEKLY_EXIT_OPT_V11_OVERHEAT_CORE_REFINE.json')
           if p.exists():
-              x=json.loads(p.read_text())
-              print(json.dumps({'status':x.get('status'),'runtime_seconds':x.get('runtime_seconds'),'valid_actions':x.get('valid_actions'),'models_tested':x.get('models_tested'),'eligible_models':x.get('eligible_models'),'robust_rr4_guarded_count':x.get('robust_rr4_guarded_count'),'best_risk_robust':x.get('best_risk_robust'),'single_criterion_ranking':x.get('single_criterion_ranking',[])[:9]},indent=2))
+            x=json.loads(p.read_text())
+            print(json.dumps({'status':x.get('status'),'runtime_seconds':x.get('runtime_seconds'),'models_tested':x.get('models_tested'),'eligible_models':x.get('eligible_models'),'robust_rr4_guarded_count':x.get('robust_rr4_guarded_count'),'best_guarded':x.get('best_guarded'),'best_rr4_guarded':x.get('best_rr4_guarded')},indent=2))
           PY
-
-      - name: Upload V10 Block E weight bank
+      - name: Upload V11 Block E refinement
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: at-weekly-exit-opt-v10-overheat-weight-bank-${{ github.run_id }}
-          path: outputs/backtest/AT_WEEKLY_EXIT_OPT_V10_OVERHEAT_WEIGHT_BANK.json
+          name: at-weekly-exit-opt-v11-overheat-core-refine-${{ github.run_id }}
+          path: outputs/backtest/AT_WEEKLY_EXIT_OPT_V11_OVERHEAT_CORE_REFINE.json
           if-no-files-found: warn
           compression-level: 1
           retention-days: 7
