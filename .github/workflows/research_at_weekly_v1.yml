@@ -5,6 +5,7 @@ on:
     branches:
       - research/at-weekly-v1-20260829
     paths:
+      - src/v182/backtest/at_weekly_selection_portfolio_v10.py
       - src/v182/backtest/at_weekly_selection_diagnostic_v9_p2.py
       - src/v182/backtest/at_weekly_selection_quality_v8_top30.py
       - src/v182/backtest/at_weekly_selection_capacity_v7_top30.py
@@ -19,9 +20,10 @@ on:
       stage:
         description: Research stage to execute
         required: true
-        default: v9_p2_diagnostic
+        default: v10_portfolio
         type: choice
         options:
+          - v10_portfolio
           - v9_p2_diagnostic
           - v8_top30_quality
           - v7_top30
@@ -38,7 +40,7 @@ jobs:
     timeout-minutes: 35
     env:
       PYTHONPATH: ${{ github.workspace }}/src
-      STAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'v9_p2_diagnostic' }}
+      STAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'v10_portfolio' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Restore persistent OHLCV cache
@@ -74,6 +76,7 @@ jobs:
           set -euo pipefail
           echo "STAGE=$STAGE"
           case "$STAGE" in
+            v10_portfolio) python -m v182.backtest.at_weekly_selection_portfolio_v10 ;;
             v9_p2_diagnostic) python -m v182.backtest.at_weekly_selection_diagnostic_v9_p2 ;;
             v8_top30_quality) python -m v182.backtest.at_weekly_selection_quality_v8_top30 ;;
             v7_top30) python -m v182.backtest.at_weekly_selection_capacity_v7_top30 ;;
@@ -88,6 +91,7 @@ jobs:
           from pathlib import Path
           stage=os.environ['STAGE']
           p={
+            'v10_portfolio':Path('outputs/backtest/AT_WEEKLY_SELECTION_PORTFOLIO_V10.json'),
             'v9_p2_diagnostic':Path('outputs/backtest/AT_WEEKLY_SELECTION_DIAGNOSTIC_V9_P2.json'),
             'v8_top30_quality':Path('outputs/backtest/AT_WEEKLY_SELECTION_QUALITY_V8_TOP30.json'),
             'v7_top30':Path('outputs/backtest/AT_WEEKLY_SELECTION_CAPACITY_V7_TOP30.json'),
@@ -100,7 +104,13 @@ jobs:
           c=x['lookahead_controls']
           assert c['completed_week_features_only'] and c['feature_timestamp_le_signal']
           assert c['locked_trade_ledger_reused'] and c['locked_entry_exit_unchanged']
-          if stage=='v9_p2_diagnostic':
+          if stage=='v10_portfolio':
+              assert x['primary_objective']=='MEAN_CALENDAR_YEAR_NET_PORTFOLIO_RETURN_GT_15_PCT'
+              assert x['secondary_objective']=='REWARD_RISK_GT_3_3'
+              assert x['portfolio_assumptions']['annual_entry_cap']==30
+              assert x['portfolio_assumptions']['weekly_entry_cap']==1
+              assert c['future_signals_not_used_for_current_ranking'] and c['outcome_not_used_in_candidate_score']
+          elif stage=='v9_p2_diagnostic':
               assert x['trades']==28 and x['stops']==15 and x['d_reversal']==11
               assert c['p2_thresholds_unchanged'] and c['diagnostic_only_no_rule_fitted']
           elif stage=='v8_top30_quality':
@@ -121,6 +131,7 @@ jobs:
         if: always()
         run: |
           case "$STAGE" in
+            v10_portfolio) F=outputs/backtest/AT_WEEKLY_SELECTION_PORTFOLIO_V10.md ;;
             v9_p2_diagnostic) F=outputs/backtest/AT_WEEKLY_SELECTION_DIAGNOSTIC_V9_P2.md ;;
             v8_top30_quality) F=outputs/backtest/AT_WEEKLY_SELECTION_QUALITY_V8_TOP30.md ;;
             v7_top30) F=outputs/backtest/AT_WEEKLY_SELECTION_CAPACITY_V7_TOP30.md ;;
@@ -134,18 +145,19 @@ jobs:
         with:
           name: at-weekly-${{ env.STAGE }}-${{ github.run_id }}
           path: |
+            outputs/backtest/AT_WEEKLY_SELECTION_PORTFOLIO_V10.json
+            outputs/backtest/AT_WEEKLY_SELECTION_PORTFOLIO_V10.csv
+            outputs/backtest/AT_WEEKLY_SELECTION_PORTFOLIO_V10_TRADES.csv
+            outputs/backtest/AT_WEEKLY_SELECTION_PORTFOLIO_V10_EQUITY.csv
+            outputs/backtest/AT_WEEKLY_SELECTION_PORTFOLIO_V10.md
             outputs/backtest/AT_WEEKLY_SELECTION_DIAGNOSTIC_V9_P2.json
             outputs/backtest/AT_WEEKLY_SELECTION_DIAGNOSTIC_V9_P2.csv
             outputs/backtest/AT_WEEKLY_SELECTION_DIAGNOSTIC_V9_P2_TRADES.csv
             outputs/backtest/AT_WEEKLY_SELECTION_DIAGNOSTIC_V9_P2.md
-            outputs/backtest/AT_WEEKLY_SELECTION_QUALITY_V8_TOP30.json
-            outputs/backtest/AT_WEEKLY_SELECTION_QUALITY_V8_TOP30.csv
-            outputs/backtest/AT_WEEKLY_SELECTION_QUALITY_V8_TOP30_TRADES.csv
-            outputs/backtest/AT_WEEKLY_SELECTION_QUALITY_V8_TOP30.md
           if-no-files-found: warn
           compression-level: 1
           retention-days: 7
       - name: Decision boundary
         if: success()
         run: |
-          echo "V9 is diagnostic only: frozen P2 stops versus D winners. No outcome-derived threshold is promoted. Next stage must pre-declare a small candidate family and preserve locked exit architecture." >> "$GITHUB_STEP_SUMMARY"
+          echo "V10 promotion requires economic value first: mean annual net portfolio return >15%, RR >3.3, PF >=1.8, lower stop rate, and annual stability. No automatic promotion on RR alone." >> "$GITHUB_STEP_SUMMARY"
