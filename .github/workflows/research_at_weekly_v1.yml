@@ -10,6 +10,7 @@ on:
       - src/v182/backtest/at_weekly_exit_opt_v9_overheat_block_e.py
       - src/v182/backtest/at_weekly_exit_opt_v10_overheat_weight_bank.py
       - src/v182/backtest/at_weekly_exit_opt_v11_overheat_core_refine.py
+      - src/v182/backtest/at_weekly_exit_opt_v12_trailing_reversal.py
       - tests/test_at_weekly_protective_stop_contract.py
       - docs/research/AT_WEEKLY_BACKTEST_CONTRACT_V1.md
       - docs/research/AT_WEEKLY_DECISION_REGISTRY_V1.md
@@ -40,53 +41,57 @@ jobs:
         run: python -m pip install --disable-pip-version-check pandas numpy pyarrow
       - name: Validate locked protective stop contract
         run: python -m unittest tests.test_at_weekly_protective_stop_contract -v
-      - name: Validate locked A-D decisions
+      - name: Validate locked A-E decisions before trailing research
         run: |
           python - <<'PY'
           from pathlib import Path
-          from v182.backtest.at_weekly_exit_opt_v11_overheat_core_refine import STOP_PCT,D_CFG
+          from v182.backtest.at_weekly_exit_opt_v12_trailing_reversal import STOP_PCT,D_CFG
           reg=Path('docs/research/AT_WEEKLY_DECISION_REGISTRY_V1.md').read_text()
           assert STOP_PCT==9.0
           assert D_CFG['activation_pct']==5.0 and D_CFG['score']==1 and D_CFG['daily_drop_pct']==4.0
-          assert 'ENTRY-01 | LOCKED' in reg and 'STOP-01 | LOCKED' in reg and 'E-01 | ACTIVE WIP' in reg
+          assert 'ENTRY-01 | LOCKED' in reg and 'STOP-01 | LOCKED' in reg
+          assert 'E-01 | LOCKED-NOT-EXECUTION' in reg and 'F-TRAIL-01 | ACTIVE WIP' in reg
           print('LOCKED_DECISIONS_OK')
           PY
-      - name: Run V11 Block E focused refinement
-        run: python -m v182.backtest.at_weekly_exit_opt_v11_overheat_core_refine
-      - name: Validate V11 robustness and controls
+      - name: Run V12 trailing reversal bench
+        run: python -m v182.backtest.at_weekly_exit_opt_v12_trailing_reversal
+      - name: Validate V12 robustness and no-lookahead controls
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          x=json.loads(Path('outputs/backtest/AT_WEEKLY_EXIT_OPT_V11_OVERHEAT_CORE_REFINE.json').read_text())
+          x=json.loads(Path('outputs/backtest/AT_WEEKLY_EXIT_OPT_V12_TRAILING_REVERSAL.json').read_text())
           assert x['status']=='SUCCESS' and x['valid_actions']>0
-          assert x['models_tested']>=500 and x['eligible_models']>0 and x['best_guarded'] is not None
-          assert x['locked']['protective_stop_pct']==9.0 and x['locked']['entries_fixed'] is True
-          c=x['lookahead_controls']
+          assert x['models_tested']>=90 and x['best_guarded'] is not None and x['best_5pct_guarded'] is not None
+          assert x['locked']['entries_fixed'] is True and x['locked']['protective_stop_pct']==9.0
+          assert x['locked']['block_e_execution_trigger'] is False
+          t=x['trailing_contract']; c=x['lookahead_controls']
+          assert t['five_pct_explicitly_tested'] is True
+          assert t['reference']=='prior_completed_week_peak_close_only' and t['same_week_future_high_not_used'] is True
+          assert t['signal']=='completed_week_only' and t['execution']=='next_week_open'
           assert c['completed_week_signals_only'] and c['strategic_execution']=='next_week_open'
-          assert c['high52_uses_prior_window_only'] and c['fixed_stop_known_before_bar'] and not c['endpoint_mark_is_execution']
-          b=x['best_guarded']
-          assert b['passes_all_guards'] is True
+          assert c['trailing_uses_prior_completed_week_peak_only'] and c['fixed_stop_known_before_bar'] and not c['endpoint_mark_is_execution']
           print('MODELS',x['models_tested'],'ELIGIBLE',x['eligible_models'],'RR4',x['robust_rr4_guarded_count'])
-          print('BEST',b['exit_model'],b['config'],b['combined']['ALL'],b['robust'],b['delta_vs_D01'])
+          print('BEST',x['best_guarded']['exit_model'],x['best_guarded']['config'],x['best_guarded']['combined']['ALL'],x['best_guarded']['robust'],x['best_guarded'].get('delta_vs_D01'))
+          print('BEST_5PCT',x['best_5pct_guarded']['exit_model'],x['best_5pct_guarded']['config'],x['best_5pct_guarded']['combined']['ALL'],x['best_5pct_guarded']['robust'],x['best_5pct_guarded'].get('delta_vs_D01'))
           PY
-      - name: Show V11 concise summary
+      - name: Show V12 concise summary
         if: always()
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          p=Path('outputs/backtest/AT_WEEKLY_EXIT_OPT_V11_OVERHEAT_CORE_REFINE.json')
+          p=Path('outputs/backtest/AT_WEEKLY_EXIT_OPT_V12_TRAILING_REVERSAL.json')
           if p.exists():
             x=json.loads(p.read_text())
-            print(json.dumps({'status':x.get('status'),'runtime_seconds':x.get('runtime_seconds'),'models_tested':x.get('models_tested'),'eligible_models':x.get('eligible_models'),'robust_rr4_guarded_count':x.get('robust_rr4_guarded_count'),'best_guarded':x.get('best_guarded'),'best_rr4_guarded':x.get('best_rr4_guarded')},indent=2))
+            print(json.dumps({'status':x.get('status'),'runtime_seconds':x.get('runtime_seconds'),'models_tested':x.get('models_tested'),'eligible_models':x.get('eligible_models'),'robust_rr4_guarded_count':x.get('robust_rr4_guarded_count'),'best_guarded':x.get('best_guarded'),'best_5pct_guarded':x.get('best_5pct_guarded'),'best_rr4_guarded':x.get('best_rr4_guarded')},indent=2))
           PY
-      - name: Upload V11 Block E refinement
+      - name: Upload V12 trailing reversal bench
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: at-weekly-exit-opt-v11-overheat-core-refine-${{ github.run_id }}
-          path: outputs/backtest/AT_WEEKLY_EXIT_OPT_V11_OVERHEAT_CORE_REFINE.json
+          name: at-weekly-exit-opt-v12-trailing-reversal-${{ github.run_id }}
+          path: outputs/backtest/AT_WEEKLY_EXIT_OPT_V12_TRAILING_REVERSAL.json
           if-no-files-found: warn
           compression-level: 1
           retention-days: 7
