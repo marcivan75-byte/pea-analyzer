@@ -5,6 +5,7 @@ on:
     branches:
       - research/at-weekly-v1-20260829
     paths:
+      - src/v182/backtest/at_weekly_staged_entry_v12_pea60k.py
       - src/v182/backtest/at_weekly_staged_entry_v11.py
       - src/v182/backtest/at_weekly_selection_portfolio_v10.py
       - src/v182/backtest/at_weekly_selection_diagnostic_v9_p2.py
@@ -21,9 +22,10 @@ on:
       stage:
         description: Research stage to execute
         required: true
-        default: v11_staged_entry
+        default: v12_pea60k
         type: choice
         options:
+          - v12_pea60k
           - v11_staged_entry
           - v10_portfolio
           - v9_p2_diagnostic
@@ -42,7 +44,7 @@ jobs:
     timeout-minutes: 35
     env:
       PYTHONPATH: ${{ github.workspace }}/src
-      STAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'v11_staged_entry' }}
+      STAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'v12_pea60k' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Restore persistent OHLCV cache
@@ -78,6 +80,7 @@ jobs:
           set -euo pipefail
           echo "STAGE=$STAGE"
           case "$STAGE" in
+            v12_pea60k) python -m v182.backtest.at_weekly_staged_entry_v12_pea60k ;;
             v11_staged_entry) python -m v182.backtest.at_weekly_staged_entry_v11 ;;
             v10_portfolio) python -m v182.backtest.at_weekly_selection_portfolio_v10 ;;
             v9_p2_diagnostic) python -m v182.backtest.at_weekly_selection_diagnostic_v9_p2 ;;
@@ -94,6 +97,7 @@ jobs:
           from pathlib import Path
           stage=os.environ['STAGE']
           p={
+            'v12_pea60k':Path('outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V12_PEA60K.json'),
             'v11_staged_entry':Path('outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V11.json'),
             'v10_portfolio':Path('outputs/backtest/AT_WEEKLY_SELECTION_PORTFOLIO_V10.json'),
             'v9_p2_diagnostic':Path('outputs/backtest/AT_WEEKLY_SELECTION_DIAGNOSTIC_V9_P2.json'),
@@ -106,7 +110,19 @@ jobs:
           assert x['status']=='SUCCESS',x.get('validation_errors')
           assert not x['validation_errors']
           c=x['lookahead_controls']
-          if stage=='v11_staged_entry':
+          if stage=='v12_pea60k':
+              pc=x['portfolio_contract']
+              assert pc['initial_capital_eur']==60000
+              assert pc['max_live_positions']==12
+              assert pc['full_nominal_per_title_eur']==4000
+              assert pc['probe_eur']==1000 and pc['conditional_add_eur']==3000
+              assert pc['max_drawdown_pct']==12
+              assert x['promotion_gates']['complete_year_mean_net_gt_pct']==15
+              assert x['promotion_gates']['rr_gt']==3.3
+              assert x['promotion_gates']['max_drawdown_abs_le_pct']==12
+              assert c['outcome_not_used_in_exante_rr'] and c['confirmation_observed_before_add'] and c['add_executes_next_session_open']
+              assert c['locked_trade_ledger_reused'] and c['locked_entry_exit_unchanged']
+          elif stage=='v11_staged_entry':
               assert x['objective']['primary']=='NET_ANNUAL_PORTFOLIO_RETURN_GT_15_PCT'
               assert x['objective']['secondary']=='RR_GT_3_3'
               assert x['nominal_example']['day0_eur']==1000 and x['nominal_example']['conditional_add_eur']==3000
@@ -144,6 +160,7 @@ jobs:
         if: always()
         run: |
           case "$STAGE" in
+            v12_pea60k) F=outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V12_PEA60K.md ;;
             v11_staged_entry) F=outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V11.md ;;
             v10_portfolio) F=outputs/backtest/AT_WEEKLY_SELECTION_PORTFOLIO_V10.md ;;
             v9_p2_diagnostic) F=outputs/backtest/AT_WEEKLY_SELECTION_DIAGNOSTIC_V9_P2.md ;;
@@ -159,20 +176,20 @@ jobs:
         with:
           name: at-weekly-${{ env.STAGE }}-${{ github.run_id }}
           path: |
+            outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V12_PEA60K.json
+            outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V12_PEA60K.csv
+            outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V12_PEA60K_TRADES.csv
+            outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V12_PEA60K_EQUITY.csv
+            outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V12_PEA60K.md
             outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V11.json
             outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V11.csv
             outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V11_TRADES.csv
             outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V11_EQUITY.csv
             outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V11.md
-            outputs/backtest/AT_WEEKLY_SELECTION_PORTFOLIO_V10.json
-            outputs/backtest/AT_WEEKLY_SELECTION_PORTFOLIO_V10.csv
-            outputs/backtest/AT_WEEKLY_SELECTION_PORTFOLIO_V10_TRADES.csv
-            outputs/backtest/AT_WEEKLY_SELECTION_PORTFOLIO_V10_EQUITY.csv
-            outputs/backtest/AT_WEEKLY_SELECTION_PORTFOLIO_V10.md
           if-no-files-found: warn
           compression-level: 1
           retention-days: 7
       - name: Decision boundary
         if: success()
         run: |
-          echo "V11 tests ex-ante theoretical RR and 25/75 staged entries. Promotion still requires >15% mean annual net portfolio return, RR >3.3, at least two positive years, and improved drawdown; same-bank results are not clean OOS." >> "$GITHUB_STEP_SUMMARY"
+          echo "V12 contract: EUR60k PEA, max 12 live positions, EUR1k probe + EUR3k conditional add, RR >3.3, PF >=2, complete-year net mean >15%, and hard max drawdown <=12%. No promotion if any hard gate fails." >> "$GITHUB_STEP_SUMMARY"
