@@ -1,0 +1,66 @@
+name: Export Python Source Bundle
+
+on:
+  push:
+    branches:
+      - research/at-weekly-v1-20260829
+    paths:
+      - .github/workflows/export_python_source_bundle.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 1
+      - name: Build complete Python source bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="PEA_Analyzer_Python_Source_Complete_${GITHUB_SHA}"
+          mkdir -p "$ROOT"
+          find . -type f -name '*.py' \
+            -not -path './.git/*' \
+            -print0 | while IFS= read -r -d '' f; do
+              rel="${f#./}"
+              mkdir -p "$ROOT/$(dirname "$rel")"
+              cp "$f" "$ROOT/$rel"
+            done
+          printf '%s\n' \
+            "Repository: marcivan75-byte/pea-analyzer" \
+            "Branch: research/at-weekly-v1-20260829" \
+            "Commit: ${GITHUB_SHA}" \
+            "Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "Scope: all tracked Python files present in this checkout" \
+            > "$ROOT/SOURCE_INFO.txt"
+          find "$ROOT" -type f | sort > "$ROOT/FILE_LIST.txt"
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib, json, os
+          root = next(Path('.').glob('PEA_Analyzer_Python_Source_Complete_*'))
+          files=[]
+          for p in sorted(root.rglob('*')):
+              if p.is_file():
+                  files.append({
+                      'path': str(p.relative_to(root)),
+                      'size_bytes': p.stat().st_size,
+                      'sha256': hashlib.sha256(p.read_bytes()).hexdigest(),
+                  })
+          (root/'MANIFEST.json').write_text(json.dumps({'files':files}, indent=2), encoding='utf-8')
+          PY
+          zip -qr "${ROOT}.zip" "$ROOT"
+          echo "BUNDLE=${ROOT}.zip" >> "$GITHUB_ENV"
+      - name: Upload Python source bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pea-analyzer-python-source-complete-${{ github.run_id }}
+          path: ${{ env.BUNDLE }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

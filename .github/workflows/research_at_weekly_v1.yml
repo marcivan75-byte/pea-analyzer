@@ -1,0 +1,218 @@
+name: Research AT Weekly V1
+
+on:
+  push:
+    branches:
+      - research/at-weekly-v1-20260829
+    paths:
+      - src/v182/backtest/at_weekly_ranked_capacity_v14.py
+      - src/v182/backtest/at_weekly_capacity_quality_v13.py
+      - src/v182/backtest/at_weekly_staged_entry_v12_pea60k.py
+      - src/v182/backtest/at_weekly_staged_entry_v11.py
+      - src/v182/backtest/at_weekly_selection_portfolio_v10.py
+      - src/v182/backtest/at_weekly_selection_diagnostic_v9_p2.py
+      - src/v182/backtest/at_weekly_selection_quality_v8_top30.py
+      - src/v182/backtest/at_weekly_selection_capacity_v7_top30.py
+      - src/v182/backtest/at_weekly_growth_potential_pit_v5_regime.py
+      - src/v182/backtest/at_weekly_growth_potential_pit_v6_regime_stress.py
+      - src/v182/backtest/at_weekly_quarterly_study_v1.py
+      - tests/test_at_weekly_protective_stop_contract.py
+      - docs/research/AT_WEEKLY_DECISION_REGISTRY_V1.md
+      - .github/workflows/research_at_weekly_v1.yml
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Research stage to execute
+        required: true
+        default: v14_ranked_capacity
+        type: choice
+        options:
+          - v14_ranked_capacity
+          - v13_quality_capacity
+          - v12_pea60k
+          - v11_staged_entry
+          - v10_portfolio
+          - v9_p2_diagnostic
+          - v8_top30_quality
+          - v7_top30
+          - v5_regime
+          - v6_regime_stress
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  at-weekly-v1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      PYTHONPATH: ${{ github.workspace }}/src
+      STAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'v14_ranked_capacity' }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Restore persistent OHLCV cache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: data/cache/
+          key: ohlcv-v3-at-weekly-v1-${{ github.run_id }}
+          restore-keys: |
+            ohlcv-v3-
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Install backtest runtime
+        run: python -m pip install --disable-pip-version-check pandas numpy pyarrow
+      - name: Validate locked protective stop contract
+        run: python -m unittest tests.test_at_weekly_protective_stop_contract -v
+      - name: Validate locked architecture
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from v182.backtest.at_weekly_quarterly_study_v1 import STOP_PCT,D_CFG
+          reg=Path('docs/research/AT_WEEKLY_DECISION_REGISTRY_V1.md').read_text()
+          assert STOP_PCT==9.0
+          assert D_CFG['activation_pct']==5.0 and D_CFG['score']==1 and D_CFG['daily_drop_pct']==4.0
+          assert 'ENTRY-01 | LOCKED' in reg and 'STOP-01 | LOCKED' in reg
+          assert 'E-01 | LOCKED-NOT-EXECUTION' in reg
+          assert 'F-TRAIL-01 | LOCKED-REJECTED' in reg
+          assert 'EXIT-LOOP-01 | LOCKED' in reg
+          print('LOCKED_ARCHITECTURE_OK')
+          PY
+      - name: Run selected research stage
+        run: |
+          set -euo pipefail
+          echo "STAGE=$STAGE"
+          case "$STAGE" in
+            v14_ranked_capacity) python -m v182.backtest.at_weekly_ranked_capacity_v14 ;;
+            v13_quality_capacity) python -m v182.backtest.at_weekly_capacity_quality_v13 ;;
+            v12_pea60k) python -m v182.backtest.at_weekly_staged_entry_v12_pea60k ;;
+            v11_staged_entry) python -m v182.backtest.at_weekly_staged_entry_v11 ;;
+            v10_portfolio) python -m v182.backtest.at_weekly_selection_portfolio_v10 ;;
+            v9_p2_diagnostic) python -m v182.backtest.at_weekly_selection_diagnostic_v9_p2 ;;
+            v8_top30_quality) python -m v182.backtest.at_weekly_selection_quality_v8_top30 ;;
+            v7_top30) python -m v182.backtest.at_weekly_selection_capacity_v7_top30 ;;
+            v5_regime) python -m v182.backtest.at_weekly_growth_potential_pit_v5_regime ;;
+            v6_regime_stress) python -m v182.backtest.at_weekly_growth_potential_pit_v6_regime_stress ;;
+            *) echo "Unknown stage: $STAGE" >&2; exit 2 ;;
+          esac
+      - name: Validate stage controls
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          stage=os.environ['STAGE']
+          p={
+            'v14_ranked_capacity':Path('outputs/backtest/AT_WEEKLY_RANKED_CAPACITY_V14.json'),
+            'v13_quality_capacity':Path('outputs/backtest/AT_WEEKLY_CAPACITY_QUALITY_V13.json'),
+            'v12_pea60k':Path('outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V12_PEA60K.json'),
+            'v11_staged_entry':Path('outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V11.json'),
+            'v10_portfolio':Path('outputs/backtest/AT_WEEKLY_SELECTION_PORTFOLIO_V10.json'),
+            'v9_p2_diagnostic':Path('outputs/backtest/AT_WEEKLY_SELECTION_DIAGNOSTIC_V9_P2.json'),
+            'v8_top30_quality':Path('outputs/backtest/AT_WEEKLY_SELECTION_QUALITY_V8_TOP30.json'),
+            'v7_top30':Path('outputs/backtest/AT_WEEKLY_SELECTION_CAPACITY_V7_TOP30.json'),
+            'v5_regime':Path('outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V5_REGIME.json'),
+            'v6_regime_stress':Path('outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V6_REGIME_STRESS.json'),
+          }[stage]
+          x=json.loads(p.read_text())
+          assert x['status']=='SUCCESS',x.get('validation_errors')
+          assert not x['validation_errors']
+          c=x['lookahead_controls']
+          if stage=='v14_ranked_capacity':
+              pc=x['portfolio_contract']; g=x['promotion_gates']
+              assert pc['initial_capital_eur']==60000 and pc['max_live_positions']==12
+              assert pc['full_nominal_per_title_eur']==4000 and pc['annual_entry_cap']==30
+              assert pc['max_drawdown_pct']==12
+              assert g['each_complete_year_net_gt_pct']==15 and g['rr_gt']==3.3 and g['pf_ge']==2 and g['max_drawdown_abs_le_pct']==12
+              assert c['completed_week_features_only'] and c['feature_timestamp_le_signal']
+              assert c['future_signals_not_used_for_current_ranking'] and c['outcome_not_used_in_candidate_score']
+              assert c['fixed_rank_formula_not_fitted_to_trade_outcomes']
+              assert c['locked_trade_ledger_reused'] and c['locked_entry_exit_unchanged']
+          elif stage=='v13_quality_capacity':
+              pc=x['portfolio_contract']; g=x['promotion_gates']
+              assert pc['initial_capital_eur']==60000 and pc['max_live_positions']==12
+              assert pc['full_nominal_per_title_eur']==4000 and pc['annual_entry_cap']==30
+              assert pc['max_drawdown_pct']==12
+              assert g['each_complete_year_net_gt_pct']==15 and g['rr_gt']==3.3 and g['pf_ge']==2 and g['max_drawdown_abs_le_pct']==12
+              assert c['completed_week_features_only'] and c['feature_timestamp_le_signal']
+              assert c['future_signals_not_used_for_current_ranking'] and c['outcome_not_used_in_candidate_score']
+              assert c['locked_trade_ledger_reused'] and c['locked_entry_exit_unchanged']
+              assert c['staged_entry_rejected_not_used'] and c['v11_theoretical_rr_rejected_not_used']
+          elif stage=='v12_pea60k':
+              pc=x['portfolio_contract']
+              assert pc['initial_capital_eur']==60000
+              assert pc['max_live_positions']==12
+              assert pc['full_nominal_per_title_eur']==4000
+              assert pc['probe_eur']==1000 and pc['conditional_add_eur']==3000
+              assert pc['max_drawdown_pct']==12
+              assert x['promotion_gates']['complete_year_mean_net_gt_pct']==15
+              assert x['promotion_gates']['rr_gt']==3.3
+              assert x['promotion_gates']['max_drawdown_abs_le_pct']==12
+              assert c['outcome_not_used_in_exante_rr'] and c['confirmation_observed_before_add'] and c['add_executes_next_session_open']
+              assert c['locked_trade_ledger_reused'] and c['locked_entry_exit_unchanged']
+          elif stage=='v11_staged_entry':
+              assert x['objective']['primary']=='NET_ANNUAL_PORTFOLIO_RETURN_GT_15_PCT'
+              assert x['objective']['secondary']=='RR_GT_3_3'
+              assert x['nominal_example']['day0_eur']==1000 and x['nominal_example']['conditional_add_eur']==3000
+              assert c['completed_week_features_only_for_exante_rr']
+              assert c['daily_confirmation_uses_completed_sessions_only'] and c['add_executes_next_session_open']
+              assert c['future_trade_outcome_not_used_for_confirmation']
+              assert c['locked_trade_ledger_reused'] and c['locked_entry_exit_unchanged']
+          else:
+              assert c['completed_week_features_only'] and c['feature_timestamp_le_signal']
+              assert c['locked_trade_ledger_reused'] and c['locked_entry_exit_unchanged']
+              if stage=='v10_portfolio':
+                  assert x['portfolio_assumptions']['annual_entry_cap']==30
+                  assert x['portfolio_assumptions']['weekly_entry_cap']==1
+                  assert c['future_signals_not_used_for_current_ranking'] and c['outcome_not_used_in_candidate_score']
+              elif stage=='v9_p2_diagnostic':
+                  assert x['trades']==28 and x['stops']==15 and x['d_reversal']==11
+                  assert c['p2_thresholds_unchanged'] and c['diagnostic_only_no_rule_fitted']
+              elif stage=='v8_top30_quality':
+                  assert c['future_signals_not_used_for_current_ranking'] and c['outcome_not_used_in_score_or_rejection']
+              elif stage=='v7_top30':
+                  assert x['capacity_rule']['annual_max_entries']==30 and x['capacity_rule']['weekly_max_entries']==1
+                  assert x['capacity_rule']['sequential_no_future_year_ranking']
+              else:
+                  assert c['regime_uses_only_bars_le_signal'] and c['threshold_optimization'] is False
+          print('STAGE_VALIDATED',stage)
+          PY
+      - name: Publish result/comments immediately to GitHub job summary
+        if: always()
+        run: |
+          case "$STAGE" in
+            v14_ranked_capacity) F=outputs/backtest/AT_WEEKLY_RANKED_CAPACITY_V14.md ;;
+            v13_quality_capacity) F=outputs/backtest/AT_WEEKLY_CAPACITY_QUALITY_V13.md ;;
+            v12_pea60k) F=outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V12_PEA60K.md ;;
+            v11_staged_entry) F=outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V11.md ;;
+            v10_portfolio) F=outputs/backtest/AT_WEEKLY_SELECTION_PORTFOLIO_V10.md ;;
+            v9_p2_diagnostic) F=outputs/backtest/AT_WEEKLY_SELECTION_DIAGNOSTIC_V9_P2.md ;;
+            v8_top30_quality) F=outputs/backtest/AT_WEEKLY_SELECTION_QUALITY_V8_TOP30.md ;;
+            v7_top30) F=outputs/backtest/AT_WEEKLY_SELECTION_CAPACITY_V7_TOP30.md ;;
+            v5_regime) F=outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V5_REGIME.md ;;
+            v6_regime_stress) F=outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V6_REGIME_STRESS.md ;;
+          esac
+          if [ -f "$F" ]; then cat "$F" >> "$GITHUB_STEP_SUMMARY"; cat "$F"; fi
+      - name: Upload research result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: at-weekly-${{ env.STAGE }}-${{ github.run_id }}
+          path: |
+            outputs/backtest/AT_WEEKLY_RANKED_CAPACITY_V14.json
+            outputs/backtest/AT_WEEKLY_RANKED_CAPACITY_V14.csv
+            outputs/backtest/AT_WEEKLY_RANKED_CAPACITY_V14_TRADES.csv
+            outputs/backtest/AT_WEEKLY_RANKED_CAPACITY_V14_EQUITY.csv
+            outputs/backtest/AT_WEEKLY_RANKED_CAPACITY_V14.md
+            outputs/backtest/AT_WEEKLY_CAPACITY_QUALITY_V13.json
+            outputs/backtest/AT_WEEKLY_CAPACITY_QUALITY_V13.csv
+            outputs/backtest/AT_WEEKLY_CAPACITY_QUALITY_V13_TRADES.csv
+            outputs/backtest/AT_WEEKLY_CAPACITY_QUALITY_V13_EQUITY.csv
+            outputs/backtest/AT_WEEKLY_CAPACITY_QUALITY_V13.md
+          if-no-files-found: warn
+          compression-level: 1
+          retention-days: 7
+      - name: Decision boundary
+        if: success()
+        run: |
+          echo "V14: broaden signal pool then rank ex-ante under EUR60k PEA; max 12 live, EUR4k/title, max 30/year; each complete year >15% net; RR >3.3; PF >=2; max DD <=12%. Same-bank research is not clean OOS." >> "$GITHUB_STEP_SUMMARY"
