@@ -11,23 +11,55 @@ from v182.hebdo.hebdo_at_chat_v22_1 import (
     double_sector_selection,
     volatility_target_weights,
 )
-from v182.hebdo.mae_predictor import MAEPredictor, apply_mae_filter
+from v182.hebdo.mae_predictor import (
+    MAEDataUnavailable,
+    MAEPredictor,
+    apply_mae_filter,
+    train_stop_model,
+)
 
 
 def test_mae_predictor_excludes_high_stop_risk():
-    frame = pd.DataFrame([
-        {"vol_z": 4.5, "drawdown_4w": -0.15, "close": 90.0, "sma200": 100.0, "atr_14_pct": 0.04}
-    ])
+    frame = pd.DataFrame([{"vol_z": 4.5, "drawdown_4w": -0.15, "close": 90.0, "sma200": 100.0, "atr_14_pct": 0.04}])
     out = MAEPredictor().predict_batch(frame)
     assert out.loc[0, "EXCLU_MAE"]
     assert out.loc[0, "stop_prob"] > 0.45
 
 
 def test_mae_filter_blocks_missing_without_imputation():
-    frame = pd.DataFrame([{"vol_z": 2.0}])
-    out = apply_mae_filter(frame)
+    out = apply_mae_filter(pd.DataFrame([{"vol_z": 2.0}]))
     assert out.loc[0, "mae_status"] == "BLOCK_DATA_MAE"
     assert pd.isna(out.loc[0, "stop_prob"])
+
+
+def test_mae_filter_requires_trained_artifact_when_requested():
+    frame = pd.DataFrame([{"vol_z": 2.0, "drawdown_4w": -0.05, "close": 105.0, "sma200": 100.0, "atr_14_pct": 0.02}])
+    with pytest.raises(MAEDataUnavailable, match="trained artifact required"):
+        apply_mae_filter(frame, require_trained=True)
+
+
+def test_trained_mae_model_uses_temporal_validation():
+    rng = np.random.default_rng(7)
+    n = 220
+    vol_z = rng.normal(2.5, 1.2, n)
+    dd = rng.normal(-0.07, 0.05, n)
+    atr = rng.uniform(0.01, 0.06, n)
+    close = np.full(n, 100.0)
+    sma200 = np.where(np.arange(n) % 3 == 0, 105.0, 95.0)
+    latent = vol_z + (-dd * 8.0) + atr * 10.0 + (close < sma200) * 0.8
+    history = pd.DataFrame({
+        "as_of_date": pd.date_range("2020-01-03", periods=n, freq="W-FRI"),
+        "vol_z": vol_z,
+        "drawdown_4w": dd,
+        "close": close,
+        "sma200": sma200,
+        "atr_14_pct": atr,
+        "hit_stop": latent > np.median(latent),
+    })
+    artifact = train_stop_model(history)
+    assert artifact["n_train"] >= 150
+    assert artifact["n_validation"] >= 30
+    assert artifact["validation_brier"] >= 0
 
 
 def test_quality_filter_is_fail_closed_and_excludes_bad_quality():
@@ -46,13 +78,7 @@ def test_double_sector_selection_keeps_max_two_per_sector():
     rows = []
     for sector in ("A", "B", "C"):
         for i in range(4):
-            rows.append({
-                "sector": sector,
-                "governed_score": 10 - i,
-                "mom_26w_sector": 5 - i,
-                "selection_status": "OK",
-                "quality_status": "OK",
-            })
+            rows.append({"sector": sector, "governed_score": 10 - i, "mom_26w_sector": 5 - i, "selection_status": "OK", "quality_status": "OK"})
     out = double_sector_selection(pd.DataFrame(rows), max_tct=6, max_ct=4)
     chosen = out[out["hebdo_bucket"].isin(["TCT", "CT"])]
     assert int(chosen.groupby("sector").size().max()) <= 2
@@ -68,25 +94,19 @@ def test_vol_targeting_inverse_atr_and_crash_cash():
 
 
 def test_vol_targeting_refuses_missing_atr():
-    frame = pd.DataFrame({"atr_14_pct": [0.02, np.nan]})
-    normal = MarketRegime("NORMAL", 1.0, 0.01)
     with pytest.raises(HebdoV221Blocked):
-        volatility_target_weights(frame, normal)
+        volatility_target_weights(pd.DataFrame({"atr_14_pct": [0.02, np.nan]}), MarketRegime("NORMAL", 1.0, 0.01))
 
 
 def test_four_week_exit_only_for_tct_negative_sector_momentum():
-    frame = pd.DataFrame({
-        "hebdo_bucket": ["TCT", "CT", "TCT"],
-        "holding_days": [20, 25, 19],
-        "mom_26w_sector": [-0.1, -0.2, -0.3],
-    })
+    frame = pd.DataFrame({"hebdo_bucket": ["TCT", "CT", "TCT"], "holding_days": [20, 25, 19], "mom_26w_sector": [-0.1, -0.2, -0.3]})
     out = apply_four_week_exit(frame)
     assert bool(out.loc[0, "exit_4w_signal"])
     assert not bool(out.loc[1, "exit_4w_signal"])
     assert not bool(out.loc[2, "exit_4w_signal"])
 
 
-def test_dashboard_computes_ic_decay_and_true_metrics():
+def test_dashboard_uses_universe_for_ic_but_portfolio_for_pnl_metrics():
     n = 40
     score = pd.Series(np.arange(n, dtype=float))
     ret = score / 1000.0
@@ -94,17 +114,19 @@ def test_dashboard_computes_ic_decay_and_true_metrics():
         "governed_score": score,
         "forward_ret_true_1w": ret,
         "forward_ret_true_4w": ret,
-        "forward_ret_true_26w": ret,
-        "mae": np.full(n, -0.04),
-        "hit_stop": [False] * 36 + [True] * 4,
+        "forward_ret_true_26w": np.r_[np.full(20, 0.05), np.full(20, -0.20)],
+        "mae": np.r_[np.full(20, -0.04), np.full(20, -0.20)],
+        "hit_stop": [False] * 18 + [True] * 2 + [True] * 20,
         "selection_status": ["OK"] * n,
         "quality_status": ["OK"] * n,
         "mae_status": ["OK"] * n,
-        "hebdo_bucket": ["TCT"] * 20 + ["CT"] * 20,
+        "hebdo_bucket": ["TCT"] * 10 + ["CT"] * 10 + ["NONE"] * 20,
+        "portfolio_weight": np.r_[np.full(20, 0.05), np.zeros(20)],
     })
     dashboard = build_dashboard(frame, MarketRegime("NORMAL", 1.0, 0.01), turnover=0.20)
-    assert dashboard["ic_1w"] == pytest.approx(1.0)
-    assert dashboard["ic_4w"] == pytest.approx(1.0)
-    assert dashboard["hit_rate_26w_true"] == pytest.approx(39 / 40)
+    assert dashboard["rows_universe"] == 40
+    assert dashboard["rows_portfolio"] == 20
+    assert dashboard["hit_rate_26w_true"] == pytest.approx(1.0)
     assert dashboard["mae_mean"] == pytest.approx(-0.04)
     assert dashboard["stop_rate"] == pytest.approx(0.10)
+    assert dashboard["gross_exposure"] == pytest.approx(1.0)
