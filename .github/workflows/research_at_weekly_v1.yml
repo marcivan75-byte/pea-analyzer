@@ -14,8 +14,10 @@ on:
       - src/v182/backtest/at_weekly_exit_opt_v6_confirmed_fp.py
       - src/v182/backtest/at_weekly_exit_opt_v7_protective_stop.py
       - src/v182/backtest/at_weekly_exit_opt_v8_profit_reversal_blocks.py
+      - src/v182/backtest/at_weekly_exit_opt_v9_overheat_block_e.py
       - tests/test_at_weekly_protective_stop_contract.py
       - docs/research/AT_WEEKLY_BACKTEST_CONTRACT_V1.md
+      - docs/research/AT_WEEKLY_DECISION_REGISTRY_V1.md
       - .github/workflows/research_at_weekly_v1.yml
 
 permissions:
@@ -71,24 +73,46 @@ jobs:
           assert c['strategic_execution']=='next_week_open'
           assert c['daily_j1_used_only_as_completed_week_evidence'] is True
           assert c['endpoint_mark_is_execution'] is False
-          b=x['best_risk_first']
-          print('VALID_ACTIONS',x['valid_actions'])
-          print('MODELS_TESTED',x['models_tested'])
-          print('BEST',b['exit_model'],b['config'],b['combined']['ALL'],b['robust'],b['trigger_counts'],b['tail_counts'])
-          for z in x['top20'][:10]:
-              print('TOP',z['exit_model'],z['config'],z['combined']['ALL'],z['robust'],z['trigger_counts'])
           PY
 
-      - name: Show V8 summary
-        if: always()
-        run: cat outputs/backtest/AT_WEEKLY_EXIT_OPT_V8_PROFIT_REVERSAL_BLOCKS.json || true
+      - name: Run V9 Block E overheating bench
+        run: python -m v182.backtest.at_weekly_exit_opt_v9_overheat_block_e
 
-      - name: Upload V8 profit reversal block bench
+      - name: Validate V9 locked decisions and Block E controls
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('outputs/backtest/AT_WEEKLY_EXIT_OPT_V9_OVERHEAT_BLOCK_E.json').read_text())
+          assert x['status']=='SUCCESS'
+          assert x['valid_actions'] > 0
+          assert x['locked']['entries_fixed'] is True
+          assert x['locked']['protective_stop_pct'] == 9.0
+          assert x['locked']['false_positive_block_fixed'] is True
+          assert x['locked']['D01_anchor_fixed']['activation_pct'] == 5.0
+          assert x['locked']['D01_anchor_fixed']['score'] == 1
+          assert x['locked']['D01_anchor_fixed']['daily_drop_pct'] == 4.0
+          assert x['models_tested'] >= 100
+          assert x['best_risk_first'] is not None
+          assert x['lookahead_controls']['completed_week_signals_only'] is True
+          assert x['lookahead_controls']['strategic_execution']=='next_week_open'
+          assert x['lookahead_controls']['high52_uses_prior_window_only'] is True
+          assert x['lookahead_controls']['endpoint_mark_is_execution'] is False
+          print('D01_CONTROL',x['D01_control']['combined']['ALL'],x['D01_control']['robust'])
+          b=x['best_risk_first']
+          print('BEST_E',b['exit_model'],b['config'],b['combined']['ALL'],b['robust'],b['e_metrics'],b.get('delta_vs_D01'))
+          PY
+
+      - name: Show V9 summary
+        if: always()
+        run: cat outputs/backtest/AT_WEEKLY_EXIT_OPT_V9_OVERHEAT_BLOCK_E.json || true
+
+      - name: Upload V9 Block E overheating bench
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: at-weekly-exit-opt-v8-profit-reversal-${{ github.run_id }}
-          path: outputs/backtest/AT_WEEKLY_EXIT_OPT_V8_PROFIT_REVERSAL_BLOCKS.json
+          name: at-weekly-exit-opt-v9-overheat-block-e-${{ github.run_id }}
+          path: outputs/backtest/AT_WEEKLY_EXIT_OPT_V9_OVERHEAT_BLOCK_E.json
           if-no-files-found: warn
           compression-level: 1
           retention-days: 7
