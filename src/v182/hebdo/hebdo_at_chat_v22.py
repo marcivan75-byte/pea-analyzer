@@ -69,10 +69,10 @@ def _atr_pct(group: pd.DataFrame, periods: int = 14) -> pd.Series:
 
 
 def compute_features_v22(df_daily: pd.DataFrame, sector_map: dict[str, str] | pd.Series | None = None) -> pd.DataFrame:
-    """Compute PIT-safe V22 technical features from a long daily panel.
+    """Compute V22 technical features from an already-PIT daily panel.
 
-    Required columns: ticker,date,open,high,low,close,volume. The output contains the
-    latest available row for each ticker. Weekly RSI is computed on W-FRI closes.
+    Required columns: ticker,date,high,low,close,volume. No sector is fabricated: when
+    no proven mapping is supplied, sector remains missing and is later BLOCK_DATA_SECTOR.
     """
     required = {"ticker", "date", "high", "low", "close", "volume"}
     missing = required.difference(df_daily.columns)
@@ -96,7 +96,9 @@ def compute_features_v22(df_daily: pd.DataFrame, sector_map: dict[str, str] | pd
         group["mom_26w"] = close / close.shift(126) - 1.0
         group["atr_14_pct"] = _atr_pct(group.reset_index(), 14).to_numpy()
         group["pct_close"] = close.pct_change()
-        group["B1_vol_v2"] = ((group["vol_z"] > 3.0) & (group["pct_close"] < -0.015) & (close < group["sma20"])).fillna(False)
+        group["B1_vol_v2"] = (
+            (group["vol_z"] > 3.0) & (group["pct_close"] < -0.015) & (close < group["sma20"])
+        ).fillna(False)
         group["B2_daily"] = group["B1_vol_v2"].shift(1).fillna(False).astype(bool)
         weekly_close = close.resample("W-FRI").last().dropna()
         weekly_rsi = _rsi(weekly_close, 14)
@@ -110,51 +112,96 @@ def compute_features_v22(df_daily: pd.DataFrame, sector_map: dict[str, str] | pd
         mapping = sector_map.to_dict() if isinstance(sector_map, pd.Series) else dict(sector_map)
         out["sector"] = out["ticker"].map(mapping)
     elif "sector" not in out.columns:
-        out["sector"] = "UNKNOWN"
+        out["sector"] = pd.NA
     return out
 
 
 def _sector_zscore(frame: pd.DataFrame, column: str) -> pd.Series:
-    grouped = frame.groupby("sector")[column]
+    grouped = frame.groupby("sector", dropna=False)[column]
     mean = grouped.transform("mean")
     std = grouped.transform("std").replace(0.0, np.nan)
     return (frame[column] - mean) / std
 
 
-def score_universe_v22(df_universe: pd.DataFrame, lasso_weights: dict[str, dict[str, object]] | None = None) -> pd.DataFrame:
-    """Sector-neutral ranking with noise, crash-pattern and MAE exclusions."""
+def _valid_sector(series: pd.Series) -> pd.Series:
+    text = series.astype("string").str.strip()
+    return text.notna() & text.ne("") & ~text.str.upper().isin(["UNKNOWN", "NAN", "NONE"])
+
+
+def score_universe_v22(
+    df_universe: pd.DataFrame,
+    lasso_weights: dict[str, dict[str, object]] | None = None,
+) -> pd.DataFrame:
+    """Fail-closed sector-neutral ranking with governed Lasso weights.
+
+    Every governed feature must exist and be observed on a row before that row can be
+    scored. Missing sectors or MAE inputs are BLOCK_DATA; they are never imputed as 0.
+    """
     required = {"ticker", "sector", "mom_26w", "vol_z", "drawdown_4w", "close", "sma200", "atr_14_pct"}
     missing = required.difference(df_universe.columns)
     if missing:
         raise ValueError(f"Missing scoring columns: {sorted(missing)}")
+    if not lasso_weights:
+        raise ValueError("BLOCK_DATA_WEIGHTS: governed Lasso weights missing/empty")
+
+    missing_features = sorted(set(lasso_weights).difference(df_universe.columns))
+    if missing_features:
+        raise ValueError(f"BLOCK_DATA_WEIGHTS: governed features missing {missing_features}")
+
     out = df_universe.copy()
-    out["mom_26w_sector"] = _sector_zscore(out, "mom_26w")
     out["selection_status"] = "OK"
+    valid_sector = _valid_sector(out["sector"])
+    out.loc[~valid_sector, "selection_status"] = "BLOCK_DATA_SECTOR"
+
+    out["mom_26w"] = pd.to_numeric(out["mom_26w"], errors="coerce")
+    sector_calc = out.loc[valid_sector].copy()
+    out["mom_26w_sector"] = np.nan
+    if not sector_calc.empty:
+        out.loc[sector_calc.index, "mom_26w_sector"] = _sector_zscore(sector_calc, "mom_26w")
+    out.loc[valid_sector & out["mom_26w_sector"].isna(), "selection_status"] = "BLOCK_DATA_SECTOR"
+
     if "market_cap_eur_m" in out.columns:
-        noisy = (pd.to_numeric(out["market_cap_eur_m"], errors="coerce") < 300.0) & (out["vol_z"] > 2.5)
-        out.loc[noisy, "selection_status"] = "BLOCK_NOISE"
-    crash_b = (out["vol_z"] > 3.0) & (out["mom_26w_sector"] < -2.0)
-    out.loc[crash_b, "selection_status"] = "EXCLU_B_CRASH"
+        market_cap = pd.to_numeric(out["market_cap_eur_m"], errors="coerce")
+        noisy = (market_cap < 300.0) & (pd.to_numeric(out["vol_z"], errors="coerce") > 2.5)
+        out.loc[out["selection_status"].eq("OK") & noisy, "selection_status"] = "BLOCK_NOISE"
+
+    vol_z = pd.to_numeric(out["vol_z"], errors="coerce")
+    crash_b = (vol_z > 3.0) & (out["mom_26w_sector"] < -2.0)
+    out.loc[out["selection_status"].eq("OK") & crash_b, "selection_status"] = "EXCLU_B_CRASH"
+
     out = apply_mae_filter(out, 0.45)
-    out.loc[out["mae_status"].eq("EXCLU_MAE"), "selection_status"] = "EXCLU_MAE"
+    out.loc[out["selection_status"].eq("OK") & out["mae_status"].eq("EXCLU_MAE"), "selection_status"] = "EXCLU_MAE"
+    out.loc[out["selection_status"].eq("OK") & out["mae_status"].eq("BLOCK_DATA_MAE"), "selection_status"] = "BLOCK_DATA_MAE"
 
-    weights = lasso_weights or {}
-    score = pd.Series(0.0, index=out.index)
-    used = 0
-    for feature, spec in weights.items():
-        if feature not in out.columns:
-            continue
-        weight = float(spec.get("weight", 0.0))
-        direction = -1.0 if str(spec.get("direction", "LONG")).upper() == "SHORT" else 1.0
+    score = pd.Series(0.0, index=out.index, dtype=float)
+    scoreable = out["selection_status"].eq("OK")
+    for feature, spec in lasso_weights.items():
         values = pd.to_numeric(out[feature], errors="coerce")
-        centered = (values - values.mean()) / values.std(ddof=0) if values.std(ddof=0) not in (0, np.nan) else values * 0.0
-        score = score + direction * weight * centered.fillna(0.0)
-        used += 1
-    out["governed_score"] = score if used else out["mom_26w_sector"].fillna(-np.inf)
+        observed = values.notna() & np.isfinite(values)
+        out.loc[scoreable & ~observed, "selection_status"] = "BLOCK_DATA_FEATURE"
+        scoreable = out["selection_status"].eq("OK")
+        vals = values.loc[scoreable]
+        if vals.empty:
+            continue
+        std = float(vals.std(ddof=0))
+        if not np.isfinite(std) or std <= 0:
+            out.loc[scoreable, "selection_status"] = "BLOCK_DATA_FEATURE"
+            scoreable = out["selection_status"].eq("OK")
+            continue
+        centered = (vals - float(vals.mean())) / std
+        weight = float(spec.get("weight", 0.0))
+        if not np.isfinite(weight) or weight < 0:
+            raise ValueError(f"BLOCK_DATA_WEIGHTS: invalid weight for {feature}")
+        direction = -1.0 if str(spec.get("direction", "LONG")).upper() == "SHORT" else 1.0
+        score.loc[centered.index] = score.loc[centered.index] + direction * weight * centered
 
-    eligible = out[out["selection_status"].eq("OK")].copy()
-    eligible = eligible.sort_values(["sector", "governed_score"], ascending=[True, False])
+    out["governed_score"] = np.nan
+    scoreable = out["selection_status"].eq("OK")
+    out.loc[scoreable, "governed_score"] = score.loc[scoreable]
+
+    eligible = out[scoreable].copy()
+    eligible = eligible.sort_values(["sector", "governed_score"], ascending=[True, False], kind="stable")
     eligible["sector_rank"] = eligible.groupby("sector").cumcount() + 1
-    eligible = eligible[eligible["sector_rank"] <= 2].sort_values("governed_score", ascending=False)
-    blocked = out[~out["selection_status"].eq("OK")].copy()
+    eligible = eligible[eligible["sector_rank"] <= 2].sort_values("governed_score", ascending=False, kind="stable")
+    blocked = out[~scoreable].copy()
     return pd.concat([eligible, blocked], ignore_index=True, sort=False)
