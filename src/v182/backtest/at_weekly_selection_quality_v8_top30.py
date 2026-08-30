@@ -50,6 +50,10 @@ def passes(r,p):
 def select(df,p):
     z=df.copy(); z['signal_date']=pd.to_datetime(z.signal_date)
     z['quality_score_v8']=z.apply(potential_score,axis=1)
+    # Compatibility alias only: V7 metrics expects this column name. Values are
+    # exactly the V8 ex-ante quality score; no criterion, threshold or ranking logic
+    # is changed by this technical fix.
+    z['potential_score_v7']=z['quality_score_v8']
     z=z[z.apply(lambda r: passes(r,p),axis=1)].copy()
     z=z.sort_values(['signal_date','symbol','quality_score_v8'],ascending=[True,True,False]).drop_duplicates(['signal_date','symbol'])
     selected=[]; annual={}; last_sym={}
