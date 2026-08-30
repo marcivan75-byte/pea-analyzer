@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from v182.backtest.v21_8_1_backtest_B_v2 import (
     compute_mae_mfe,
@@ -13,7 +14,6 @@ def _signal_frame(periods: int = 40) -> pd.DataFrame:
     idx = pd.date_range("2024-01-01", periods=periods, freq="B")
     close = np.full(periods, 100.0)
     volume = np.array([90.0 + (i % 11) * 2.0 for i in range(periods)])
-    # First eligible z-score day: 20 prior observations exist.
     close[20] = 97.0
     volume[20] = 500.0
     close[21:] = 97.5
@@ -36,10 +36,10 @@ def test_true_pnl_hits_intraday_stop():
         index=idx,
     )
     pnl, hit, day_stop, exit_price = compute_true_26w_pnl(100.0, hist, 0.09)
-    assert pnl == -0.09
+    assert pnl == pytest.approx(-0.09)
     assert hit is True
     assert day_stop == 10
-    assert exit_price == 91.0
+    assert exit_price == pytest.approx(91.0)
 
 
 def test_mae_mfe_log_full_forward_window_even_after_stop():
@@ -51,8 +51,8 @@ def test_mae_mfe_log_full_forward_window_even_after_stop():
         }
     )
     mae, mfe = compute_mae_mfe(100.0, hist)
-    assert mae == -0.12
-    assert mfe == 0.20
+    assert mae == pytest.approx(-0.12)
+    assert mfe == pytest.approx(0.20)
 
 
 def test_b1_zscore_and_b2_daily_detection():
@@ -70,17 +70,14 @@ def test_b1_zscore_and_b2_daily_detection():
 
 def test_backtest_records_real_stop_date_and_excursions():
     df = _signal_frame(50)
-    signal_day = df.index[20]
-    # Entry at 97. Stop price = 88.27; hit on the 10th forward observation.
     stop_index = 20 + 10
     df.loc[df.index[stop_index], "low"] = 80.0
     df.loc[df.index[35], "high"] = 120.0
     out = run_backtest_B_v2(df, stop_pct=0.09, forward_days=20)
     b1 = out[out["B1_vol_v2"]].iloc[0]
     assert bool(b1["hit_stop"])
-    # hist_forward starts at entry+1, so source index entry+10 is day_stop 9.
     assert int(b1["day_stop"]) == 9
     assert pd.Timestamp(b1["exit_date"]) == df.index[stop_index]
-    assert float(b1["pnl_true"]) == -0.09
+    assert float(b1["pnl_true"]) == pytest.approx(-0.09)
     assert float(b1["mae"]) < -0.09
     assert float(b1["mfe"]) > 0.20
