@@ -1,64 +1,86 @@
-import unittest
 import numpy as np
 import pandas as pd
 
 from v182.backtest.v21_8_1_backtest_B_v2 import (
+    compute_mae_mfe,
     compute_true_26w_pnl,
     detect_B_v2,
     run_backtest_B_v2,
 )
 
 
-class TestBacktestBV2(unittest.TestCase):
-    def test_true_pnl_hits_intraday_stop(self):
-        idx = pd.date_range('2024-01-02', periods=5, freq='D')
-        hist = pd.DataFrame({'low':[99, 97, 90, 95, 96], 'close':[100, 98, 92, 96, 97]}, index=idx)
-        pnl, hit, day_stop, exit_price = compute_true_26w_pnl(100.0, hist, 0.09)
-        self.assertAlmostEqual(pnl, -0.09)
-        self.assertTrue(hit)
-        self.assertEqual(day_stop, 2)
-        self.assertAlmostEqual(exit_price, 91.0)
-
-    def test_true_pnl_uses_final_close_without_stop(self):
-        idx = pd.date_range('2024-01-02', periods=5, freq='D')
-        hist = pd.DataFrame({'low':[99, 98, 97, 96, 95], 'close':[101, 102, 103, 104, 110]}, index=idx)
-        pnl, hit, day_stop, exit_price = compute_true_26w_pnl(100.0, hist, 0.09)
-        self.assertAlmostEqual(pnl, 0.10)
-        self.assertFalse(hit)
-        self.assertIsNone(day_stop)
-        self.assertAlmostEqual(exit_price, 110.0)
-
-    def test_b1_and_b2_daily_detection(self):
-        idx = pd.date_range('2024-01-01', periods=4, freq='D')
-        df = pd.DataFrame({
-            'close':[100.0, 97.0, 97.5, 98.0],
-            'volume':[100.0, 250.0, 100.0, 100.0],
-            'volume_avg20':[100.0, 100.0, 100.0, 100.0],
-        }, index=idx)
-        z = detect_B_v2(df)
-        self.assertTrue(bool(z.loc[idx[1], 'B1_vol']))
-        self.assertFalse(bool(z.loc[idx[1], 'B2_daily']))
-        self.assertTrue(bool(z.loc[idx[2], 'B2_daily']))
-        self.assertEqual(z.loc[idx[1], 'B_signal_type'], 'B1_VOL')
-        self.assertEqual(z.loc[idx[2], 'B_signal_type'], 'B2_DAILY')
-
-    def test_backtest_records_real_stop_exit_date(self):
-        idx = pd.date_range('2024-01-01', periods=12, freq='D')
-        df = pd.DataFrame({
-            'open':np.full(12, 100.0),
-            'high':np.full(12, 101.0),
-            'low':np.full(12, 95.0),
-            'close':[100.0, 97.0] + [97.0]*10,
-            'volume':[100.0, 250.0] + [100.0]*10,
-            'volume_avg20':np.full(12, 100.0),
-        }, index=idx)
-        df.loc[idx[3], 'low'] = 80.0
-        out = run_backtest_B_v2(df, stop_pct=0.09, forward_days=5)
-        b1 = out[out['B1_vol']].iloc[0]
-        self.assertTrue(bool(b1['hit_stop']))
-        self.assertEqual(pd.Timestamp(b1['exit_date']), idx[3])
-        self.assertAlmostEqual(float(b1['pnl_true']), -0.09)
+def _signal_frame(periods: int = 40) -> pd.DataFrame:
+    idx = pd.date_range("2024-01-01", periods=periods, freq="B")
+    close = np.full(periods, 100.0)
+    volume = np.array([90.0 + (i % 11) * 2.0 for i in range(periods)])
+    # First eligible z-score day: 20 prior observations exist.
+    close[20] = 97.0
+    volume[20] = 500.0
+    close[21:] = 97.5
+    high = np.maximum(close + 2.0, 100.0)
+    low = close - 2.0
+    return pd.DataFrame(
+        {"open": close, "high": high, "low": low, "close": close, "volume": volume},
+        index=idx,
+    )
 
 
-if __name__ == '__main__':
-    unittest.main()
+def test_true_pnl_hits_intraday_stop():
+    idx = pd.date_range("2024-01-02", periods=12, freq="D")
+    hist = pd.DataFrame(
+        {
+            "low": [99, 98, 97, 96, 95, 94, 93, 92, 91.5, 91.2, 90.0, 95],
+            "high": [101] * 12,
+            "close": [100, 99, 98, 97, 96, 95, 94, 93, 92, 92, 91, 96],
+        },
+        index=idx,
+    )
+    pnl, hit, day_stop, exit_price = compute_true_26w_pnl(100.0, hist, 0.09)
+    assert pnl == -0.09
+    assert hit is True
+    assert day_stop == 10
+    assert exit_price == 91.0
+
+
+def test_mae_mfe_log_full_forward_window_even_after_stop():
+    hist = pd.DataFrame(
+        {
+            "low": [99.0, 90.0, 88.0, 95.0, 96.0],
+            "high": [101.0, 102.0, 103.0, 120.0, 110.0],
+            "close": [100.0, 91.0, 95.0, 118.0, 108.0],
+        }
+    )
+    mae, mfe = compute_mae_mfe(100.0, hist)
+    assert mae == -0.12
+    assert mfe == 0.20
+
+
+def test_b1_zscore_and_b2_daily_detection():
+    df = _signal_frame()
+    out = detect_B_v2(df)
+    signal_day = df.index[20]
+    next_day = df.index[21]
+    assert bool(out.loc[signal_day, "B1_vol_v2"])
+    assert bool(out.loc[signal_day, "B1_vol"])
+    assert float(out.loc[signal_day, "vol_z"]) > 3.0
+    assert bool(out.loc[next_day, "B2_daily"])
+    assert out.loc[signal_day, "B_signal_type"] == "B1_VOL_V2"
+    assert out.loc[next_day, "B_signal_type"] == "B2_DAILY"
+
+
+def test_backtest_records_real_stop_date_and_excursions():
+    df = _signal_frame(50)
+    signal_day = df.index[20]
+    # Entry at 97. Stop price = 88.27; hit on the 10th forward observation.
+    stop_index = 20 + 10
+    df.loc[df.index[stop_index], "low"] = 80.0
+    df.loc[df.index[35], "high"] = 120.0
+    out = run_backtest_B_v2(df, stop_pct=0.09, forward_days=20)
+    b1 = out[out["B1_vol_v2"]].iloc[0]
+    assert bool(b1["hit_stop"])
+    # hist_forward starts at entry+1, so source index entry+10 is day_stop 9.
+    assert int(b1["day_stop"]) == 9
+    assert pd.Timestamp(b1["exit_date"]) == df.index[stop_index]
+    assert float(b1["pnl_true"]) == -0.09
+    assert float(b1["mae"]) < -0.09
+    assert float(b1["mfe"]) > 0.20
