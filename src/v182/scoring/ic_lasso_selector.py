@@ -1,6 +1,6 @@
 """
 v182/scoring/ic_lasso_selector.py
-Remplace pondérations manuelles 0.86 / 0.88 par sélection IC + Lasso gouvernée.
+Sélection IC + Lasso gouvernée avec contrat explicite train/inference.
 Politique: fail-closed, pas de forward fill, pas d'estimation.
 """
 
@@ -17,16 +17,13 @@ def compute_information_coefficient(
     df_features: pd.DataFrame,
     forward_returns: pd.Series,
 ) -> pd.DataFrame:
-    """
-    IC = corr Spearman(feature, forward_return_26w_vrai).
-    forward_returns doit venir de compute_true_26w_pnl (pas de close/close naïf).
-    """
+    """IC de Spearman entre chaque feature et le forward return vrai."""
     if df_features.empty:
         return pd.DataFrame(columns=["feature", "IC", "p_value", "n"])
 
     ics: list[dict[str, object]] = []
     for col in df_features.columns:
-        x = df_features[col]
+        x = pd.to_numeric(df_features[col], errors="coerce")
         aligned = pd.concat([x.rename("feature"), forward_returns.rename("forward_ret")], axis=1)
         mask = aligned["feature"].notna() & aligned["forward_ret"].notna()
         n = int(mask.sum())
@@ -45,11 +42,7 @@ def lasso_select_features(
     cv: int = 5,
     min_abs_coef: float = 1e-4,
 ):
-    """
-    X: features sans look-ahead, index aligné avec y.
-    y: forward return vrai 26w (issu de B V2).
-    Retourne features sélectionnées avec poids gouvernés.
-    """
+    """Entraîne StandardScaler + LassoCV et conserve le contrat de scaling."""
     if X.empty or X.shape[1] == 0:
         raise ValueError("Aucune feature fournie au Lasso")
     if cv < 2:
@@ -57,7 +50,8 @@ def lasso_select_features(
     if min_abs_coef < 0:
         raise ValueError("min_abs_coef doit être >= 0")
 
-    data = pd.concat([X, y.rename("forward_ret")], axis=1).dropna()
+    numeric = X.apply(pd.to_numeric, errors="coerce")
+    data = pd.concat([numeric, pd.to_numeric(y, errors="coerce").rename("forward_ret")], axis=1).dropna()
     if len(data) < 100:
         raise ValueError(f"Pas assez de données pour Lasso: {len(data)} rows")
     if len(data) < cv:
@@ -69,7 +63,6 @@ def lasso_select_features(
 
     scaler = StandardScaler()
     Xs = scaler.fit_transform(X_clean)
-
     lasso = LassoCV(cv=cv, max_iter=20000, alphas=100, random_state=42).fit(Xs, y_clean)
 
     selected: list[dict[str, object]] = []
@@ -81,7 +74,9 @@ def lasso_select_features(
         strict=True,
     ):
         if abs(coef) > min_abs_coef:
-            coef_raw = coef / scale_ if scale_ != 0 else 0.0
+            if not np.isfinite(scale_) or scale_ <= 0:
+                raise ValueError(f"Scale Lasso invalide pour {feature}")
+            coef_raw = coef / scale_
             selected.append(
                 {
                     "feature": feature,
@@ -105,19 +100,21 @@ def lasso_select_features(
 
 
 def build_governed_weights(df_selected: pd.DataFrame) -> dict[str, dict[str, float | str]]:
-    """
-    Transforme coefs Lasso en poids gouvernés type V21.8.1.
-    Pour remplacer le dict manuel {feature: 0.86}.
+    """Construit les poids et fige mean/scale d'entraînement pour l'inférence.
+
+    Le scoring futur doit utiliser exactement ``(x-training_mean)/training_scale``.
+    Une renormalisation cross-sectionnelle de la semaine courante est interdite car
+    elle modifierait implicitement le modèle appris.
     """
     if df_selected.empty:
         return {}
 
-    required = {"feature", "coef_lasso_standardized"}
+    required = {"feature", "coef_lasso_standardized", "mean", "scale"}
     missing = required.difference(df_selected.columns)
     if missing:
         raise ValueError(f"Colonnes manquantes pour gouvernance: {sorted(missing)}")
 
-    abs_coefs = df_selected["coef_lasso_standardized"].abs()
+    abs_coefs = pd.to_numeric(df_selected["coef_lasso_standardized"], errors="coerce").abs()
     denom = float(abs_coefs.sum())
     if not np.isfinite(denom) or denom <= 0:
         raise ValueError("Somme des coefficients Lasso invalide ou nulle")
@@ -131,14 +128,20 @@ def build_governed_weights(df_selected: pd.DataFrame) -> dict[str, dict[str, flo
         strict=True,
     ):
         coef = float(row["coef_lasso_standardized"])
+        mean_ = float(row["mean"])
+        scale_ = float(row["scale"])
+        if not np.isfinite(mean_) or not np.isfinite(scale_) or scale_ <= 0:
+            raise ValueError(f"Contrat de scaling invalide pour {feat}")
         governed[str(feat)] = {
             "weight": float(weight),
             "coef": coef,
             "direction": "SHORT" if coef < 0 else "LONG",
+            "training_mean": mean_,
+            "training_scale": scale_,
         }
 
     return governed
 
 
 if __name__ == "__main__":
-    print("IC Lasso selector chargé - à brancher sur outputs de B V2")
+    print("IC Lasso selector chargé - scaling train/inference verrouillé")
