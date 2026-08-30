@@ -13,6 +13,7 @@ on:
       - src/v182/backtest/at_weekly_exit_opt_v5_delayed_failure.py
       - src/v182/backtest/at_weekly_exit_opt_v6_confirmed_fp.py
       - src/v182/backtest/at_weekly_exit_opt_v7_protective_stop.py
+      - src/v182/backtest/at_weekly_exit_opt_v8_profit_reversal_blocks.py
       - tests/test_at_weekly_protective_stop_contract.py
       - docs/research/AT_WEEKLY_BACKTEST_CONTRACT_V1.md
       - .github/workflows/research_at_weekly_v1.yml
@@ -47,50 +48,47 @@ jobs:
       - name: Validate protective stop execution contract
         run: python -m unittest tests.test_at_weekly_protective_stop_contract -v
 
-      - name: Run V7 protective stop tail-risk audit
-        run: python -m v182.backtest.at_weekly_exit_opt_v7_protective_stop
+      - name: Run V8 profit reversal block bench
+        run: python -m v182.backtest.at_weekly_exit_opt_v8_profit_reversal_blocks
 
-      - name: Validate V7 protective stop tail-risk audit
+      - name: Validate V8 architecture and controls
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          x=json.loads(Path('outputs/backtest/AT_WEEKLY_EXIT_OPT_V7_PROTECTIVE_STOP.json').read_text())
+          x=json.loads(Path('outputs/backtest/AT_WEEKLY_EXIT_OPT_V8_PROFIT_REVERSAL_BLOCKS.json').read_text())
           assert x['status']=='SUCCESS'
           assert x['valid_actions'] > 0
           assert len(x['entries_fixed']) == 2
-          assert len(x['models']) == 5
-          assert x['best_protected_risk_first'] is not None
-          assert x['lookahead_controls']['entry_models_fixed'] is True
-          assert x['lookahead_controls']['strategic_signals']=='completed_week_only'
-          assert x['lookahead_controls']['strategic_execution']=='next_week_open'
-          assert x['lookahead_controls']['fixed_stop_known_before_bar'] is True
-          assert x['lookahead_controls']['gap_fill']=='actual_week_open'
-          assert x['lookahead_controls']['intrabar_trailing_assumption'] is False
-          for z in x['models']:
-              if z['protective_stop_pct'] == 5.0:
-                  # Any loss worse than -5% must not be labeled as a normal stop touch.
-                  # It must come from a gap-through or another earlier strategic execution.
-                  for t in z['worst_15_trades']:
-                      if t['return_pct'] < -5.000001 and 'PROTECTIVE_STOP_5_TOUCH' in t['exit_reasons']:
-                          raise AssertionError(t)
+          assert x['protective_stop_pct_locked'] == 9.0
+          assert x['models_tested'] >= 100
+          assert x['best_risk_first'] is not None
+          c=x['lookahead_controls']
+          assert c['entry_models_fixed'] is True
+          assert c['protective_stop_locked_9'] is True
+          assert c['fixed_stop_known_before_bar'] is True
+          assert c['strategic_signals']=='completed_week_only'
+          assert c['strategic_execution']=='next_week_open'
+          assert c['daily_j1_used_only_as_completed_week_evidence'] is True
+          assert c['endpoint_mark_is_execution'] is False
+          b=x['best_risk_first']
           print('VALID_ACTIONS',x['valid_actions'])
-          for z in x['models']:
-              print(z['exit_model'],z['protective_stop_pct'],z['combined']['ALL'],z['tail_counts'],z['delta_vs_anchor_ALL'])
-              print('WORST3',z['worst_15_trades'][:3])
-          print('BEST_RISK_FIRST',x['best_protected_risk_first']['exit_model'],x['best_protected_risk_first']['combined']['ALL'])
+          print('MODELS_TESTED',x['models_tested'])
+          print('BEST',b['exit_model'],b['config'],b['combined']['ALL'],b['robust'],b['trigger_counts'],b['tail_counts'])
+          for z in x['top20'][:10]:
+              print('TOP',z['exit_model'],z['config'],z['combined']['ALL'],z['robust'],z['trigger_counts'])
           PY
 
-      - name: Show V7 summary
+      - name: Show V8 summary
         if: always()
-        run: cat outputs/backtest/AT_WEEKLY_EXIT_OPT_V7_PROTECTIVE_STOP.json || true
+        run: cat outputs/backtest/AT_WEEKLY_EXIT_OPT_V8_PROFIT_REVERSAL_BLOCKS.json || true
 
-      - name: Upload V7 protective stop tail-risk audit
+      - name: Upload V8 profit reversal block bench
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: at-weekly-exit-opt-v7-protective-stop-${{ github.run_id }}
-          path: outputs/backtest/AT_WEEKLY_EXIT_OPT_V7_PROTECTIVE_STOP.json
+          name: at-weekly-exit-opt-v8-profit-reversal-${{ github.run_id }}
+          path: outputs/backtest/AT_WEEKLY_EXIT_OPT_V8_PROFIT_REVERSAL_BLOCKS.json
           if-no-files-found: warn
           compression-level: 1
           retention-days: 7
