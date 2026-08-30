@@ -9,6 +9,7 @@ import pandas as pd
 from scipy.stats import spearmanr
 
 from v182.backtest.v21_8_1_backtest_B_v2 import compute_mae_mfe, compute_true_26w_pnl
+from v182.hebdo.hebdo_at_chat_v22_1 import adaptive_atr_stop_pct
 from v182.hebdo.mae_predictor import apply_mae_filter, train_stop_model
 from v182.scoring.ic_lasso_selector import (
     build_governed_weights,
@@ -32,9 +33,6 @@ TECHNICAL_CORE_FEATURE_COLUMNS = (
     "drawdown_4w",
     "atr_14_pct",
 )
-# Backward-compatible default: the enhanced model still requires proven PIT
-# sector data. The explicit technical-core mode only uses features that are
-# reconstructed from timestamped OHLCV.
 DEFAULT_FEATURE_COLUMNS = ENHANCED_FEATURE_COLUMNS
 
 
@@ -53,7 +51,7 @@ def _read_frame(path: Path) -> pd.DataFrame:
 
 def _validate_inputs(features: pd.DataFrame, ohlcv: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     required_features = {"ticker", "as_of_date"}
-    required_ohlcv = {"ticker", "date", "low", "high", "close"}
+    required_ohlcv = {"ticker", "date", "open", "low", "high", "close"}
     miss_f = required_features.difference(features.columns)
     miss_o = required_ohlcv.difference(ohlcv.columns)
     if miss_f:
@@ -80,12 +78,27 @@ def _validate_inputs(features: pd.DataFrame, ohlcv: pd.DataFrame) -> tuple[pd.Da
     return f, o
 
 
+def _stop_for_row(row: pd.Series, fixed_stop_pct: float, stop_policy: str) -> float:
+    if stop_policy == "fixed":
+        return float(fixed_stop_pct)
+    if stop_policy == "atr":
+        if "atr_14_pct" not in row.index:
+            raise HistoricalPITUnavailable("BLOCK_DATA_BACKTEST: atr_14_pct missing for ATR stop")
+        try:
+            return adaptive_atr_stop_pct(float(row["atr_14_pct"]))
+        except (TypeError, ValueError) as exc:
+            raise HistoricalPITUnavailable("BLOCK_DATA_BACKTEST: invalid atr_14_pct for ATR stop") from exc
+    raise ValueError(f"unsupported stop_policy={stop_policy}")
+
+
 def add_true_forward_returns(
     features: pd.DataFrame,
     ohlcv: pd.DataFrame,
     *,
     stop_pct: float = 0.09,
+    stop_policy: str = "fixed",
 ) -> pd.DataFrame:
+    """Create true forward ledger using Friday signal -> next-session open execution."""
     f, o = _validate_inputs(features, ohlcv)
     output: list[dict[str, object]] = []
     grouped = {str(t): g.set_index("date").sort_index() for t, g in o.groupby("ticker", sort=False)}
@@ -95,32 +108,41 @@ def add_true_forward_returns(
         hist = grouped.get(ticker)
         if hist is None or hist.empty:
             continue
-        dates = hist.index[hist.index <= row["as_of_date"]]
-        if len(dates) == 0:
+        decision_dates = hist.index[hist.index <= row["as_of_date"]]
+        if len(decision_dates) == 0:
             continue
-        entry_date = dates[-1]
-        loc = hist.index.get_loc(entry_date)
+        signal_market_date = decision_dates[-1]
+        loc = hist.index.get_loc(signal_market_date)
         if not isinstance(loc, (int, np.integer)):
             continue
-        entry_close = pd.to_numeric(pd.Series([hist.iloc[int(loc)]["close"]]), errors="coerce").iloc[0]
-        if not np.isfinite(entry_close) or entry_close <= 0:
+        entry_loc = int(loc) + 1
+        if entry_loc >= len(hist):
             continue
+        entry_price = pd.to_numeric(pd.Series([hist.iloc[entry_loc]["open"]]), errors="coerce").iloc[0]
+        if not np.isfinite(entry_price) or entry_price <= 0:
+            continue
+        row_stop = _stop_for_row(row, stop_pct, stop_policy)
 
         record = row.to_dict()
-        record["entry_date"] = entry_date
-        record["entry_price"] = float(entry_close)
-        enough_26w = int(loc) + 126 < len(hist)
+        record["signal_market_date"] = signal_market_date
+        record["entry_date"] = hist.index[entry_loc]
+        record["entry_price"] = float(entry_price)
+        record["execution_policy"] = "NEXT_SESSION_OPEN_J1"
+        record["stop_policy"] = stop_policy
+        record["stop_pct_used"] = row_stop
+
         for horizon, days in HORIZON_DAYS.items():
-            if int(loc) + days >= len(hist):
+            forward = hist.iloc[entry_loc : entry_loc + days]
+            if len(forward) < days:
                 record[f"forward_ret_true_{horizon}"] = np.nan
                 continue
-            forward = hist.iloc[int(loc) + 1 : int(loc) + 1 + days]
-            pnl, _, _, _ = compute_true_26w_pnl(float(entry_close), forward, stop_pct=stop_pct)
+            pnl, _, _, _ = compute_true_26w_pnl(float(entry_price), forward, stop_pct=row_stop)
             record[f"forward_ret_true_{horizon}"] = pnl
-        if enough_26w:
-            full = hist.iloc[int(loc) + 1 : int(loc) + 1 + 126]
-            pnl26, hit, day_stop, _ = compute_true_26w_pnl(float(entry_close), full, stop_pct=stop_pct)
-            mae, mfe = compute_mae_mfe(float(entry_close), full)
+
+        full = hist.iloc[entry_loc : entry_loc + 126]
+        if len(full) == 126:
+            pnl26, hit, day_stop, _ = compute_true_26w_pnl(float(entry_price), full, stop_pct=row_stop)
+            mae, mfe = compute_mae_mfe(float(entry_price), full)
             record["forward_ret_true_26w"] = pnl26
             record["hit_stop"] = bool(hit)
             record["day_stop"] = day_stop
@@ -196,6 +218,13 @@ def _oos_ic(frame: pd.DataFrame, score_col: str = "governed_score") -> dict[str,
     return out
 
 
+def _mean_stop(frame: pd.DataFrame) -> float | None:
+    if "stop_pct_used" not in frame.columns:
+        return None
+    v = pd.to_numeric(frame["stop_pct_used"], errors="coerce").dropna()
+    return float(v.mean()) if not v.empty else None
+
+
 def acceptance_metrics(ledger: pd.DataFrame) -> dict[str, float | int | None]:
     ret26 = pd.to_numeric(ledger.get("forward_ret_true_26w"), errors="coerce").dropna()
     mae = pd.to_numeric(ledger.get("mae"), errors="coerce").dropna()
@@ -210,6 +239,7 @@ def acceptance_metrics(ledger: pd.DataFrame) -> dict[str, float | int | None]:
         "expectancy_26w_true": float(ret26.mean()) if not ret26.empty else None,
         "mae_mean": float(mae.mean()) if not mae.empty else None,
         "stop_rate": stop_rate,
+        "mean_stop_pct_used": _mean_stop(ledger),
     }
 
 
@@ -222,6 +252,7 @@ def main() -> int:
     parser.add_argument("--end", default="2024-12-31")
     parser.add_argument("--holdout-start", default="2024-01-01")
     parser.add_argument("--feature-set", choices=("enhanced", "technical-core"), default="enhanced")
+    parser.add_argument("--stop-policy", choices=("fixed", "atr"), default="fixed")
     args = parser.parse_args()
     if not args.features.is_file() or not args.ohlcv.is_file():
         raise SystemExit("BLOCK_DATA_BACKTEST: required PIT historical files missing")
@@ -236,7 +267,7 @@ def main() -> int:
         features = features[(dates >= pd.Timestamp(args.start)) & (dates <= pd.Timestamp(args.end))].copy()
     feature_columns = TECHNICAL_CORE_FEATURE_COLUMNS if args.feature_set == "technical-core" else ENHANCED_FEATURE_COLUMNS
     try:
-        ledger = add_true_forward_returns(features, ohlcv)
+        ledger = add_true_forward_returns(features, ohlcv, stop_policy=args.stop_policy)
         ledger["as_of_date"] = pd.to_datetime(ledger["as_of_date"], errors="coerce")
         train = ledger[ledger["as_of_date"] < pd.Timestamp(args.holdout_start)].copy()
         holdout = ledger[ledger["as_of_date"] >= pd.Timestamp(args.holdout_start)].copy()
@@ -258,6 +289,8 @@ def main() -> int:
         "holdout_start": args.holdout_start,
         "feature_set": args.feature_set,
         "feature_columns": list(feature_columns),
+        "stop_policy": args.stop_policy,
+        "execution_policy": "NEXT_SESSION_OPEN_J1",
         "full_enhanced_pit_claimed": False if args.feature_set == "technical-core" else None,
         "train_rows": int(len(train)),
         "holdout_rows": int(len(holdout)),
