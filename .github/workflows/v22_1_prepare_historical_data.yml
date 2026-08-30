@@ -7,6 +7,8 @@ on:
     paths:
       - "tools/v22_1_data/**"
       - "src/v182/hebdo/backtest_v22_1.py"
+      - "src/v182/hebdo/hebdo_at_chat_v22.py"
+      - "src/v182/hebdo/hebdo_at_chat_v22_1.py"
       - "src/v182/hebdo/mae_predictor.py"
       - "src/v182/scoring/ic_lasso_selector.py"
       - "src/v182/backtest/v21_8_1_backtest_B_v2.py"
@@ -44,23 +46,36 @@ jobs:
         run: python tools/v22_1_data/prepare_historical_data.py --root . --batch-size 80
       - name: Validate non-price PIT evidence fail-closed
         run: python tools/v22_1_data/validate_readiness.py
-      - name: Run true-PnL PIT technical-core backtest
+      - name: Run true-PnL PIT technical-core fixed -9pct benchmark
         run: |
           python -m v182.hebdo.backtest_v22_1 \
             --features outputs/hebdo/data_v22_1/V22_1_TECHNICAL_PIT_2019_2024.parquet \
             --ohlcv outputs/hebdo/data_v22_1/V22_1_OHLCV_2018_2025.parquet \
             --feature-set technical-core \
+            --stop-policy fixed \
             --start 2019-01-01 \
             --end 2024-12-31 \
             --holdout-start 2024-01-01 \
-            --out-dir outputs/hebdo/backtest_v22_1
-      - name: Publish readiness and technical-core backtest summary
+            --out-dir outputs/hebdo/backtest_v22_1/fixed
+      - name: Run true-PnL PIT technical-core ATR challenger
+        run: |
+          python -m v182.hebdo.backtest_v22_1 \
+            --features outputs/hebdo/data_v22_1/V22_1_TECHNICAL_PIT_2019_2024.parquet \
+            --ohlcv outputs/hebdo/data_v22_1/V22_1_OHLCV_2018_2025.parquet \
+            --feature-set technical-core \
+            --stop-policy atr \
+            --start 2019-01-01 \
+            --end 2024-12-31 \
+            --holdout-start 2024-01-01 \
+            --out-dir outputs/hebdo/backtest_v22_1/atr
+      - name: Publish readiness and stop-policy comparison
         if: always()
         run: |
           for F in \
             outputs/hebdo/data_v22_1/V22_1_DATA_READINESS.json \
-            outputs/hebdo/backtest_v22_1/V22_1_BACKTEST_REPORT.json \
-            outputs/hebdo/backtest_v22_1/V22_1_GOVERNED_WEIGHTS.json; do
+            outputs/hebdo/backtest_v22_1/fixed/V22_1_BACKTEST_REPORT.json \
+            outputs/hebdo/backtest_v22_1/atr/V22_1_BACKTEST_REPORT.json \
+            outputs/hebdo/backtest_v22_1/fixed/V22_1_GOVERNED_WEIGHTS.json; do
             if [ -f "$F" ]; then
               echo "## $F" >> "$GITHUB_STEP_SUMMARY"
               echo '```json' >> "$GITHUB_STEP_SUMMARY"
