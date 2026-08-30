@@ -14,10 +14,12 @@ on:
       - "tests/test_etf_ter_assets_governance.py"
       - "tests/test_preopen_enricher.py"
       - "tests/test_hebdo_at_chat_v22_1.py"
+      - "tests/test_hebdo_backtest_v22_1.py"
       - "requirements-runtime.txt"
       - ".github/workflows/committee_tct_ct_daily.yml"
       - ".github/workflows/tct_next_session_context.yml"
       - ".github/workflows/etf_distribution_v21_18_1r4.yml"
+      - ".github/workflows/hebdo_at_chat_v22_1.yml"
       - ".github/workflows/v22_pit_backtest_preopen_validation.yml"
   workflow_dispatch:
 
@@ -53,7 +55,8 @@ jobs:
             src/v182/etf/ter_assets_governance.py \
             src/v182/hebdo/mae_predictor.py \
             src/v182/hebdo/hebdo_at_chat_v22.py \
-            src/v182/hebdo/hebdo_at_chat_v22_1.py
+            src/v182/hebdo/hebdo_at_chat_v22_1.py \
+            src/v182/hebdo/backtest_v22_1.py
       - name: Critical V22.1 regression tests
         run: |
           python -m pytest -q \
@@ -62,7 +65,8 @@ jobs:
             tests/test_ic_lasso_selector.py \
             tests/test_etf_ter_assets_governance.py \
             tests/test_preopen_enricher.py \
-            tests/test_hebdo_at_chat_v22_1.py
+            tests/test_hebdo_at_chat_v22_1.py \
+            tests/test_hebdo_backtest_v22_1.py
       - name: Master data fail-fatal audit
         run: python -m v182.audit.master_data --root . --fail-fatal
       - name: Full pytest suite legacy compatibility check
