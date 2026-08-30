@@ -7,7 +7,10 @@ on:
     paths:
       - src/v182/backtest/pit_v15.py
       - src/v182/backtest/coverage_v15.py
+      - src/v182/backtest/benchmark_pit_v15.py
       - tests/test_pit_v15_contract.py
+      - tests/test_pit_v15_benchmark.py
+      - docs/PIT_V15_DATA_CONTRACT.md
       - .github/workflows/research_pit_v15_qualification.yml
   workflow_dispatch:
 
@@ -28,15 +31,22 @@ jobs:
       - name: Install runtime
         run: python -m pip install --disable-pip-version-check pandas numpy
       - name: Run PIT V15 locked-contract tests
-        run: python -m unittest tests.test_pit_v15_contract -v
+        run: |
+          python -m unittest tests.test_pit_v15_contract -v
+          python -m unittest tests.test_pit_v15_benchmark -v
       - name: Verify no performance optimization is coupled to qualification
         run: |
           python - <<'PY'
           from pathlib import Path
           p=Path('src/v182/backtest/pit_v15.py').read_text()
+          b=Path('src/v182/backtest/benchmark_pit_v15.py').read_text()
+          d=Path('docs/PIT_V15_DATA_CONTRACT.md').read_text()
           assert 'performance_backtest_authorized' in p
           assert 'NO_GO_DATA_COVERAGE' in p
           assert 'P1_FACTSET' in p and 'P2_EPS' in p and 'P3_MODEL' in p
           assert 'TARGET_THRESHOLD_PCT = 20.0' in p
-          print('PIT_V15_CONTRACT_OK')
+          assert 'pea_eligible_of_record' in b
+          assert 'performance_backtest_authorized_by_this_module' in b
+          assert 'Pas d\'optimisation technique' in d
+          print('PIT_V15_CONTRACT_AND_BENCHMARK_OK')
           PY
