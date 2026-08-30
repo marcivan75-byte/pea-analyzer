@@ -12,6 +12,7 @@ on:
       - "src/v182/hebdo/mae_predictor.py"
       - "src/v182/scoring/ic_lasso_selector.py"
       - "src/v182/backtest/v21_8_1_backtest_B_v2.py"
+      - "tests/test_v22_1_liquidity_pit.py"
       - ".github/workflows/v22_1_prepare_historical_data.yml"
   workflow_dispatch:
 
@@ -20,7 +21,7 @@ permissions:
 
 env:
   PIP_CONSTRAINT: ${{ github.workspace }}/constraints-ci.txt
-  PYTHONPATH: ${{ github.workspace }}/src
+  PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}
 
 jobs:
   prepare-historical-data:
@@ -35,6 +36,8 @@ jobs:
           cache-dependency-path: requirements-runtime.txt
       - name: Install data preparation and model runtime
         run: python -m pip install --prefer-binary -r requirements-runtime.txt
+      - name: Run liquidity PIT unit tests
+        run: python -m pytest -q tests/test_v22_1_liquidity_pit.py
       - name: Restore prior OHLCV cache when available
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
         with:
@@ -44,6 +47,14 @@ jobs:
             ohlcv-v3-
       - name: Download missing OHLCV and reconstruct technical PIT
         run: python tools/v22_1_data/prepare_historical_data.py --root . --batch-size 80
+      - name: Persist historical ADV20 liquidity in PIT
+        run: |
+          python tools/v22_1_data/enrich_liquidity_pit.py \
+            --pit outputs/hebdo/data_v22_1/V22_1_TECHNICAL_PIT_2019_2024.parquet \
+            --ohlcv outputs/hebdo/data_v22_1/V22_1_OHLCV_2018_2025.parquet \
+            --min-adv-eur 800000 \
+            --report outputs/hebdo/data_v22_1/V22_1_LIQUIDITY_PIT_REPORT.json \
+            --liquid-output outputs/hebdo/data_v22_1/V22_1_TECHNICAL_PIT_2019_2024_LIQUID.parquet
       - name: Validate non-price PIT evidence fail-closed
         run: python tools/v22_1_data/validate_readiness.py
       - name: Run true-PnL PIT technical-core fixed -9pct benchmark
@@ -68,13 +79,38 @@ jobs:
             --end 2024-12-31 \
             --holdout-start 2024-01-01 \
             --out-dir outputs/hebdo/backtest_v22_1/atr
-      - name: Publish readiness and stop-policy comparison
+      - name: Run liquid-universe fixed -9pct challenger
+        run: |
+          python -m v182.hebdo.backtest_v22_1 \
+            --features outputs/hebdo/data_v22_1/V22_1_TECHNICAL_PIT_2019_2024_LIQUID.parquet \
+            --ohlcv outputs/hebdo/data_v22_1/V22_1_OHLCV_2018_2025.parquet \
+            --feature-set technical-core \
+            --stop-policy fixed \
+            --start 2019-01-01 \
+            --end 2024-12-31 \
+            --holdout-start 2024-01-01 \
+            --out-dir outputs/hebdo/backtest_v22_1/fixed_liquid
+      - name: Run liquid-universe ATR challenger
+        run: |
+          python -m v182.hebdo.backtest_v22_1 \
+            --features outputs/hebdo/data_v22_1/V22_1_TECHNICAL_PIT_2019_2024_LIQUID.parquet \
+            --ohlcv outputs/hebdo/data_v22_1/V22_1_OHLCV_2018_2025.parquet \
+            --feature-set technical-core \
+            --stop-policy atr \
+            --start 2019-01-01 \
+            --end 2024-12-31 \
+            --holdout-start 2024-01-01 \
+            --out-dir outputs/hebdo/backtest_v22_1/atr_liquid
+      - name: Publish readiness, liquidity and stop-policy comparison
         if: always()
         run: |
           for F in \
             outputs/hebdo/data_v22_1/V22_1_DATA_READINESS.json \
+            outputs/hebdo/data_v22_1/V22_1_LIQUIDITY_PIT_REPORT.json \
             outputs/hebdo/backtest_v22_1/fixed/V22_1_BACKTEST_REPORT.json \
             outputs/hebdo/backtest_v22_1/atr/V22_1_BACKTEST_REPORT.json \
+            outputs/hebdo/backtest_v22_1/fixed_liquid/V22_1_BACKTEST_REPORT.json \
+            outputs/hebdo/backtest_v22_1/atr_liquid/V22_1_BACKTEST_REPORT.json \
             outputs/hebdo/backtest_v22_1/fixed/V22_1_GOVERNED_WEIGHTS.json; do
             if [ -f "$F" ]; then
               echo "## $F" >> "$GITHUB_STEP_SUMMARY"
@@ -93,6 +129,8 @@ jobs:
             outputs/hebdo/data_v22_1/V22_1_VALIDATED_IDENTITIES.csv
             outputs/hebdo/data_v22_1/V22_1_OHLCV_2018_2025.parquet
             outputs/hebdo/data_v22_1/V22_1_TECHNICAL_PIT_2019_2024.parquet
+            outputs/hebdo/data_v22_1/V22_1_TECHNICAL_PIT_2019_2024_LIQUID.parquet
+            outputs/hebdo/data_v22_1/V22_1_LIQUIDITY_PIT_REPORT.json
             outputs/hebdo/data_v22_1/V22_1_DOWNLOAD_FAILURES.json
             outputs/hebdo/data_v22_1/V22_1_DATA_READINESS.json
             outputs/hebdo/backtest_v22_1/
