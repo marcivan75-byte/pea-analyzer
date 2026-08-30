@@ -21,6 +21,25 @@ OUT=ROOT/'outputs/backtest/AT_WEEKLY_EXIT_OPT_V7_PROTECTIVE_STOP.json'
 ANCHOR={'loss_cut_pct':4.5,'fp_weeks':2,'fp_floor_pct':-1.5,'confirm_mode':'momentum_or_trend','rsi_heat':75.0,'stoch_heat':75.0,'trend':'psar'}
 STOPS=[None,5.0,7.0,9.0,12.0]
 
+
+def fixed_stop_fill(week_open, week_low, stop_price):
+    """Return (fill_price, reason) for a standing fixed sell stop, or None.
+
+    Contract is deliberately conservative and path-independent for a stop known
+    before the weekly bar begins:
+      * opening gap through stop -> fill at actual open;
+      * otherwise low touches/crosses stop -> fill at stop;
+      * otherwise no stop fill.
+    """
+    if not (np.isfinite(stop_price) and stop_price > 0):
+        raise ValueError('stop_price must be finite and > 0')
+    if np.isfinite(week_open) and week_open <= stop_price:
+        return float(week_open), 'GAP_OPEN'
+    if np.isfinite(week_low) and week_low <= stop_price:
+        return float(stop_price), 'TOUCH'
+    return None
+
+
 def arrs(b):
  return {k:getattr(b,k).to_numpy(float) for k in ['open','high','low','close']} | {
   'rsi':b.rsi14.to_numpy(float),'k':b.stoch_k.to_numpy(float),'d':b.stoch_d.to_numpy(float),
@@ -55,10 +74,10 @@ def simulate(sym,b,a,sig,entry_label,stop_pct,model):
   if pos>=0 and i>=pos:
    if stop_pct is not None:
     sp=price*(1-stop_pct/100.)
-    if np.isfinite(o[i]) and o[i]<=sp:
-     out.append(trade(sym,entry_label,model,b,pos,price,i,float(o[i]),[f'PROTECTIVE_STOP_{stop_pct:g}_GAP_OPEN'],stop_price=sp)); pos=-1; price=0.; continue
-    if np.isfinite(l[i]) and l[i]<=sp:
-     out.append(trade(sym,entry_label,model,b,pos,price,i,float(sp),[f'PROTECTIVE_STOP_{stop_pct:g}_TOUCH'],stop_price=sp)); pos=-1; price=0.; continue
+    fill=fixed_stop_fill(o[i],l[i],sp)
+    if fill is not None:
+     fill_price,kind=fill
+     out.append(trade(sym,entry_label,model,b,pos,price,i,fill_price,[f'PROTECTIVE_STOP_{stop_pct:g}_{kind}'],stop_price=sp)); pos=-1; price=0.; continue
    if i < len(c)-1:
     prev=c[i-1]; ret=(c[i]/price-1)*100; held=i-pos+1; reasons=[]
     if ret<=-ANCHOR['loss_cut_pct']: reasons.append(f'LOSS_CLOSE_{ANCHOR["loss_cut_pct"]:g}')
@@ -87,7 +106,7 @@ def run():
    if not all(x in b.columns for x in ['open','high','low','close']): continue
    bars[sym]=b; aa[sym]=arrs(b); first.append(b.index.min()); last.append(b.index.max())
    sigs[sym]={e['label']:entry_mask(b,e['weights'],e['threshold_ratio']).to_numpy(bool) for e in ENTRIES}
- end=max(last); results=[]; all_trade_sets={}
+ end=max(last); results=[]
  for sp in STOPS:
   mid='V7_ANCHOR_NO_INTRAWEEK_STOP' if sp is None else f'V7_PROTECT_{sp:g}'
   by={}; combined=[]
@@ -95,16 +114,14 @@ def run():
    tr=[]
    for sym,b in bars.items(): tr.extend(simulate(sym,b,aa[sym],sigs[sym][e['label']],e['label'],sp,mid))
    by[e['label']]=summarize(pd.DataFrame(tr),end); combined.extend(tr)
-  df=pd.DataFrame(combined); all_trade_sets[mid]=combined
+  df=pd.DataFrame(combined)
   results.append({'exit_model':mid,'protective_stop_pct':sp,'by_entry':by,'combined':summarize(df,end),
    'tail_counts':{f'lt_{x}pct':int((df.return_pct<=-x).sum()) for x in [10,15,20,30,40]},
    'worst_15_trades':df.sort_values('return_pct').head(15).to_dict('records')})
- # Compare each stop directly with anchor at aggregate level; entries/signals unchanged but exits can permit later re-entry.
  anchor=next(x for x in results if x['protective_stop_pct'] is None)
  for z in results:
   z['delta_vs_anchor_ALL']={k:None if z['combined']['ALL'].get(k) is None or anchor['combined']['ALL'].get(k) is None else round(z['combined']['ALL'][k]-anchor['combined']['ALL'][k],3)
    for k in ['win_rate_pct','mean_return_pct','profit_factor','reward_risk','p10_return_pct','avg_loss_pct','avg_win_pct','max_loss_pct']}
- # Rank risk-first: max loss, P10, then PF and mean; no claim that max loss is guaranteed because gap-through risk remains.
  protected=[z for z in results if z['protective_stop_pct'] is not None]
  protected.sort(key=lambda z:(z['combined']['ALL']['max_loss_pct'],z['combined']['ALL']['p10_return_pct'],z['combined']['ALL']['profit_factor'],z['combined']['ALL']['mean_return_pct']),reverse=True)
  payload={'status':'SUCCESS','version':'AT_WEEKLY_EXIT_OPT_V7_PROTECTIVE_STOP','generated_at_utc':datetime.now(timezone.utc).isoformat(),
