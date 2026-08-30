@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "packages/PACKAGE_ETF_V21_18_1R4_DISTRIBUTION_COMPLETE/**"
+      - "src/v182/etf/**"
+      - "tests/test_etf_ter_assets_governance.py"
       - ".github/workflows/etf_distribution_v21_18_1r4.yml"
   workflow_dispatch:
 
@@ -31,6 +33,11 @@ jobs:
           cache-dependency-path: packages/PACKAGE_ETF_V21_18_1R4_DISTRIBUTION_COMPLETE/pyproject.toml
       - name: Install package and audit tools
         run: python -m pip install -e ".[test]"
+      - name: Validate governed TER/assets gate
+        working-directory: ${{ github.workspace }}
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: python -m pytest -q tests/test_etf_ter_assets_governance.py
       - name: Validate package integrity governance and schemas
         run: python tools/validate_package.py --json-report validation_report.json
       - name: Confirm strict canonical-source gate remains closed
