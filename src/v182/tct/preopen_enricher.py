@@ -34,34 +34,66 @@ class FinnhubClient:
     api_key: str | None
     disabled: bool = False
 
-    def company_news_last_12h(self, ticker: str, now_utc: datetime) -> tuple[int, str]:
+    def _get(self, endpoint: str, params: dict[str, object]) -> tuple[object | None, str]:
         if not self.api_key or self.disabled:
-            return 0, "UNAVAILABLE"
-        start = now_utc - timedelta(hours=12)
-        params = {
-            "symbol": ticker,
-            "from": start.date().isoformat(),
-            "to": now_utc.date().isoformat(),
-            "token": self.api_key,
-        }
+            return None, "UNAVAILABLE"
+        query = dict(params)
+        query["token"] = self.api_key
         try:
-            response = requests.get("https://finnhub.io/api/v1/company-news", params=params, timeout=8)
+            response = requests.get(f"https://finnhub.io/api/v1/{endpoint}", params=query, timeout=8)
         except requests.RequestException:
-            return 0, "SOURCE_ERROR"
+            return None, "SOURCE_ERROR"
         if response.status_code in {401, 403}:
             self.disabled = True
-            return 0, f"HTTP_{response.status_code}_SOURCE_DISABLED"
+            return None, f"HTTP_{response.status_code}_SOURCE_DISABLED"
         if response.status_code != 200:
-            return 0, f"HTTP_{response.status_code}"
+            return None, f"HTTP_{response.status_code}"
         try:
-            rows = response.json()
+            return response.json(), "OK"
         except ValueError:
-            return 0, "INVALID_JSON"
-        if not isinstance(rows, list):
+            return None, "INVALID_JSON"
+
+    def company_news_last_12h(self, ticker: str, now_utc: datetime) -> tuple[int, str]:
+        start = now_utc - timedelta(hours=12)
+        payload, status = self._get(
+            "company-news",
+            {"symbol": ticker, "from": start.date().isoformat(), "to": now_utc.date().isoformat()},
+        )
+        if status != "OK":
+            return 0, status
+        if not isinstance(payload, list):
             return 0, "INVALID_PAYLOAD"
         cutoff = int(start.timestamp())
-        recent = [row for row in rows if int(row.get("datetime") or 0) >= cutoff]
+        recent = [row for row in payload if isinstance(row, dict) and int(row.get("datetime") or 0) >= cutoff]
         return len(recent), "OK"
+
+    def earnings_within_days(self, ticker: str, now_utc: datetime, days: int = 3) -> tuple[str | None, int | None, str]:
+        end = now_utc + timedelta(days=days)
+        payload, status = self._get(
+            "calendar/earnings",
+            {"symbol": ticker, "from": now_utc.date().isoformat(), "to": end.date().isoformat()},
+        )
+        if status != "OK":
+            return None, None, status
+        if not isinstance(payload, dict):
+            return None, None, "INVALID_PAYLOAD"
+        rows = payload.get("earningsCalendar")
+        if not isinstance(rows, list):
+            return None, None, "INVALID_PAYLOAD"
+        dates: list[pd.Timestamp] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            value = row.get("date")
+            ts = pd.to_datetime(value, errors="coerce")
+            if pd.notna(ts):
+                dates.append(pd.Timestamp(ts).normalize())
+        if not dates:
+            return None, None, "OK_NO_EARNINGS"
+        event = min(dates)
+        today = pd.Timestamp(now_utc.date())
+        delta = int((event - today).days)
+        return event.date().isoformat(), delta, "OK"
 
 
 def _read_csv(path: Path) -> pd.DataFrame:
@@ -199,13 +231,19 @@ def run(
         ticker = str(row["_ticker"])
         market = _premarket_snapshot(ticker)
         news_count, news_status = finnhub.company_news_last_12h(ticker, now_utc)
+        earnings_date, days_to_earnings, earnings_source_status = finnhub.earnings_within_days(ticker, now_utc, days=3)
         record = row.to_dict()
         record.update(market)
         record["news_finnhub_12h_count"] = int(news_count)
         record["news_finnhub_status"] = news_status
+        record["earnings_date"] = earnings_date
+        record["days_to_earnings"] = days_to_earnings
+        record["earnings_finnhub_status"] = earnings_source_status
+        record["earnings_risk_3d"] = days_to_earnings is not None and 0 <= int(days_to_earnings) <= 3
+        record["preopen_action"] = "EXCLU_EARNINGS" if record["_horizon"] == "TCT" and record["earnings_risk_3d"] else "KEEP"
         record["preopen_enrichment_status"] = (
             "ACTIVE_OK"
-            if market["market_source_status"] == "OK" and news_status == "OK"
+            if market["market_source_status"] == "OK" and news_status in {"OK", "OK_NO_NEWS"} and earnings_source_status in {"OK", "OK_NO_EARNINGS"}
             else "ACTIVE_BLOCK_DATA_PARTIAL"
         )
         record["generated_at_utc"] = now_utc.isoformat()
@@ -223,6 +261,8 @@ def run(
         "candidate_rows": int(len(output)),
         "tct_rows": int((output["_horizon"] == "TCT").sum()),
         "ct_rows": int((output["_horizon"] == "CT").sum()),
+        "earnings_exclusions_tct": int(((output["_horizon"] == "TCT") & output["earnings_risk_3d"].astype(bool)).sum()),
+        "earnings_rule": "TCT earnings within 3 calendar days => EXCLU_EARNINGS when Finnhub calendar is known",
         "finnhub_disabled_after_auth_error": bool(finnhub.disabled),
         "fail_closed_if_preselection_missing": True,
         "real_orders_enabled": False,
