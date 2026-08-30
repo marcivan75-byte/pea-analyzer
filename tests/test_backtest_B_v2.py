@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from v182.audit.pit_loader import PITDataUnavailable, load_pit_file, pit_cutoff
+from v182.audit.pit_loader import PITDataUnavailable, PITLoader, load_pit_features, load_pit_file, pit_cutoff
 from v182.backtest.v21_8_1_backtest_B_v2 import compute_true_26w_pnl, detect_B_v2
 
 
@@ -60,3 +60,25 @@ def test_pit_loader_refuses_future_only_data(tmp_path: Path):
 def test_pit_cutoff_is_previous_day_22_paris():
     cutoff = pit_cutoff(datetime(2024, 1, 10, 9, 0, tzinfo=ZoneInfo("Europe/Paris")))
     assert cutoff == datetime(2024, 1, 9, 21, 0, tzinfo=ZoneInfo("UTC"))
+
+
+def test_supplied_pitloader_api_uses_observation_timestamp_not_file_mtime(tmp_path: Path):
+    audit = tmp_path / "outputs" / "audit"
+    audit.mkdir(parents=True)
+    source = audit / "action_identity_map_sample.csv"
+    pd.DataFrame(
+        {
+            "ticker": ["AI.PA", "AI.PA"],
+            "asset_type": ["ACTION", "ACTION"],
+            "observed_at": ["2024-01-09T20:30:00Z", "2024-01-10T21:30:00Z"],
+            "value": [1.0, 99.0],
+        }
+    ).to_csv(source, index=False)
+    loader = PITLoader(tmp_path)
+    row = loader.get_features_pit("AI.PA", pd.Timestamp("2024-01-10T12:00:00", tz="Europe/Paris"))
+    assert row["value"] == 1.0
+
+
+def test_supplied_load_pit_features_wrapper_fails_closed_without_audit(tmp_path: Path):
+    with pytest.raises(PITDataUnavailable):
+        load_pit_features("2024-01-10", root=tmp_path)
