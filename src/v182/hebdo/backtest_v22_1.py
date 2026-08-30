@@ -6,8 +6,10 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy.stats import spearmanr
 
 from v182.backtest.v21_8_1_backtest_B_v2 import compute_mae_mfe, compute_true_26w_pnl
+from v182.hebdo.mae_predictor import apply_mae_filter, train_stop_model
 from v182.scoring.ic_lasso_selector import (
     build_governed_weights,
     compute_information_coefficient,
@@ -47,18 +49,14 @@ def _validate_inputs(features: pd.DataFrame, ohlcv: pd.DataFrame) -> tuple[pd.Da
     o = o.dropna(subset=["ticker", "date"]).sort_values(["ticker", "date"])
     if f.empty or o.empty:
         raise HistoricalPITUnavailable("BLOCK_DATA_BACKTEST: empty historical PIT features or OHLCV")
-    if "pit_observed_at" in f.columns:
-        observed = pd.to_datetime(f["pit_observed_at"], errors="coerce", utc=True)
-        asof_utc = pd.to_datetime(f["as_of_date"], errors="coerce", utc=True)
-        if observed.isna().any() or bool((observed > asof_utc).any()):
-            raise HistoricalPITUnavailable("BLOCK_DATA_BACKTEST: future/invalid PIT feature timestamp")
-    elif "_pit_observed_at_utc" in f.columns:
-        observed = pd.to_datetime(f["_pit_observed_at_utc"], errors="coerce", utc=True)
-        asof_utc = pd.to_datetime(f["as_of_date"], errors="coerce", utc=True)
-        if observed.isna().any() or bool((observed > asof_utc).any()):
-            raise HistoricalPITUnavailable("BLOCK_DATA_BACKTEST: future/invalid PIT feature timestamp")
-    else:
+
+    ts_col = "pit_observed_at" if "pit_observed_at" in f.columns else "_pit_observed_at_utc" if "_pit_observed_at_utc" in f.columns else None
+    if ts_col is None:
         raise HistoricalPITUnavailable("BLOCK_DATA_BACKTEST: historical features lack PIT observation timestamp")
+    observed = pd.to_datetime(f[ts_col], errors="coerce", utc=True)
+    asof_utc = pd.to_datetime(f["as_of_date"], errors="coerce", utc=True)
+    if observed.isna().any() or bool((observed > asof_utc).any()):
+        raise HistoricalPITUnavailable("BLOCK_DATA_BACKTEST: future/invalid PIT feature timestamp")
     return f, o
 
 
@@ -68,12 +66,6 @@ def add_true_forward_returns(
     *,
     stop_pct: float = 0.09,
 ) -> pd.DataFrame:
-    """Attach true stopped forward returns at all IC-decay horizons.
-
-    Entry is the close on the feature as_of_date (or last session <= it). Forward lows
-    are inspected from the next trading session. Every horizon uses the same intraday
-    protective stop. MAE/MFE are measured over the full 126-session forward window.
-    """
     f, o = _validate_inputs(features, ohlcv)
     output: list[dict[str, object]] = []
     grouped = {str(t): g.set_index("date").sort_index() for t, g in o.groupby("ticker", sort=False)}
@@ -149,6 +141,41 @@ def train_governed_model(
     return ic, weights, meta
 
 
+def _score_with_frozen_weights(frame: pd.DataFrame, weights: dict[str, dict[str, object]]) -> pd.Series:
+    score = pd.Series(0.0, index=frame.index, dtype=float)
+    valid = pd.Series(True, index=frame.index)
+    for feature, spec in weights.items():
+        if feature not in frame.columns:
+            valid[:] = False
+            continue
+        values = pd.to_numeric(frame[feature], errors="coerce")
+        try:
+            mean_ = float(spec["training_mean"])
+            scale_ = float(spec["training_scale"])
+            weight = float(spec["weight"])
+        except (KeyError, TypeError, ValueError):
+            valid[:] = False
+            continue
+        observed = values.notna() & np.isfinite(values) & np.isfinite(mean_) & np.isfinite(scale_) & (scale_ > 0)
+        valid &= observed
+        direction = -1.0 if str(spec.get("direction", "LONG")).upper() == "SHORT" else 1.0
+        score = score + direction * weight * ((values - mean_) / scale_)
+    score.loc[~valid] = np.nan
+    return score
+
+
+def _oos_ic(frame: pd.DataFrame, score_col: str = "governed_score") -> dict[str, float | int | None]:
+    out: dict[str, float | int | None] = {}
+    score = pd.to_numeric(frame[score_col], errors="coerce")
+    for horizon in ("1w", "4w", "26w"):
+        ret = pd.to_numeric(frame.get(f"forward_ret_true_{horizon}"), errors="coerce")
+        valid = score.notna() & ret.notna()
+        n = int(valid.sum())
+        out[f"ic_{horizon}"] = float(spearmanr(score[valid], ret[valid]).statistic) if n >= 30 else None
+        out[f"ic_{horizon}_n"] = n
+    return out
+
+
 def acceptance_metrics(ledger: pd.DataFrame) -> dict[str, float | int | None]:
     ret26 = pd.to_numeric(ledger.get("forward_ret_true_26w"), errors="coerce").dropna()
     mae = pd.to_numeric(ledger.get("mae"), errors="coerce").dropna()
@@ -173,6 +200,7 @@ def main() -> int:
     parser.add_argument("--out-dir", type=Path, default=Path("outputs/hebdo/backtest_v22_1"))
     parser.add_argument("--start", default="2019-01-01")
     parser.add_argument("--end", default="2024-12-31")
+    parser.add_argument("--holdout-start", default="2024-01-01")
     args = parser.parse_args()
     if not args.features.is_file() or not args.ohlcv.is_file():
         raise SystemExit("BLOCK_DATA_BACKTEST: required PIT historical files missing")
@@ -184,16 +212,46 @@ def main() -> int:
         features = features[(dates >= pd.Timestamp(args.start)) & (dates <= pd.Timestamp(args.end))].copy()
     try:
         ledger = add_true_forward_returns(features, ohlcv)
-        ic, weights, model_meta = train_governed_model(ledger)
-    except HistoricalPITUnavailable as exc:
+        ledger["as_of_date"] = pd.to_datetime(ledger["as_of_date"], errors="coerce")
+        train = ledger[ledger["as_of_date"] < pd.Timestamp(args.holdout_start)].copy()
+        holdout = ledger[ledger["as_of_date"] >= pd.Timestamp(args.holdout_start)].copy()
+        if len(train) < 150 or len(holdout) < 30:
+            raise HistoricalPITUnavailable(
+                f"BLOCK_DATA_BACKTEST: temporal split insufficient train={len(train)} holdout={len(holdout)}"
+            )
+        ic_train, weights, model_meta = train_governed_model(train)
+        mae_model = train_stop_model(train)
+    except (HistoricalPITUnavailable, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
+
+    holdout["governed_score"] = _score_with_frozen_weights(holdout, weights)
+    holdout = apply_mae_filter(holdout, trained_artifact=mae_model, require_trained=True)
+    retained = holdout[holdout["mae_status"].eq("OK")].copy()
+
+    report = {
+        "period": [args.start, args.end],
+        "holdout_start": args.holdout_start,
+        "train_rows": int(len(train)),
+        "holdout_rows": int(len(holdout)),
+        "model": model_meta,
+        "mae_model": {
+            "n_train": mae_model["n_train"],
+            "n_validation": mae_model["n_validation"],
+            "validation_auc": mae_model["validation_auc"],
+            "validation_brier": mae_model["validation_brier"],
+        },
+        "holdout_all": {**acceptance_metrics(holdout), **_oos_ic(holdout)},
+        "holdout_after_mae_filter": {**acceptance_metrics(retained), **_oos_ic(retained)},
+    }
 
     out = args.out_dir
     out.mkdir(parents=True, exist_ok=True)
     ledger.to_csv(out / "V22_1_TRUE_FORWARD_LEDGER.csv", index=False)
-    ic.to_csv(out / "V22_1_IC_26W.csv", index=False)
+    train.to_csv(out / "V22_1_TRAIN_LEDGER.csv", index=False)
+    holdout.to_csv(out / "V22_1_HOLDOUT_LEDGER.csv", index=False)
+    ic_train.to_csv(out / "V22_1_IC_TRAIN_26W.csv", index=False)
     (out / "V22_1_GOVERNED_WEIGHTS.json").write_text(json.dumps(weights, indent=2), encoding="utf-8")
-    report = {"period": [args.start, args.end], "model": model_meta, "metrics": acceptance_metrics(ledger)}
+    (out / "V22_1_MAE_MODEL.json").write_text(json.dumps(mae_model, indent=2), encoding="utf-8")
     (out / "V22_1_BACKTEST_REPORT.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))
     return 0
