@@ -11,6 +11,8 @@ import pytest
 from v182.audit.pit_loader import PITDataUnavailable, PITLoader, load_pit_features, load_pit_file, pit_cutoff
 from v182.backtest.v21_8_1_backtest_B_v2 import compute_true_26w_pnl, detect_B_v2
 
+# V22.1 acceptance regression suite for true P&L, B1/B2 and PIT fail-closed governance.
+
 
 def test_stop_touched_j10_is_realized_minus_nine_percent():
     idx = pd.date_range("2024-01-02", periods=20, freq="B")
@@ -28,11 +30,6 @@ def test_stop_touched_j10_is_realized_minus_nine_percent():
 
 
 def test_no_stop_uses_true_final_close_return():
-    """Imported from the supplied Test-Backtest-B-V2.py contract.
-
-    When no intraday low touches the protective stop, the true forward P&L must
-    remain close[J+126] / entry - 1 rather than being clipped or imputed.
-    """
     idx = pd.date_range("2024-01-02", periods=126, freq="B")
     hist = pd.DataFrame(
         {
@@ -50,12 +47,6 @@ def test_no_stop_uses_true_final_close_return():
 
 
 def test_b1_volume_alias_tracks_v21_zscore_signal():
-    """Preserve the supplied B1_vol downstream contract under V2.1 governance.
-
-    The uploaded test expected the legacy B1_vol column. V2.1 deliberately keeps
-    that column as an alias, but the signal itself is now governed by vol_z > 3,
-    pct_close < -1.5% and close < SMA20 rather than the obsolete 2x-volume rule.
-    """
     idx = pd.date_range("2024-01-01", periods=30, freq="B")
     close = np.full(30, 100.0)
     volume = np.array([90.0 + 2.0 * (i % 11) for i in range(30)])
@@ -92,8 +83,6 @@ def test_pit_loader_refuses_future_only_data(tmp_path: Path):
             "value": [1.0],
         }
     ).to_csv(source, index=False)
-
-    # For T=2024-01-10 Paris, the latest admissible timestamp is T-1 22:00 Paris.
     with pytest.raises(PITDataUnavailable):
         load_pit_file(source, datetime(2024, 1, 10, 12, 0, tzinfo=ZoneInfo("Europe/Paris")))
 
