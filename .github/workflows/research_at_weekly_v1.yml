@@ -5,18 +5,11 @@ on:
     branches:
       - research/at-weekly-v1-20260829
     paths:
-      - src/v182/backtest/at_weekly_exit_opt_v7_protective_stop.py
-      - src/v182/backtest/at_weekly_exit_opt_v8_profit_reversal_blocks.py
-      - src/v182/backtest/at_weekly_exit_opt_v9_overheat_block_e.py
-      - src/v182/backtest/at_weekly_exit_opt_v10_overheat_weight_bank.py
-      - src/v182/backtest/at_weekly_exit_opt_v11_overheat_core_refine.py
-      - src/v182/backtest/at_weekly_exit_opt_v12_trailing_reversal.py
-      - src/v182/backtest/at_weekly_quarterly_study_v1.py
       - src/v182/backtest/at_weekly_growth_potential_pit_v1.py
+      - src/v182/backtest/at_weekly_growth_potential_pit_v2.py
+      - src/v182/backtest/at_weekly_quarterly_study_v1.py
       - tests/test_at_weekly_protective_stop_contract.py
-      - docs/research/AT_WEEKLY_BACKTEST_CONTRACT_V1.md
       - docs/research/AT_WEEKLY_DECISION_REGISTRY_V1.md
-      - docs/research/AT_WEEKLY_QUARTERLY_STUDY_SPEC_V1.md
       - docs/research/AT_WEEKLY_GROWTH_POTENTIAL_PIT_SPEC_V1.md
       - .github/workflows/research_at_weekly_v1.yml
 
@@ -45,7 +38,7 @@ jobs:
         run: python -m pip install --disable-pip-version-check pandas numpy pyarrow
       - name: Validate locked protective stop contract
         run: python -m unittest tests.test_at_weekly_protective_stop_contract -v
-      - name: Validate locked architecture before PIT growth study
+      - name: Validate locked architecture before PIT growth V2
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -59,41 +52,39 @@ jobs:
           assert 'EXIT-LOOP-01 | LOCKED' in reg
           print('LOCKED_ARCHITECTURE_OK')
           PY
-      - name: Run PIT growth-potential diagnostic
-        run: python -m v182.backtest.at_weekly_growth_potential_pit_v1
-      - name: Validate PIT growth-potential controls
+      - name: Run PIT growth-potential V2
+        run: python -m v182.backtest.at_weekly_growth_potential_pit_v2
+      - name: Validate PIT growth V2 controls
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          x=json.loads(Path('outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V1.json').read_text())
+          x=json.loads(Path('outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V2.json').read_text())
           assert x['status']=='SUCCESS',x.get('validation_errors')
           assert not x['validation_errors']
           assert x['consensus_upside_pit_coverage_pct']==0.0
+          assert x['max_score_bucket_share_pct']<=85.0
           c=x['lookahead_controls']
-          assert c['completed_week_features_only']
-          assert c['prior_52w_uses_shift_1']
-          assert c['feature_timestamp_le_signal']
-          assert c['current_consensus_backfill_forbidden']
-          assert c['locked_trade_ledger_reused']
-          assert x['score_formula']['outcome_fitting'] is False
+          assert c['completed_week_features_only'] and c['prior_52w_uses_shift_1']
+          assert c['feature_timestamp_le_signal'] and c['current_consensus_backfill_forbidden']
+          assert c['locked_trade_ledger_reused'] and c['outcome_fitting'] is False
           assert x['realised_trades']>0
-          print('PIT_GROWTH_VALIDATED',x['realised_trades'])
+          print('PIT_GROWTH_V2_VALIDATED',x['realised_trades'],'MAX_BUCKET',x['max_score_bucket_share_pct'])
           PY
-      - name: Show PIT growth summary
+      - name: Show PIT growth V2 summary
         if: always()
         run: |
-          if [ -f outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V1.md ]; then cat outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V1.md; fi
-      - name: Upload PIT growth study
+          if [ -f outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V2.md ]; then cat outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V2.md; fi
+      - name: Upload PIT growth V2
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: at-weekly-growth-potential-pit-v1-${{ github.run_id }}
+          name: at-weekly-growth-potential-pit-v2-${{ github.run_id }}
           path: |
-            outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V1.json
-            outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V1_TRADES.csv
-            outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V1_BUCKETS.csv
-            outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V1.md
+            outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V2.json
+            outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V2_TRADES.csv
+            outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V2_BUCKETS.csv
+            outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V2.md
           if-no-files-found: warn
           compression-level: 1
           retention-days: 7
