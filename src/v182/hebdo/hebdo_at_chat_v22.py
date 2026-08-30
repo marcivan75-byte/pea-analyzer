@@ -18,7 +18,6 @@ class MarketRegime:
 
 
 def load_pit_universe(as_of_date: str | pd.Timestamp, root: Path | str = ".") -> pd.DataFrame:
-    """Load the ACTION universe strictly from timestamped PIT audit observations."""
     loader = PITLoader(root)
     frame = loader.load_as_of(pd.Timestamp(as_of_date), "ACTION")
     ticker_col = "ticker" if "ticker" in frame.columns else "yahoo_ticker" if "yahoo_ticker" in frame.columns else None
@@ -35,7 +34,6 @@ def load_pit_universe(as_of_date: str | pd.Timestamp, root: Path | str = ".") ->
 
 
 def detect_market_regime(cac40_daily: pd.DataFrame) -> MarketRegime:
-    """CRASH when CAC40 two-week close return is below -3%."""
     close_col = "close" if "close" in cac40_daily.columns else "Close" if "Close" in cac40_daily.columns else None
     if close_col is None or len(cac40_daily) < 11:
         raise ValueError("CAC40 daily history must provide at least 11 closes")
@@ -69,11 +67,6 @@ def _atr_pct(group: pd.DataFrame, periods: int = 14) -> pd.Series:
 
 
 def compute_features_v22(df_daily: pd.DataFrame, sector_map: dict[str, str] | pd.Series | None = None) -> pd.DataFrame:
-    """Compute V22 technical features from an already-PIT daily panel.
-
-    Required columns: ticker,date,high,low,close,volume. No sector is fabricated: when
-    no proven mapping is supplied, sector remains missing and is later BLOCK_DATA_SECTOR.
-    """
     required = {"ticker", "date", "high", "low", "close", "volume"}
     missing = required.difference(df_daily.columns)
     if missing:
@@ -132,11 +125,7 @@ def score_universe_v22(
     df_universe: pd.DataFrame,
     lasso_weights: dict[str, dict[str, object]] | None = None,
 ) -> pd.DataFrame:
-    """Fail-closed sector-neutral ranking with governed Lasso weights.
-
-    Every governed feature must exist and be observed on a row before that row can be
-    scored. Missing sectors or MAE inputs are BLOCK_DATA; they are never imputed as 0.
-    """
+    """Fail-closed sector-neutral ranking using the frozen Lasso train contract."""
     required = {"ticker", "sector", "mom_26w", "vol_z", "drawdown_4w", "close", "sma200", "atr_14_pct"}
     missing = required.difference(df_universe.columns)
     if missing:
@@ -180,20 +169,21 @@ def score_universe_v22(
         observed = values.notna() & np.isfinite(values)
         out.loc[scoreable & ~observed, "selection_status"] = "BLOCK_DATA_FEATURE"
         scoreable = out["selection_status"].eq("OK")
-        vals = values.loc[scoreable]
-        if vals.empty:
+        if not bool(scoreable.any()):
             continue
-        std = float(vals.std(ddof=0))
-        if not np.isfinite(std) or std <= 0:
-            out.loc[scoreable, "selection_status"] = "BLOCK_DATA_FEATURE"
-            scoreable = out["selection_status"].eq("OK")
-            continue
-        centered = (vals - float(vals.mean())) / std
-        weight = float(spec.get("weight", 0.0))
-        if not np.isfinite(weight) or weight < 0:
-            raise ValueError(f"BLOCK_DATA_WEIGHTS: invalid weight for {feature}")
+
+        try:
+            mean_ = float(spec["training_mean"])
+            scale_ = float(spec["training_scale"])
+            weight = float(spec["weight"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"BLOCK_DATA_WEIGHTS: incomplete train contract for {feature}") from exc
+        if not np.isfinite(mean_) or not np.isfinite(scale_) or scale_ <= 0 or not np.isfinite(weight) or weight < 0:
+            raise ValueError(f"BLOCK_DATA_WEIGHTS: invalid train contract for {feature}")
+
+        standardized = (values.loc[scoreable] - mean_) / scale_
         direction = -1.0 if str(spec.get("direction", "LONG")).upper() == "SHORT" else 1.0
-        score.loc[centered.index] = score.loc[centered.index] + direction * weight * centered
+        score.loc[standardized.index] = score.loc[standardized.index] + direction * weight * standardized
 
     out["governed_score"] = np.nan
     scoreable = out["selection_status"].eq("OK")
