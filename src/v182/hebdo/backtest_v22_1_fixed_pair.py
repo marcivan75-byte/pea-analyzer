@@ -10,7 +10,6 @@ from scipy.stats import spearmanr
 
 from v182.hebdo.backtest_v22_1 import (
     HistoricalPITUnavailable,
-    TECHNICAL_CORE_FEATURE_COLUMNS,
     _read_frame,
     _score_with_frozen_weights,
     acceptance_metrics,
@@ -18,6 +17,14 @@ from v182.hebdo.backtest_v22_1 import (
     train_governed_model,
 )
 from v182.hebdo.mae_predictor import apply_mae_filter, train_stop_model
+
+
+FIXED_NO_ATR_FEATURE_COLUMNS = (
+    "vol_z",
+    "mom_26w",
+    "rsi_14_hebdo",
+    "drawdown_4w",
+)
 
 
 def _safe_float(value):
@@ -119,10 +126,9 @@ def _write_variant(
             f"BLOCK_DATA_BACKTEST: temporal split insufficient train={len(train)} holdout={len(holdout)}"
         )
 
-    ic_train, weights, model_meta = train_governed_model(train, feature_columns=TECHNICAL_CORE_FEATURE_COLUMNS)
+    ic_train, weights, model_meta = train_governed_model(train, feature_columns=FIXED_NO_ATR_FEATURE_COLUMNS)
     mae_model = train_stop_model(train)
 
-    # Apply the same frozen training weights to both IS diagnostics and true OOS holdout.
     train["governed_score"] = _score_with_frozen_weights(train, weights)
     holdout["governed_score"] = _score_with_frozen_weights(holdout, weights)
     train = apply_mae_filter(train, trained_artifact=mae_model, require_trained=True)
@@ -141,10 +147,11 @@ def _write_variant(
     report = {
         "period": [start, end],
         "holdout_start": holdout_start,
-        "feature_set": "technical-core",
-        "feature_columns": list(TECHNICAL_CORE_FEATURE_COLUMNS),
+        "feature_set": "technical-core-no-atr",
+        "feature_columns": list(FIXED_NO_ATR_FEATURE_COLUMNS),
         "stop_policy": "fixed",
         "fixed_stop_pct": 0.09,
+        "atr_removed_from_stop_and_ranking": True,
         "execution_policy": "NEXT_SESSION_OPEN_J1",
         "universe": universe,
         "full_enhanced_pit_claimed": False,
@@ -203,7 +210,6 @@ def main() -> int:
     dates = pd.to_datetime(features["as_of_date"], errors="coerce")
     features = features[(dates >= pd.Timestamp(args.start)) & (dates <= pd.Timestamp(args.end))].copy()
 
-    # Expensive J+1 alignment and forward-window construction is performed once only.
     ledger = add_true_forward_returns(features, ohlcv, stop_policy="fixed")
 
     full_report = _write_variant(
@@ -230,7 +236,7 @@ def main() -> int:
 
     comparison = {
         "runtime_design": "ONE_FIXED_FORWARD_LEDGER_REUSED_FOR_FULL_AND_LIQUID",
-        "atr_removed": True,
+        "atr_removed_from_stop_and_ranking": True,
         "min_adv_eur": args.min_adv_eur,
         "full": full_report,
         "liquid": liquid_report,
