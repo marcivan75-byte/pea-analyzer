@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Mapping
 
 import numpy as np
 import pandas as pd
@@ -124,8 +125,11 @@ def _valid_sector(series: pd.Series) -> pd.Series:
 def score_universe_v22(
     df_universe: pd.DataFrame,
     lasso_weights: dict[str, dict[str, object]] | None = None,
+    *,
+    mae_model: Mapping[str, object] | None = None,
+    require_trained_mae: bool = False,
 ) -> pd.DataFrame:
-    """Fail-closed sector-neutral ranking using the frozen Lasso train contract."""
+    """Fail-closed sector-neutral ranking with frozen Lasso and optional trained MAE."""
     required = {"ticker", "sector", "mom_26w", "vol_z", "drawdown_4w", "close", "sma200", "atr_14_pct"}
     missing = required.difference(df_universe.columns)
     if missing:
@@ -158,7 +162,12 @@ def score_universe_v22(
     crash_b = (vol_z > 3.0) & (out["mom_26w_sector"] < -2.0)
     out.loc[out["selection_status"].eq("OK") & crash_b, "selection_status"] = "EXCLU_B_CRASH"
 
-    out = apply_mae_filter(out, 0.45)
+    out = apply_mae_filter(
+        out,
+        0.45,
+        trained_artifact=mae_model,
+        require_trained=require_trained_mae,
+    )
     out.loc[out["selection_status"].eq("OK") & out["mae_status"].eq("EXCLU_MAE"), "selection_status"] = "EXCLU_MAE"
     out.loc[out["selection_status"].eq("OK") & out["mae_status"].eq("BLOCK_DATA_MAE"), "selection_status"] = "BLOCK_DATA_MAE"
 
@@ -171,7 +180,6 @@ def score_universe_v22(
         scoreable = out["selection_status"].eq("OK")
         if not bool(scoreable.any()):
             continue
-
         try:
             mean_ = float(spec["training_mean"])
             scale_ = float(spec["training_scale"])
@@ -180,7 +188,6 @@ def score_universe_v22(
             raise ValueError(f"BLOCK_DATA_WEIGHTS: incomplete train contract for {feature}") from exc
         if not np.isfinite(mean_) or not np.isfinite(scale_) or scale_ <= 0 or not np.isfinite(weight) or weight < 0:
             raise ValueError(f"BLOCK_DATA_WEIGHTS: invalid train contract for {feature}")
-
         standardized = (values.loc[scoreable] - mean_) / scale_
         direction = -1.0 if str(spec.get("direction", "LONG")).upper() == "SHORT" else 1.0
         score.loc[standardized.index] = score.loc[standardized.index] + direction * weight * standardized
