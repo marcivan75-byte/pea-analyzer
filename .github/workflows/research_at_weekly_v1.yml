@@ -10,6 +10,7 @@ on:
       - src/v182/backtest/at_weekly_exit_opt_v2.py
       - src/v182/backtest/at_weekly_exit_opt_v3.py
       - src/v182/backtest/at_weekly_exit_opt_v4_false_positive.py
+      - src/v182/backtest/at_weekly_exit_opt_v5_delayed_failure.py
       - .github/workflows/research_at_weekly_v1.yml
 
 permissions:
@@ -39,19 +40,19 @@ jobs:
       - name: Install backtest runtime
         run: python -m pip install --disable-pip-version-check pandas numpy pyarrow
 
-      - name: Run V4 selective false-positive refinement
-        run: python -m v182.backtest.at_weekly_exit_opt_v4_false_positive
+      - name: Run V5 delayed deterioration refinement
+        run: python -m v182.backtest.at_weekly_exit_opt_v5_delayed_failure
 
-      - name: Validate V4 false-positive refinement
+      - name: Validate V5 delayed deterioration refinement
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          x=json.loads(Path('outputs/backtest/AT_WEEKLY_EXIT_OPT_V4_FALSE_POSITIVE.json').read_text())
+          x=json.loads(Path('outputs/backtest/AT_WEEKLY_EXIT_OPT_V5_DELAYED_FAILURE.json').read_text())
           assert x['status']=='SUCCESS'
           assert x['valid_actions'] > 0
           assert len(x['entries_fixed']) == 2
-          assert x['exit_models_tested'] >= 300
+          assert x['exit_models_tested'] >= 500
           assert x['diagnostics']['best_overall'] is not None
           assert x['diagnostics']['best_5pct_trailing'] is not None
           assert x['requested_5pct_trailing_explicitly_tested'] is True
@@ -60,22 +61,22 @@ jobs:
           assert x['lookahead_controls']['intrabar_stop_assumption'] is False
           assert x['lookahead_controls']['endpoint_mark_is_execution'] is False
           print('VALID_ACTIONS',x['valid_actions'],'EXIT_MODELS',x['exit_models_tested'])
-          for k in ['best_overall','best_5pct_trailing','best_fp_score2','best_fp_score3','best_fp_score4']:
+          for k in ['best_overall','best_5pct_trailing','best_watch3','best_watch4','best_watch5','best_watch6']:
               z=x['diagnostics'][k]
               if z is not None:
-                  print(k,z['exit_model'],z['config'],z['robust'],z['combined']['ALL'],z['combined']['12M'],z['false_positive_diagnostics'])
+                  print(k,z['exit_model'],z['config'],z['robust'],z['combined']['ALL'],z['combined']['12M'],z['deterioration_diagnostics'])
           PY
 
-      - name: Show V4 summary
+      - name: Show V5 summary
         if: always()
-        run: cat outputs/backtest/AT_WEEKLY_EXIT_OPT_V4_FALSE_POSITIVE.json || true
+        run: cat outputs/backtest/AT_WEEKLY_EXIT_OPT_V5_DELAYED_FAILURE.json || true
 
-      - name: Upload V4 false-positive refinement
+      - name: Upload V5 delayed deterioration refinement
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: at-weekly-exit-opt-v4-false-positive-${{ github.run_id }}
-          path: outputs/backtest/AT_WEEKLY_EXIT_OPT_V4_FALSE_POSITIVE.json
+          name: at-weekly-exit-opt-v5-delayed-failure-${{ github.run_id }}
+          path: outputs/backtest/AT_WEEKLY_EXIT_OPT_V5_DELAYED_FAILURE.json
           if-no-files-found: warn
           compression-level: 1
           retention-days: 7
