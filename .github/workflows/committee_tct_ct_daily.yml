@@ -130,6 +130,9 @@ jobs:
       - name: Daily consolidated optimized V21.15.7
         run: python -m v182.reporting.daily_consolidated_runner_v21_15_4
 
+      - name: ACTIVE bounded TCT CT PREOPEN enrichment
+        run: python -m v182.tct.preopen_enricher --root . --max-tct 20 --max-ct 20
+
       - name: Publish Android tactical and CI summaries
         if: always()
         run: |
@@ -184,6 +187,7 @@ jobs:
           if [ -f outputs/audit/TCT_NEXT_SESSION_CATALYST_V24_4_2_AUDIT.json ]; then cat outputs/audit/TCT_NEXT_SESSION_CATALYST_V24_4_2_AUDIT.json; fi
           if [ -f outputs/audit/TCT_V24_4_2_PIT_LINEAGE_AUDIT.json ]; then cat outputs/audit/TCT_V24_4_2_PIT_LINEAGE_AUDIT.json; fi
           if [ -f outputs/audit/TCT_V24_4_2_PIT_VALIDATION.json ]; then cat outputs/audit/TCT_V24_4_2_PIT_VALIDATION.json; fi
+          if [ -f outputs/audit/TCT_PREOPEN_ENRICHER_ACTIVE_AUDIT.json ]; then cat outputs/audit/TCT_PREOPEN_ENRICHER_ACTIVE_AUDIT.json; fi
           if [ -f outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json ]; then cat outputs/audit/FINNHUB_CONSENSUS_CACHE_V1.json; fi
           if [ -f outputs/audit/PIPELINE_RUNTIME_V21_13_7.json ]; then cat outputs/audit/PIPELINE_RUNTIME_V21_13_7.json; fi
           if [ -f data/cache/actions/history_manifest.json ]; then cat data/cache/actions/history_manifest.json; fi
@@ -238,9 +242,11 @@ jobs:
             outputs/mobile/ANDROID_TCT_DAILY_TRADER_SHADOW.md
             outputs/mobile/ANDROID_TCT_NEXT_SESSION_CATALYST_V24_4_2.md
             outputs/mobile/ANDROID_TCT_V24_4_2_PIT_VALIDATION.md
+            outputs/daily_tct_ct/TCT_PREOPEN_ENRICHED_ACTIVE.csv
             outputs/daily_tct_ct/TCT_NEXT_SESSION_CATALYST_V24_4_2.csv
             outputs/daily_tct_ct/TCT_V24_4_2_PIT_SLICES.csv
             outputs/daily_tct_ct/TCT_V24_4_2_PREOPEN_POSTMARKET_CHANGES.csv
+            outputs/audit/TCT_PREOPEN_ENRICHER_ACTIVE_AUDIT.json
             outputs/audit/DAILY_CONSOLIDATED_RUNTIME_V21_15_7.json
             outputs/audit/DAILY_CI_RESTITUTION_V21_15_7.json
             outputs/audit/CI_EXPLAINABILITY_AUDIT.json
