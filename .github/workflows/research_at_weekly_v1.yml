@@ -11,9 +11,11 @@ on:
       - src/v182/backtest/at_weekly_exit_opt_v10_overheat_weight_bank.py
       - src/v182/backtest/at_weekly_exit_opt_v11_overheat_core_refine.py
       - src/v182/backtest/at_weekly_exit_opt_v12_trailing_reversal.py
+      - src/v182/backtest/at_weekly_quarterly_study_v1.py
       - tests/test_at_weekly_protective_stop_contract.py
       - docs/research/AT_WEEKLY_BACKTEST_CONTRACT_V1.md
       - docs/research/AT_WEEKLY_DECISION_REGISTRY_V1.md
+      - docs/research/AT_WEEKLY_QUARTERLY_STUDY_SPEC_V1.md
       - .github/workflows/research_at_weekly_v1.yml
 
 permissions:
@@ -41,64 +43,59 @@ jobs:
         run: python -m pip install --disable-pip-version-check pandas numpy pyarrow
       - name: Validate locked protective stop contract
         run: python -m unittest tests.test_at_weekly_protective_stop_contract -v
-      - name: Validate locked A-E decisions before trailing research
+      - name: Validate locked exit architecture before quarterly study
         run: |
           python - <<'PY'
           from pathlib import Path
-          from v182.backtest.at_weekly_exit_opt_v12_trailing_reversal import STOP_PCT,D_CFG
+          from v182.backtest.at_weekly_quarterly_study_v1 import STOP_PCT,D_CFG
           reg=Path('docs/research/AT_WEEKLY_DECISION_REGISTRY_V1.md').read_text()
           assert STOP_PCT==9.0
           assert D_CFG['activation_pct']==5.0 and D_CFG['score']==1 and D_CFG['daily_drop_pct']==4.0
           assert 'ENTRY-01 | LOCKED' in reg and 'STOP-01 | LOCKED' in reg
-          assert 'E-01 | LOCKED-NOT-EXECUTION' in reg and 'F-TRAIL-01 | ACTIVE WIP' in reg
-          print('LOCKED_DECISIONS_OK')
+          assert 'E-01 | LOCKED-NOT-EXECUTION' in reg
+          assert 'F-TRAIL-01 | LOCKED-REJECTED' in reg
+          assert 'EXIT-LOOP-01 | LOCKED' in reg
+          print('LOCKED_EXIT_ARCHITECTURE_OK')
           PY
-      - name: Run V12 trailing reversal bench
-        run: python -m v182.backtest.at_weekly_exit_opt_v12_trailing_reversal
-      - name: Validate V12 robustness and no-lookahead controls
+      - name: Run quarterly study since 2023
+        run: python -m v182.backtest.at_weekly_quarterly_study_v1
+      - name: Validate quarterly study reconciliations and no-lookahead controls
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          x=json.loads(Path('outputs/backtest/AT_WEEKLY_EXIT_OPT_V12_TRAILING_REVERSAL.json').read_text())
-          assert x['status']=='SUCCESS' and x['valid_actions']>0
-          assert x['models_tested']>=90
-          assert x['locked']['entries_fixed'] is True and x['locked']['protective_stop_pct']==9.0
-          assert x['locked']['block_e_execution_trigger'] is False
-          t=x['trailing_contract']; c=x['lookahead_controls']
-          assert t['five_pct_explicitly_tested'] is True
-          assert t['reference']=='prior_completed_week_peak_close_only' and t['same_week_future_high_not_used'] is True
-          assert t['signal']=='completed_week_only' and t['execution']=='next_week_open'
-          assert c['completed_week_signals_only'] and c['strategic_execution']=='next_week_open'
-          assert c['trailing_uses_prior_completed_week_peak_only'] and c['fixed_stop_known_before_bar'] and not c['endpoint_mark_is_execution']
-          eligible=x.get('eligible_models',0)
-          best=x.get('best_guarded')
-          best5=x.get('best_5pct_guarded')
-          if eligible>0:
-            assert best is not None
-          if any(m.get('config',{}).get('trail_pct')==5.0 for m in x.get('top20',[])):
-            assert best5 is not None
-          print('MODELS',x['models_tested'],'ELIGIBLE',eligible,'RR4',x.get('robust_rr4_guarded_count',0))
-          print('BEST',best)
-          print('BEST_5PCT',best5)
+          x=json.loads(Path('outputs/backtest/AT_WEEKLY_QUARTERLY_STUDY_V1.json').read_text())
+          assert x['status']=='SUCCESS',x.get('validation_errors')
+          assert not x['validation_errors']
+          assert x['nominal_per_trade_eur']==5000.0
+          l=x['locked']
+          assert l['protective_stop_pct']==9.0
+          assert l['block_e']=='LOCKED_DIAGNOSTIC_NOT_EXECUTION'
+          assert l['trailing']=='LOCKED_REJECTED'
+          assert l['strategic_signals']=='completed_week_only' and l['strategic_execution']=='next_week_open'
+          assert l['endpoint_mark_is_execution'] is False
+          assert len(x['quarters'])>0
+          for r in x['quarters']:
+            cats=r['early_false_positives_eliminated']+r['protective_stop_invalidations']+r['other_invalidations']+r['take_profit_reversal_D']+r['take_profit_overheat_E']+r['take_profit_D_plus_E_joint']
+            assert cats==r['realised_closed_exits']
+            assert r['winning_trades']+r['losing_trades']+r['zero_return_trades']==r['realised_closed_exits']
+          print('QUARTERS',len(x['quarters']))
+          print('CONSOLIDATED',json.dumps(x['consolidated'],sort_keys=True))
           PY
-      - name: Show V12 concise summary
+      - name: Show quarterly summary
         if: always()
         run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          p=Path('outputs/backtest/AT_WEEKLY_EXIT_OPT_V12_TRAILING_REVERSAL.json')
-          if p.exists():
-            x=json.loads(p.read_text())
-            print(json.dumps({'status':x.get('status'),'runtime_seconds':x.get('runtime_seconds'),'models_tested':x.get('models_tested'),'eligible_models':x.get('eligible_models'),'robust_rr4_guarded_count':x.get('robust_rr4_guarded_count'),'best_guarded':x.get('best_guarded'),'best_5pct_guarded':x.get('best_5pct_guarded'),'best_rr4_guarded':x.get('best_rr4_guarded')},indent=2))
-          PY
-      - name: Upload V12 trailing reversal bench
+          if [ -f outputs/backtest/AT_WEEKLY_QUARTERLY_STUDY_V1.md ]; then cat outputs/backtest/AT_WEEKLY_QUARTERLY_STUDY_V1.md; fi
+      - name: Upload quarterly study
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: at-weekly-exit-opt-v12-trailing-reversal-${{ github.run_id }}
-          path: outputs/backtest/AT_WEEKLY_EXIT_OPT_V12_TRAILING_REVERSAL.json
+          name: at-weekly-quarterly-study-v1-${{ github.run_id }}
+          path: |
+            outputs/backtest/AT_WEEKLY_QUARTERLY_STUDY_V1.json
+            outputs/backtest/AT_WEEKLY_QUARTERLY_STUDY_V1.csv
+            outputs/backtest/AT_WEEKLY_QUARTERLY_STUDY_V1_TRADES.csv
+            outputs/backtest/AT_WEEKLY_QUARTERLY_STUDY_V1.md
           if-no-files-found: warn
           compression-level: 1
           retention-days: 7
