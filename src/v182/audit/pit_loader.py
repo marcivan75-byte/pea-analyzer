@@ -165,3 +165,60 @@ def load_pit_observations(
         observations=observations,
         source_files=tuple(used),
     )
+
+
+class PITLoader:
+    """Compatibility API for callers that used the supplied PITLoader class.
+
+    The implementation intentionally delegates to the governed timestamp-based loader.
+    File modification times are never used as historical evidence.
+    """
+
+    def __init__(self, root: Path | str = Path(".")):
+        self.root = Path(root)
+
+    def load_as_of(self, as_of_date: date | datetime | pd.Timestamp, asset_type: str = "ACTION") -> pd.DataFrame:
+        asset = str(asset_type).upper().strip()
+        if asset not in {"ACTION", "ETF"}:
+            raise PITDataUnavailable(f"Unsupported asset_type: {asset_type}")
+        as_of = pd.Timestamp(as_of_date).to_pydatetime()
+        pit = load_pit_observations(self.root, as_of)
+        observations = pit.observations.copy()
+        asset_col = next(
+            (col for col in observations.columns if str(col).lower() in {"asset_type", "instrument_type", "type"}),
+            None,
+        )
+        if asset_col is not None:
+            typed = observations[observations[asset_col].astype(str).str.upper().eq(asset)].copy()
+            if typed.empty:
+                raise PITDataUnavailable(f"BLOCK_DATA: no {asset} observation available at PIT cutoff")
+            return typed
+        return observations
+
+    def get_features_pit(self, ticker: str, as_of_date: date | datetime | pd.Timestamp) -> dict[str, object]:
+        frame = self.load_as_of(as_of_date, "ACTION")
+        ticker_col = next(
+            (col for col in frame.columns if str(col).lower() in {"ticker", "symbol", "yahoo_ticker"}),
+            None,
+        )
+        if ticker_col is None:
+            raise PITDataUnavailable("BLOCK_DATA: PIT observations have no validated ticker column")
+        rows = frame[frame[ticker_col].astype(str).str.upper().eq(str(ticker).upper())]
+        if rows.empty:
+            raise PITDataUnavailable(f"BLOCK_DATA: {ticker} not found at PIT cutoff")
+        if "_pit_observed_at_utc" in rows.columns:
+            rows = rows.sort_values("_pit_observed_at_utc", ascending=False, kind="stable")
+        return rows.iloc[0].to_dict()
+
+
+def load_pit_features(
+    as_of_date: str | date | datetime | pd.Timestamp,
+    ticker: str | None = None,
+    *,
+    root: Path | str = Path("."),
+) -> pd.DataFrame | dict[str, object]:
+    """Compatibility wrapper using the governed fail-closed PIT loader."""
+    loader = PITLoader(root)
+    if ticker:
+        return loader.get_features_pit(ticker, as_of_date)
+    return loader.load_as_of(as_of_date, "ACTION")
