@@ -5,6 +5,7 @@ on:
     branches:
       - research/at-weekly-v1-20260829
     paths:
+      - src/v182/backtest/at_weekly_ranked_capacity_v14.py
       - src/v182/backtest/at_weekly_capacity_quality_v13.py
       - src/v182/backtest/at_weekly_staged_entry_v12_pea60k.py
       - src/v182/backtest/at_weekly_staged_entry_v11.py
@@ -23,9 +24,10 @@ on:
       stage:
         description: Research stage to execute
         required: true
-        default: v13_quality_capacity
+        default: v14_ranked_capacity
         type: choice
         options:
+          - v14_ranked_capacity
           - v13_quality_capacity
           - v12_pea60k
           - v11_staged_entry
@@ -46,7 +48,7 @@ jobs:
     timeout-minutes: 35
     env:
       PYTHONPATH: ${{ github.workspace }}/src
-      STAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'v13_quality_capacity' }}
+      STAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'v14_ranked_capacity' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Restore persistent OHLCV cache
@@ -82,6 +84,7 @@ jobs:
           set -euo pipefail
           echo "STAGE=$STAGE"
           case "$STAGE" in
+            v14_ranked_capacity) python -m v182.backtest.at_weekly_ranked_capacity_v14 ;;
             v13_quality_capacity) python -m v182.backtest.at_weekly_capacity_quality_v13 ;;
             v12_pea60k) python -m v182.backtest.at_weekly_staged_entry_v12_pea60k ;;
             v11_staged_entry) python -m v182.backtest.at_weekly_staged_entry_v11 ;;
@@ -100,6 +103,7 @@ jobs:
           from pathlib import Path
           stage=os.environ['STAGE']
           p={
+            'v14_ranked_capacity':Path('outputs/backtest/AT_WEEKLY_RANKED_CAPACITY_V14.json'),
             'v13_quality_capacity':Path('outputs/backtest/AT_WEEKLY_CAPACITY_QUALITY_V13.json'),
             'v12_pea60k':Path('outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V12_PEA60K.json'),
             'v11_staged_entry':Path('outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V11.json'),
@@ -114,7 +118,17 @@ jobs:
           assert x['status']=='SUCCESS',x.get('validation_errors')
           assert not x['validation_errors']
           c=x['lookahead_controls']
-          if stage=='v13_quality_capacity':
+          if stage=='v14_ranked_capacity':
+              pc=x['portfolio_contract']; g=x['promotion_gates']
+              assert pc['initial_capital_eur']==60000 and pc['max_live_positions']==12
+              assert pc['full_nominal_per_title_eur']==4000 and pc['annual_entry_cap']==30
+              assert pc['max_drawdown_pct']==12
+              assert g['each_complete_year_net_gt_pct']==15 and g['rr_gt']==3.3 and g['pf_ge']==2 and g['max_drawdown_abs_le_pct']==12
+              assert c['completed_week_features_only'] and c['feature_timestamp_le_signal']
+              assert c['future_signals_not_used_for_current_ranking'] and c['outcome_not_used_in_candidate_score']
+              assert c['fixed_rank_formula_not_fitted_to_trade_outcomes']
+              assert c['locked_trade_ledger_reused'] and c['locked_entry_exit_unchanged']
+          elif stage=='v13_quality_capacity':
               pc=x['portfolio_contract']; g=x['promotion_gates']
               assert pc['initial_capital_eur']==60000 and pc['max_live_positions']==12
               assert pc['full_nominal_per_title_eur']==4000 and pc['annual_entry_cap']==30
@@ -167,6 +181,7 @@ jobs:
         if: always()
         run: |
           case "$STAGE" in
+            v14_ranked_capacity) F=outputs/backtest/AT_WEEKLY_RANKED_CAPACITY_V14.md ;;
             v13_quality_capacity) F=outputs/backtest/AT_WEEKLY_CAPACITY_QUALITY_V13.md ;;
             v12_pea60k) F=outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V12_PEA60K.md ;;
             v11_staged_entry) F=outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V11.md ;;
@@ -184,20 +199,20 @@ jobs:
         with:
           name: at-weekly-${{ env.STAGE }}-${{ github.run_id }}
           path: |
+            outputs/backtest/AT_WEEKLY_RANKED_CAPACITY_V14.json
+            outputs/backtest/AT_WEEKLY_RANKED_CAPACITY_V14.csv
+            outputs/backtest/AT_WEEKLY_RANKED_CAPACITY_V14_TRADES.csv
+            outputs/backtest/AT_WEEKLY_RANKED_CAPACITY_V14_EQUITY.csv
+            outputs/backtest/AT_WEEKLY_RANKED_CAPACITY_V14.md
             outputs/backtest/AT_WEEKLY_CAPACITY_QUALITY_V13.json
             outputs/backtest/AT_WEEKLY_CAPACITY_QUALITY_V13.csv
             outputs/backtest/AT_WEEKLY_CAPACITY_QUALITY_V13_TRADES.csv
             outputs/backtest/AT_WEEKLY_CAPACITY_QUALITY_V13_EQUITY.csv
             outputs/backtest/AT_WEEKLY_CAPACITY_QUALITY_V13.md
-            outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V12_PEA60K.json
-            outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V12_PEA60K.csv
-            outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V12_PEA60K_TRADES.csv
-            outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V12_PEA60K_EQUITY.csv
-            outputs/backtest/AT_WEEKLY_STAGED_ENTRY_V12_PEA60K.md
           if-no-files-found: warn
           compression-level: 1
           retention-days: 7
       - name: Decision boundary
         if: success()
         run: |
-          echo "V13: EUR60k PEA; max 12 live positions; EUR4k/title; max 30 entries/year; each complete year net >15%; RR >3.3; PF >=2; hard max drawdown <=12%. Same-bank research is not clean OOS." >> "$GITHUB_STEP_SUMMARY"
+          echo "V14: broaden signal pool then rank ex-ante under EUR60k PEA; max 12 live, EUR4k/title, max 30/year; each complete year >15% net; RR >3.3; PF >=2; max DD <=12%. Same-bank research is not clean OOS." >> "$GITHUB_STEP_SUMMARY"
