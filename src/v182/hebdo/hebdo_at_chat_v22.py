@@ -11,6 +11,9 @@ from v182.audit.pit_loader import PITDataUnavailable, PITLoader
 from v182.hebdo.mae_predictor import apply_mae_filter
 
 
+MIN_ADV20_EUR = 800_000.0
+
+
 @dataclass(frozen=True)
 class MarketRegime:
     name: str
@@ -83,6 +86,8 @@ def compute_features_v22(df_daily: pd.DataFrame, sector_map: dict[str, str] | pd
         prior_vol = volume.shift(1)
         avg20 = prior_vol.rolling(20, min_periods=20).mean()
         std20 = prior_vol.rolling(20, min_periods=20).std(ddof=0)
+        group["volume_avg20"] = avg20
+        group["adv_20_eur"] = avg20 * close
         group["vol_z"] = (volume - avg20) / std20.replace(0.0, np.nan)
         group["sma20"] = close.rolling(20, min_periods=20).mean()
         group["sma200"] = close.rolling(200, min_periods=200).mean()
@@ -128,8 +133,9 @@ def score_universe_v22(
     *,
     mae_model: Mapping[str, object] | None = None,
     require_trained_mae: bool = False,
+    min_adv20_eur: float = MIN_ADV20_EUR,
 ) -> pd.DataFrame:
-    """Fail-closed sector-neutral ranking with frozen Lasso and optional trained MAE."""
+    """Fail-closed sector-neutral ranking with frozen Lasso, liquidity and optional trained MAE."""
     required = {"ticker", "sector", "mom_26w", "vol_z", "drawdown_4w", "close", "sma200", "atr_14_pct"}
     missing = required.difference(df_universe.columns)
     if missing:
@@ -145,6 +151,17 @@ def score_universe_v22(
     out["selection_status"] = "OK"
     valid_sector = _valid_sector(out["sector"])
     out.loc[~valid_sector, "selection_status"] = "BLOCK_DATA_SECTOR"
+
+    # Liquidity is part of execution truth. Never assume a theoretical stop is
+    # executable when 20-day EUR ADV is unknown or below the governed floor.
+    if "adv_20_eur" not in out.columns:
+        if "volume_avg20" in out.columns:
+            out["adv_20_eur"] = pd.to_numeric(out["volume_avg20"], errors="coerce") * pd.to_numeric(out["close"], errors="coerce")
+        else:
+            out["adv_20_eur"] = np.nan
+    adv = pd.to_numeric(out["adv_20_eur"], errors="coerce")
+    out.loc[out["selection_status"].eq("OK") & adv.isna(), "selection_status"] = "BLOCK_DATA_LIQUIDITY"
+    out.loc[out["selection_status"].eq("OK") & (adv < float(min_adv20_eur)), "selection_status"] = "BLOCK_ILLIQUID"
 
     out["mom_26w"] = pd.to_numeric(out["mom_26w"], errors="coerce")
     sector_calc = out.loc[valid_sector].copy()
