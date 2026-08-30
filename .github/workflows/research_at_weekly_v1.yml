@@ -13,6 +13,8 @@ on:
       - src/v182/backtest/at_weekly_exit_opt_v5_delayed_failure.py
       - src/v182/backtest/at_weekly_exit_opt_v6_confirmed_fp.py
       - src/v182/backtest/at_weekly_exit_opt_v7_protective_stop.py
+      - tests/test_at_weekly_protective_stop_contract.py
+      - docs/research/AT_WEEKLY_BACKTEST_CONTRACT_V1.md
       - .github/workflows/research_at_weekly_v1.yml
 
 permissions:
@@ -42,6 +44,9 @@ jobs:
       - name: Install backtest runtime
         run: python -m pip install --disable-pip-version-check pandas numpy pyarrow
 
+      - name: Validate protective stop execution contract
+        run: python -m unittest tests.test_at_weekly_protective_stop_contract -v
+
       - name: Run V7 protective stop tail-risk audit
         run: python -m v182.backtest.at_weekly_exit_opt_v7_protective_stop
 
@@ -62,6 +67,13 @@ jobs:
           assert x['lookahead_controls']['fixed_stop_known_before_bar'] is True
           assert x['lookahead_controls']['gap_fill']=='actual_week_open'
           assert x['lookahead_controls']['intrabar_trailing_assumption'] is False
+          for z in x['models']:
+              if z['protective_stop_pct'] == 5.0:
+                  # Any loss worse than -5% must not be labeled as a normal stop touch.
+                  # It must come from a gap-through or another earlier strategic execution.
+                  for t in z['worst_15_trades']:
+                      if t['return_pct'] < -5.000001 and 'PROTECTIVE_STOP_5_TOUCH' in t['exit_reasons']:
+                          raise AssertionError(t)
           print('VALID_ACTIONS',x['valid_actions'])
           for z in x['models']:
               print(z['exit_model'],z['protective_stop_pct'],z['combined']['ALL'],z['tail_counts'],z['delta_vs_anchor_ALL'])
