@@ -34,8 +34,10 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: requirements-runtime.txt
-      - name: Install data preparation and model runtime
-        run: python -m pip install --prefer-binary -r requirements-runtime.txt
+      - name: Install data preparation, model runtime and test runner
+        run: |
+          python -m pip install --prefer-binary -r requirements-runtime.txt
+          python -m pip install --prefer-binary pytest
       - name: Run liquidity PIT unit tests
         run: python -m pytest -q tests/test_v22_1_liquidity_pit.py
       - name: Restore prior OHLCV cache when available
