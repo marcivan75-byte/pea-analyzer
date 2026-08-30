@@ -18,17 +18,37 @@ from v182.scoring.ic_lasso_selector import (
 
 
 HORIZON_DAYS = {"1w": 5, "2w": 10, "4w": 20, "13w": 63, "26w": 126}
-DEFAULT_FEATURE_COLUMNS = (
+ENHANCED_FEATURE_COLUMNS = (
     "vol_z",
     "mom_26w_sector",
     "rsi_14_hebdo",
     "drawdown_4w",
     "atr_14_pct",
 )
+TECHNICAL_CORE_FEATURE_COLUMNS = (
+    "vol_z",
+    "mom_26w",
+    "rsi_14_hebdo",
+    "drawdown_4w",
+    "atr_14_pct",
+)
+# Backward-compatible default: the enhanced model still requires proven PIT
+# sector data. The explicit technical-core mode only uses features that are
+# reconstructed from timestamped OHLCV.
+DEFAULT_FEATURE_COLUMNS = ENHANCED_FEATURE_COLUMNS
 
 
 class HistoricalPITUnavailable(RuntimeError):
     pass
+
+
+def _read_frame(path: Path) -> pd.DataFrame:
+    suffix = path.suffix.lower()
+    if suffix == ".parquet":
+        return pd.read_parquet(path)
+    if suffix == ".csv":
+        return pd.read_csv(path)
+    raise HistoricalPITUnavailable(f"BLOCK_DATA_BACKTEST: unsupported historical input format {suffix}")
 
 
 def _validate_inputs(features: pd.DataFrame, ohlcv: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -201,15 +221,20 @@ def main() -> int:
     parser.add_argument("--start", default="2019-01-01")
     parser.add_argument("--end", default="2024-12-31")
     parser.add_argument("--holdout-start", default="2024-01-01")
+    parser.add_argument("--feature-set", choices=("enhanced", "technical-core"), default="enhanced")
     args = parser.parse_args()
     if not args.features.is_file() or not args.ohlcv.is_file():
         raise SystemExit("BLOCK_DATA_BACKTEST: required PIT historical files missing")
 
-    features = pd.read_csv(args.features)
-    ohlcv = pd.read_csv(args.ohlcv)
+    try:
+        features = _read_frame(args.features)
+        ohlcv = _read_frame(args.ohlcv)
+    except HistoricalPITUnavailable as exc:
+        raise SystemExit(str(exc)) from exc
     if "as_of_date" in features.columns:
         dates = pd.to_datetime(features["as_of_date"], errors="coerce")
         features = features[(dates >= pd.Timestamp(args.start)) & (dates <= pd.Timestamp(args.end))].copy()
+    feature_columns = TECHNICAL_CORE_FEATURE_COLUMNS if args.feature_set == "technical-core" else ENHANCED_FEATURE_COLUMNS
     try:
         ledger = add_true_forward_returns(features, ohlcv)
         ledger["as_of_date"] = pd.to_datetime(ledger["as_of_date"], errors="coerce")
@@ -219,7 +244,7 @@ def main() -> int:
             raise HistoricalPITUnavailable(
                 f"BLOCK_DATA_BACKTEST: temporal split insufficient train={len(train)} holdout={len(holdout)}"
             )
-        ic_train, weights, model_meta = train_governed_model(train)
+        ic_train, weights, model_meta = train_governed_model(train, feature_columns=feature_columns)
         mae_model = train_stop_model(train)
     except (HistoricalPITUnavailable, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
@@ -231,6 +256,9 @@ def main() -> int:
     report = {
         "period": [args.start, args.end],
         "holdout_start": args.holdout_start,
+        "feature_set": args.feature_set,
+        "feature_columns": list(feature_columns),
+        "full_enhanced_pit_claimed": False if args.feature_set == "technical-core" else None,
         "train_rows": int(len(train)),
         "holdout_rows": int(len(holdout)),
         "model": model_meta,
