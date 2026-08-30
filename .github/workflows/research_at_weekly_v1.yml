@@ -8,6 +8,7 @@ on:
       - src/v182/backtest/at_weekly_growth_potential_pit_v1.py
       - src/v182/backtest/at_weekly_growth_potential_pit_v2.py
       - src/v182/backtest/at_weekly_growth_potential_pit_v3_combo.py
+      - src/v182/backtest/at_weekly_growth_potential_pit_v4_frozen_mom40.py
       - src/v182/backtest/at_weekly_quarterly_study_v1.py
       - tests/test_at_weekly_protective_stop_contract.py
       - docs/research/AT_WEEKLY_DECISION_REGISTRY_V1.md
@@ -39,7 +40,7 @@ jobs:
         run: python -m pip install --disable-pip-version-check pandas numpy pyarrow
       - name: Validate locked protective stop contract
         run: python -m unittest tests.test_at_weekly_protective_stop_contract -v
-      - name: Validate locked architecture before PIT growth V3
+      - name: Validate locked architecture before PIT growth V4
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -53,36 +54,39 @@ jobs:
           assert 'EXIT-LOOP-01 | LOCKED' in reg
           print('LOCKED_ARCHITECTURE_OK')
           PY
-      - name: Run PIT growth combo robustness V3
-        run: python -m v182.backtest.at_weekly_growth_potential_pit_v3_combo
-      - name: Validate PIT growth V3 controls
+      - name: Run frozen MOM12>=40 temporal stress V4
+        run: python -m v182.backtest.at_weekly_growth_potential_pit_v4_frozen_mom40
+      - name: Validate PIT growth V4 controls
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          x=json.loads(Path('outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V3_COMBO.json').read_text())
+          x=json.loads(Path('outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V4_FROZEN_MOM40.json').read_text())
           assert x['status']=='SUCCESS',x.get('validation_errors')
           assert not x['validation_errors']
-          assert x['hypothesis_status']=='DATA_INFORMED_FROM_V2_SAME_BANK_NOT_CLEAN_OOS'
+          assert x['frozen_candidate']['feature']=='momentum_12w_pct'
+          assert x['frozen_candidate']['threshold']==40.0
+          assert x['hypothesis_status']=='FROZEN_AFTER_V3_BUT_NOT_CLEAN_OOS'
           c=x['lookahead_controls']
           assert c['completed_week_features_only'] and c['feature_timestamp_le_signal']
           assert c['locked_trade_ledger_reused'] and c['locked_entry_exit_unchanged']
+          assert c['threshold_reoptimized_in_v4'] is False
           assert x['realised_trades']>0
-          print('PIT_GROWTH_V3_VALIDATED',x['realised_trades'])
+          print('PIT_GROWTH_V4_VALIDATED',x['realised_trades'])
           PY
-      - name: Show PIT growth V3 summary
+      - name: Show PIT growth V4 summary
         if: always()
         run: |
-          if [ -f outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V3_COMBO.md ]; then cat outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V3_COMBO.md; fi
-      - name: Upload PIT growth V3
+          if [ -f outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V4_FROZEN_MOM40.md ]; then cat outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V4_FROZEN_MOM40.md; fi
+      - name: Upload PIT growth V4
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: at-weekly-growth-potential-pit-v3-combo-${{ github.run_id }}
+          name: at-weekly-growth-potential-pit-v4-frozen-mom40-${{ github.run_id }}
           path: |
-            outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V3_COMBO.json
-            outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V3_COMBO.csv
-            outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V3_COMBO.md
+            outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V4_FROZEN_MOM40.json
+            outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V4_FROZEN_MOM40.csv
+            outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V4_FROZEN_MOM40.md
           if-no-files-found: warn
           compression-level: 1
           retention-days: 7
