@@ -16,6 +16,7 @@ import yfinance as yf
 DEFAULT_ROOT = Path(__file__).resolve().parents[3]
 OUTPUT_REL = Path("outputs/daily_tct_ct/TCT_PREOPEN_ENRICHED_ACTIVE.csv")
 AUDIT_REL = Path("outputs/audit/TCT_PREOPEN_ENRICHER_ACTIVE_AUDIT.json")
+CANDIDATE_STATE_REL = Path("state/tct_context/TCT_CT_PREOPEN_CANDIDATES_LATEST.csv")
 CANDIDATE_PATHS = (
     Path("outputs/daily_tct_ct/DAILY_TCT_CT_DECISIONS.csv"),
     Path("outputs/committee_master/CI_DAILY_DECISIONS.csv"),
@@ -37,7 +38,6 @@ class FinnhubClient:
         if not self.api_key or self.disabled:
             return 0, "UNAVAILABLE"
         start = now_utc - timedelta(hours=12)
-        url = "https://finnhub.io/api/v1/company-news"
         params = {
             "symbol": ticker,
             "from": start.date().isoformat(),
@@ -45,7 +45,7 @@ class FinnhubClient:
             "token": self.api_key,
         }
         try:
-            response = requests.get(url, params=params, timeout=8)
+            response = requests.get("https://finnhub.io/api/v1/company-news", params=params, timeout=8)
         except requests.RequestException:
             return 0, "SOURCE_ERROR"
         if response.status_code in {401, 403}:
@@ -79,27 +79,16 @@ def _first_existing_column(frame: pd.DataFrame, candidates: Iterable[str]) -> st
     return None
 
 
-def _load_candidates(root: Path, max_tct: int, max_ct: int) -> pd.DataFrame:
-    frames: list[pd.DataFrame] = []
-    for rel in CANDIDATE_PATHS:
-        path = root / rel
-        if path.is_file():
-            frame = _read_csv(path)
-            frame["_candidate_source"] = str(rel)
-            frames.append(frame)
-    if not frames:
-        raise PreopenBlocked("BLOCK_DATA: no TCT/CT preselection file available")
-
-    all_rows = pd.concat(frames, ignore_index=True, sort=False)
-    horizon_col = _first_existing_column(all_rows, ("horizon", "time_horizon"))
-    ticker_col = _first_existing_column(all_rows, TICKER_COLUMNS)
-    isin_col = _first_existing_column(all_rows, ("isin",))
+def _bound_candidates(frame: pd.DataFrame, max_tct: int, max_ct: int) -> pd.DataFrame:
+    horizon_col = _first_existing_column(frame, ("horizon", "time_horizon"))
+    ticker_col = _first_existing_column(frame, TICKER_COLUMNS)
+    isin_col = _first_existing_column(frame, ("isin",))
     if horizon_col is None:
         raise PreopenBlocked("BLOCK_DATA: preselection has no horizon column")
     if ticker_col is None:
         raise PreopenBlocked("BLOCK_DATA: preselection has no validated ticker column")
 
-    rows = all_rows.copy()
+    rows = frame.copy()
     rows["_horizon"] = rows[horizon_col].astype(str).str.upper().str.strip()
     rows["_ticker"] = rows[ticker_col].astype(str).str.upper().str.strip()
     rows = rows[rows["_ticker"].ne("") & rows["_ticker"].ne("NAN")].copy()
@@ -124,6 +113,30 @@ def _load_candidates(root: Path, max_tct: int, max_ct: int) -> pd.DataFrame:
     return bounded
 
 
+def prepare_candidates(root: Path, max_tct: int = 20, max_ct: int = 20) -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+    for rel in CANDIDATE_PATHS:
+        path = root / rel
+        if path.is_file():
+            frame = _read_csv(path)
+            frame["_candidate_source"] = str(rel)
+            frames.append(frame)
+    if not frames:
+        raise PreopenBlocked("BLOCK_DATA: no TCT/CT preselection file available")
+    bounded = _bound_candidates(pd.concat(frames, ignore_index=True, sort=False), max_tct, max_ct)
+    state_path = root / CANDIDATE_STATE_REL
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    bounded.to_csv(state_path, index=False, encoding="utf-8-sig")
+    return bounded
+
+
+def _load_candidates(root: Path, max_tct: int, max_ct: int) -> pd.DataFrame:
+    state_path = root / CANDIDATE_STATE_REL
+    if state_path.is_file():
+        return _bound_candidates(_read_csv(state_path), max_tct, max_ct)
+    return prepare_candidates(root, max_tct=max_tct, max_ct=max_ct)
+
+
 def _premarket_snapshot(ticker: str) -> dict[str, object]:
     result: dict[str, object] = {
         "gap_overnight": None,
@@ -137,7 +150,7 @@ def _premarket_snapshot(ticker: str) -> dict[str, object]:
         fast = instrument.fast_info
         previous_close = float(fast.get("previous_close")) if fast.get("previous_close") is not None else None
         intraday = instrument.history(period="1d", interval="5m", prepost=True, auto_adjust=False)
-    except Exception as exc:  # network/provider boundary
+    except Exception as exc:
         result["market_source_status"] = f"SOURCE_ERROR:{type(exc).__name__}"
         return result
 
@@ -216,6 +229,7 @@ def run(
         "finnhub_disabled_after_auth_error": bool(finnhub.disabled),
         "fail_closed_if_preselection_missing": True,
         "real_orders_enabled": False,
+        "candidate_state": str(CANDIDATE_STATE_REL),
         "output": str(OUTPUT_REL),
         "generated_at_utc": now_utc.isoformat(),
     }
@@ -225,22 +239,36 @@ def run(
     return audit
 
 
+def _write_block_audit(root: Path, error: str) -> None:
+    audit_path = root / AUDIT_REL
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_path.write_text(
+        json.dumps({"status": "BLOCK_DATA", "error": error, "real_orders_enabled": False}, indent=2),
+        encoding="utf-8",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--max-tct", type=int, default=20)
     parser.add_argument("--max-ct", type=int, default=20)
+    parser.add_argument("--prepare-only", action="store_true")
     args = parser.parse_args()
+    root = args.root.resolve()
     try:
-        payload = run(args.root, max_tct=args.max_tct, max_ct=args.max_ct)
+        if args.prepare_only:
+            candidates = prepare_candidates(root, max_tct=args.max_tct, max_ct=args.max_ct)
+            payload = {
+                "status": "PREPARED",
+                "candidate_rows": int(len(candidates)),
+                "candidate_state": str(CANDIDATE_STATE_REL),
+                "real_orders_enabled": False,
+            }
+        else:
+            payload = run(root, max_tct=args.max_tct, max_ct=args.max_ct)
     except PreopenBlocked as exc:
-        root = args.root.resolve()
-        audit_path = root / AUDIT_REL
-        audit_path.parent.mkdir(parents=True, exist_ok=True)
-        audit_path.write_text(
-            json.dumps({"status": "BLOCK_DATA", "error": str(exc), "real_orders_enabled": False}, indent=2),
-            encoding="utf-8",
-        )
+        _write_block_audit(root, str(exc))
         raise SystemExit(str(exc)) from exc
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
