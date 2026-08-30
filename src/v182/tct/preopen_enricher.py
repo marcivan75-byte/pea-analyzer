@@ -254,15 +254,20 @@ def main() -> int:
     parser.add_argument("--max-tct", type=int, default=20)
     parser.add_argument("--max-ct", type=int, default=20)
     parser.add_argument("--prepare-only", action="store_true")
+    parser.add_argument("--active", action="store_true")
     args = parser.parse_args()
     root = args.root.resolve()
+    daily_profile = os.getenv("PEA_RUN_PROFILE", "").strip().upper() == "DAILY_TACTICAL"
+    prepare_mode = args.prepare_only or (daily_profile and not args.active)
     try:
-        if args.prepare_only:
+        if prepare_mode:
             candidates = prepare_candidates(root, max_tct=args.max_tct, max_ct=args.max_ct)
             payload = {
                 "status": "PREPARED",
+                "mode": "NEXT_PREOPEN_CANDIDATE_STATE",
                 "candidate_rows": int(len(candidates)),
                 "candidate_state": str(CANDIDATE_STATE_REL),
+                "network_enrichment_calls": 0,
                 "real_orders_enabled": False,
             }
         else:
