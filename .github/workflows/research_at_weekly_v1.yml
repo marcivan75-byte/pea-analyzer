@@ -5,6 +5,7 @@ on:
     branches:
       - research/at-weekly-v1-20260829
     paths:
+      - src/v182/backtest/at_weekly_selection_quality_v8_top30.py
       - src/v182/backtest/at_weekly_selection_capacity_v7_top30.py
       - src/v182/backtest/at_weekly_growth_potential_pit_v5_regime.py
       - src/v182/backtest/at_weekly_growth_potential_pit_v6_regime_stress.py
@@ -17,9 +18,10 @@ on:
       stage:
         description: Research stage to execute
         required: true
-        default: v7_top30
+        default: v8_top30_quality
         type: choice
         options:
+          - v8_top30_quality
           - v7_top30
           - v5_regime
           - v6_regime_stress
@@ -34,7 +36,7 @@ jobs:
     timeout-minutes: 35
     env:
       PYTHONPATH: ${{ github.workspace }}/src
-      STAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'v7_top30' }}
+      STAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'v8_top30_quality' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Restore persistent OHLCV cache
@@ -70,6 +72,7 @@ jobs:
           set -euo pipefail
           echo "STAGE=$STAGE"
           case "$STAGE" in
+            v8_top30_quality) python -m v182.backtest.at_weekly_selection_quality_v8_top30 ;;
             v7_top30) python -m v182.backtest.at_weekly_selection_capacity_v7_top30 ;;
             v5_regime) python -m v182.backtest.at_weekly_growth_potential_pit_v5_regime ;;
             v6_regime_stress) python -m v182.backtest.at_weekly_growth_potential_pit_v6_regime_stress ;;
@@ -82,6 +85,7 @@ jobs:
           from pathlib import Path
           stage=os.environ['STAGE']
           p={
+            'v8_top30_quality':Path('outputs/backtest/AT_WEEKLY_SELECTION_QUALITY_V8_TOP30.json'),
             'v7_top30':Path('outputs/backtest/AT_WEEKLY_SELECTION_CAPACITY_V7_TOP30.json'),
             'v5_regime':Path('outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V5_REGIME.json'),
             'v6_regime_stress':Path('outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V6_REGIME_STRESS.json'),
@@ -92,7 +96,10 @@ jobs:
           c=x['lookahead_controls']
           assert c['completed_week_features_only'] and c['feature_timestamp_le_signal']
           assert c['locked_trade_ledger_reused'] and c['locked_entry_exit_unchanged']
-          if stage=='v7_top30':
+          if stage=='v8_top30_quality':
+              assert c['future_signals_not_used_for_current_ranking']
+              assert c['outcome_not_used_in_score_or_rejection']
+          elif stage=='v7_top30':
               assert x['capacity_rule']['annual_max_entries']==30
               assert x['capacity_rule']['weekly_max_entries']==1
               assert x['capacity_rule']['sequential_no_future_year_ranking']
@@ -107,6 +114,7 @@ jobs:
         if: always()
         run: |
           case "$STAGE" in
+            v8_top30_quality) F=outputs/backtest/AT_WEEKLY_SELECTION_QUALITY_V8_TOP30.md ;;
             v7_top30) F=outputs/backtest/AT_WEEKLY_SELECTION_CAPACITY_V7_TOP30.md ;;
             v5_regime) F=outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V5_REGIME.md ;;
             v6_regime_stress) F=outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V6_REGIME_STRESS.md ;;
@@ -118,6 +126,10 @@ jobs:
         with:
           name: at-weekly-${{ env.STAGE }}-${{ github.run_id }}
           path: |
+            outputs/backtest/AT_WEEKLY_SELECTION_QUALITY_V8_TOP30.json
+            outputs/backtest/AT_WEEKLY_SELECTION_QUALITY_V8_TOP30.csv
+            outputs/backtest/AT_WEEKLY_SELECTION_QUALITY_V8_TOP30_TRADES.csv
+            outputs/backtest/AT_WEEKLY_SELECTION_QUALITY_V8_TOP30.md
             outputs/backtest/AT_WEEKLY_SELECTION_CAPACITY_V7_TOP30.json
             outputs/backtest/AT_WEEKLY_SELECTION_CAPACITY_V7_TOP30.csv
             outputs/backtest/AT_WEEKLY_SELECTION_CAPACITY_V7_TOP30_TRADES.csv
@@ -134,4 +146,4 @@ jobs:
       - name: Decision boundary
         if: success()
         run: |
-          echo "V7 enforces <=30 annual entries without future-year ranking. Further refinement must follow validated V7 results; no blind technical filter stacking." >> "$GITHUB_STEP_SUMMARY"
+          echo "V8 tests stricter ex-ante quality floors, overextension rejection and symbol cooldown under <=30 annual capacity. Promotion requires annual robustness plus RR, stop-rate and TP-rate improvement." >> "$GITHUB_STEP_SUMMARY"
