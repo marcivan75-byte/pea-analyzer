@@ -51,10 +51,7 @@ def pit_cutoff(as_of: date | datetime) -> datetime:
 def _read_frame(path: Path) -> pd.DataFrame:
     suffix = path.suffix.lower()
     if suffix == ".csv":
-        try:
-            return pd.read_csv(path, sep=None, engine="python", low_memory=False)
-        except TypeError:
-            return pd.read_csv(path, sep=None, engine="python")
+        return pd.read_csv(path, sep=None, engine="python")
     if suffix == ".parquet":
         return pd.read_parquet(path)
     if suffix == ".jsonl":
@@ -80,8 +77,7 @@ def _timestamp_column(frame: pd.DataFrame) -> str | None:
 
 
 def _normalize_timestamp(series: pd.Series) -> pd.Series:
-    parsed = pd.to_datetime(series, errors="coerce", utc=True)
-    return parsed
+    return pd.to_datetime(series, errors="coerce", utc=True)
 
 
 def load_pit_file(path: Path, as_of: date | datetime) -> pd.DataFrame:
