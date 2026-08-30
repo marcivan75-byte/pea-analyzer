@@ -4,7 +4,7 @@ import argparse
 import base64
 import io
 import json
-import math
+import time
 import zlib
 from pathlib import Path
 
@@ -18,6 +18,7 @@ START_DOWNLOAD = "2018-01-01"
 END_DOWNLOAD = "2025-07-15"  # warmup + 126 sessions after 2024-12-31
 PIT_START = pd.Timestamp("2019-01-01")
 PIT_END = pd.Timestamp("2024-12-31")
+MIN_PREP_COVERAGE = 0.90
 
 
 class DataPrepBlocked(RuntimeError):
@@ -94,7 +95,7 @@ def _download_batch(tickers: list[str], start: str, end: str) -> pd.DataFrame:
         actions=False,
         threads=True,
         progress=False,
-        timeout=20,
+        timeout=25,
     )
     rows: list[pd.DataFrame] = []
     if data.empty:
@@ -106,9 +107,8 @@ def _download_batch(tickers: list[str], start: str, end: str) -> pd.DataFrame:
                 continue
             g = data[ticker].copy()
             g.columns = [str(c).lower() for c in g.columns]
-            g = g.reset_index().rename(columns={g.index.name or "index": "date", "Date": "date"})
-            if "date" not in g.columns:
-                g = g.rename(columns={g.columns[0]: "date"})
+            g = g.reset_index()
+            g = g.rename(columns={g.columns[0]: "date"})
             g["ticker"] = ticker
             rows.append(g)
     elif len(tickers) == 1:
@@ -125,6 +125,7 @@ def download_ohlcv(identity: pd.DataFrame, outdir: Path, batch_size: int = 80) -
     tickers = identity["ticker"].drop_duplicates().tolist()
     chunks: list[pd.DataFrame] = []
     failed_batches: list[list[str]] = []
+
     for i in range(0, len(tickers), batch_size):
         batch = tickers[i:i + batch_size]
         try:
@@ -134,21 +135,53 @@ def download_ohlcv(identity: pd.DataFrame, outdir: Path, batch_size: int = 80) -
             continue
         if not part.empty:
             chunks.append(part)
-    if not chunks:
+
+    first_pass = pd.concat(chunks, ignore_index=True, sort=False) if chunks else pd.DataFrame()
+    downloaded = set(first_pass["ticker"].astype(str).unique()) if not first_pass.empty and "ticker" in first_pass.columns else set()
+    missing = [t for t in tickers if t not in downloaded]
+
+    # Retry every missing ticker individually. This avoids losing an entire batch
+    # because one provider symbol is temporarily unavailable.
+    retry_failures: list[str] = []
+    retry_chunks: list[pd.DataFrame] = []
+    for n, ticker in enumerate(missing, start=1):
+        try:
+            part = _download_batch([ticker], START_DOWNLOAD, END_DOWNLOAD)
+            if part.empty:
+                retry_failures.append(ticker)
+            else:
+                retry_chunks.append(part)
+        except Exception:
+            retry_failures.append(ticker)
+        if n % 25 == 0:
+            time.sleep(1.0)
+
+    all_chunks = ([first_pass] if not first_pass.empty else []) + retry_chunks
+    if not all_chunks:
         raise DataPrepBlocked("no OHLCV downloaded from yfinance")
-    ohlcv = pd.concat(chunks, ignore_index=True, sort=False)
-    rename = {"adj close": "adj_close"}
-    ohlcv = ohlcv.rename(columns=rename)
+    ohlcv = pd.concat(all_chunks, ignore_index=True, sort=False)
+    ohlcv = ohlcv.rename(columns={"adj close": "adj_close"})
     needed = {"ticker", "date", "open", "high", "low", "close", "volume"}
-    missing = needed.difference(ohlcv.columns)
-    if missing:
-        raise DataPrepBlocked(f"downloaded OHLCV missing columns {sorted(missing)}")
-    ohlcv["date"] = pd.to_datetime(ohlcv["date"], errors="coerce").dt.tz_localize(None)
+    missing_cols = needed.difference(ohlcv.columns)
+    if missing_cols:
+        raise DataPrepBlocked(f"downloaded OHLCV missing columns {sorted(missing_cols)}")
+    ohlcv["date"] = pd.to_datetime(ohlcv["date"], errors="coerce", utc=True).dt.tz_convert(None)
     for c in ("open", "high", "low", "close", "volume"):
         ohlcv[c] = pd.to_numeric(ohlcv[c], errors="coerce")
-    ohlcv = ohlcv.dropna(subset=["ticker", "date", "close"]).sort_values(["ticker", "date"])
+    ohlcv = (
+        ohlcv.dropna(subset=["ticker", "date", "close"])
+        .drop_duplicates(subset=["ticker", "date"], keep="last")
+        .sort_values(["ticker", "date"])
+    )
     ohlcv.to_parquet(outdir / "V22_1_OHLCV_2018_2025.parquet", index=False)
-    (outdir / "V22_1_DOWNLOAD_FAILURES.json").write_text(json.dumps({"failed_batches": failed_batches}, indent=2), encoding="utf-8")
+    final_downloaded = set(ohlcv["ticker"].astype(str).unique())
+    final_missing = sorted(set(tickers).difference(final_downloaded))
+    failure_payload = {
+        "failed_batches_first_pass": failed_batches,
+        "individual_retry_failures": retry_failures,
+        "final_missing_tickers": final_missing,
+    }
+    (outdir / "V22_1_DOWNLOAD_FAILURES.json").write_text(json.dumps(failure_payload, indent=2), encoding="utf-8")
     return ohlcv
 
 
@@ -163,6 +196,7 @@ def _rsi(close: pd.Series, n: int = 14) -> pd.Series:
 def build_technical_pit(ohlcv: pd.DataFrame, identity: pd.DataFrame, outdir: Path) -> pd.DataFrame:
     id_small = identity[[c for c in identity.columns if c in {"isin", "ticker"}]].drop_duplicates("ticker")
     rows: list[pd.DataFrame] = []
+    friday_grid = pd.date_range(PIT_START, PIT_END, freq="W-FRI")
     for ticker, g0 in ohlcv.groupby("ticker", sort=False):
         g = g0.sort_values("date").copy().set_index("date")
         close = g["close"]
@@ -176,21 +210,33 @@ def build_technical_pit(ohlcv: pd.DataFrame, identity: pd.DataFrame, outdir: Pat
         g["drawdown_4w"] = close / close.rolling(20, min_periods=20).max() - 1
         g["mom_26w"] = close / close.shift(126) - 1
         prev = close.shift(1)
-        tr = pd.concat([(g["high"]-g["low"]).abs(), (g["high"]-prev).abs(), (g["low"]-prev).abs()], axis=1).max(axis=1)
+        tr = pd.concat([(g["high"] - g["low"]).abs(), (g["high"] - prev).abs(), (g["low"] - prev).abs()], axis=1).max(axis=1)
         g["atr_14_pct"] = tr.rolling(14, min_periods=14).mean() / close.replace(0, np.nan)
         weekly = close.resample("W-FRI").last().dropna()
         wrsi = _rsi(weekly, 14)
         g["rsi_14_hebdo"] = wrsi.reindex(g.index, method="ffill")
-        friday = pd.date_range(PIT_START, PIT_END, freq="W-FRI")
-        pos = g.index.searchsorted(friday, side="right") - 1
+
+        pos = g.index.searchsorted(friday_grid, side="right") - 1
         valid = pos >= 0
         if not valid.any():
             continue
         take = g.iloc[pos[valid]].copy()
-        take["as_of_date"] = friday[valid].values
-        take["pit_observed_at"] = pd.to_datetime(take.index).strftime("%Y-%m-%dT17:30:00Z")
+        signal_dates = friday_grid[valid]
+        take["signal_date"] = signal_dates.values
+        # Use an explicit Friday end-of-day UTC cutoff rather than an implicit
+        # midnight timestamp. market_data_date separately records the actual
+        # trading session (Thursday if Friday was a market holiday).
+        take["as_of_date"] = (signal_dates + pd.Timedelta(hours=23, minutes=59, seconds=59)).values
+        take["market_data_date"] = pd.to_datetime(take.index).values
+        take["pit_observed_at"] = [f"{d.date().isoformat()}T23:59:59Z" for d in signal_dates]
         take["ticker"] = ticker
-        rows.append(take.reset_index(drop=True)[["ticker","as_of_date","pit_observed_at","close","sma20","sma200","vol_z","drawdown_4w","mom_26w","atr_14_pct","rsi_14_hebdo"]])
+        rows.append(
+            take.reset_index(drop=True)[[
+                "ticker", "signal_date", "as_of_date", "market_data_date", "pit_observed_at",
+                "close", "sma20", "sma200", "vol_z", "drawdown_4w", "mom_26w",
+                "atr_14_pct", "rsi_14_hebdo",
+            ]]
+        )
     if not rows:
         raise DataPrepBlocked("technical PIT generation produced no rows")
     pit = pd.concat(rows, ignore_index=True)
@@ -201,20 +247,43 @@ def build_technical_pit(ohlcv: pd.DataFrame, identity: pd.DataFrame, outdir: Pat
 
 
 def scan_historical_nonprice_pit(root: Path) -> dict[str, object]:
-    audit = root / "outputs" / "audit"
+    roots = [root / "outputs" / "audit", root / "data", root / "inputs", root / "config"]
     sector_ready = False
     quality_ready = False
     evidence: list[str] = []
-    if audit.is_dir():
-        for path in audit.rglob("*"):
+    scanned = 0
+    for base in roots:
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*"):
             if path.suffix.lower() not in {".csv", ".parquet", ".json", ".jsonl"}:
                 continue
+            scanned += 1
             name = path.name.lower()
-            if "sector" in name and any(k in name for k in ("pit", "history", "histor")):
-                sector_ready = True; evidence.append(str(path))
-            if any(k in name for k in ("fundamental", "financial", "quality", "roe", "debt")) and any(k in name for k in ("pit", "history", "histor")):
-                quality_ready = True; evidence.append(str(path))
-    return {"sector_pit_ready": sector_ready, "quality_pit_ready": quality_ready, "evidence": evidence}
+            historical = any(k in name for k in ("pit", "history", "histor", "point_in_time", "asof"))
+            if historical and "sector" in name:
+                sector_ready = True
+                evidence.append(str(path.relative_to(root)))
+            if historical and any(k in name for k in ("fundamental", "financial", "quality", "roe", "debt")):
+                quality_ready = True
+                evidence.append(str(path.relative_to(root)))
+    return {
+        "sector_pit_ready": sector_ready,
+        "quality_pit_ready": quality_ready,
+        "evidence": sorted(set(evidence)),
+        "files_scanned": scanned,
+    }
+
+
+def coverage_by_year(ohlcv: pd.DataFrame, identity: pd.DataFrame) -> dict[str, float]:
+    expected = int(identity["ticker"].nunique())
+    out: dict[str, float] = {}
+    if expected == 0:
+        return out
+    for year in range(2018, 2026):
+        n = int(ohlcv.loc[ohlcv["date"].dt.year.eq(year), "ticker"].nunique())
+        out[str(year)] = n / expected
+    return out
 
 
 def main() -> int:
@@ -225,38 +294,56 @@ def main() -> int:
     root = args.root.resolve()
     outdir = root / OUTDIR
     outdir.mkdir(parents=True, exist_ok=True)
+
     identity = load_identity_map(root)
     identity[["isin", "ticker"]].to_csv(outdir / "V22_1_VALIDATED_IDENTITIES.csv", index=False)
     ohlcv = download_ohlcv(identity, outdir, batch_size=args.batch_size)
     pit = build_technical_pit(ohlcv, identity, outdir)
     nonprice = scan_historical_nonprice_pit(root)
+
     ticker_count = int(identity["ticker"].nunique())
     ohlcv_tickers = int(ohlcv["ticker"].nunique())
     coverage = ohlcv_tickers / ticker_count if ticker_count else 0.0
+    yearly_coverage = coverage_by_year(ohlcv, identity)
+    pit_isins = int(pit["isin"].nunique())
+    pit_isin_coverage = pit_isins / int(identity["isin"].nunique()) if len(identity) else 0.0
+
     report = {
-        "status": "READY_TECHNICAL_ONLY" if not (nonprice["sector_pit_ready"] and nonprice["quality_pit_ready"]) else "READY_FULL_PIT",
+        "status": "READY_FULL_PIT" if (coverage >= MIN_PREP_COVERAGE and nonprice["sector_pit_ready"] and nonprice["quality_pit_ready"]) else "READY_TECHNICAL_ONLY",
         "identity_rows": int(len(identity)),
         "validated_tickers": ticker_count,
         "ohlcv_tickers": ohlcv_tickers,
         "ohlcv_ticker_coverage": coverage,
+        "ohlcv_ticker_coverage_by_year": yearly_coverage,
         "technical_pit_rows": int(len(pit)),
+        "technical_pit_isins": pit_isins,
+        "technical_pit_isin_coverage": pit_isin_coverage,
         "download_period": [START_DOWNLOAD, END_DOWNLOAD],
         "pit_period": [str(PIT_START.date()), str(PIT_END.date())],
         "technical_features_pit_reconstructable": True,
         "sector_history": nonprice["sector_pit_ready"],
         "quality_roe_debt_history": nonprice["quality_pit_ready"],
         "historical_nonprice_evidence": nonprice["evidence"],
-        "final_performance_validation_authorized": bool(coverage >= 0.90 and nonprice["sector_pit_ready"] and nonprice["quality_pit_ready"]),
+        "historical_nonprice_files_scanned": nonprice["files_scanned"],
+        "final_performance_validation_authorized": bool(
+            coverage >= MIN_PREP_COVERAGE
+            and pit_isin_coverage >= MIN_PREP_COVERAGE
+            and nonprice["sector_pit_ready"]
+            and nonprice["quality_pit_ready"]
+        ),
         "governance": {
             "no_invented_ticker": True,
             "identity_source": str(IDENTITY_PARTS),
             "current_fundamentals_not_used_as_history": True,
             "current_sector_not_used_as_history": True,
+            "signal_cutoff": "Friday 23:59:59Z; actual last market session stored separately",
             "fail_closed": True,
         },
     }
     (outdir / "V22_1_DATA_READINESS.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))
+    # Preparation may complete with technical-only data. This is deliberately
+    # not equivalent to authorizing a performance-validation run.
     return 0 if coverage >= 0.75 else 2
 
 
