@@ -46,3 +46,11 @@ def test_lasso_selects_signal_and_governed_weights_sum_to_one():
     governed = build_governed_weights(selected)
     assert sum(item["weight"] for item in governed.values()) == pytest.approx(1.0)
     assert governed["signal"]["direction"] == "LONG"
+    assert governed["signal"]["training_scale"] > 0
+    assert np.isfinite(governed["signal"]["training_mean"])
+
+
+def test_governed_weights_refuse_missing_training_scale():
+    selected = pd.DataFrame([{"feature": "f", "coef_lasso_standardized": 0.2, "mean": 1.0}])
+    with pytest.raises(ValueError, match="Colonnes manquantes"):
+        build_governed_weights(selected)
