@@ -11,6 +11,7 @@ on:
       - "tests/test_backtest_B_v2.py"
       - "tests/test_v21_8_1_backtest_B_v2.py"
       - "tests/test_etf_ter_assets_governance.py"
+      - "tests/test_preopen_enricher.py"
       - "requirements-runtime.txt"
       - ".github/workflows/committee_tct_ct_daily.yml"
       - ".github/workflows/tct_next_session_context.yml"
@@ -54,7 +55,8 @@ jobs:
             tests/test_backtest_B_v2.py \
             tests/test_v21_8_1_backtest_B_v2.py \
             tests/test_ic_lasso_selector.py \
-            tests/test_etf_ter_assets_governance.py
+            tests/test_etf_ter_assets_governance.py \
+            tests/test_preopen_enricher.py
       - name: Full pytest suite
         run: python -m pytest -q
       - name: Master data fail-fatal audit
