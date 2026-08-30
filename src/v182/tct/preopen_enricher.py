@@ -65,10 +65,7 @@ class FinnhubClient:
 
 
 def _read_csv(path: Path) -> pd.DataFrame:
-    try:
-        return pd.read_csv(path, sep=None, engine="python", low_memory=False)
-    except TypeError:
-        return pd.read_csv(path, sep=None, engine="python")
+    return pd.read_csv(path, sep=None, engine="python")
 
 
 def _first_existing_column(frame: pd.DataFrame, candidates: Iterable[str]) -> str | None:
