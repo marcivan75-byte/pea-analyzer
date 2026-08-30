@@ -5,6 +5,7 @@ on:
     branches:
       - research/at-weekly-v1-20260829
     paths:
+      - src/v182/backtest/at_weekly_selection_capacity_v7_top30.py
       - src/v182/backtest/at_weekly_growth_potential_pit_v5_regime.py
       - src/v182/backtest/at_weekly_growth_potential_pit_v6_regime_stress.py
       - src/v182/backtest/at_weekly_quarterly_study_v1.py
@@ -16,9 +17,10 @@ on:
       stage:
         description: Research stage to execute
         required: true
-        default: v5_regime
+        default: v7_top30
         type: choice
         options:
+          - v7_top30
           - v5_regime
           - v6_regime_stress
 
@@ -32,7 +34,7 @@ jobs:
     timeout-minutes: 35
     env:
       PYTHONPATH: ${{ github.workspace }}/src
-      STAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'v5_regime' }}
+      STAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'v7_top30' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Restore persistent OHLCV cache
@@ -68,16 +70,10 @@ jobs:
           set -euo pipefail
           echo "STAGE=$STAGE"
           case "$STAGE" in
-            v5_regime)
-              python -m v182.backtest.at_weekly_growth_potential_pit_v5_regime
-              ;;
-            v6_regime_stress)
-              python -m v182.backtest.at_weekly_growth_potential_pit_v6_regime_stress
-              ;;
-            *)
-              echo "Unknown stage: $STAGE" >&2
-              exit 2
-              ;;
+            v7_top30) python -m v182.backtest.at_weekly_selection_capacity_v7_top30 ;;
+            v5_regime) python -m v182.backtest.at_weekly_growth_potential_pit_v5_regime ;;
+            v6_regime_stress) python -m v182.backtest.at_weekly_growth_potential_pit_v6_regime_stress ;;
+            *) echo "Unknown stage: $STAGE" >&2; exit 2 ;;
           esac
       - name: Validate stage controls
         run: |
@@ -86,6 +82,7 @@ jobs:
           from pathlib import Path
           stage=os.environ['STAGE']
           p={
+            'v7_top30':Path('outputs/backtest/AT_WEEKLY_SELECTION_CAPACITY_V7_TOP30.json'),
             'v5_regime':Path('outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V5_REGIME.json'),
             'v6_regime_stress':Path('outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V6_REGIME_STRESS.json'),
           }[stage]
@@ -94,27 +91,37 @@ jobs:
           assert not x['validation_errors']
           c=x['lookahead_controls']
           assert c['completed_week_features_only'] and c['feature_timestamp_le_signal']
-          assert c['regime_uses_only_bars_le_signal']
           assert c['locked_trade_ledger_reused'] and c['locked_entry_exit_unchanged']
-          assert c['threshold_optimization'] is False
-          print('STAGE_VALIDATED',stage,x.get('next_stage'))
+          if stage=='v7_top30':
+              assert x['capacity_rule']['annual_max_entries']==30
+              assert x['capacity_rule']['weekly_max_entries']==1
+              assert x['capacity_rule']['sequential_no_future_year_ranking']
+              assert c['future_signals_not_used_for_current_ranking']
+              assert c['outcome_not_used_in_candidate_score']
+          else:
+              assert c['regime_uses_only_bars_le_signal']
+              assert c['threshold_optimization'] is False
+          print('STAGE_VALIDATED',stage)
           PY
       - name: Publish result/comments immediately to GitHub job summary
         if: always()
         run: |
-          if [ "$STAGE" = "v5_regime" ] && [ -f outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V5_REGIME.md ]; then
-            cat outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V5_REGIME.md >> "$GITHUB_STEP_SUMMARY"
-            cat outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V5_REGIME.md
-          elif [ "$STAGE" = "v6_regime_stress" ] && [ -f outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V6_REGIME_STRESS.md ]; then
-            cat outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V6_REGIME_STRESS.md >> "$GITHUB_STEP_SUMMARY"
-            cat outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V6_REGIME_STRESS.md
-          fi
+          case "$STAGE" in
+            v7_top30) F=outputs/backtest/AT_WEEKLY_SELECTION_CAPACITY_V7_TOP30.md ;;
+            v5_regime) F=outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V5_REGIME.md ;;
+            v6_regime_stress) F=outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V6_REGIME_STRESS.md ;;
+          esac
+          if [ -f "$F" ]; then cat "$F" >> "$GITHUB_STEP_SUMMARY"; cat "$F"; fi
       - name: Upload research result
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: at-weekly-${{ env.STAGE }}-${{ github.run_id }}
           path: |
+            outputs/backtest/AT_WEEKLY_SELECTION_CAPACITY_V7_TOP30.json
+            outputs/backtest/AT_WEEKLY_SELECTION_CAPACITY_V7_TOP30.csv
+            outputs/backtest/AT_WEEKLY_SELECTION_CAPACITY_V7_TOP30_TRADES.csv
+            outputs/backtest/AT_WEEKLY_SELECTION_CAPACITY_V7_TOP30.md
             outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V5_REGIME.json
             outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V5_REGIME.csv
             outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V5_REGIME.md
@@ -124,29 +131,7 @@ jobs:
           if-no-files-found: warn
           compression-level: 1
           retention-days: 7
-      - name: Immediate autonomous continuation
+      - name: Decision boundary
         if: success()
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          NEXT="STOP"
-          if [ "$STAGE" = "v5_regime" ]; then
-            NEXT=$(python - <<'PY'
-          import json
-          from pathlib import Path
-          x=json.loads(Path('outputs/backtest/AT_WEEKLY_GROWTH_POTENTIAL_PIT_V5_REGIME.json').read_text())
-          print(x.get('next_stage','STOP'))
-          PY
-            )
-          fi
-          echo "NEXT_STAGE=$NEXT" >> "$GITHUB_STEP_SUMMARY"
-          if [ "$NEXT" = "v6_regime_stress" ]; then
-            echo "Dispatching next research stage immediately: $NEXT"
-            gh api --method POST \
-              repos/${{ github.repository }}/actions/workflows/research_at_weekly_v1.yml/dispatches \
-              -f ref=research/at-weekly-v1-20260829 \
-              -f 'inputs[stage]=v6_regime_stress'
-          else
-            echo "Autonomous loop stops at this decision boundary: $NEXT"
-          fi
+          echo "V7 enforces <=30 annual entries without future-year ranking. Further refinement must follow validated V7 results; no blind technical filter stacking." >> "$GITHUB_STEP_SUMMARY"
