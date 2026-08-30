@@ -37,6 +37,8 @@ jobs:
             ohlcv-v3-
       - name: Download missing OHLCV and reconstruct technical PIT
         run: python tools/v22_1_data/prepare_historical_data.py --root . --batch-size 80
+      - name: Validate non-price PIT evidence fail-closed
+        run: python tools/v22_1_data/validate_readiness.py
       - name: Publish readiness summary
         if: always()
         run: |
