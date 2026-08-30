@@ -12,6 +12,7 @@ on:
       - src/v182/backtest/at_weekly_exit_opt_v4_false_positive.py
       - src/v182/backtest/at_weekly_exit_opt_v5_delayed_failure.py
       - src/v182/backtest/at_weekly_exit_opt_v6_confirmed_fp.py
+      - src/v182/backtest/at_weekly_exit_opt_v7_protective_stop.py
       - .github/workflows/research_at_weekly_v1.yml
 
 permissions:
@@ -41,43 +42,43 @@ jobs:
       - name: Install backtest runtime
         run: python -m pip install --disable-pip-version-check pandas numpy pyarrow
 
-      - name: Run V6 confirmed false-positive refinement
-        run: python -m v182.backtest.at_weekly_exit_opt_v6_confirmed_fp
+      - name: Run V7 protective stop tail-risk audit
+        run: python -m v182.backtest.at_weekly_exit_opt_v7_protective_stop
 
-      - name: Validate V6 confirmed false-positive refinement
+      - name: Validate V7 protective stop tail-risk audit
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          x=json.loads(Path('outputs/backtest/AT_WEEKLY_EXIT_OPT_V6_CONFIRMED_FP.json').read_text())
+          x=json.loads(Path('outputs/backtest/AT_WEEKLY_EXIT_OPT_V7_PROTECTIVE_STOP.json').read_text())
           assert x['status']=='SUCCESS'
           assert x['valid_actions'] > 0
           assert len(x['entries_fixed']) == 2
-          assert x['exit_models_tested'] >= 500
-          assert x['diagnostics']['best_overall'] is not None
-          assert x['diagnostics']['best_5pct_trailing'] is not None
-          assert x['requested_5pct_trailing_explicitly_tested'] is True
-          assert x['lookahead_controls']['signals']=='completed_week_only'
-          assert x['lookahead_controls']['execution']=='next_week_open'
-          assert x['lookahead_controls']['intrabar_stop_assumption'] is False
-          assert x['lookahead_controls']['endpoint_mark_is_execution'] is False
-          print('VALID_ACTIONS',x['valid_actions'],'EXIT_MODELS',x['exit_models_tested'])
-          for k in ['best_overall','best_5pct_trailing','best_stoch_only','best_stoch_or_trend','best_momentum_or_trend','best_two_confirmations']:
-              z=x['diagnostics'][k]
-              if z is not None:
-                  print(k,z['exit_model'],z['config'],z['robust'],z['combined']['ALL'],z['combined']['12M'],z['false_positive_diagnostics'])
+          assert len(x['models']) == 5
+          assert x['best_protected_risk_first'] is not None
+          assert x['lookahead_controls']['entry_models_fixed'] is True
+          assert x['lookahead_controls']['strategic_signals']=='completed_week_only'
+          assert x['lookahead_controls']['strategic_execution']=='next_week_open'
+          assert x['lookahead_controls']['fixed_stop_known_before_bar'] is True
+          assert x['lookahead_controls']['gap_fill']=='actual_week_open'
+          assert x['lookahead_controls']['intrabar_trailing_assumption'] is False
+          print('VALID_ACTIONS',x['valid_actions'])
+          for z in x['models']:
+              print(z['exit_model'],z['protective_stop_pct'],z['combined']['ALL'],z['tail_counts'],z['delta_vs_anchor_ALL'])
+              print('WORST3',z['worst_15_trades'][:3])
+          print('BEST_RISK_FIRST',x['best_protected_risk_first']['exit_model'],x['best_protected_risk_first']['combined']['ALL'])
           PY
 
-      - name: Show V6 summary
+      - name: Show V7 summary
         if: always()
-        run: cat outputs/backtest/AT_WEEKLY_EXIT_OPT_V6_CONFIRMED_FP.json || true
+        run: cat outputs/backtest/AT_WEEKLY_EXIT_OPT_V7_PROTECTIVE_STOP.json || true
 
-      - name: Upload V6 confirmed false-positive refinement
+      - name: Upload V7 protective stop tail-risk audit
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: at-weekly-exit-opt-v6-confirmed-fp-${{ github.run_id }}
-          path: outputs/backtest/AT_WEEKLY_EXIT_OPT_V6_CONFIRMED_FP.json
+          name: at-weekly-exit-opt-v7-protective-stop-${{ github.run_id }}
+          path: outputs/backtest/AT_WEEKLY_EXIT_OPT_V7_PROTECTIVE_STOP.json
           if-no-files-found: warn
           compression-level: 1
           retention-days: 7
