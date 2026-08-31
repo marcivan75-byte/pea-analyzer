@@ -11,7 +11,7 @@ from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
-from scripts.v22_1_tabport_portfolio import (
+from v22_1_tabport_portfolio import (
     ANALYSIS_END,
     FEATURES,
     V1_THRESHOLD,
@@ -54,7 +54,7 @@ def metrics(ret: np.ndarray, stop: np.ndarray, keep: np.ndarray) -> dict[str, fl
     }
 
 
-def choose_policy(train_raw: pd.DataFrame, hold_raw: pd.DataFrame) -> tuple[pd.Series, dict[str, object]]:
+def choose_policy(train_raw: pd.DataFrame, hold_raw: pd.DataFrame) -> tuple[pd.Series, dict[str, object], pd.DataFrame]:
     train = _features(train_raw, True)
     hold = _features(hold_raw, False)
     split = int(len(train) * 0.80)
@@ -104,7 +104,6 @@ def choose_policy(train_raw: pd.DataFrame, hold_raw: pd.DataFrame) -> tuple[pd.S
         exp = float(m["expectancy"]) if m["expectancy"] is not None else -1e9
         pf = float(m["profit_factor"]) if m["profit_factor"] is not None else 0.0
         sr = float(m["stop_rate"]) if m["stop_rate"] is not None else 1.0
-        # Lexicographic choice: expectancy first, then PF, then fewer stops, then higher big-winner recall.
         key = (exp, pf, -sr, big_recall)
         row = {**{f"policy_{r}": policy[r] for r in V3_REGIMES}, "admissible": admissible, "keep_rate": keep_rate, "big_winner_recall_vs_full": big_recall, **m}
         rows.append(row)
