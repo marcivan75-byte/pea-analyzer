@@ -41,30 +41,47 @@ def test_ohlc_missing_or_inconsistent_is_blocked():
     assert compute_true_26w_pnl(100, bad)['block_reason']=='BLOCK_DATA_OHLC_INCONSISTENT'
 
 
+def _single_daily(volume_tail):
+    return pd.DataFrame({
+        'date':pd.date_range('2025-01-01',periods=25,freq='B'),
+        'close':[100.0]*25,
+        'volume':[1e6]*20+volume_tail,
+        'high':[101.0]*25,
+        'low':[99.0]*25,
+    })
+
+
 def test_B1_vol_detection():
-    df = pd.DataFrame({'close':[100]*25, 'volume':[1e6]*20+[4e6,4e6,1e6,1e6,1e6], 'high':[101]*25, 'low':[99]*25})
-    df.loc[20, 'close'] = 98
-    df['close'] = df['close'].astype(float)
-    res = detect_B_v2(df)
+    df=_single_daily([4e6,4e6,1e6,1e6,1e6])
+    df.loc[20,'close']=98; df.loc[20,'low']=97
+    res=detect_B_v2(df)
     assert 'B1_vol' in res.columns
 
 
 def test_B2_daily_J1():
-    df = pd.DataFrame({'close':[100]*25, 'volume':[1e6]*20+[4e6,1e6,1e6,1e6,1e6], 'high':[101]*25, 'low':[99]*25})
-    df.loc[20, 'close'] = 98
-    res = detect_B_v2(df)
+    df=_single_daily([4e6,1e6,1e6,1e6,1e6])
+    df.loc[20,'close']=98; df.loc[20,'low']=97
+    res=detect_B_v2(df)
     assert bool(res['B2_daily'].iloc[21]) is True
+
+
+def test_B_detection_requires_explicit_chronology():
+    df=pd.DataFrame({'close':[100.0]*25,'volume':[1e6]*25,'high':[101.0]*25,'low':[99.0]*25})
+    try:
+        detect_B_v2(df)
+        assert False, 'expected chronology block'
+    except ValueError as e:
+        assert 'explicit date or DatetimeIndex required' in str(e)
 
 
 def test_B_detection_isolated_by_ticker():
     dates=pd.date_range('2025-01-01', periods=25, freq='B')
     a=pd.DataFrame({'date':dates,'ticker':'AAA','close':[100.0]*25,'volume':[1e6]*25,'high':[101.0]*25,'low':[99.0]*25})
     b=pd.DataFrame({'date':dates,'ticker':'BBB','close':[50.0]*25,'volume':[2e6]*25,'high':[51.0]*25,'low':[49.0]*25})
-    # Un choc volume/prix uniquement sur AAA à J21.
     a.loc[20,'volume']=6e6; a.loc[20,'close']=97.0; a.loc[20,'low']=96.0
     mixed=pd.concat([a,b], ignore_index=True)
     out=detect_B_v2(mixed)
-    assert bool(out[(out['ticker']=='AAA')].iloc[20]['B1_vol']) is True
+    assert bool(out[out['ticker']=='AAA'].iloc[20]['B1_vol']) is True
     assert not out[out['ticker']=='BBB']['B1_vol'].any()
     assert not out[out['ticker']=='BBB']['B2_daily'].any()
 
