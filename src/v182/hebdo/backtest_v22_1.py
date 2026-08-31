@@ -139,16 +139,18 @@ def add_true_forward_returns(
             pnl, _, _, _ = compute_true_26w_pnl(float(entry_price), forward, stop_pct=row_stop)
             record[f"forward_ret_true_{horizon}"] = pnl
 
-        full = hist.iloc[entry_loc : entry_loc + 126]
-        if len(full) == 126:
+        full = hist.iloc[entry_loc : entry_loc + HORIZON_DAYS["26w"]]
+        if len(full) == HORIZON_DAYS["26w"]:
             pnl26, hit, day_stop, _ = compute_true_26w_pnl(float(entry_price), full, stop_pct=row_stop)
             mae, mfe = compute_mae_mfe(float(entry_price), full)
             record["forward_ret_true_26w"] = pnl26
+            record["label_end_date_26w"] = full.index[-1]
             record["hit_stop"] = bool(hit)
             record["day_stop"] = day_stop
             record["mae"] = mae
             record["mfe"] = mfe
         else:
+            record["label_end_date_26w"] = pd.NaT
             record["hit_stop"] = pd.NA
             record["day_stop"] = pd.NA
             record["mae"] = np.nan
@@ -228,19 +230,55 @@ def _mean_stop(frame: pd.DataFrame) -> float | None:
 def acceptance_metrics(ledger: pd.DataFrame) -> dict[str, float | int | None]:
     ret26 = pd.to_numeric(ledger.get("forward_ret_true_26w"), errors="coerce").dropna()
     mae = pd.to_numeric(ledger.get("mae"), errors="coerce").dropna()
+    mfe = pd.to_numeric(ledger.get("mfe"), errors="coerce").dropna()
     stops = ledger.get("hit_stop")
     stop_rate = None
+    stop_count = 0
     if stops is not None:
         s = stops.dropna().astype(bool)
+        stop_count = int(s.sum())
         stop_rate = float(s.mean()) if not s.empty else None
+    wins = ret26[ret26 > 0]
+    losses = ret26[ret26 <= 0]
+    gross_profit = float(wins.sum()) if not wins.empty else 0.0
+    gross_loss = float((-losses).sum()) if not losses.empty else 0.0
+    avg_win = float(wins.mean()) if not wins.empty else None
+    avg_loss = float(losses.mean()) if not losses.empty else None
+    profit_factor = gross_profit / gross_loss if gross_loss > 0 else None
+    payoff_ratio = (avg_win / abs(avg_loss)) if avg_win is not None and avg_loss not in (None, 0.0) else None
     return {
         "rows": int(len(ledger)),
+        "completed_26w": int(len(ret26)),
+        "wins": int((ret26 > 0).sum()),
+        "losses_or_flat": int((ret26 <= 0).sum()),
         "hit_rate_26w_true": float((ret26 > 0).mean()) if not ret26.empty else None,
+        "avg_win_26w_true": avg_win,
+        "avg_loss_26w_true": avg_loss,
         "expectancy_26w_true": float(ret26.mean()) if not ret26.empty else None,
+        "profit_factor_26w_true": profit_factor,
+        "payoff_ratio_26w_true": payoff_ratio,
         "mae_mean": float(mae.mean()) if not mae.empty else None,
+        "mfe_mean": float(mfe.mean()) if not mfe.empty else None,
+        "stop_count": stop_count,
         "stop_rate": stop_rate,
         "mean_stop_pct_used": _mean_stop(ledger),
     }
+
+
+def _period_table(frame: pd.DataFrame, *, freq: str, variant: str) -> pd.DataFrame:
+    work = frame.copy()
+    work["as_of_date"] = pd.to_datetime(work["as_of_date"], errors="coerce")
+    work = work.dropna(subset=["as_of_date"])
+    if freq == "Y":
+        work["period"] = work["as_of_date"].dt.year.astype(str)
+    elif freq == "Q":
+        work["period"] = work["as_of_date"].dt.to_period("Q").astype(str)
+    else:
+        raise ValueError(freq)
+    rows = []
+    for period, group in work.groupby("period", sort=True):
+        rows.append({"variant": variant, "period": str(period), **acceptance_metrics(group)})
+    return pd.DataFrame(rows)
 
 
 def main() -> int:
@@ -248,14 +286,17 @@ def main() -> int:
     parser.add_argument("--features", type=Path, required=True)
     parser.add_argument("--ohlcv", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, default=Path("outputs/hebdo/backtest_v22_1"))
-    parser.add_argument("--start", default="2019-01-01")
-    parser.add_argument("--end", default="2024-12-31")
-    parser.add_argument("--holdout-start", default="2024-01-01")
-    parser.add_argument("--feature-set", choices=("enhanced", "technical-core"), default="enhanced")
+    parser.add_argument("--start", default="2010-01-01")
+    parser.add_argument("--end", default="2026-08-31")
+    parser.add_argument("--holdout-start", default="2023-01-01")
+    parser.add_argument("--feature-set", choices=("enhanced", "technical-core"), default="technical-core")
     parser.add_argument("--stop-policy", choices=("fixed", "atr"), default="fixed")
+    parser.add_argument("--fixed-stop-pct", type=float, default=0.09)
     args = parser.parse_args()
     if not args.features.is_file() or not args.ohlcv.is_file():
         raise SystemExit("BLOCK_DATA_BACKTEST: required PIT historical files missing")
+    if not 0 < args.fixed_stop_pct < 1:
+        raise SystemExit("BLOCK_CONFIG_BACKTEST: fixed-stop-pct must be in (0,1)")
 
     try:
         features = _read_frame(args.features)
@@ -267,14 +308,31 @@ def main() -> int:
         features = features[(dates >= pd.Timestamp(args.start)) & (dates <= pd.Timestamp(args.end))].copy()
     feature_columns = TECHNICAL_CORE_FEATURE_COLUMNS if args.feature_set == "technical-core" else ENHANCED_FEATURE_COLUMNS
     try:
-        ledger = add_true_forward_returns(features, ohlcv, stop_policy=args.stop_policy)
+        ledger = add_true_forward_returns(
+            features,
+            ohlcv,
+            stop_pct=args.fixed_stop_pct,
+            stop_policy=args.stop_policy,
+        )
         ledger["as_of_date"] = pd.to_datetime(ledger["as_of_date"], errors="coerce")
-        train = ledger[ledger["as_of_date"] < pd.Timestamp(args.holdout_start)].copy()
-        holdout = ledger[ledger["as_of_date"] >= pd.Timestamp(args.holdout_start)].copy()
+        ledger["label_end_date_26w"] = pd.to_datetime(ledger["label_end_date_26w"], errors="coerce")
+        holdout_start = pd.Timestamp(args.holdout_start)
+        train = ledger[
+            (ledger["as_of_date"] < holdout_start)
+            & ledger["label_end_date_26w"].notna()
+            & (ledger["label_end_date_26w"] < holdout_start)
+        ].copy()
+        embargo = ledger[
+            (ledger["as_of_date"] < holdout_start)
+            & (~ledger.index.isin(train.index))
+        ].copy()
+        holdout = ledger[ledger["as_of_date"] >= holdout_start].copy()
         if len(train) < 150 or len(holdout) < 30:
             raise HistoricalPITUnavailable(
                 f"BLOCK_DATA_BACKTEST: temporal split insufficient train={len(train)} holdout={len(holdout)}"
             )
+        if bool((train["label_end_date_26w"] >= holdout_start).any()):
+            raise HistoricalPITUnavailable("BLOCK_LOOKAHEAD_BACKTEST: 26w training label overlaps holdout")
         ic_train, weights, model_meta = train_governed_model(train, feature_columns=feature_columns)
         mae_model = train_stop_model(train)
     except (HistoricalPITUnavailable, ValueError) as exc:
@@ -284,14 +342,34 @@ def main() -> int:
     holdout = apply_mae_filter(holdout, trained_artifact=mae_model, require_trained=True)
     retained = holdout[holdout["mae_status"].eq("OK")].copy()
 
+    annual = pd.concat(
+        [_period_table(holdout, freq="Y", variant="FULL"), _period_table(retained, freq="Y", variant="MAE_FILTER")],
+        ignore_index=True,
+    )
+    quarterly = pd.concat(
+        [_period_table(holdout, freq="Q", variant="FULL"), _period_table(retained, freq="Q", variant="MAE_FILTER")],
+        ignore_index=True,
+    )
+
     report = {
         "period": [args.start, args.end],
         "holdout_start": args.holdout_start,
         "feature_set": args.feature_set,
         "feature_columns": list(feature_columns),
         "stop_policy": args.stop_policy,
+        "fixed_stop_pct": args.fixed_stop_pct if args.stop_policy == "fixed" else None,
         "execution_policy": "NEXT_SESSION_OPEN_J1",
         "full_enhanced_pit_claimed": False if args.feature_set == "technical-core" else None,
+        "portfolio_simulation": False,
+        "performance_interpretation": "overlapping 26w signal observations; not annual portfolio returns",
+        "anti_lookahead": {
+            "pit_timestamp_check": True,
+            "label_embargo_policy": "train only when label_end_date_26w < holdout_start",
+            "train_max_label_end": str(train["label_end_date_26w"].max()),
+            "holdout_start": args.holdout_start,
+            "embargo_rows": int(len(embargo)),
+            "passed": bool((train["label_end_date_26w"] < holdout_start).all()),
+        },
         "train_rows": int(len(train)),
         "holdout_rows": int(len(holdout)),
         "model": model_meta,
@@ -300,6 +378,9 @@ def main() -> int:
             "n_validation": mae_model["n_validation"],
             "validation_auc": mae_model["validation_auc"],
             "validation_brier": mae_model["validation_brier"],
+            "train_end": mae_model["train_end"],
+            "validation_start": mae_model["validation_start"],
+            "validation_end": mae_model["validation_end"],
         },
         "holdout_all": {**acceptance_metrics(holdout), **_oos_ic(holdout)},
         "holdout_after_mae_filter": {**acceptance_metrics(retained), **_oos_ic(retained)},
@@ -309,7 +390,11 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
     ledger.to_csv(out / "V22_1_TRUE_FORWARD_LEDGER.csv", index=False)
     train.to_csv(out / "V22_1_TRAIN_LEDGER.csv", index=False)
+    embargo.to_csv(out / "V22_1_EMBARGO_LEDGER.csv", index=False)
     holdout.to_csv(out / "V22_1_HOLDOUT_LEDGER.csv", index=False)
+    retained.to_csv(out / "V22_1_HOLDOUT_MAE_FILTERED.csv", index=False)
+    annual.to_csv(out / "V22_1_HOLDOUT_ANNUAL_FULL_VS_MAE.csv", index=False)
+    quarterly.to_csv(out / "V22_1_HOLDOUT_QUARTERLY_FULL_VS_MAE.csv", index=False)
     ic_train.to_csv(out / "V22_1_IC_TRAIN_26W.csv", index=False)
     (out / "V22_1_GOVERNED_WEIGHTS.json").write_text(json.dumps(weights, indent=2), encoding="utf-8")
     (out / "V22_1_MAE_MODEL.json").write_text(json.dumps(mae_model, indent=2), encoding="utf-8")
