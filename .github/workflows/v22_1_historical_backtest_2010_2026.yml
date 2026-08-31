@@ -21,7 +21,7 @@ env:
 
 concurrency:
   group: v22-1-historical-weekly-pit-backtest
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   historical-backtest:
@@ -36,10 +36,11 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-runtime.txt
 
-      - name: Install runtime
+      - name: Install minimal backtest runtime
         run: |
-          python -m pip install --prefer-binary -r requirements-runtime.txt
-          python -m pip install pytest==9.1.1
+          python -m pip install --prefer-binary \
+            "pandas>=2.2" "numpy>=2.0" "pyarrow>=17" \
+            "scipy>=1.17" "scikit-learn>=1.8" "pytest==9.1.1"
 
       - name: Prove fast engine equivalence
         run: python -m pytest -q tests/test_hebdo_backtest_v22_1_fast.py
@@ -106,7 +107,7 @@ jobs:
           fi
 
       - name: Upload historical backtest evidence
-        if: always()
+        if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: v22-1-historical-weekly-backtest-${{ github.run_id }}
