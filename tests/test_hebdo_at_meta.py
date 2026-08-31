@@ -7,6 +7,7 @@ from v182.hebdo.meta_labeler import MetaLabeler
 from v182.hebdo.false_positive_filter import FalsePositiveFilter
 from v182.hebdo.expected_value_ranker import ExpectedValueRanker
 from v182.hebdo.hebdo_at_meta import HebdoATMeta
+from v182.scoring.ic_lasso_selector import lasso_select_features
 
 
 def make_features(n=100):
@@ -104,3 +105,25 @@ def test_meta_training_sparse_classes_blocks_safely():
     df['meta_label']=1
     result=MetaLabeler().train(df)
     assert result['status'].startswith('BLOCK_')
+
+
+def test_meta_training_uses_chronological_oos_split():
+    n=150
+    df=make_features(n)
+    # Chaque segment temporel contient les deux classes.
+    df['meta_label']=np.tile([0,1], n//2)
+    result=MetaLabeler().train(df)
+    assert result['status']=='TRAINED_TEMPORAL_OOS'
+    assert result['split_scheme']=='chronological_60_20_20'
+    assert result['n_train'] < n and result['n_test'] > 0
+
+
+def test_lasso_uses_time_series_split():
+    n=80
+    X=pd.DataFrame({
+        'f1':np.linspace(-1,1,n),
+        'f2':np.sin(np.linspace(0,8,n)),
+    })
+    y=pd.Series(0.5*X['f1'] + 0.1*X['f2'])
+    result=lasso_select_features(X,y,cv=4)
+    assert result['cv_scheme']=='TimeSeriesSplit'
