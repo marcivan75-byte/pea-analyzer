@@ -83,7 +83,7 @@ def test_selected_etf_cache_uses_two_ttls_and_no_raw_html(tmp_path: Path):
     )
     assert first.metrics["refresh_success"] == 1
     assert second.metrics["refresh_requested"] == 0
-    assert len(calls) == first_calls == 2
+    assert len(calls) == first_calls == 3
     assert any(row["field"] == "boursorama_etf_aum_eur_m" for row in second.observations)
     assert any(row["field"] == "boursorama_etf_beta_1y" for row in second.observations)
     assert all(len(row["page_sha256"]) == 64 for row in second.observations)

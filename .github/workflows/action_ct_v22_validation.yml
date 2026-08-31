@@ -143,7 +143,7 @@ jobs:
               '.github/workflows/committee_tct_ct_daily.yml':
                   'python -m v182.reporting.daily_consolidated_runner_v21_15_4',
               '.github/workflows/committee_master_daily.yml':
-                  'python -m v182.reporting.weekly_tail_super_runner_v21_16_0',
+                  'python -m v182.reporting.weekly_operational_runner_v4_4',
           }
           for workflow_path, consolidated_command in workflow_contracts.items():
               workflow=Path(workflow_path).read_text()

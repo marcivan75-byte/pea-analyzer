@@ -30,7 +30,7 @@ def test_final_runtime_dependency_contract_is_exact():
         if line.strip() and not line.lstrip().startswith("#")
     ]
     assert runtime == expected
-    assert len(runtime) == 13
+    assert len(runtime) == 15
 
 
 def test_final_package_workflow_is_publish_only_and_does_not_modify_production_workflows():

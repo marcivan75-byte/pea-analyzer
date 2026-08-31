@@ -134,7 +134,7 @@ def test_weekly_super_runner_uses_friday_reuse_while_daily_uses_full_consolidate
     weekly_tail = (ROOT / "src" / "v182" / "reporting" / "weekly_tail_super_runner_v21_16_0.py").read_text(encoding="utf-8")
     runner = (ROOT / "src" / "v182" / "reporting" / "daily_tct_ct_runner.py").read_text(encoding="utf-8")
 
-    assert "python -m v182.reporting.weekly_tail_super_runner_v21_16_0" in weekly
+    assert "python -m v182.reporting.weekly_operational_runner_v4_4" in weekly
     assert "friday_tactical_reuse_runner as friday_reuse" in weekly_tail
     assert "python -m v182.reporting.daily_consolidated_runner_v21_15_4" in daily_workflow
     assert "PEA_RUN_PROFILE: DAILY_TACTICAL" in daily_workflow

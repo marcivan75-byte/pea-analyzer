@@ -13,7 +13,8 @@ def test_daily_and_weekly_share_same_persistent_ohlcv_cache_namespace():
     for source in (daily, weekly):
         assert "Restore persistent OHLCV cache" in source
         assert "Save persistent OHLCV cache" in source
-        assert "path: data/cache/" in source
+        assert "data/cache/actions/" in source
+        assert "data/cache/etf/" in source
         assert "ohlcv-v3-" in source
 
 

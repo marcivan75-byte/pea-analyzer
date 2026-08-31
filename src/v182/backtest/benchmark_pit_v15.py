@@ -6,8 +6,6 @@ at that date, including delisted names when historically eligible.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional
 import pandas as pd
 
 

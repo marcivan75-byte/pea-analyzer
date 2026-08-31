@@ -13,7 +13,7 @@ import json
 import numpy as np
 import pandas as pd
 
-from .at_weekly_growth_potential_pit_v1 import enrich_trades, rr_pf, summarize_bucket
+from .at_weekly_growth_potential_pit_v1 import enrich_trades, summarize_bucket
 from .at_weekly_quarterly_study_v1 import build_universe, trade_ledger
 
 ROOT=Path(__file__).resolve().parents[3]

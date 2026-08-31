@@ -13,7 +13,7 @@ from .at_weekly_v1 import _to_weekly
 from .at_weekly_v1_fixed import _cache_files,_iter_consolidated,CACHE_DIRS,MIN_WEEKLY_BARS
 from .at_weekly_weight_bank_v1 import build_bars
 from .at_weekly_weight_bank_v3_continuous import entry_mask
-from .at_weekly_exit_bench_v1 import ENTRIES, arrays, metric, summarize, _trade
+from .at_weekly_exit_bench_v1 import ENTRIES, arrays, summarize, _trade
 
 ROOT=Path(__file__).resolve().parents[3]
 OUT=ROOT/'outputs/backtest/AT_WEEKLY_EXIT_OPT_V2.json'

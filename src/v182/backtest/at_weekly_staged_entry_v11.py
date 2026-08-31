@@ -110,7 +110,7 @@ def prepare_trade(daily,row,lag):
         after=hist[hist.index>=entry_dt].sort_index()
         # confirmation is observed after lag completed sessions; add at the next session open.
         if len(after)>=lag+1:
-            conf=after.iloc[lag-1]; conf_dt=pd.Timestamp(after.index[lag-1]); nxt=after.iloc[lag]; nxt_dt=pd.Timestamp(after.index[lag])
+            conf=after.iloc[lag-1]; nxt=after.iloc[lag]; nxt_dt=pd.Timestamp(after.index[lag])
             prev_close=float(after.iloc[lag-2].close) if lag>=2 else entry_px
             no_stop=True
             pre=after.iloc[:lag]

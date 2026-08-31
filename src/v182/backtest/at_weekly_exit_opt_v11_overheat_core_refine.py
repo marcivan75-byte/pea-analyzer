@@ -5,14 +5,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import json,time
-import numpy as np, pandas as pd
+import pandas as pd
 from .at_weekly_v1 import _to_weekly
 from .at_weekly_v1_fixed import _cache_files,_iter_consolidated,CACHE_DIRS,MIN_WEEKLY_BARS
 from .at_weekly_weight_bank_v1 import build_bars
 from .at_weekly_weight_bank_v3_continuous import entry_mask
 from .at_weekly_exit_bench_v1 import ENTRIES,summarize
 from .at_weekly_exit_opt_v8_profit_reversal_blocks import add_indicators,last_daily_change_by_week,robust_score
-from .at_weekly_exit_opt_v10_overheat_weight_bank import STOP_PCT,FP_WEEKS,FP_FLOOR,D_CFG,add_e_indicators,simulate,e_metrics,cost_metrics,criterion_trigger_share
+from .at_weekly_exit_opt_v10_overheat_weight_bank import STOP_PCT,D_CFG,add_e_indicators,simulate,e_metrics,cost_metrics,criterion_trigger_share
 ROOT=Path(__file__).resolve().parents[3]
 OUT=ROOT/'outputs/backtest/AT_WEEKLY_EXIT_OPT_V11_OVERHEAT_CORE_REFINE.json'
 PROFILES=[

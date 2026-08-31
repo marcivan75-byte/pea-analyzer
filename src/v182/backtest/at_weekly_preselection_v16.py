@@ -10,7 +10,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import json
-import numpy as np
 import pandas as pd
 
 from .at_weekly_selection_quality_v8_top30 import potential_score

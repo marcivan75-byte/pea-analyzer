@@ -12,10 +12,10 @@ def _workflow(name: str) -> str:
 def _assert_validated_checkpoint(workflow: str, collection_step: str) -> None:
     assert "- name: Validate OHLCV cache checkpoint" in workflow
     assert "rm -f state/OHLCV_CACHE_VALIDATED" in workflow
-    assert "outputs/audit/V18.2_QUALITY_GATES.json" in workflow
-    assert "grep -Eq '\"passed\"[[:space:]]*:[[:space:]]*true'" in workflow
-    assert "[ -f data/cache/actions/history_manifest.json ]" in workflow
-    assert "[ -f data/cache/etf/history_manifest.json ]" in workflow
+    assert "outputs/audit/OHLCV_CACHE_CHECKPOINT.json" in workflow
+    assert "quality_gate_required" in workflow
+    assert "-s data/cache/actions/history_manifest.json" in workflow
+    assert "-s data/cache/etf/history_manifest.json" in workflow
     assert "printf 'validated\\n' > state/OHLCV_CACHE_VALIDATED" in workflow
     assert SAVE_GATE in workflow
     assert "if: ${{ success() && hashFiles('data/cache/**') != '' }}" not in workflow
@@ -33,5 +33,5 @@ def test_daily_ohlcv_cache_survives_downstream_failure_only_after_validated_coll
 def test_weekly_ohlcv_cache_survives_downstream_failure_only_after_validated_collection() -> None:
     _assert_validated_checkpoint(
         _workflow("committee_master_daily.yml"),
-        "Run optimized weekly unified Committee DAG V21.16.2",
+        "Run unified weekly operational runner V4.4",
     )

@@ -133,9 +133,7 @@ def parse_etf_morningstar_sri_html(html: str) -> dict[str, object]:
                 continue
             on_icons = [
                 node
-                for node in root.select(
-                    "[class*='star'][class*='on'], [class*='star'][class*='full'], .c-star--on"
-                )
+                for node in root.select("[class*='star'][class*='on'], [class*='star'][class*='full'], .c-star--on")
                 if getattr(node, "name", "") != "input"
             ]
             if 1 <= len(on_icons) <= 5:
@@ -246,5 +244,11 @@ def palmares_search_url(isin: str) -> str:
     )
 
 
-from v182.sources.boursorama_etf_sheet import parse_etf_risk_html, parse_etf_sheet_html
-from v182.sources.boursorama_etf_collect import collect_selected_etf_context_cached
+# Explicit aliases preserve the historical public import contract while letting
+# the implementation live in dedicated modules. Ruff recognizes these as
+# intentional re-exports and will not remove them during maintenance --fix.
+from v182.sources.boursorama_etf_sheet import parse_etf_risk_html as parse_etf_risk_html
+from v182.sources.boursorama_etf_sheet import parse_etf_sheet_html as parse_etf_sheet_html
+from v182.sources.boursorama_etf_collect import (
+    collect_selected_etf_context_cached as collect_selected_etf_context_cached,
+)

@@ -17,7 +17,7 @@ from .at_weekly_v1 import _to_weekly
 from .at_weekly_v1_fixed import _cache_files, _iter_consolidated, CACHE_DIRS, MIN_WEEKLY_BARS
 from .at_weekly_weight_bank_v1 import build_bars
 from .at_weekly_weight_bank_v3_continuous import entry_mask
-from .at_weekly_exit_bench_v1 import ENTRIES, summarize
+from .at_weekly_exit_bench_v1 import ENTRIES
 from .at_weekly_exit_opt_v8_profit_reversal_blocks import add_indicators, last_daily_change_by_week, simulate
 
 ROOT = Path(__file__).resolve().parents[3]

@@ -10,7 +10,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import json
-import numpy as np
 import pandas as pd
 
 from .at_weekly_growth_potential_pit_v1 import enrich_trades, summarize_bucket

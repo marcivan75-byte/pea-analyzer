@@ -113,7 +113,7 @@ def test_daily_and_weekly_use_tactical_bundle_via_dag_and_keep_downstream_pit_ca
     assert "tactical_shadow_bundle_run as tactical" in daily_tactical
     assert "tct_postmarket_bundle_run as postmarket" in daily_tactical
 
-    assert "python -m v182.reporting.weekly_tail_super_runner_v21_16_0" in weekly_workflow
+    assert "python -m v182.reporting.weekly_operational_runner_v4_4" in weekly_workflow
     assert "tactical_shadow_bundle_run as tactical" in weekly_tail
     assert "tct_postmarket_bundle_run as postmarket" in weekly_tail
 
@@ -126,4 +126,4 @@ def test_daily_and_weekly_use_tactical_bundle_via_dag_and_keep_downstream_pit_ca
     assert "lineage.run(root=root)" in postmarket
     assert "validator.run(root=root)" in postmarket
     assert "TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json" in daily_workflow
-    assert "TACTICAL_SHARED_PARQUET_RUNTIME_V21_13_11.json" in weekly_workflow
+    assert "tactical.run(root=root, tct_complete_callback=_start_postmarket)" in weekly_tail

@@ -14,7 +14,7 @@ No production influence.
 from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
-import itertools, json, math, time
+import itertools, json, time
 import numpy as np
 import pandas as pd
 
