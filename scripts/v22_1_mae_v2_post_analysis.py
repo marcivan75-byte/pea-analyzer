@@ -40,27 +40,48 @@ def _frame(df: pd.DataFrame) -> pd.DataFrame:
     return out.sort_values("date", kind="stable")
 
 
-def _metrics(frame: pd.DataFrame, keep: np.ndarray) -> dict[str, float | int | None]:
+def _metrics(frame: pd.DataFrame, keep: np.ndarray) -> dict[str, float | int | str | None]:
     kept = frame.loc[keep].copy()
     mature = kept[kept["ret26"].notna()].copy()
+    base = {
+        "signals_total": int(len(frame)),
+        "kept": int(len(kept)),
+        "retention_rate": float(len(kept) / len(frame)) if len(frame) else None,
+        "mature": int(len(mature)),
+        "maturity_rate": float(len(mature) / len(kept)) if len(kept) else None,
+        "portfolio_net_result": None,
+        "portfolio_net_result_status": "REQUIRES_CAPITAL_CONSTRAINED_PORTFOLIO_SIMULATION_WITH_COSTS",
+    }
     if mature.empty:
         return {
-            "kept": int(len(kept)), "mature": 0, "wins": 0, "win_rate": None,
-            "losses": 0, "loss_rate": None, "false_positives": 0,
-            "false_positive_rate": None, "avg_win": None, "avg_loss": None,
-            "expectancy": None, "profit_factor": None, "payoff_ratio": None,
-            "stop_count": 0, "stop_rate": None, "mae_mean": None, "mfe_mean": None,
+            **base,
+            "wins": 0, "win_rate": None, "losses": 0, "loss_rate": None,
+            "false_positives": 0, "false_positive_rate": None,
+            "avg_win": None, "avg_loss": None, "median_return": None,
+            "expectancy": None, "gross_profit_signal_units": None,
+            "gross_loss_signal_units": None, "net_signal_pnl_units": None,
+            "profit_factor": None, "payoff_ratio": None,
+            "return_std": None, "downside_std": None,
+            "best_trade": None, "worst_trade": None,
+            "stop_count": 0, "stop_rate": None,
+            "mae_mean": None, "mae_median": None, "mae_p10": None,
+            "mfe_mean": None, "mfe_median": None, "mfe_p90": None,
         }
+
     ret = mature["ret26"].astype(float)
     wins = ret[ret > 0]
     losses = ret[ret <= 0]
     stop = mature["label"].astype(bool)
-    gross_loss = float((-losses).sum())
+    gross_profit = float(wins.sum()) if not wins.empty else 0.0
+    gross_loss = float((-losses).sum()) if not losses.empty else 0.0
     avg_win = float(wins.mean()) if not wins.empty else None
     avg_loss = float(losses.mean()) if not losses.empty else None
+    downside = ret[ret < 0]
+    mae = pd.to_numeric(mature["mae"], errors="coerce").dropna()
+    mfe = pd.to_numeric(mature["mfe"], errors="coerce").dropna()
+
     return {
-        "kept": int(len(kept)),
-        "mature": int(len(mature)),
+        **base,
         "wins": int((ret > 0).sum()),
         "win_rate": float((ret > 0).mean()),
         "losses": int((ret <= 0).sum()),
@@ -69,13 +90,25 @@ def _metrics(frame: pd.DataFrame, keep: np.ndarray) -> dict[str, float | int | N
         "false_positive_rate": float(stop.mean()),
         "avg_win": avg_win,
         "avg_loss": avg_loss,
+        "median_return": float(ret.median()),
         "expectancy": float(ret.mean()),
-        "profit_factor": float(wins.sum() / gross_loss) if gross_loss > 0 else None,
+        "gross_profit_signal_units": gross_profit,
+        "gross_loss_signal_units": gross_loss,
+        "net_signal_pnl_units": float(ret.sum()),
+        "profit_factor": float(gross_profit / gross_loss) if gross_loss > 0 else None,
         "payoff_ratio": (avg_win / abs(avg_loss)) if avg_win is not None and avg_loss not in (None, 0.0) else None,
+        "return_std": float(ret.std(ddof=1)) if len(ret) > 1 else None,
+        "downside_std": float(downside.std(ddof=1)) if len(downside) > 1 else None,
+        "best_trade": float(ret.max()),
+        "worst_trade": float(ret.min()),
         "stop_count": int(stop.sum()),
         "stop_rate": float(stop.mean()),
-        "mae_mean": float(pd.to_numeric(mature["mae"], errors="coerce").mean()),
-        "mfe_mean": float(pd.to_numeric(mature["mfe"], errors="coerce").mean()),
+        "mae_mean": float(mae.mean()) if not mae.empty else None,
+        "mae_median": float(mae.median()) if not mae.empty else None,
+        "mae_p10": float(mae.quantile(0.10)) if not mae.empty else None,
+        "mfe_mean": float(mfe.mean()) if not mfe.empty else None,
+        "mfe_median": float(mfe.median()) if not mfe.empty else None,
+        "mfe_p90": float(mfe.quantile(0.90)) if not mfe.empty else None,
     }
 
 
@@ -153,13 +186,13 @@ def _period_comparison(
                 **m,
             }
             if not publish_final:
-                for key in (
-                    "wins", "win_rate", "losses", "loss_rate", "false_positives",
-                    "false_positive_rate", "avg_win", "avg_loss", "expectancy",
-                    "profit_factor", "payoff_ratio", "stop_count", "stop_rate",
-                    "mae_mean", "mfe_mean",
-                ):
-                    row[key] = None
+                preserve = {
+                    "signals_total", "kept", "retention_rate", "mature", "maturity_rate",
+                    "portfolio_net_result", "portfolio_net_result_status",
+                }
+                for key in list(m):
+                    if key not in preserve:
+                        row[key] = None
             rows.append(row)
     return pd.DataFrame(rows)
 
@@ -219,6 +252,10 @@ def main() -> int:
     report = {
         "version": "V22.1_MAE_V2_RESEARCH",
         "false_positive_definition": "RETAINED_SIGNAL_THAT_HITS_STOP_WITHIN_26W",
+        "net_result_definition": {
+            "net_signal_pnl_units": "SUM_OF_MATURE_26W_RETURNS_ON_ONE_UNIT_NOTIONAL_PER_SIGNAL; NOT A PORTFOLIO_RETURN",
+            "portfolio_net_result": "NOT_AVAILABLE_UNTIL_CAPITAL_CONSTRAINED_PORTFOLIO_SIMULATION_WITH_COSTS",
+        },
         "governance": {
             "features": list(FEATURES),
             "training_source": "PRE_2023_TECHNICAL_PIT_ONLY",
