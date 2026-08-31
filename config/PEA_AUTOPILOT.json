@@ -1,13 +1,27 @@
 {
-  "version": "PEA_AUTOPILOT_V1",
+  "version": "PEA_AUTOPILOT_V2",
   "enabled": true,
   "wip_limit": 1,
   "max_transient_reruns": 2,
-  "max_autofix_commits_per_upstream_run": 1,
+  "max_autofix_chain_depth": 3,
   "allowed_branches": [
     "main",
     "v22/pit-mae-mfe-preopen",
     "research/at-weekly-v1-20260829"
+  ],
+  "autofix_workflows": [
+    "V22.1 CI corrections + canonical 2010-2019 data"
+  ],
+  "validation_commands": [
+    ["python", "-m", "ruff", "check", "src", "tests", "scripts"],
+    ["python", "-m", "compileall", "-q", "src", "scripts"],
+    ["python", "-m", "pytest", "-q"]
+  ],
+  "forbidden_autofix_paths": [
+    "config/",
+    "data/",
+    "outputs/",
+    "state/"
   ],
   "governance": {
     "fail_closed": true,
@@ -17,7 +31,9 @@
     "allow_future_returns_in_features": false,
     "allow_weight_threshold_changes": false,
     "allow_holdout_open": false,
-    "allow_real_orders": false
+    "allow_real_orders": false,
+    "stale_run_remediation_forbidden": true,
+    "unknown_failure_autofix_forbidden": true
   },
   "transient_patterns": [
     "The hosted runner",
@@ -27,7 +43,9 @@
     "HTTP 504",
     "connection reset",
     "temporary failure",
-    "rate limit"
+    "rate limit",
+    "runner lost communication",
+    "failed to download action"
   ],
   "deterministic_maintenance": {
     "v22/pit-mae-mfe-preopen": "scripts/maintenance_fix_v22_1_ci.py"
