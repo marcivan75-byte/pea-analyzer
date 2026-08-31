@@ -38,7 +38,7 @@ def test_autopilot_autofix_scope_is_explicit_and_bounded():
 def test_supervisor_avoids_expensive_target_install_for_report_only_runs():
     workflow = (ROOT / ".github" / "workflows" / "pea_autopilot_supervisor.yml").read_text(encoding="utf-8")
     assert "needs_target=true" in workflow
-    assert 'if: steps.upstream.outputs.needs_target == \'true\'' in workflow
+    assert "if: steps.upstream.outputs.needs_target == 'true'" in workflow
     assert "python -m pip install -e \"./target[test]\"" in workflow
     assert "cancel-in-progress: false" in workflow
 
@@ -48,6 +48,6 @@ def test_autopilot_has_stale_run_and_chain_guards():
     assert "STALE_RUN_SUPERSEDED" in source
     assert "AUTOFIX_CHAIN_LIMIT_REACHED" in source
     assert "AUTOFIX_FORBIDDEN_PATH_CHANGE" in source
-    assert "git\", \"reset\", \"--hard\", \"HEAD" in source
+    assert '["git", "reset", "--hard", "HEAD"]' in source
     assert "RERUN_FAILED_JOBS" in source
     assert "validation_commands" in source
