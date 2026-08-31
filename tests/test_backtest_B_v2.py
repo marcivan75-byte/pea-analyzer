@@ -3,7 +3,7 @@ import pandas as pd
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from v182.backtests.v21_8_1_backtest_B_v2 import compute_true_26w_pnl, detect_B_v2
+from v182.backtests.v21_8_1_backtest_B_v2 import compute_true_26w_pnl, detect_B_v2, run_backtest_B_v2
 
 
 def test_stop_bloque():
@@ -57,12 +57,25 @@ def test_mae_mfe_logged():
 
 def test_mae_mfe_stop_ignore_future_bars():
     hist = pd.DataFrame({
-        'open':[100, 100, 100],
-        'low':[90, 50, 40],
-        'high':[103, 160, 180],
-        'close':[91, 150, 170],
+        'open':[100,100,100], 'low':[90,50,40], 'high':[103,160,180], 'close':[91,150,170],
     })
     res = compute_true_26w_pnl(100, hist, 0.09)
     assert res['day_stop'] == 1
     assert abs(res['mae'] - (-0.10)) < 1e-12
     assert abs(res['mfe'] - 0.03) < 1e-12
+
+
+def test_backtest_price_path_is_isolated_by_ticker_and_future_date():
+    signal_date=pd.Timestamp('2025-01-02')
+    signals=pd.DataFrame([
+        {'date':signal_date,'ticker':'AAA','close':100,'B_signal':True,'B_signal_type':'B1_VOL'}
+    ])
+    dates=pd.date_range('2025-01-03', periods=126, freq='B')
+    aaa=pd.DataFrame({'date':dates,'ticker':'AAA','open':100,'low':95,'high':110,'close':105})
+    bbb=pd.DataFrame({'date':dates,'ticker':'BBB','open':50,'low':1,'high':60,'close':2})
+    prices=pd.concat([bbb,aaa], ignore_index=True)
+    out=run_backtest_B_v2(signals, prices, forward=126)
+    assert len(out)==1
+    assert out.iloc[0]['ticker']=='AAA'
+    assert out.iloc[0]['hit_stop'] is False
+    assert abs(out.iloc[0]['pnl']-0.05)<1e-12
