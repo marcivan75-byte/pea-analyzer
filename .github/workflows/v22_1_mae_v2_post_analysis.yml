@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/v22_1_mae_v2_post_analysis.yml'
       - 'scripts/v22_1_mae_v2_post_analysis.py'
+      - 'scripts/v22_1_reporting_integrity_fix.py'
   workflow_dispatch:
 
 permissions:
@@ -52,6 +53,11 @@ jobs:
             --input-dir inputs \
             --out-dir outputs/mae_v2 \
             --analysis-end 2026-08-31
+      - name: Reconcile raw ledger counts in detailed reporting
+        run: |
+          python scripts/v22_1_reporting_integrity_fix.py \
+            --input-dir inputs \
+            --out-dir outputs/mae_v2
       - name: Publish summary
         shell: bash
         run: |
@@ -61,6 +67,8 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           echo '## 2026 quarter completeness' >> "$GITHUB_STEP_SUMMARY"
           grep '^2026' outputs/mae_v2/V22_1_QUARTER_COMPLETENESS.csv >> "$GITHUB_STEP_SUMMARY" || true
+          echo '## 2026 detailed reporting integrity' >> "$GITHUB_STEP_SUMMARY"
+          grep '^2026Q[12],FULL' outputs/mae_v2/V22_1_QUARTERLY_DETAILED_COMPARISON.csv >> "$GITHUB_STEP_SUMMARY" || true
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: v22-1-mae-v2-post-analysis-${{ github.run_id }}
