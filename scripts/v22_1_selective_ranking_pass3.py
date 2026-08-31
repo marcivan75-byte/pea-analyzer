@@ -31,9 +31,11 @@ def build(df: pd.DataFrame) -> pd.DataFrame:
     x["governed_score"] = num(df, "governed_score")
     mom = num(df, "mom_26w")
     dd = num(df, "drawdown_4w")
+    atr = num(df, "atr_14_pct")
     x["H_MOM_DD"] = mom * (1.0 - dd.abs())
+    x["H_VOL_DD"] = atr * dd.abs()
     good = x["date"].notna() & x["ret26"].notna() & x["stop"].notna()
-    for c in ["governed_score", "H_MOM_DD"]:
+    for c in ["governed_score", "H_MOM_DD", "H_VOL_DD"]:
         good &= np.isfinite(x[c])
     x = x.loc[good].copy()
     x["stop"] = x["stop"].astype(bool)
@@ -50,15 +52,7 @@ def metrics(g: pd.DataFrame) -> dict:
     r = g["ret26"].astype(float)
     w, l = r[r > 0], r[r <= 0]
     gp, gl = float(w.sum()), float((-l).sum())
-    return {
-        "n": int(len(g)),
-        "win_rate": float((r > 0).mean()),
-        "stop_rate": float(g["stop"].mean()),
-        "expectancy": float(r.mean()),
-        "profit_factor": float(gp / gl) if gl > 0 else None,
-        "payoff_ratio": float(w.mean() / abs(l.mean())) if len(w) and len(l) and l.mean() != 0 else None,
-        "big_winners": int((r >= BIG_WIN).sum()),
-    }
+    return {"n": int(len(g)), "win_rate": float((r > 0).mean()), "stop_rate": float(g["stop"].mean()), "expectancy": float(r.mean()), "profit_factor": float(gp / gl) if gl > 0 else None, "payoff_ratio": float(w.mean() / abs(l.mean())) if len(w) and len(l) and l.mean() != 0 else None, "big_winners": int((r >= BIG_WIN).sum())}
 
 
 def select_capacity(g: pd.DataFrame, score_col: str) -> pd.DataFrame:
@@ -96,16 +90,17 @@ def main() -> int:
     if len(valid) < 1000:
         raise SystemExit("BLOCK_PASS3_DATA: insufficient validation")
 
-    # Reproduce pass2 H_MOM_DD risk direction (-1): low H_MOM_DD is risky.
     risk = (-valid["H_MOM_DD"]).rank(method="average", pct=True)
     valid = valid.loc[risk <= keep_level].copy()
 
     valid["R_GOV"] = pct_rank(valid["governed_score"])
-    valid["R_HYBRID"] = pct_rank(valid["H_MOM_DD"])
-    valid["R_BALANCED"] = 0.70 * valid["R_GOV"] + 0.30 * valid["R_HYBRID"]
-    valid["R_HYBRID_HEAVY"] = 0.50 * valid["R_GOV"] + 0.50 * valid["R_HYBRID"]
+    valid["R_VOL_DD_GOOD"] = 1.0 - pct_rank(valid["H_VOL_DD"])
+    # Existing PIT volatility×drawdown hybrid is used only as a small anti-stop penalty.
+    valid["R_STOP_06"] = 0.94 * valid["R_GOV"] + 0.06 * valid["R_VOL_DD_GOOD"]
+    valid["R_STOP_08"] = 0.92 * valid["R_GOV"] + 0.08 * valid["R_VOL_DD_GOOD"]
+    valid["R_STOP_10"] = 0.90 * valid["R_GOV"] + 0.10 * valid["R_VOL_DD_GOOD"]
 
-    variants = ["R_GOV", "R_BALANCED", "R_HYBRID_HEAVY"]
+    variants = ["R_GOV", "R_STOP_06", "R_STOP_08", "R_STOP_10"]
     selected = {v: select_capacity(valid, v) for v in variants}
     base = selected["R_GOV"]
     base_big = max(int((base["ret26"] >= BIG_WIN).sum()), 1)
@@ -117,13 +112,11 @@ def main() -> int:
         m = metrics(s)
         big_recall = float(((s["ret26"] >= BIG_WIN).sum()) / base_big)
         years = max(int(s["date"].dt.year.nunique()), 1)
-        per_year = float(len(s) / years)
         monthly_max = int(s.groupby(s["date"].dt.to_period("M")).size().max()) if len(s) else 0
         yearly_max = int(s.groupby(s["date"].dt.year).size().max()) if len(s) else 0
         admissible = big_recall >= MIN_BIG_RECALL_VS_BASELINE and monthly_max <= MAX_PER_MONTH and yearly_max <= MAX_PER_YEAR
-        row = {"variant": v, "admissible": admissible, "big_winner_recall_vs_capacity_baseline": big_recall, "avg_entries_per_year": per_year, "max_entries_month": monthly_max, "max_entries_year": yearly_max, **m}
+        row = {"variant": v, "admissible": admissible, "big_winner_recall_vs_capacity_baseline": big_recall, "avg_entries_per_year": float(len(s) / years), "max_entries_month": monthly_max, "max_entries_year": yearly_max, **m}
         rows.append(row)
-        # Selectivity objective: fewer stops first, then expectancy, PF, big-winner retention.
         key = (-float(m["stop_rate"] or 1.0), float(m["expectancy"] or -1e9), float(m["profit_factor"] or 0.0), big_recall)
         if admissible and (best is None or key > best[0]):
             best = (key, v, row)
@@ -133,21 +126,17 @@ def main() -> int:
 
     best_v = best[1]
     best_sel = selected[best_v]
+    # Require the selective ranking to improve its own same-capacity stop baseline.
+    base_stop = float(metrics(base)["stop_rate"] or 1.0)
+    if float(best[2]["stop_rate"] or 1.0) >= base_stop:
+        raise SystemExit("BLOCK_PASS3_MODEL: no stop-rate improvement versus capacity baseline")
+
     args.out_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows).to_csv(args.out_dir / "PASS3_VARIANTS.csv", index=False)
-    best_sel[["date", "ticker", "isin", "ret26", "stop", "governed_score", "H_MOM_DD", best_v]].to_csv(args.out_dir / "PASS3_SELECTED_PRE2023.csv", index=False)
+    best_sel[["date", "ticker", "isin", "ret26", "stop", "governed_score", "H_MOM_DD", "H_VOL_DD", best_v]].to_csv(args.out_dir / "PASS3_SELECTED_PRE2023.csv", index=False)
     report = {
-        "version": "V22.1_TABPORT_PASS3_SELECTIVE_RANKING_1",
-        "governance": {
-            "holdout_accessed": False,
-            "holdout_scope": "SEALED_UNTIL_FINAL_PASS6_EVALUATION",
-            "training_source": "PRE_2023_PIT_ONLY",
-            "embargo_weeks": 26,
-            "train_max_date": str(x["date"].max().date()),
-            "pass2_filter": {"criteria": ["H_MOM_DD"], "keep_level": keep_level},
-            "capacity": {"max_entries_month": MAX_PER_MONTH, "max_entries_year": MAX_PER_YEAR},
-            "big_winner_guard": {"definition": BIG_WIN, "min_recall_vs_same_capacity_baseline": MIN_BIG_RECALL_VS_BASELINE},
-        },
+        "version": "V22.1_TABPORT_PASS3_SELECTIVE_RANKING_2_ANTISTOP",
+        "governance": {"holdout_accessed": False, "holdout_scope": "SEALED_UNTIL_FINAL_PASS6_EVALUATION", "training_source": "PRE_2023_PIT_ONLY", "embargo_weeks": 26, "train_max_date": str(x["date"].max().date()), "pass2_filter": {"criteria": ["H_MOM_DD"], "keep_level": keep_level}, "capacity": {"max_entries_month": MAX_PER_MONTH, "max_entries_year": MAX_PER_YEAR}, "big_winner_guard": {"definition": BIG_WIN, "min_recall_vs_same_capacity_baseline": MIN_BIG_RECALL_VS_BASELINE}},
         "baseline_capacity": metrics(base),
         "selected": {"variant": best_v, "metrics": best[2]},
         "variants": rows,
