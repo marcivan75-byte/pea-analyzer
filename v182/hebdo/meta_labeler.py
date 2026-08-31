@@ -1,7 +1,6 @@
 """
 v182/hebdo/meta_labeler.py
-HEBDO AT META - meta-labeling isotonic avec séparation chronologique train/calibration/test.
-L'entraînement exige une preuve explicite d'ordre temporel.
+HEBDO AT META - meta-labeling isotonic avec splits temporels groupés par date et embargo.
 """
 
 import numpy as np
@@ -12,7 +11,7 @@ from sklearn.metrics import precision_score, recall_score, brier_score_loss
 
 
 class MetaLabeler:
-    def __init__(self):
+    def __init__(self, label_horizon_periods: int = 126):
         self.base = None
         self.isotonic = None
         self.features = [
@@ -20,6 +19,9 @@ class MetaLabeler:
             'mom_26w_sector', 'prob_stop_9', 'close_vs_sma200'
         ]
         self.training_status = 'UNTRAINED'
+        self.label_horizon_periods = int(label_horizon_periods)
+        if self.label_horizon_periods < 1:
+            raise ValueError('BLOCK_DATA_META_TRAIN: label_horizon_periods must be >= 1')
 
     def build_meta_label(self, df_backtest: pd.DataFrame):
         required = {'mfe', 'mae', 'hit_stop'}
@@ -50,46 +52,75 @@ class MetaLabeler:
         return len(counts) == 2 and counts.min() >= minimum_each
 
     @staticmethod
-    def _sort_temporal(df: pd.DataFrame) -> pd.DataFrame:
-        if 'date' in df.columns:
-            out = df.copy()
+    def _with_time(df: pd.DataFrame) -> pd.DataFrame:
+        out = df.copy()
+        if 'date' in out.columns:
             out['_meta_time'] = pd.to_datetime(out['date'], errors='coerce', utc=True)
-            if out['_meta_time'].isna().any():
-                raise ValueError('BLOCK_DATA_META_TRAIN: invalid date values')
-            return out.sort_values('_meta_time').drop(columns=['_meta_time']).reset_index(drop=True)
-        if isinstance(df.index, pd.DatetimeIndex):
-            return df.sort_index().reset_index(drop=True)
-        raise ValueError('BLOCK_DATA_META_TRAIN: temporal order evidence missing (date column or DatetimeIndex required)')
+        elif isinstance(out.index, pd.DatetimeIndex):
+            out['_meta_time'] = pd.to_datetime(out.index, utc=True)
+        else:
+            raise ValueError('BLOCK_DATA_META_TRAIN: temporal order evidence missing (date column or DatetimeIndex required)')
+        if out['_meta_time'].isna().any():
+            raise ValueError('BLOCK_DATA_META_TRAIN: invalid date values')
+        return out.sort_values(['_meta_time']).reset_index(drop=True)
+
+    def _purged_split(self, work: pd.DataFrame):
+        unique_times = pd.Index(work['_meta_time'].drop_duplicates().sort_values())
+        n_dates = len(unique_times)
+        gap = self.label_horizon_periods
+        available = n_dates - 2 * gap
+        if available < 30:
+            return None
+
+        n_train_dates = max(10, int(available * 0.60))
+        n_cal_dates = max(10, int(available * 0.20))
+        n_test_dates = available - n_train_dates - n_cal_dates
+        if n_test_dates < 10:
+            return None
+
+        train_dates = unique_times[:n_train_dates]
+        cal_start = n_train_dates + gap
+        cal_dates = unique_times[cal_start:cal_start + n_cal_dates]
+        test_start = cal_start + n_cal_dates + gap
+        test_dates = unique_times[test_start:test_start + n_test_dates]
+        if len(train_dates)==0 or len(cal_dates)==0 or len(test_dates)==0:
+            return None
+
+        train = work[work['_meta_time'].isin(train_dates)].copy()
+        cal = work[work['_meta_time'].isin(cal_dates)].copy()
+        test = work[work['_meta_time'].isin(test_dates)].copy()
+        return train, cal, test, n_dates
 
     def train(self, df_labeled: pd.DataFrame):
-        """Entraîne sans mélange temporel: 60% train, 20% calibration, 20% test final."""
+        """Entraîne avec dates groupées et embargo égal à l'horizon du label."""
         if 'meta_label' not in df_labeled.columns:
             raise ValueError('BLOCK_DATA_META_TRAIN: meta_label missing')
-        work = self._sort_temporal(df_labeled)
-        work = self._prepare_features(work, strict=True).reset_index(drop=True)
-        n = len(work)
-        if n < 60:
+        work = self._with_time(df_labeled)
+        work = self._prepare_features(work, strict=True)
+        if work[self.features].isna().any().any():
+            raise ValueError('BLOCK_DATA_META_FEATURES: missing feature values in training sample')
+
+        split = self._purged_split(work)
+        if split is None:
             self.base = None
             self.isotonic = None
-            self.training_status = 'BLOCK_INSUFFICIENT_TEMPORAL_SAMPLE'
-            return {'status': self.training_status, 'n': int(n)}
-
-        i_train = int(n * 0.60)
-        i_cal = int(n * 0.80)
-        train = work.iloc[:i_train]
-        cal = work.iloc[i_train:i_cal]
-        test = work.iloc[i_cal:]
-
+            self.training_status = 'BLOCK_INSUFFICIENT_PURGED_TEMPORAL_SAMPLE'
+            return {
+                'status': self.training_status,
+                'n': int(len(work)),
+                'label_horizon_periods': self.label_horizon_periods,
+            }
+        train, cal, test, n_dates = split
         y_train = train['meta_label'].astype(int)
         y_cal = cal['meta_label'].astype(int)
         y_test = test['meta_label'].astype(int)
         if not (self._class_ok(y_train) and self._class_ok(y_cal) and self._class_ok(y_test)):
             self.base = None
             self.isotonic = None
-            self.training_status = 'BLOCK_INSUFFICIENT_CLASSES_PER_TEMPORAL_SPLIT'
+            self.training_status = 'BLOCK_INSUFFICIENT_CLASSES_PER_PURGED_SPLIT'
             return {
                 'status': self.training_status,
-                'n': int(n),
+                'n': int(len(work)),
                 'train_counts': {str(k): int(v) for k, v in y_train.value_counts().items()},
                 'cal_counts': {str(k): int(v) for k, v in y_cal.value_counts().items()},
                 'test_counts': {str(k): int(v) for k, v in y_test.value_counts().items()},
@@ -102,39 +133,46 @@ class MetaLabeler:
             random_state=42,
             class_weight='balanced',
         )
-        self.base.fit(train[self.features].fillna(0), y_train)
+        self.base.fit(train[self.features], y_train)
 
-        raw_cal = self.base.predict_proba(cal[self.features].fillna(0))[:, 1]
+        raw_cal = self.base.predict_proba(cal[self.features])[:, 1]
+        if np.unique(raw_cal).size < 2:
+            self.base = None
+            self.isotonic = None
+            self.training_status = 'BLOCK_DEGENERATE_CALIBRATION_SCORES'
+            return {'status': self.training_status, 'n': int(len(work))}
         self.isotonic = IsotonicRegression(out_of_bounds='clip')
         self.isotonic.fit(raw_cal, y_cal)
 
-        raw_test = self.base.predict_proba(test[self.features].fillna(0))[:, 1]
+        raw_test = self.base.predict_proba(test[self.features])[:, 1]
         proba_test = np.asarray(self.isotonic.transform(raw_test), dtype=float)
         pred = (proba_test > 0.55).astype(int)
-        self.training_status = 'TRAINED_TEMPORAL_OOS'
+        self.training_status = 'TRAINED_PURGED_TEMPORAL_OOS'
         return {
             'status': self.training_status,
             'precision': float(precision_score(y_test, pred, zero_division=0)),
             'recall': float(recall_score(y_test, pred, zero_division=0)),
             'brier': float(brier_score_loss(y_test, proba_test)),
             'mean_proba': float(proba_test.mean()),
-            'n': int(n),
+            'n': int(len(work)),
+            'n_dates': int(n_dates),
             'n_train': int(len(train)),
             'n_calibration': int(len(cal)),
             'n_test': int(len(test)),
-            'split_scheme': 'chronological_60_20_20',
+            'split_scheme': 'purged_date_grouped_train_cal_test',
+            'embargo_periods': self.label_horizon_periods,
         }
 
     def predict_proba(self, df: pd.DataFrame):
-        # Un modèle non entraîné reste neutre, sans imposer les features ML optionnelles.
         if self.base is None or self.isotonic is None:
             out = df.copy()
             out['prob_meta'] = 0.5
             out['meta_model_status'] = self.training_status
             return out
         out = self._prepare_features(df, strict=True)
-        X = out[self.features].fillna(0)
-        raw = self.base.predict_proba(X)[:, 1]
+        if out[self.features].isna().any().any():
+            raise ValueError('BLOCK_DATA_META_FEATURES: missing feature values in prediction sample')
+        raw = self.base.predict_proba(out[self.features])[:, 1]
         out['prob_meta'] = np.asarray(self.isotonic.transform(raw), dtype=float)
         out['meta_model_status'] = self.training_status
         return out
