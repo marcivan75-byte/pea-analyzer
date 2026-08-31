@@ -19,15 +19,18 @@ class PITLoader:
         self.strict_provenance = strict_provenance
         self.paris_tz = ZoneInfo('Europe/Paris')
 
-    def _cutoff(self, as_of_date: pd.Timestamp) -> pd.Timestamp:
+    def cutoff_for(self, as_of_date: pd.Timestamp) -> pd.Timestamp:
         as_of = pd.Timestamp(as_of_date)
-        # Le jour de décision est toujours interprété en Europe/Paris.
         if as_of.tzinfo is None:
             as_of = as_of.tz_localize(self.paris_tz)
         else:
             as_of = as_of.tz_convert(self.paris_tz)
         local_date = as_of.date()
         return pd.Timestamp.combine(local_date, time(22, 0)).tz_localize(self.paris_tz) - pd.Timedelta(days=1)
+
+    # Compatibilité interne historique.
+    def _cutoff(self, as_of_date: pd.Timestamp) -> pd.Timestamp:
+        return self.cutoff_for(as_of_date)
 
     def _provenance_time(self, path: Path):
         sidecar = Path(str(path) + '.meta.json')
@@ -50,13 +53,24 @@ class PITLoader:
         mtime = pd.Timestamp(path.stat().st_mtime, unit='s', tz='UTC').tz_convert(self.paris_tz)
         return mtime, 'filesystem_mtime'
 
+    def validate_explicit_provenance(self, path: Path, as_of_date: pd.Timestamp):
+        """Valide un fichier externe contre le cutoff PIT en exigeant un sidecar explicite."""
+        strict_loader = PITLoader(root=self.root, strict_provenance=True)
+        ts, source = strict_loader._provenance_time(Path(path))
+        cutoff = strict_loader.cutoff_for(as_of_date)
+        if ts > cutoff:
+            raise ValueError(
+                f'BLOCK_DATA PIT: snapshot {ts.isoformat()} after cutoff {cutoff.isoformat()}'
+            )
+        return {'snapshot_time': ts.isoformat(), 'cutoff': cutoff.isoformat(), 'source': source}
+
     def _read(self, path: Path) -> pd.DataFrame:
         if path.suffix == '.parquet':
             return pd.read_parquet(path)
         return pd.read_csv(path)
 
     def load_as_of(self, as_of_date: pd.Timestamp, asset_type='ACTION') -> pd.DataFrame:
-        cutoff = self._cutoff(as_of_date)
+        cutoff = self.cutoff_for(as_of_date)
         candidates = (
             list(self.audit_dir.glob(f'{asset_type.lower()}*.parquet'))
             + list(self.audit_dir.glob(f'{asset_type.lower()}*.csv'))
