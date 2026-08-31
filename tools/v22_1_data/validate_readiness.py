@@ -65,6 +65,23 @@ def _validate_evidence(root: Path, rel: str, kind: str) -> tuple[bool, str]:
     return True, "validated_dataset"
 
 
+def _compute_gates(report: dict[str, object]) -> dict[str, bool]:
+    """Compute independent fail-closed authorization gates.
+
+    The V22.1 historical backtest currently executed by this workflow is the
+    technical-core model: it consumes only governed PIT price/volume-derived
+    features.  Missing historical sector/fundamental observations must block a
+    *full-process* validation, but must not be misreported as a blocker for a
+    price/volume-only technical validation that does not consume those fields.
+    """
+    return {
+        "ohlcv_coverage_ge_90pct": float(report.get("ohlcv_ticker_coverage", 0.0)) >= 0.90,
+        "technical_pit_isin_coverage_ge_90pct": float(report.get("technical_pit_isin_coverage", 0.0)) >= 0.90,
+        "sector_history_validated": bool(report.get("sector_history", False)),
+        "quality_roe_debt_history_validated": bool(report.get("quality_roe_debt_history", False)),
+    }
+
+
 def main() -> int:
     root = Path(".").resolve()
     readiness_path = root / READINESS
@@ -101,21 +118,38 @@ def main() -> int:
     report["historical_nonprice_evidence_validated"] = sorted(set(validated_sector + validated_quality))
     report["historical_nonprice_evidence_rejected"] = rejected
 
-    price_gate = float(report.get("ohlcv_ticker_coverage", 0.0)) >= 0.90
-    pit_gate = float(report.get("technical_pit_isin_coverage", 0.0)) >= 0.90
-    sector_gate = bool(report["sector_history"])
-    quality_gate = bool(report["quality_roe_debt_history"])
-    authorized = price_gate and pit_gate and sector_gate and quality_gate
-    report["final_performance_validation_authorized"] = authorized
-    report["status"] = "READY_FULL_PIT" if authorized else "READY_TECHNICAL_ONLY"
-    report["performance_gate_reasons"] = {
-        "ohlcv_coverage_ge_90pct": price_gate,
-        "technical_pit_isin_coverage_ge_90pct": pit_gate,
-        "sector_history_validated": sector_gate,
-        "quality_roe_debt_history_validated": quality_gate,
+    gates = _compute_gates(report)
+    technical_authorized = gates["ohlcv_coverage_ge_90pct"] and gates["technical_pit_isin_coverage_ge_90pct"]
+    full_authorized = technical_authorized and gates["sector_history_validated"] and gates["quality_roe_debt_history_validated"]
+
+    # Keep the legacy full-process field fail-closed.  Add a distinct field for
+    # the technical-core scope so downstream jobs cannot confuse the two.
+    report["technical_performance_validation_authorized"] = technical_authorized
+    report["final_performance_validation_authorized"] = full_authorized
+    report["full_process_performance_validation_authorized"] = full_authorized
+    report["status"] = "READY_FULL_PIT" if full_authorized else "READY_TECHNICAL_ONLY" if technical_authorized else "BLOCKED"
+    report["validation_scopes"] = {
+        "technical_core_price_volume": {
+            "authorized": technical_authorized,
+            "requires": ["ohlcv_coverage_ge_90pct", "technical_pit_isin_coverage_ge_90pct"],
+            "forbids_nonpit_substitution": True,
+        },
+        "full_process_including_nonprice": {
+            "authorized": full_authorized,
+            "requires": [
+                "ohlcv_coverage_ge_90pct",
+                "technical_pit_isin_coverage_ge_90pct",
+                "sector_history_validated",
+                "quality_roe_debt_history_validated",
+            ],
+            "forbids_nonpit_substitution": True,
+        },
     }
+    report["performance_gate_reasons"] = gates
     report.setdefault("governance", {})["protocol_files_never_count_as_historical_data"] = True
     report["governance"]["nonprice_evidence_content_validated"] = True
+    report["governance"]["technical_scope_does_not_consume_sector_or_quality"] = True
+    report["governance"]["full_process_stays_blocked_without_certified_nonprice_pit"] = True
 
     readiness_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))
