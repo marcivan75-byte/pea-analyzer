@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from v182.audit.pit_loader import PITLoader
 from v182.hebdo.false_positive_filter import FalsePositiveFilter
 from v182.hebdo.mae_predictor import MAEPredictor
 from v182.hebdo.meta_labeler import MetaLabeler
@@ -20,13 +21,7 @@ REQUIRED = {
 CRITICAL_NUMERIC = ['close','sma200','vol_z','drawdown_4w','atr_14_pct','mom_26w_sector','adv_20m_eur']
 
 class HebdoATMeta:
-    """Process Meta par étapes temporelles distinctes.
-
-    `run` = classement hebdomadaire.
-    `run_preopen` = enrichissement d'exécution sur candidats non exclus.
-    `run_confirmation_j1` = confirmation sur première barre future disponible.
-    `check_early_exit` = règle post-entrée pour une position donnée.
-    """
+    """Process Meta par étapes temporelles distinctes."""
     def __init__(self, meta_labeler=None, preopen_enricher=None):
         self.fp = FalsePositiveFilter()
         self.mae = MAEPredictor()
@@ -120,6 +115,7 @@ def _write_block(out: Path, reason: str):
 def main():
     p=argparse.ArgumentParser()
     p.add_argument('--features', required=True)
+    p.add_argument('--as-of', required=True, help='Date/heure de décision; cutoff PIT = T-1 22h Europe/Paris')
     p.add_argument('--output-dir', default='outputs/hebdo_meta')
     args=p.parse_args()
     src=Path(args.features); out=Path(args.output_dir); out.mkdir(parents=True, exist_ok=True)
@@ -127,14 +123,19 @@ def main():
         _write_block(out, f"missing features {src}")
         raise SystemExit(2)
     try:
+        provenance=PITLoader(root=Path('.'), strict_provenance=True).validate_explicit_provenance(src, pd.Timestamp(args.as_of))
         df=pd.read_csv(src)
         ranked=HebdoATMeta().run(df)
-    except (ValueError, pd.errors.ParserError, UnicodeDecodeError) as exc:
+    except (ValueError, FileNotFoundError, pd.errors.ParserError, UnicodeDecodeError) as exc:
         _write_block(out, str(exc))
         raise SystemExit(2)
     ranked.to_csv(out/'HEBDO_AT_META_RANKED.csv', index=False)
     summary={
         'status':'OK', 'version':'HEBDO_AT_META_V1',
+        'as_of':str(args.as_of),
+        'pit_snapshot_time':provenance['snapshot_time'],
+        'pit_cutoff':provenance['cutoff'],
+        'pit_provenance_source':provenance['source'],
         'universe_initial':int(ranked['meta_universe_initial'].iloc[0]),
         'invalid_rows_dropped':int(ranked['meta_invalid_rows_dropped'].iloc[0]),
         'universe_after_fp':int(ranked['meta_universe_after_fp'].iloc[0]),
