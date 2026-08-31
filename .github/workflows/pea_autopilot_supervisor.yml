@@ -25,7 +25,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: pea-autopilot-${{ github.event.workflow_run.head_branch || inputs.upstream_run_id || github.run_id }}
+  group: pea-autopilot-wip-1
   cancel-in-progress: false
 
 jobs:
@@ -121,6 +121,42 @@ jobs:
           UPSTREAM_HEAD_SHA: ${{ steps.upstream.outputs.sha }}
           UPSTREAM_RUN_ATTEMPT: ${{ steps.upstream.outputs.attempt }}
         run: python .autopilot/scripts/pea_autopilot.py
+
+      - name: Hard-chain next governed phase after success
+        if: steps.upstream.outputs.conclusion == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          UPSTREAM_RUN_ID: ${{ steps.upstream.outputs.run_id }}
+          UPSTREAM_NAME: ${{ steps.upstream.outputs.name }}
+          BRANCH: ${{ steps.upstream.outputs.branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=""
+          case "$UPSTREAM_NAME" in
+            "V22.1 CI corrections + canonical 2010-2019 data")
+              workflow="v22_1_prepare_historical_data.yml"
+              ;;
+            "V22.1 prepare historical data")
+              workflow="hebdo_at_chat_v22_1.yml"
+              ;;
+            *)
+              echo "No governed successor for $UPSTREAM_NAME"
+              exit 0
+              ;;
+          esac
+
+          upstream_json="$(gh api "repos/$REPO/actions/runs/$UPSTREAM_RUN_ID")"
+          completed_at="$(jq -r '.updated_at' <<<"$upstream_json")"
+          existing="$(gh api "repos/$REPO/actions/workflows/$workflow/runs?branch=$(python -c 'import os,urllib.parse;print(urllib.parse.quote(os.environ["BRANCH"], safe=""))')&event=workflow_dispatch&per_page=20")"
+          if jq -e --arg t "$completed_at" '.workflow_runs[]? | select(.created_at >= $t)' <<<"$existing" >/dev/null; then
+            echo "Successor $workflow already dispatched after upstream completion; skip duplicate."
+            exit 0
+          fi
+
+          echo "Dispatching $workflow on $BRANCH after successful $UPSTREAM_NAME #$UPSTREAM_RUN_ID"
+          gh api --method POST "repos/$REPO/actions/workflows/$workflow/dispatches" -f ref="$BRANCH"
 
       - name: Upload supervisor report
         if: always()
