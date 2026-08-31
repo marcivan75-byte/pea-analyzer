@@ -1,0 +1,119 @@
+name: PEA Autopilot Supervisor
+
+on:
+  workflow_run:
+    workflows:
+      - "V22.1 CI corrections + canonical 2010-2019 data"
+      - "V22.1 prepare historical data"
+      - "V22 PIT True PnL PREOPEN validation"
+      - "Action CT V22 validation"
+      - "TCT module validation"
+      - "Committee Master V21.8.1 data and code audit validation"
+      - "Action Identity Hydration V21.9 Audit"
+      - "ETF V21.18.1R4 distribution validation"
+      - "V4 Hebdo validation"
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      upstream_run_id:
+        description: "Optional completed upstream run ID for manual supervision"
+        required: false
+        type: string
+
+permissions:
+  actions: write
+  contents: write
+
+concurrency:
+  group: pea-autopilot-${{ github.event.workflow_run.head_branch || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  supervise:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout supervisor package from main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: main
+          path: .autopilot
+          fetch-depth: 1
+
+      - name: Resolve upstream metadata
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
+          EVENT_NAME_UPSTREAM: ${{ github.event.workflow_run.name }}
+          EVENT_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          EVENT_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          EVENT_SHA: ${{ github.event.workflow_run.head_sha }}
+          EVENT_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          MANUAL_RUN_ID: ${{ inputs.upstream_run_id }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            test -n "$MANUAL_RUN_ID"
+            json="$(gh api "repos/$REPO/actions/runs/$MANUAL_RUN_ID")"
+            echo "run_id=$(jq -r '.id' <<<"$json")" >> "$GITHUB_OUTPUT"
+            echo "name=$(jq -r '.name' <<<"$json")" >> "$GITHUB_OUTPUT"
+            echo "conclusion=$(jq -r '.conclusion' <<<"$json")" >> "$GITHUB_OUTPUT"
+            echo "branch=$(jq -r '.head_branch' <<<"$json")" >> "$GITHUB_OUTPUT"
+            echo "sha=$(jq -r '.head_sha' <<<"$json")" >> "$GITHUB_OUTPUT"
+            echo "attempt=$(jq -r '.run_attempt' <<<"$json")" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_id=$EVENT_RUN_ID" >> "$GITHUB_OUTPUT"
+            echo "name=$EVENT_NAME_UPSTREAM" >> "$GITHUB_OUTPUT"
+            echo "conclusion=$EVENT_CONCLUSION" >> "$GITHUB_OUTPUT"
+            echo "branch=$EVENT_BRANCH" >> "$GITHUB_OUTPUT"
+            echo "sha=$EVENT_SHA" >> "$GITHUB_OUTPUT"
+            echo "attempt=$EVENT_ATTEMPT" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout upstream branch for governed remediation
+        if: steps.upstream.outputs.branch != ''
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ steps.upstream.outputs.branch }}
+          path: target
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+
+      - name: Install target CI runtime only for failed upstream runs
+        if: steps.upstream.outputs.conclusion != 'success'
+        env:
+          PIP_CONSTRAINT: ${{ github.workspace }}/target/constraints-ci.txt
+        run: python -m pip install -e "./target[test]"
+
+      - name: Supervise, report and safely remediate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PEA_TARGET_ROOT: ${{ github.workspace }}/target
+          PYTHONPATH: ${{ github.workspace }}/target/src
+          UPSTREAM_RUN_ID: ${{ steps.upstream.outputs.run_id }}
+          UPSTREAM_NAME: ${{ steps.upstream.outputs.name }}
+          UPSTREAM_CONCLUSION: ${{ steps.upstream.outputs.conclusion }}
+          UPSTREAM_HEAD_BRANCH: ${{ steps.upstream.outputs.branch }}
+          UPSTREAM_HEAD_SHA: ${{ steps.upstream.outputs.sha }}
+          UPSTREAM_RUN_ATTEMPT: ${{ steps.upstream.outputs.attempt }}
+        run: python .autopilot/scripts/pea_autopilot.py
+
+      - name: Upload supervisor report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pea-autopilot-report-${{ steps.upstream.outputs.run_id }}
+          path: .autopilot/outputs/autopilot/
+          if-no-files-found: warn
+          retention-days: 30
