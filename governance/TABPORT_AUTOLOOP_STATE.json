@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "branch": "v22/pit-mae-mfe-preopen",
+  "wip": 1,
+  "current_pass": 3,
+  "passes": {
+    "1": {
+      "status": "completed",
+      "run_id": 33446596893,
+      "artifact": "v22-1-hybrid-ranking-rr-33446596893",
+      "version": "V22.1_RR_EX_ANTE_PIT_4_NEAREST_RESISTANCE",
+      "holdout_accessed": false,
+      "embargo_weeks": 26
+    },
+    "2": {
+      "status": "completed",
+      "run_id": 33449455231,
+      "artifact": "v22-1-hybrid-fp-33449455231",
+      "version": "V22.1_HYBRID_FP_RESEARCH_3_RR_FIT_VALID",
+      "selected_criteria": ["H_MOM_VOL", "H_MOM_DD"],
+      "keep_level": 0.9,
+      "holdout_accessed": false,
+      "embargo_weeks": 26
+    },
+    "3": {
+      "status": "launched",
+      "expected_head_sha": "090bcbfe1242d747295792447df0051ad88068af"
+    },
+    "4": {"status": "pending"},
+    "5": {"status": "pending"},
+    "6": {"status": "pending"}
+  },
+  "holdout_policy": "2023-2026 sealed until final frozen evaluation after pass 6",
+  "last_audit_note": "Pass 2 completed with stop rate 0.6051 vs 0.6204 baseline, big-winner recall 0.9331, expectancy 0.0350 and PF 1.6297. Pass 3 generalized to consume the validated two-criterion pass-2 filter and chained to the current pass-2 artifact."
+}
