@@ -12,7 +12,7 @@ EMBARGO = pd.Timedelta(weeks=26)
 STOP_DEFAULT = 0.09
 TOP_K = (1, 3, 5)
 BIG_WIN = 0.15
-TARGET_LOOKBACK_SESSIONS = 126
+TARGET_WINDOWS = (20, 63, 126)
 
 
 def n(s):
@@ -29,13 +29,14 @@ def load_prior_high_targets(price_path: Path) -> pd.DataFrame:
     p["high"] = n(p["high"])
     p = p.dropna(subset=["isin", "date", "high"])
     p = p.sort_values(["isin", "date"], kind="stable").drop_duplicates(["isin", "date"], keep="last")
-    # Strict PIT resistance: highest HIGH over the 126 PRIOR trading sessions.
-    # shift(1) excludes the signal session itself.
-    p["prior_high_126s"] = (
-        p.groupby("isin", sort=False)["high"]
-        .transform(lambda s: s.shift(1).rolling(TARGET_LOOKBACK_SESSIONS, min_periods=40).max())
-    )
-    return p[["isin", "date", "prior_high_126s"]].dropna(subset=["prior_high_126s"])
+    mins = {20: 10, 63: 20, 126: 40}
+    for w in TARGET_WINDOWS:
+        p[f"prior_high_{w}s"] = (
+            p.groupby("isin", sort=False)["high"]
+            .transform(lambda s, w=w: s.shift(1).rolling(w, min_periods=mins[w]).max())
+        )
+    cols = ["isin", "date"] + [f"prior_high_{w}s" for w in TARGET_WINDOWS]
+    return p[cols].dropna(subset=[f"prior_high_{w}s" for w in TARGET_WINDOWS], how="all")
 
 
 def attach_target(raw: pd.DataFrame, target_hist: pd.DataFrame) -> pd.DataFrame:
@@ -45,7 +46,8 @@ def attach_target(raw: pd.DataFrame, target_hist: pd.DataFrame) -> pd.DataFrame:
     left = x.dropna(subset=["isin", "date"]).sort_values(["date", "isin"], kind="stable")
     right = target_hist.sort_values(["date", "isin"], kind="stable")
     merged = pd.merge_asof(left, right, on="date", by="isin", direction="backward", allow_exact_matches=True)
-    out = x.merge(merged[["_row_id", "prior_high_126s"]], on="_row_id", how="left", validate="one_to_one")
+    target_cols = [f"prior_high_{w}s" for w in TARGET_WINDOWS]
+    out = x.merge(merged[["_row_id"] + target_cols], on="_row_id", how="left", validate="one_to_one")
     return out.drop(columns=["_row_id"])
 
 
@@ -55,13 +57,17 @@ def add_features(raw: pd.DataFrame) -> pd.DataFrame:
     close = n(x["close"])
     stop_pct = n(x["stop_pct_used"]) if "stop_pct_used" in x else pd.Series(STOP_DEFAULT, index=x.index)
     stop_pct = stop_pct.where(np.isfinite(stop_pct) & (stop_pct > 0), STOP_DEFAULT)
-    target = n(x["prior_high_126s"])
 
-    # A profit target below/equal to the signal close is not an upside target.
-    # Fail closed per signal: RR stays unavailable rather than becoming negative/zero.
-    valid_target = np.isfinite(target) & np.isfinite(close) & (close > 0) & (target > close)
+    target_candidates = pd.DataFrame(index=x.index)
+    for w in TARGET_WINDOWS:
+        t = n(x[f"prior_high_{w}s"])
+        target_candidates[str(w)] = t.where(np.isfinite(t) & np.isfinite(close) & (close > 0) & (t > close))
+    # Nearest known overhead resistance across 20/63/126-session horizons.
+    target = target_candidates.min(axis=1, skipna=True)
+    valid_target = target.notna() & np.isfinite(target) & np.isfinite(close) & (close > 0) & (target > close)
     upside = pd.Series(np.nan, index=x.index, dtype=float)
     upside.loc[valid_target] = target.loc[valid_target] / close.loc[valid_target] - 1.0
+    x["rr_target"] = target
     x["rr_ex_ante"] = upside / stop_pct
     x["rr_target_valid"] = valid_target
     x["ret26"] = n(x["forward_ret_true_26w"])
@@ -90,6 +96,7 @@ def metrics(g: pd.DataFrame) -> dict:
         "big_winner_rate": float((r >= BIG_WIN).mean()),
         "mean_rr_ex_ante": float(g["rr_ex_ante"].mean()),
         "median_rr_ex_ante": float(g["rr_ex_ante"].median()),
+        "p95_rr_ex_ante": float(g["rr_ex_ante"].quantile(0.95)),
     }
 
 
@@ -137,19 +144,19 @@ def main() -> int:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     val.to_csv(args.out_dir / "RR_EX_ANTE_VALIDATION_PRE2023.csv", index=False)
     report = {
-        "version": "V22.1_RR_EX_ANTE_PIT_3",
+        "version": "V22.1_RR_EX_ANTE_PIT_4_NEAREST_RESISTANCE",
         "status": "READY",
-        "rr_target_source": "GOVERNED_OHLC_HIGH_PRIOR_126_TRADING_SESSIONS_SHIFT_1_OVERHEAD_ONLY",
-        "rr_formula": "(prior_high_126s / signal_close - 1) / stop_pct_known_at_signal",
-        "target_validity": "prior_high_126s strictly greater than signal_close; otherwise RR unavailable fail-closed",
-        "target_lookback_sessions": TARGET_LOOKBACK_SESSIONS,
+        "rr_target_source": "NEAREST_OVERHEAD_OF_PRIOR_HIGH_20_63_126_SESSIONS_SHIFT_1",
+        "rr_formula": "(nearest_valid_prior_high / signal_close - 1) / stop_pct_known_at_signal",
+        "target_validity": "nearest prior 20/63/126-session high strictly greater than signal_close; otherwise RR unavailable fail-closed",
+        "target_windows_sessions": list(TARGET_WINDOWS),
         "coverage_pre2023_positive_rr": coverage,
         "valid_positive_rr_count": n_valid,
         "holdout_accessed": False,
         "holdout_scope": "SEALED_UNTIL_FINAL_FROZEN_EVALUATION",
         "embargo_weeks": 26,
         "train_max_date": str(train["date"].max().date()),
-        "anti_lookahead": "target high uses shift(1); no signal-day high, future MFE, future return, future entry open, or 2023-2026 holdout used for RR construction/selection",
+        "anti_lookahead": "all target highs use shift(1); no signal-day high, future MFE, future return, future entry open, or 2023-2026 holdout used for RR construction/selection",
     }
     (args.out_dir / "RR_EX_ANTE_REPORT.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))
