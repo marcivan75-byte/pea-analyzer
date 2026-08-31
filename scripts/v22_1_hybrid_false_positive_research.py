@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 HOLDOUT_START = pd.Timestamp("2023-01-01")
+EMBARGO = pd.Timedelta(weeks=26)
 BIG_WIN = 0.15
 MIN_KEEP = 0.50
 MIN_BIG_RECALL = 0.90
@@ -66,15 +67,10 @@ def metrics(g: pd.DataFrame) -> dict[str, float | int | None]:
 
 
 def percentile_risk(valid: pd.DataFrame, target: pd.DataFrame, col: str) -> tuple[np.ndarray, int, float]:
-    # Spearman correlation is Pearson correlation of average ranks. Implemented
-    # with pandas rank+corr so the research workflow has no undeclared scipy dependency.
     vv = valid[[col, "stop"]].dropna()
-    if len(vv) > 2:
-        corr = float(vv[col].rank(method="average").corr(vv["stop"].astype(float).rank(method="average")))
-    else:
-        corr = 0.0
+    corr = float(vv[col].rank(method="average").corr(vv["stop"].astype(float).rank(method="average"))) if len(vv) > 2 else 0.0
     direction = 1 if corr >= 0 else -1
-    ref = np.sort((valid[col].to_numpy(float) * direction))
+    ref = np.sort(valid[col].to_numpy(float) * direction)
     vals = target[col].to_numpy(float) * direction
     ranks = np.searchsorted(ref, vals, side="right") / max(len(ref), 1)
     return ranks, direction, corr
@@ -85,25 +81,31 @@ def main() -> int:
     ap.add_argument("--input-dir", type=Path, required=True)
     ap.add_argument("--out-dir", type=Path, required=True)
     args = ap.parse_args()
+
+    # Pass 2 is deliberately blind to V22_1_HOLDOUT.csv. 2023-2026 remains sealed
+    # until the final frozen evaluation after pass 6.
     train = build(pd.read_csv(args.input_dir / "V22_1_TRAIN.csv", low_memory=False))
-    hold = build(pd.read_csv(args.input_dir / "V22_1_HOLDOUT.csv", low_memory=False))
-    train = train[train["date"] < HOLDOUT_START].copy()
+    embargo_cutoff = HOLDOUT_START - EMBARGO
+    if train.empty or train["date"].max() >= embargo_cutoff:
+        raise SystemExit(f"BLOCK_HYBRID_EMBARGO: train max date must be before {embargo_cutoff.date()}")
+
     split = int(len(train) * 0.80)
-    fit, valid = train.iloc[:split].copy(), train.iloc[split:].copy()
-    if len(valid) < 1000 or hold.empty:
-        raise SystemExit("BLOCK_HYBRID_DATA: insufficient validation/holdout")
+    valid = train.iloc[split:].copy()
+    if len(valid) < 1000:
+        raise SystemExit("BLOCK_HYBRID_DATA: insufficient pre2023 validation")
+
     hybrids = [c for c in valid.columns if c.startswith("H_")]
     base = metrics(valid)
     base_big = max(int(base["big_winners"] or 0), 1)
     base_pf = float(base["profit_factor"] or 0.0)
     base_exp = float(base["expectancy"] or 0.0)
-    valid_risk, hold_risk, directions = {}, {}, {}
+
+    valid_risk, directions = {}, {}
     for c in hybrids:
         vr, direction, corr = percentile_risk(valid, valid, c)
-        hr, _, _ = percentile_risk(valid, hold, c)
         valid_risk[c] = vr
-        hold_risk[c] = hr
         directions[c] = {"risk_direction": direction, "validation_stop_spearman": corr}
+
     rows = []
     best = None
     candidates = [(c,) for c in hybrids] + list(itertools.combinations(hybrids, 2))
@@ -124,18 +126,42 @@ def main() -> int:
             key = (stop_reduction, exp, pf, big_recall, keep_rate)
             if admissible and (best is None or key > best[0]):
                 best = (key, combo, keep_level, row)
+
     if best is None:
         raise SystemExit("BLOCK_HYBRID_MODEL: no hybrid satisfies pre2023 guards")
+
     combo, keep_level = best[1], best[2]
-    hold_score = np.mean([hold_risk[c] for c in combo], axis=0)
-    hold_keep = hold_score <= keep_level
-    hold_base = metrics(hold)
-    hold_sel = metrics(hold.loc[hold_keep])
-    hold_big_base = max(int(hold_base["big_winners"] or 0), 1)
-    report = {"version": "V22.1_HYBRID_FP_RESEARCH_1", "governance": {"training_source": "PRE_2023_TECHNICAL_PIT_ONLY", "selection_source": "LAST_20_PERCENT_PRE2023_VALIDATION_ONLY", "holdout_used_for_tuning": False, "holdout_scope": "EVALUATION_ONLY", "new_raw_features_added": False, "big_winner_definition": BIG_WIN, "guards": {"min_keep_rate": MIN_KEEP, "min_big_winner_recall": MIN_BIG_RECALL, "max_expectancy_giveback": MAX_EXPECTANCY_GIVEBACK, "min_pf_ratio_vs_full": MIN_PF_RATIO}}, "hybrid_definitions": {"H_MOM_VOL": "mom_26w/(abs(atr_14_pct)+0.01)", "H_TREND_DD": "close_vs_sma200-abs(drawdown_4w)", "H_RSI_TREND": "((rsi_14_hebdo-50)/25)*close_vs_sma200", "H_VOL_DD": "atr_14_pct*abs(drawdown_4w)", "H_MOM_DD": "mom_26w*(1-abs(drawdown_4w))", "H_TREND_VOL": "close_vs_sma200/(abs(atr_14_pct)+0.01)", "H_OPPORTUNITY_RISK": "mom_26w/(abs(atr_14_pct)+abs(drawdown_4w)+0.01)"}, "risk_directions": directions, "validation_full": base, "selected": {"criteria": list(combo), "keep_level": keep_level, "validation": best[3]}, "holdout_evaluation": {"full": hold_base, "hybrid": hold_sel, "keep_rate": float(hold_keep.mean()), "big_winner_recall_vs_full": float((hold_sel["big_winners"] or 0) / hold_big_base), "stop_reduction": float(hold_base["stop_rate"] - hold_sel["stop_rate"]) if hold_sel["stop_rate"] is not None else None}, "promotion_automatic": False}
+    report = {
+        "version": "V22.1_HYBRID_FP_RESEARCH_2_PRE2023_ONLY",
+        "governance": {
+            "training_source": "PRE_2023_TECHNICAL_PIT_ONLY",
+            "selection_source": "LAST_20_PERCENT_PRE2023_VALIDATION_ONLY",
+            "holdout_accessed": False,
+            "holdout_scope": "SEALED_UNTIL_FINAL_PASS6_EVALUATION",
+            "embargo_weeks": 26,
+            "embargo_cutoff": str(embargo_cutoff.date()),
+            "train_max_date": str(train["date"].max().date()),
+            "new_raw_features_added": False,
+            "big_winner_definition": BIG_WIN,
+            "guards": {"min_keep_rate": MIN_KEEP, "min_big_winner_recall": MIN_BIG_RECALL, "max_expectancy_giveback": MAX_EXPECTANCY_GIVEBACK, "min_pf_ratio_vs_full": MIN_PF_RATIO},
+        },
+        "hybrid_definitions": {
+            "H_MOM_VOL": "mom_26w/(abs(atr_14_pct)+0.01)",
+            "H_TREND_DD": "close_vs_sma200-abs(drawdown_4w)",
+            "H_RSI_TREND": "((rsi_14_hebdo-50)/25)*close_vs_sma200",
+            "H_VOL_DD": "atr_14_pct*abs(drawdown_4w)",
+            "H_MOM_DD": "mom_26w*(1-abs(drawdown_4w))",
+            "H_TREND_VOL": "close_vs_sma200/(abs(atr_14_pct)+0.01)",
+            "H_OPPORTUNITY_RISK": "mom_26w/(abs(atr_14_pct)+abs(drawdown_4w)+0.01)",
+        },
+        "risk_directions": directions,
+        "validation_full": base,
+        "selected": {"criteria": list(combo), "keep_level": keep_level, "validation": best[3]},
+        "promotion_automatic": False,
+    }
+
     args.out_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows).sort_values(["admissible", "stop_reduction", "expectancy"], ascending=[False, False, False]).to_csv(args.out_dir / "HYBRID_FP_GRID.csv", index=False)
-    pd.DataFrame({"row_index": hold.index, "hybrid_keep": hold_keep, "hybrid_risk_score": hold_score}).to_csv(args.out_dir / "HYBRID_FP_HOLDOUT_MASK.csv", index=False)
     (args.out_dir / "HYBRID_FP_REPORT.json").write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0
