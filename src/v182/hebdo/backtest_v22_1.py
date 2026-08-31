@@ -19,7 +19,7 @@ from v182.scoring.ic_lasso_selector import (
 
 HORIZON_DAYS = {"1w": 5, "2w": 10, "4w": 20, "13w": 63, "26w": 126}
 ENHANCED_FEATURE_COLUMNS = ("vol_z", "mom_26w_sector", "rsi_14_hebdo", "drawdown_4w", "atr_14_pct")
-TECHNICAL_CORE_FEATURE_COLUMNS = ("vol_z", "mom_26w", "rsi_14_hebdo", "drawdown_4w", "atr_14_pct")
+TECHNICAL_CORE_FEATURE_COLUMNS = ("vol_z", "mom_26w", "rsi_14_hebdo", "drawdown_4w")
 DEFAULT_FEATURE_COLUMNS = ENHANCED_FEATURE_COLUMNS
 
 class HistoricalPITUnavailable(RuntimeError):
