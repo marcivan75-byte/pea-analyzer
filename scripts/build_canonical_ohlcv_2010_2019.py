@@ -80,8 +80,14 @@ def _extract_one(frame: pd.DataFrame, ticker: str) -> pd.DataFrame:
     if sub.empty or "Close" not in sub.columns:
         return pd.DataFrame()
     close = pd.to_numeric(sub["Close"], errors="coerce")
-    if not close.notna().any():
+    valid = close.notna()
+    if not valid.any():
         return pd.DataFrame()
+    # yf.download on a multi-ticker batch uses a union calendar. Rows before an
+    # instrument listing (or after delisting) therefore exist with all-NaN
+    # prices. They are not historical observations and must never be materialized
+    # or counted as coverage.
+    sub = sub.loc[valid].copy()
     return sub
 
 
@@ -145,8 +151,11 @@ def _download_asset(asset: str, mapping: pd.DataFrame, batch_size: int = 40) -> 
 def _coverage(data: pd.DataFrame, mapping: pd.DataFrame, asset: str) -> pd.DataFrame:
     requested = int(mapping["ticker"].nunique())
     records = []
+    valid_data = data[data["close_raw"].notna()].copy() if not data.empty else pd.DataFrame()
+    if not valid_data.empty:
+        valid_data["date"] = pd.to_datetime(valid_data["date"], errors="coerce")
     for year in range(2010, 2020):
-        subset = data[pd.to_datetime(data["date"]).dt.year == year] if not data.empty else pd.DataFrame()
+        subset = valid_data[valid_data["date"].dt.year == year] if not valid_data.empty else pd.DataFrame()
         covered = int(subset["ticker"].nunique()) if not subset.empty else 0
         records.append({
             "asset_class": asset,
@@ -157,6 +166,26 @@ def _coverage(data: pd.DataFrame, mapping: pd.DataFrame, asset: str) -> pd.DataF
             "rows": int(len(subset)),
         })
     return pd.DataFrame(records)
+
+
+def _ticker_coverage(data: pd.DataFrame, mapping: pd.DataFrame, asset: str) -> pd.DataFrame:
+    base = mapping[["isin", "ticker"]].drop_duplicates("ticker").copy()
+    base["asset_class"] = asset
+    if data.empty:
+        base["observed_rows"] = 0
+        base["first_observed_date"] = pd.NaT
+        base["last_observed_date"] = pd.NaT
+        base["observed_years"] = 0
+        return base
+    valid = data[data["close_raw"].notna()].copy()
+    valid["date"] = pd.to_datetime(valid["date"], errors="coerce")
+    stats = valid.groupby("ticker", as_index=False).agg(
+        observed_rows=("date", "size"),
+        first_observed_date=("date", "min"),
+        last_observed_date=("date", "max"),
+        observed_years=("date", lambda s: int(s.dt.year.nunique())),
+    )
+    return base.merge(stats, on="ticker", how="left").fillna({"observed_rows": 0, "observed_years": 0})
 
 
 def _sha256(path: Path) -> str:
@@ -171,6 +200,7 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     all_data = []
     all_coverage = []
+    all_ticker_coverage = []
     all_failures: list[dict] = []
     identity_snapshots = []
 
@@ -182,22 +212,27 @@ def main() -> None:
         all_failures.extend(failures)
         if not data.empty:
             data = data[(pd.to_datetime(data["date"]) >= pd.Timestamp(START)) & (pd.to_datetime(data["date"]) < pd.Timestamp(END_EXCLUSIVE))]
+            data = data[data["close_raw"].notna()].copy()
             data = data.sort_values(["isin", "date"]).drop_duplicates(["isin", "date"], keep="last")
             all_data.append(data)
         all_coverage.append(_coverage(data, mapping, asset))
+        all_ticker_coverage.append(_ticker_coverage(data, mapping, asset))
 
     canonical = pd.concat(all_data, ignore_index=True) if all_data else pd.DataFrame()
     coverage = pd.concat(all_coverage, ignore_index=True)
+    ticker_coverage = pd.concat(all_ticker_coverage, ignore_index=True)
     identities = pd.concat(identity_snapshots, ignore_index=True)
     failures = pd.DataFrame(all_failures).drop_duplicates() if all_failures else pd.DataFrame(columns=["asset_class", "ticker", "reason"])
 
     data_path = OUT / "PEA_OHLCV_2010_2019_CANONICAL.parquet"
     identity_path = OUT / "PEA_IDENTITY_SNAPSHOT_CURRENT_UNIVERSE.csv"
     coverage_path = OUT / "PEA_OHLCV_2010_2019_COVERAGE.csv"
+    ticker_coverage_path = OUT / "PEA_OHLCV_2010_2019_TICKER_COVERAGE.csv"
     failures_path = OUT / "PEA_OHLCV_2010_2019_FAILURES.csv"
     canonical.to_parquet(data_path, index=False, compression="zstd")
     identities.to_csv(identity_path, sep=";", index=False, encoding="utf-8-sig")
     coverage.to_csv(coverage_path, sep=";", index=False, encoding="utf-8-sig")
+    ticker_coverage.to_csv(ticker_coverage_path, sep=";", index=False, encoding="utf-8-sig")
     failures.to_csv(failures_path, sep=";", index=False, encoding="utf-8-sig")
 
     manifest = {
@@ -212,6 +247,7 @@ def main() -> None:
         "source": "Yahoo Finance via yfinance",
         "pit_classification": "PRICE_ONLY_HISTORICAL_RECONSTRUCTION",
         "decision_influence": 0.0,
+        "coverage_contract": "OBSERVED_CLOSE_ONLY; union-calendar all-NaN rows are excluded",
         "anti_lookahead": {
             "current_fundamentals_used_as_history": False,
             "current_consensus_used_as_history": False,
@@ -223,10 +259,11 @@ def main() -> None:
             "Delisted, merged or formerly PEA-eligible instruments absent from the current masters may be missing; survivorship bias must be acknowledged in universe-level backtests.",
             "This dataset certifies historical market-price observations only. Fundamental, consensus, news and sector PIT evidence require separate dated sources.",
             "Adjusted Close is retained separately from raw OHLC to avoid silently mixing corporate-action conventions.",
+            "Per-year coverage counts only actual non-null Close observations; instruments not yet listed are not backfilled into earlier years.",
         ],
         "files": {},
     }
-    for path in (data_path, identity_path, coverage_path, failures_path):
+    for path in (data_path, identity_path, coverage_path, ticker_coverage_path, failures_path):
         manifest["files"][path.name] = {"size_bytes": path.stat().st_size, "sha256": _sha256(path)}
     (OUT / "MANIFEST.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({"status": "SUCCESS", **manifest}, ensure_ascii=False, indent=2))
