@@ -79,6 +79,41 @@ def build_pit(actions: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(rows,ignore_index=True)
 
 
+def qualify_ohlc(merged: pd.DataFrame) -> tuple[pd.Series, pd.Series, pd.DataFrame, dict]:
+    ohlc = merged[["open","high","low","close"]].apply(pd.to_numeric, errors="coerce")
+    upper_ref = ohlc[["open","close","low"]].max(axis=1)
+    lower_ref = ohlc[["open","close","high"]].min(axis=1)
+    upper_violation = (upper_ref - ohlc["high"]).clip(lower=0)
+    lower_violation = (ohlc["low"] - lower_ref).clip(lower=0)
+    violation_abs = pd.concat([upper_violation, lower_violation], axis=1).max(axis=1)
+    scale = ohlc.abs().max(axis=1).clip(lower=1.0)
+    tolerance = scale * 1e-8
+    raw_bad = violation_abs > 0
+    material_bad = violation_abs > tolerance
+    rel = violation_abs / scale
+
+    anomalies = merged.loc[raw_bad, ["date","asset_class","isin","ticker","open","high","low","close","origin"]].copy()
+    anomalies["upper_violation_abs"] = upper_violation.loc[raw_bad].values
+    anomalies["lower_violation_abs"] = lower_violation.loc[raw_bad].values
+    anomalies["violation_abs"] = violation_abs.loc[raw_bad].values
+    anomalies["violation_rel"] = rel.loc[raw_bad].values
+    anomalies["tolerance_abs"] = tolerance.loc[raw_bad].values
+    anomalies["material"] = material_bad.loc[raw_bad].values
+    anomalies = anomalies.sort_values(["material","violation_rel","date"], ascending=[False,False,True])
+
+    material = anomalies[anomalies["material"]]
+    stats = {
+        "ohl_inconsistent_rows_raw": int(raw_bad.sum()),
+        "ohl_inconsistent_rows_material": int(material_bad.sum()),
+        "ohl_inconsistent_isins_material": int(material["isin"].nunique()) if len(material) else 0,
+        "ohl_max_violation_abs": float(anomalies["violation_abs"].max()) if len(anomalies) else 0.0,
+        "ohl_max_violation_rel": float(anomalies["violation_rel"].max()) if len(anomalies) else 0.0,
+        "ohl_material_by_origin": {str(k): int(v) for k,v in material.groupby("origin").size().items()} if len(material) else {},
+        "ohl_tolerance_policy": "material when OHLC ordering violation exceeds 1e-8 * max(abs(open,high,low,close), 1.0)",
+    }
+    return raw_bad, material_bad, anomalies, stats
+
+
 def main() -> int:
     ap=argparse.ArgumentParser(); ap.add_argument("--inputs",type=Path,required=True); ap.add_argument("--out",type=Path,required=True); a=ap.parse_args(); a.out.mkdir(parents=True,exist_ok=True)
     old=read_canonical(a.inputs); new=read_recent(a.inputs)
@@ -88,20 +123,22 @@ def main() -> int:
     merged["priority"]=merged["origin"].map({"canonical_2010_2019":0,"v22_1_2018_2026":1}).fillna(0)
     merged=merged.sort_values(["isin","date","priority"]).drop_duplicates(["isin","date"],keep="last").drop(columns="priority")
     critical=merged[["isin","ticker","date","close"]].isna().any(axis=1)
-    bad_ohl=(merged["high"]<merged[["open","close","low"]].max(axis=1))|(merged["low"]>merged[["open","close","high"]].min(axis=1))
+    _, material_bad, anomalies, ohl_stats = qualify_ohlc(merged)
     nonpositive=(pd.to_numeric(merged["close"],errors="coerce")<=0)
     duplicate=int(merged.duplicated(["isin","date"]).sum())
-    audit={"status":"PASS","period":[str(merged.date.min().date()),str(merged.date.max().date())],"rows":int(len(merged)),"unique_isin":int(merged["isin"].nunique()),"unique_tickers":int(merged.ticker.nunique()),"duplicate_isin_date":duplicate,"critical_null_rows":int(critical.sum()),"ohl_inconsistent_rows":int(bad_ohl.fillna(False).sum()),"nonpositive_close_rows":int(nonpositive.fillna(False).sum()),"overlap_policy":"V22.1 recent source wins on duplicate ISIN/date in 2018-2019","pit_classification":"PRICE_ONLY_TECHNICAL_RECONSTRUCTION","survivorship_bias":True,"current_fundamentals_used_as_history":False,"future_returns_embedded":False}
-    if duplicate or audit["critical_null_rows"] or audit["nonpositive_close_rows"]: audit["status"]="FAIL"
+    audit={"status":"PASS","period":[str(merged.date.min().date()),str(merged.date.max().date())],"rows":int(len(merged)),"unique_isin":int(merged["isin"].nunique()),"unique_tickers":int(merged.ticker.nunique()),"duplicate_isin_date":duplicate,"critical_null_rows":int(critical.sum()),**ohl_stats,"nonpositive_close_rows":int(nonpositive.fillna(False).sum()),"overlap_policy":"V22.1 recent source wins on duplicate ISIN/date in 2018-2019","pit_classification":"PRICE_ONLY_TECHNICAL_RECONSTRUCTION","survivorship_bias":True,"current_fundamentals_used_as_history":False,"future_returns_embedded":False,"mae_mfe_ready":bool(material_bad.sum()==0)}
+    if duplicate or audit["critical_null_rows"] or audit["nonpositive_close_rows"] or audit["ohl_inconsistent_rows_material"]:
+        audit["status"]="FAIL"
     annual=[]
     for y,g in merged.groupby(merged.date.dt.year): annual.append({"year":int(y),"rows":int(len(g)),"isins":int(g["isin"].nunique()),"actions":int(g.loc[g.asset_class.eq("ACTION"),"isin"].nunique()),"etfs":int(g.loc[g.asset_class.eq("ETF"),"isin"].nunique())})
     outp=a.out/"PEA_OHLCV_2010_2026_CONSOLIDATED.parquet"; merged.to_parquet(outp,index=False,compression="zstd")
-    pd.DataFrame(annual).to_csv(a.out/"PEA_OHLCV_2010_2026_ANNUAL_COVERAGE.csv",index=False)
-    (a.out/"PEA_OHLCV_2010_2026_AUDIT.json").write_text(json.dumps(audit,indent=2),encoding="utf-8")
-    actions=merged[merged.asset_class.eq("ACTION")].copy(); pit=build_pit(actions); pit.to_parquet(a.out/"PEA_TECHNICAL_PIT_2010_2026.parquet",index=False,compression="zstd")
-    manifest={"version":"PEA_HISTORY_2010_2026_V1","audit":audit,"technical_pit_rows":int(len(pit)),"technical_pit_isins":int(pit["isin"].nunique()),"limits":["Current governed universe reconstruction creates survivorship bias.","Only historical price/volume technical PIT is certified before separate dated non-price evidence exists.","No current fundamentals, consensus or sector scores are backfilled historically."],"files":{}}
-    for p in [outp,a.out/"PEA_OHLCV_2010_2026_ANNUAL_COVERAGE.csv",a.out/"PEA_OHLCV_2010_2026_AUDIT.json",a.out/"PEA_TECHNICAL_PIT_2010_2026.parquet"]: manifest["files"][p.name]={"size_bytes":p.stat().st_size,"sha256":sha256(p)}
-    (a.out/"MANIFEST.json").write_text(json.dumps(manifest,indent=2),encoding="utf-8")
+    coverage=a.out/"PEA_OHLCV_2010_2026_ANNUAL_COVERAGE.csv"; pd.DataFrame(annual).to_csv(coverage,index=False)
+    anomaly_path=a.out/"PEA_OHLCV_2010_2026_OHLC_ANOMALIES.csv"; anomalies.to_csv(anomaly_path,index=False)
+    audit_path=a.out/"PEA_OHLCV_2010_2026_AUDIT.json"; audit_path.write_text(json.dumps(audit,indent=2),encoding="utf-8")
+    actions=merged[merged.asset_class.eq("ACTION")].copy(); pit=build_pit(actions); pit_path=a.out/"PEA_TECHNICAL_PIT_2010_2026.parquet"; pit.to_parquet(pit_path,index=False,compression="zstd")
+    manifest={"version":"PEA_HISTORY_2010_2026_V2_OHLC_QUALIFIED","audit":audit,"technical_pit_rows":int(len(pit)),"technical_pit_isins":int(pit["isin"].nunique()),"limits":["Current governed universe reconstruction creates survivorship bias.","Only historical price/volume technical PIT is certified before separate dated non-price evidence exists.","No current fundamentals, consensus or sector scores are backfilled historically.","MAE/MFE backtest is blocked whenever material OHLC ordering anomalies remain."],"files":{}}
+    for p in [outp,coverage,anomaly_path,audit_path,pit_path]: manifest["files"][p.name]={"size_bytes":p.stat().st_size,"sha256":sha256(p)}
+    manifest_path=a.out/"MANIFEST.json"; manifest_path.write_text(json.dumps(manifest,indent=2),encoding="utf-8")
     print(json.dumps(manifest,indent=2))
     if audit["status"]!="PASS": raise RuntimeError("CONSOLIDATED_HISTORY_AUDIT_FAILED")
     return 0
