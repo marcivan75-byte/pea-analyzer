@@ -4,10 +4,11 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from urllib import request, error
+from urllib import error, request
 
-ROOT = Path(__file__).resolve().parents[1]
-CONFIG = ROOT / "config" / "PEA_AUTOPILOT.json"
+SUPERVISOR_ROOT = Path(__file__).resolve().parents[1]
+TARGET_ROOT = Path(os.environ.get("PEA_TARGET_ROOT", str(SUPERVISOR_ROOT))).resolve()
+CONFIG = SUPERVISOR_ROOT / "config" / "PEA_AUTOPILOT.json"
 
 
 def _api(method: str, url: str, token: str, payload: dict | None = None) -> dict:
@@ -25,8 +26,8 @@ def _api(method: str, url: str, token: str, payload: dict | None = None) -> dict
         raise RuntimeError(f"GITHUB_API_{exc.code}:{url}:{body[:500]}") from exc
 
 
-def _run(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True, check=check)
+def _run(cmd: list[str], *, cwd: Path = TARGET_ROOT, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, check=check)
 
 
 def _jobs_and_logs(repo: str, run_id: int, token: str) -> tuple[list[dict], str]:
@@ -49,9 +50,10 @@ def _jobs_and_logs(repo: str, run_id: int, token: str) -> tuple[list[dict], str]
 
 
 def _write_report(payload: dict, markdown: str, cfg: dict) -> None:
-    md = ROOT / cfg["report_path"]
-    js = ROOT / cfg["json_path"]
-    md.parent.mkdir(parents=True, exist_ok=True)
+    report_root = SUPERVISOR_ROOT / "outputs" / "autopilot"
+    report_root.mkdir(parents=True, exist_ok=True)
+    md = report_root / "PEA_AUTOPILOT_REPORT.md"
+    js = report_root / "PEA_AUTOPILOT_REPORT.json"
     md.write_text(markdown, encoding="utf-8")
     js.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -73,7 +75,14 @@ def main() -> int:
 
     payload = {
         "autopilot_version": cfg["version"],
-        "upstream": {"run_id": run_id, "workflow": name, "branch": branch, "head_sha": sha, "conclusion": conclusion, "attempt": attempt},
+        "upstream": {
+            "run_id": run_id,
+            "workflow": name,
+            "branch": branch,
+            "head_sha": sha,
+            "conclusion": conclusion,
+            "attempt": attempt,
+        },
         "governance": cfg["governance"],
         "action": "REPORT_ONLY",
         "status": "OBSERVED",
@@ -86,11 +95,21 @@ def main() -> int:
         return 0
 
     jobs, logs = _jobs_and_logs(repo, run_id, token)
-    payload["details"]["jobs"] = [{"id": j.get("id"), "name": j.get("name"), "conclusion": j.get("conclusion")} for j in jobs]
+    payload["details"]["jobs"] = [
+        {"id": j.get("id"), "name": j.get("name"), "conclusion": j.get("conclusion")}
+        for j in jobs
+    ]
 
     if conclusion == "success":
         payload["status"] = "SUCCESS_REPORTED"
-        markdown = f"# PEA Autopilot — success\n\n- Run: **#{run_id}** — `{name}`\n- Branch: `{branch}`\n- SHA: `{sha}`\n- Status: **SUCCESS**\n- Governance: fail-closed/PIT/anti-lookahead unchanged.\n"
+        markdown = (
+            "# PEA Autopilot — success\n\n"
+            f"- Run: **#{run_id}** — `{name}`\n"
+            f"- Branch: `{branch}`\n"
+            f"- SHA: `{sha}`\n"
+            "- Status: **SUCCESS**\n"
+            "- Governance: fail-closed/PIT/anti-lookahead unchanged.\n"
+        )
         _write_report(payload, markdown, cfg)
         return 0
 
@@ -100,19 +119,24 @@ def main() -> int:
         _api("POST", f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/rerun-failed-jobs", token, {})
         payload["action"] = "RERUN_FAILED_JOBS"
         payload["status"] = "TRANSIENT_RETRY_REQUESTED"
-        markdown = f"# PEA Autopilot — transient retry\n\nRun **#{run_id}** `{name}` failed on a transient/infrastructure signature. Failed jobs were re-requested automatically. No model/economic conclusion inferred.\n"
+        markdown = (
+            "# PEA Autopilot — transient retry\n\n"
+            f"Run **#{run_id}** `{name}` failed on a transient/infrastructure signature. "
+            "Failed jobs were re-requested automatically. No model/economic conclusion inferred.\n"
+        )
         _write_report(payload, markdown, cfg)
         return 0
 
     maintenance = cfg.get("deterministic_maintenance", {}).get(branch)
-    if maintenance and (ROOT / maintenance).exists():
-        before = _run(["git", "status", "--porcelain"], check=True).stdout.strip()
+    maintenance_path = TARGET_ROOT / maintenance if maintenance else None
+    if maintenance_path and maintenance_path.exists():
+        before = _run(["git", "status", "--porcelain"]).stdout.strip()
         if before:
             payload["status"] = "FAIL_CLOSED_DIRTY_CHECKOUT"
-            _write_report(payload, f"# PEA Autopilot — fail closed\n\nDirty checkout detected before remediation of run **#{run_id}**. No automated write performed.\n", cfg)
+            _write_report(payload, f"# PEA Autopilot — fail closed\n\nDirty target checkout detected before remediation of run **#{run_id}**. No automated write performed.\n", cfg)
             return 1
 
-        fix = _run(["python", maintenance], check=False)
+        fix = _run(["python", str(maintenance_path)], check=False)
         payload["details"]["maintenance_rc"] = fix.returncode
         payload["details"]["maintenance_tail"] = (fix.stdout + "\n" + fix.stderr)[-4000:]
         if fix.returncode != 0:
@@ -128,7 +152,7 @@ def main() -> int:
             _write_report(payload, f"# PEA Autopilot — fail closed\n\nDeterministic corrections were attempted for run **#{run_id}**, but the complete pytest gate remains red. Nothing was committed.\n", cfg)
             return 1
 
-        changed = _run(["git", "status", "--porcelain"], check=True).stdout.strip()
+        changed = _run(["git", "status", "--porcelain"]).stdout.strip()
         if changed:
             _run(["git", "config", "user.name", "github-actions[bot]"])
             _run(["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"])
@@ -137,14 +161,27 @@ def main() -> int:
             _run(["git", "push", "origin", f"HEAD:{branch}"])
             payload["action"] = "VALIDATED_FIX_COMMITTED"
             payload["status"] = "CORRECTION_PUSHED"
-            markdown = f"# PEA Autopilot — correction pushed\n\nRun **#{run_id}** `{name}` failed technically. A whitelisted deterministic correction passed the complete pytest suite and was committed to `{branch}`. The resulting push will trigger the governed validation chain. No economic/model conclusion inferred.\n"
+            markdown = (
+                "# PEA Autopilot — correction pushed\n\n"
+                f"Run **#{run_id}** `{name}` failed technically. A whitelisted deterministic correction "
+                f"passed the complete pytest suite and was committed to `{branch}`. The resulting push will "
+                "trigger the governed validation chain. No economic/model conclusion inferred.\n"
+            )
             _write_report(payload, markdown, cfg)
             return 0
 
         payload["status"] = "NO_DETERMINISTIC_DIFF"
 
-    payload["status"] = payload.get("status") or "UNKNOWN_FAILURE_FAIL_CLOSED"
-    markdown = f"# PEA Autopilot — failure classified\n\n- Run: **#{run_id}** — `{name}`\n- Branch: `{branch}`\n- SHA: `{sha}`\n- Status: **{conclusion.upper()}**\n- Automatic action: none beyond safe deterministic rules.\n- Interpretation: CI/data failure only; **not** a model/economic result.\n- Governance: fail-closed preserved.\n"
+    markdown = (
+        "# PEA Autopilot — failure classified\n\n"
+        f"- Run: **#{run_id}** — `{name}`\n"
+        f"- Branch: `{branch}`\n"
+        f"- SHA: `{sha}`\n"
+        f"- Status: **{conclusion.upper()}**\n"
+        "- Automatic action: none beyond safe deterministic rules.\n"
+        "- Interpretation: CI/data failure only; **not** a model/economic result.\n"
+        "- Governance: fail-closed preserved.\n"
+    )
     _write_report(payload, markdown, cfg)
     return 0
 
