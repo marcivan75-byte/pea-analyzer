@@ -5,7 +5,7 @@ The 5% trailing rule is close-confirmed drawdown after reversal, not an intrabar
 from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
-import json, math, time
+import json, time
 import numpy as np
 import pandas as pd
 

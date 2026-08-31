@@ -7,7 +7,7 @@ def test_weekly_committee_executes_governance_audit_with_calibration_gate():
     post_bundle = Path("src/v182/reporting/weekly_post_decision_bundle_run.py").read_text(encoding="utf-8")
     governance_module = Path("src/v182/reporting/criteria_governance_audit.py").read_text(encoding="utf-8")
 
-    assert "python -m v182.reporting.weekly_tail_super_runner_v21_16_0" in workflow
+    assert "python -m v182.reporting.weekly_operational_runner_v4_4" in workflow
     assert "weekly_post_decision_bundle_run as weekly_post" in tail
     assert "criteria_governance_audit" in post_bundle
     assert "calibration_governance_audit.run(root)" in governance_module

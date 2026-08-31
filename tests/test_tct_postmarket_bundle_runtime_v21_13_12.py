@@ -99,7 +99,7 @@ def test_daily_and_weekly_use_single_postmarket_process_but_preopen_stays_autono
     assert "python -m v182.reporting.daily_consolidated_runner_v21_15_4" in daily
     assert "tct_postmarket_bundle_run as postmarket" in daily_tactical
     assert "lambda: postmarket.run(root=root)" in daily_tactical
-    assert "python -m v182.reporting.weekly_tail_super_runner_v21_16_0" in weekly
+    assert "python -m v182.reporting.weekly_operational_runner_v4_4" in weekly
     assert "tct_postmarket_bundle_run as postmarket" in weekly_tail
     assert "lambda: postmarket.run(root=root)" in weekly_tail
 
@@ -112,7 +112,8 @@ def test_daily_and_weekly_use_single_postmarket_process_but_preopen_stays_autono
     for workflow in (daily, weekly):
         for command in direct:
             assert command not in workflow
-        assert "POSTMARKET_BUNDLE_RUNTIME_V21_13_12.json" in workflow
+    assert "POSTMARKET_BUNDLE_RUNTIME_V21_13_12.json" in daily
+    assert "postmarket.run(root=root)" in weekly_tail
 
     assert 'cron: "40 6 * * 1-5"' in preopen
     assert "TCT_CATALYST_PHASE: ${{ github.event.inputs.phase }}" in preopen

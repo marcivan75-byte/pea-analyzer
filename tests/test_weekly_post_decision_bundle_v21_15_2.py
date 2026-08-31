@@ -84,7 +84,7 @@ def test_weekly_tail_runs_decision_brief_and_post_decision_as_required_parallel_
     workflow = (ROOT / ".github" / "workflows" / "committee_master_daily.yml").read_text(encoding="utf-8")
     tail = (ROOT / "src" / "v182" / "reporting" / "weekly_tail_super_runner_v21_16_0.py").read_text(encoding="utf-8")
 
-    assert "python -m v182.reporting.weekly_tail_super_runner_v21_16_0" in workflow
+    assert "python -m v182.reporting.weekly_operational_runner_v4_4" in workflow
     assert "decision_brief" in tail
     assert "weekly_post_decision_bundle_run as weekly_post" in tail
     assert "ThreadPoolExecutor(max_workers=2, thread_name_prefix=\"weekly-finalize\")" in tail

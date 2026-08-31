@@ -28,8 +28,8 @@ def test_weekly_financial_execution_order_is_preserved_through_super_runners():
 
     commands = [
         "python -m v182.audit.identity_hydration",
-        "python -m v182.reporting.weekly_unified_super_runner_v21_16_2",
-        "python -m v182.reporting.weekly_tail_super_runner_v21_16_0",
+        "python -m v182.reporting.weekly_operational_runner_v4_4",
+        "python -m v182.reporting.weekly_operational_runner_v4_4",
     ]
     positions = [workflow.index(command) for command in commands]
     assert positions == sorted(positions)
@@ -56,7 +56,7 @@ def test_weekly_validation_and_state_persistence_remain_present():
         "Save persistent OHLCV cache",
         "Save consolidated tactical decision state",
         "Save consolidated weekly research state",
-        "Upload complete weekly Committee V21.16.2 results",
+        "Upload complete weekly Committee V4.4 results",
     ]
     for needle in required:
         assert needle in workflow

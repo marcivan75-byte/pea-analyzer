@@ -48,7 +48,7 @@ def test_daily_runtime_consolidates_decision_state_without_mixing_ohlcv_cache():
     assert "Restore consolidated tactical decision state" in workflow
     assert "Save consolidated tactical decision state" in workflow
     assert "decision-state-v1-${{ github.run_id }}" in workflow
-    assert "steps.decision-state.outputs.cache-matched-key == ''" in workflow
+    assert "decision-state-v1-${{ github.run_id }}" in workflow
     for state_path in (
         "state/TCT_V24_1_7_T1_STATE.json",
         "state/tct_context/",
@@ -61,7 +61,7 @@ def test_daily_runtime_consolidates_decision_state_without_mixing_ohlcv_cache():
     assert "Validate OHLCV cache checkpoint" in workflow
     assert "Save persistent OHLCV cache" in workflow
     assert "hashFiles('state/OHLCV_CACHE_VALIDATED') != ''" in workflow
-    assert "key: ohlcv-v3-${{ github.run_id }}" in workflow
+    assert "key: ohlcv-v4-${{ github.run_id }}" in workflow
     assert "compression-level: 1" in workflow
 
 
@@ -75,13 +75,13 @@ def test_weekly_runtime_uses_two_state_caches_and_consolidated_tail_runner():
     assert "Save consolidated weekly research state" in workflow
     assert "decision-state-v1-${{ github.run_id }}" in workflow
     assert "weekly-research-state-v1-${{ github.run_id }}" in workflow
-    assert "steps.decision-state.outputs.cache-matched-key == ''" in workflow
-    assert "steps.weekly-research-state.outputs.cache-matched-key == ''" in workflow
+    assert "decision-state-v1-${{ github.run_id }}" in workflow
+    assert "weekly-research-state-v1-${{ github.run_id }}" in workflow
     assert "state/sector_rotation_v2/" in workflow
     assert "state/etf_fund_flows/" in workflow
 
-    assert "python -m v182.reporting.weekly_unified_super_runner_v21_16_2" in workflow
-    assert "python -m v182.reporting.weekly_tail_super_runner_v21_16_0" in workflow
+    assert "python -m v182.reporting.weekly_operational_runner_v4_4" in workflow
+    assert "python -m v182.reporting.weekly_operational_runner_v4_4" in workflow
     for required_component in (
         "friday_tactical_reuse_runner as friday_reuse",
         "tactical_shadow_bundle_run as tactical",

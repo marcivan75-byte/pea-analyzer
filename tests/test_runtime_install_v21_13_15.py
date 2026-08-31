@@ -15,7 +15,7 @@ def test_runtime_requirements_match_project_dependencies():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     expected = [str(item).strip() for item in project["project"]["dependencies"]]
     assert _runtime_requirements() == expected
-    assert len(expected) == 13
+    assert len(expected) == 15
 
 
 def test_daily_workflow_uses_runtime_file_and_pythonpath():

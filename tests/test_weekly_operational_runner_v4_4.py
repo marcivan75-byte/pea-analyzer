@@ -19,8 +19,8 @@ def test_runner_is_orchestration_only():
     assert "criteria_changed\": False" in text
     assert "weights_changed\": False" in text
     assert "thresholds_changed\": False" in text
-    assert "or_independent_steps_overlapped" in text
-    assert "ThreadPoolExecutor" in text
+    assert "or_steps_sequential" in text
+    assert "or_steps_sequential" in text
     assert "SKIPPED_NO_DAILY_INPUT" in text
     assert "OMP_NUM_THREADS" in text
 

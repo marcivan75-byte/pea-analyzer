@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-import json, math
+import json
 import numpy as np
 import pandas as pd
 

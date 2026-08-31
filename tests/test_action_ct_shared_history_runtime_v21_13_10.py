@@ -87,7 +87,7 @@ def test_daily_and_weekly_keep_v211310_bundle_through_super_runners():
     assert "tactical_shadow_bundle_run as tactical" in daily_tactical
     assert "tct_postmarket_bundle_run as postmarket" in daily_tactical
 
-    assert "python -m v182.reporting.weekly_tail_super_runner_v21_16_0" in weekly_workflow
+    assert "python -m v182.reporting.weekly_operational_runner_v4_4" in weekly_workflow
     assert "tactical_shadow_bundle_run as tactical" in weekly_tail
     assert "tct_postmarket_bundle_run as postmarket" in weekly_tail
 
