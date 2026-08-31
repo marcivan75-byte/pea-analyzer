@@ -31,15 +31,15 @@ def make_features(n=100):
 def test_meta_pipeline_runs_and_ranks():
     out=HebdoATMeta().run(make_features())
     assert len(out)>0
-    assert {'EV_net','tier','prob_stop_9','prob_meta','META_STATUS','selection_confidence'}.issubset(out.columns)
+    assert {'EV_net','tier','prob_stop_9','prob_meta','META_STATUS','selection_confidence','mae_model_status'}.issubset(out.columns)
     assert out['EV_net'].is_monotonic_decreasing
 
 
-def test_untrained_meta_never_promotes_tct():
+def test_uncalibrated_models_never_promote_tct():
     out=HebdoATMeta().run(make_features())
-    assert (out['meta_model_status']=='UNTRAINED').all()
     assert not (out['tier']=='TCT').any()
-    assert (out['selection_confidence']=='DEGRADED_UNTRAINED_META').all()
+    assert (out['selection_confidence']=='DEGRADED_PARTIAL_OR_UNCALIBRATED_MODELS').all()
+    assert (out['mae_model_status']=='HEURISTIC_UNCALIBRATED').all()
 
 
 def test_meta_pipeline_fail_closed_missing_feature():
@@ -80,23 +80,31 @@ def test_meta_pipeline_blocks_if_all_filtered():
 
 def test_past_earnings_are_not_future_event_exclusions():
     f=FalsePositiveFilter()
-    row=pd.Series({
-        'close':100,'sma200':90,'drawdown_4w':-0.02,'atr_14_pct':0.03,
-        'vol_z':1,'days_to_earnings':-2,'adv_20m_eur':2_000_000,'mom_26w_sector':0,
-    })
+    row=pd.Series({'close':100,'sma200':90,'drawdown_4w':-0.02,'atr_14_pct':0.03,
+                   'vol_z':1,'days_to_earnings':-2,'adv_20m_eur':2_000_000,'mom_26w_sector':0})
     blocked, reason=f.is_loser_certain(row)
     assert blocked is False and reason == ''
+
+
+def test_momentum_cannot_override_earnings_or_illiquidity():
+    f=FalsePositiveFilter()
+    df=pd.DataFrame([
+        {'ticker':'E','close':100,'sma200':90,'drawdown_4w':0,'atr_14_pct':0.03,'vol_z':1,
+         'days_to_earnings':2,'adv_20m_eur':2_000_000,'mom_26w_sector':3},
+        {'ticker':'L','close':100,'sma200':90,'drawdown_4w':0,'atr_14_pct':0.03,'vol_z':1,
+         'days_to_earnings':30,'adv_20m_eur':1000,'mom_26w_sector':3},
+    ])
+    out=f.filter_batch(df)
+    assert out.empty
 
 
 def test_negative_ev_never_promoted():
     r=ExpectedValueRanker(avg_win=0.01, avg_loss=-0.20, fee=0.02)
     df=pd.DataFrame({
-        'prob_meta':[0.1,0.2,0.3],
-        'prob_stop_9':[0.8,0.7,0.6],
-        'mom_26w_sector':[0,0,0],
-        'drawdown_4w':[0,0,0],
-        'vol_z':[0,0,0],
-        'meta_model_status':['TRAINED_TEMPORAL_OOS']*3,
+        'prob_meta':[0.1,0.2,0.3], 'prob_stop_9':[0.8,0.7,0.6],
+        'mom_26w_sector':[0,0,0], 'drawdown_4w':[0,0,0], 'vol_z':[0,0,0],
+        'meta_model_status':['TRAINED_PURGED_TEMPORAL_OOS']*3,
+        'mae_model_status':['CALIBRATED_TEMPORAL_OOS']*3,
     })
     out=r.rank_batch(df)
     assert (out['EV_net']<0).all()
@@ -147,7 +155,7 @@ def test_gap_through_stop_uses_open_loss():
 def test_meta_training_sparse_classes_blocks_safely():
     df=make_features(20)
     df['meta_label']=1
-    result=MetaLabeler().train(df)
+    result=MetaLabeler(label_horizon_periods=2).train(df)
     assert result['status'].startswith('BLOCK_')
 
 
@@ -155,31 +163,29 @@ def test_meta_training_requires_temporal_evidence():
     df=make_features(80).drop(columns=['date'])
     df['meta_label']=np.tile([0,1],40)
     try:
-        MetaLabeler().train(df)
+        MetaLabeler(label_horizon_periods=2).train(df)
         assert False, 'expected temporal-order block'
     except ValueError as e:
         assert 'temporal order evidence missing' in str(e)
 
 
-def test_meta_training_uses_chronological_oos_split():
-    n=150
+def test_meta_training_uses_purged_date_grouped_oos_split():
+    n=180
     df=make_features(n)
     df['meta_label']=np.tile([0,1], n//2)
-    result=MetaLabeler().train(df)
-    assert result['status']=='TRAINED_TEMPORAL_OOS'
-    assert result['split_scheme']=='chronological_60_20_20'
+    result=MetaLabeler(label_horizon_periods=10).train(df)
+    assert result['status']=='TRAINED_PURGED_TEMPORAL_OOS'
+    assert result['split_scheme']=='purged_date_grouped_train_cal_test'
+    assert result['embargo_periods']==10
     assert result['n_train'] < n and result['n_test'] > 0
 
 
-def test_lasso_uses_time_series_split_and_drops_missing_labels():
+def test_lasso_uses_fold_local_scaling_and_drops_missing_labels():
     n=80
-    X=pd.DataFrame({
-        'f1':np.linspace(-1,1,n),
-        'f2':np.sin(np.linspace(0,8,n)),
-    })
+    X=pd.DataFrame({'f1':np.linspace(-1,1,n), 'f2':np.sin(np.linspace(0,8,n))})
     y=pd.Series(0.5*X['f1'] + 0.1*X['f2'])
     y.iloc[-3:]=np.nan
     result=lasso_select_features(X,y,cv=4)
-    assert result['cv_scheme']=='TimeSeriesSplit'
+    assert result['cv_scheme']=='TimeSeriesSplit_Pipeline_GridSearchCV'
     assert result['n_labeled']==77
     assert result['n_dropped_missing_label']==3
