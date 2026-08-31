@@ -32,8 +32,15 @@ class MetaLabeler:
 
     def _prepare_features(self,df:pd.DataFrame,strict:bool=True)->pd.DataFrame:
         out=df.copy()
-        if 'close_vs_sma200' not in out.columns and {'close','sma200'}.issubset(out.columns):
-            close=pd.to_numeric(out['close'],errors='coerce'); sma=pd.to_numeric(out['sma200'],errors='coerce'); out['close_vs_sma200']=(close<sma).astype(int)
+        if 'close_vs_sma200' not in out.columns:
+            if not {'close','sma200'}.issubset(out.columns):
+                if strict: raise ValueError("BLOCK_DATA_META_FEATURES: close/sma200 required to derive close_vs_sma200")
+                out['close_vs_sma200']=0
+            else:
+                close=pd.to_numeric(out['close'],errors='coerce'); sma=pd.to_numeric(out['sma200'],errors='coerce')
+                if close.isna().any() or sma.isna().any() or not np.isfinite(close.to_numpy(dtype=float)).all() or not np.isfinite(sma.to_numpy(dtype=float)).all():
+                    raise ValueError('BLOCK_DATA_META_FEATURES: non-finite close/sma200 source')
+                out['close_vs_sma200']=(close<sma).astype(int)
         missing=[f for f in self.features if f not in out.columns]
         if missing and strict: raise ValueError(f"BLOCK_DATA_META_FEATURES: missing {missing}")
         for f in missing: out[f]=0
