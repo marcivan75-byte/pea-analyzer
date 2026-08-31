@@ -29,10 +29,20 @@ class MetaLabeler:
         if missing:
             raise ValueError(f"BLOCK_DATA_META_LABEL: missing {sorted(missing)}")
         df = df_backtest.copy()
+        valid = df[['mfe','mae','hit_stop']].notna().all(axis=1)
+        if 'block_reason' in df.columns:
+            valid &= df['block_reason'].isna()
+        dropped=int((~valid).sum())
+        df=df.loc[valid].copy()
+        if df.empty:
+            raise ValueError('BLOCK_DATA_META_LABEL: no complete outcomes')
+        if not df['hit_stop'].isin([True,False]).all():
+            raise ValueError('BLOCK_DATA_META_LABEL: hit_stop must be boolean for complete outcomes')
         df['meta_label'] = 0
-        mask_win = (df['mfe'] > 0.08) & (df['mae'] > -0.09)
+        mask_win = (pd.to_numeric(df['mfe'],errors='coerce') > 0.08) & (pd.to_numeric(df['mae'],errors='coerce') > -0.09)
         df.loc[mask_win, 'meta_label'] = 1
         df.loc[df['hit_stop'] == True, 'meta_label'] = 0
+        df['meta_label_dropped_incomplete']=dropped
         return df
 
     def _prepare_features(self, df: pd.DataFrame, strict: bool = True) -> pd.DataFrame:
@@ -65,81 +75,60 @@ class MetaLabeler:
         return out.sort_values(['_meta_time']).reset_index(drop=True)
 
     def _purged_split(self, work: pd.DataFrame):
-        times=work['_meta_time']
-        start=times.min(); end=times.max()
+        times=work['_meta_time']; start=times.min(); end=times.max()
         embargo=pd.Timedelta(days=self.label_horizon_days)
         effective=(end-start)-2*embargo
         if effective <= pd.Timedelta(0):
             return None
-
         train_end=start + effective*0.60
         cal_start=train_end + embargo
         cal_end=cal_start + effective*0.20
         test_start=cal_end + embargo
-
         train=work[times <= train_end].copy()
         cal=work[(times >= cal_start) & (times <= cal_end)].copy()
         test=work[times >= test_start].copy()
         if min(len(train),len(cal),len(test)) < 10:
             return None
-        # Vérification forte : aucun label d'une partition précédente ne doit chevaucher la suivante.
         if train['_meta_time'].max()+embargo > cal['_meta_time'].min():
             raise RuntimeError('INTERNAL_META_SPLIT_ERROR: train/cal embargo violated')
         if cal['_meta_time'].max()+embargo > test['_meta_time'].min():
             raise RuntimeError('INTERNAL_META_SPLIT_ERROR: cal/test embargo violated')
-        return train, cal, test, int(times.nunique())
+        return train,cal,test,int(times.nunique())
 
     def train(self, df_labeled: pd.DataFrame):
-        """Entraîne avec dates groupées et embargo calendaire égal à l'horizon réel du label."""
         if 'meta_label' not in df_labeled.columns:
             raise ValueError('BLOCK_DATA_META_TRAIN: meta_label missing')
-        work = self._with_time(df_labeled)
-        work = self._prepare_features(work, strict=True)
+        work=self._with_time(df_labeled)
+        work=self._prepare_features(work,strict=True)
         if work[self.features].isna().any().any():
             raise ValueError('BLOCK_DATA_META_FEATURES: missing feature values in training sample')
-
-        split = self._purged_split(work)
+        split=self._purged_split(work)
         if split is None:
-            self.base = None; self.isotonic = None
-            self.training_status = 'BLOCK_INSUFFICIENT_PURGED_TEMPORAL_SAMPLE'
+            self.base=None; self.isotonic=None; self.training_status='BLOCK_INSUFFICIENT_PURGED_TEMPORAL_SAMPLE'
             return {'status':self.training_status,'n':int(len(work)),'label_horizon_days':self.label_horizon_days}
-        train, cal, test, n_dates = split
+        train,cal,test,n_dates=split
         y_train=train['meta_label'].astype(int); y_cal=cal['meta_label'].astype(int); y_test=test['meta_label'].astype(int)
         if not (self._class_ok(y_train) and self._class_ok(y_cal) and self._class_ok(y_test)):
-            self.base=None; self.isotonic=None
-            self.training_status='BLOCK_INSUFFICIENT_CLASSES_PER_PURGED_SPLIT'
-            return {
-                'status':self.training_status,'n':int(len(work)),
-                'train_counts':{str(k):int(v) for k,v in y_train.value_counts().items()},
-                'cal_counts':{str(k):int(v) for k,v in y_cal.value_counts().items()},
-                'test_counts':{str(k):int(v) for k,v in y_test.value_counts().items()},
-            }
-
+            self.base=None; self.isotonic=None; self.training_status='BLOCK_INSUFFICIENT_CLASSES_PER_PURGED_SPLIT'
+            return {'status':self.training_status,'n':int(len(work)),
+                    'train_counts':{str(k):int(v) for k,v in y_train.value_counts().items()},
+                    'cal_counts':{str(k):int(v) for k,v in y_cal.value_counts().items()},
+                    'test_counts':{str(k):int(v) for k,v in y_test.value_counts().items()}}
         self.base=RandomForestClassifier(n_estimators=200,max_depth=6,min_samples_leaf=20,random_state=42,class_weight='balanced')
         self.base.fit(train[self.features],y_train)
         raw_cal=self.base.predict_proba(cal[self.features])[:,1]
         if np.unique(raw_cal).size<2:
-            self.base=None; self.isotonic=None
-            self.training_status='BLOCK_DEGENERATE_CALIBRATION_SCORES'
+            self.base=None; self.isotonic=None; self.training_status='BLOCK_DEGENERATE_CALIBRATION_SCORES'
             return {'status':self.training_status,'n':int(len(work))}
-        self.isotonic=IsotonicRegression(out_of_bounds='clip')
-        self.isotonic.fit(raw_cal,y_cal)
-
+        self.isotonic=IsotonicRegression(out_of_bounds='clip'); self.isotonic.fit(raw_cal,y_cal)
         raw_test=self.base.predict_proba(test[self.features])[:,1]
-        proba_test=np.asarray(self.isotonic.transform(raw_test),dtype=float)
-        pred=(proba_test>0.55).astype(int)
+        proba_test=np.asarray(self.isotonic.transform(raw_test),dtype=float); pred=(proba_test>0.55).astype(int)
         self.training_status='TRAINED_PURGED_TEMPORAL_OOS'
-        return {
-            'status':self.training_status,
-            'precision':float(precision_score(y_test,pred,zero_division=0)),
-            'recall':float(recall_score(y_test,pred,zero_division=0)),
-            'brier':float(brier_score_loss(y_test,proba_test)),
-            'mean_proba':float(proba_test.mean()),
-            'n':int(len(work)),'n_dates':n_dates,
-            'n_train':int(len(train)),'n_calibration':int(len(cal)),'n_test':int(len(test)),
-            'split_scheme':'purged_calendar_time_train_cal_test',
-            'embargo_days':self.label_horizon_days,
-        }
+        return {'status':self.training_status,'precision':float(precision_score(y_test,pred,zero_division=0)),
+                'recall':float(recall_score(y_test,pred,zero_division=0)),
+                'brier':float(brier_score_loss(y_test,proba_test)),'mean_proba':float(proba_test.mean()),
+                'n':int(len(work)),'n_dates':n_dates,'n_train':int(len(train)),'n_calibration':int(len(cal)),'n_test':int(len(test)),
+                'split_scheme':'purged_calendar_time_train_cal_test','embargo_days':self.label_horizon_days}
 
     def predict_proba(self, df: pd.DataFrame):
         if self.base is None or self.isotonic is None:
