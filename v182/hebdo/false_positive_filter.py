@@ -8,6 +8,11 @@ from typing import Tuple
 class FalsePositiveFilter:
     def __init__(self):
         self.min_adv_eur=500_000; self.max_debt=2.0; self.min_roe=0.03
+        self.overridable_reasons={
+            'EXCLU_QUALITE_POURRIE',
+            'EXCLU_TECH_CASSEE',
+            'EXCLU_VOL_PIEGE',
+        }
 
     def is_loser_certain(self, row: pd.Series)->Tuple[bool,str]:
         roe=row.get('roe',np.nan); debt=row.get('debt_to_equity',np.nan)
@@ -44,8 +49,8 @@ class FalsePositiveFilter:
         res=df.apply(self.is_loser_certain, axis=1)
         df['is_loser']=[r[0] for r in res]
         df['exclu_reason']=[r[1] for r in res]
-        # Sauvegarde uniquement les exclusions de signal, jamais un blocage de données.
-        overridable=~df['exclu_reason'].str.startswith('BLOCK_', na=False)
+        # Le momentum ne peut annuler que des exclusions souples explicitement listées.
+        overridable=df['exclu_reason'].isin(self.overridable_reasons)
         mask_keep=(df['is_loser']) & overridable & (df.get('mom_26w_sector',0)>1.5)
         df.loc[mask_keep,'is_loser']=False
         df.loc[mask_keep,'exclu_reason']=df.loc[mask_keep,'exclu_reason']+"_OVERRIDDEN_BY_MOM"
