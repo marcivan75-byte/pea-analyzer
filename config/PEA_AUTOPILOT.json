@@ -1,0 +1,37 @@
+{
+  "version": "PEA_AUTOPILOT_V1",
+  "enabled": true,
+  "wip_limit": 1,
+  "max_transient_reruns": 2,
+  "max_autofix_commits_per_upstream_run": 1,
+  "allowed_branches": [
+    "main",
+    "v22/pit-mae-mfe-preopen",
+    "research/at-weekly-v1-20260829"
+  ],
+  "governance": {
+    "fail_closed": true,
+    "anti_lookahead_required": true,
+    "pit_required": true,
+    "allow_current_fundamentals_as_history": false,
+    "allow_future_returns_in_features": false,
+    "allow_weight_threshold_changes": false,
+    "allow_holdout_open": false,
+    "allow_real_orders": false
+  },
+  "transient_patterns": [
+    "The hosted runner",
+    "timed out",
+    "HTTP 502",
+    "HTTP 503",
+    "HTTP 504",
+    "connection reset",
+    "temporary failure",
+    "rate limit"
+  ],
+  "deterministic_maintenance": {
+    "v22/pit-mae-mfe-preopen": "scripts/maintenance_fix_v22_1_ci.py"
+  },
+  "report_path": "outputs/autopilot/PEA_AUTOPILOT_REPORT.md",
+  "json_path": "outputs/autopilot/PEA_AUTOPILOT_REPORT.json"
+}
