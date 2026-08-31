@@ -1,6 +1,6 @@
 name: V22.1 CI corrections + canonical 2010-2019 data
 
-# Recovery trigger: tactical DAG contract aligned with governed callback wiring.
+# Recovery trigger: canonical recovery persists only non-workflow deterministic fixes from GITHUB_TOKEN.
 on:
   push:
     branches: [v22/pit-mae-mfe-preopen]
@@ -42,19 +42,30 @@ jobs:
       - name: Validate complete Python suite before data collection
         run: python -m pytest -q
 
-      - name: Commit validated corrections to active V22 branch
+      - name: Commit validated non-workflow corrections to active V22 branch
         id: corrections
         run: |
-          if git diff --quiet; then
+          set -euo pipefail
+          git add src tests scripts
+          if git diff --cached --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src tests scripts .github/workflows/action_ct_v22_validation.yml .github/workflows/committee_tct_ct_daily.yml
           git commit -m "fix(ci): align legacy gates with governed weekly V4.4"
           git push origin HEAD:v22/pit-mae-mfe-preopen
           echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Record deferred workflow-file corrections
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only -- '.github/workflows' || true)"
+          if [ -n "$changed" ]; then
+            echo "### Deferred workflow corrections" >> "$GITHUB_STEP_SUMMARY"
+            echo "The validated maintenance pass changed workflow files, but GITHUB_TOKEN is not permitted to push workflow-file modifications. They remain applied in this runner for the current canonical build and must be persisted through a workflow-authorized channel." >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\n' "$changed" | sed 's/^/- `/' | sed 's/$/`/' >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Build canonical PEA OHLCV history 2010-2019
         run: python scripts/build_canonical_ohlcv_2010_2019.py
