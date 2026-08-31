@@ -91,7 +91,6 @@ def qualify_ohlc(merged: pd.DataFrame) -> tuple[pd.Series, pd.Series, pd.DataFra
     raw_bad = violation_abs > 0
     material_bad = violation_abs > tolerance
     rel = violation_abs / scale
-
     anomalies = merged.loc[raw_bad, ["date","asset_class","isin","ticker","open","high","low","close","origin"]].copy()
     anomalies["upper_violation_abs"] = upper_violation.loc[raw_bad].values
     anomalies["lower_violation_abs"] = lower_violation.loc[raw_bad].values
@@ -100,7 +99,6 @@ def qualify_ohlc(merged: pd.DataFrame) -> tuple[pd.Series, pd.Series, pd.DataFra
     anomalies["tolerance_abs"] = tolerance.loc[raw_bad].values
     anomalies["material"] = material_bad.loc[raw_bad].values
     anomalies = anomalies.sort_values(["material","violation_rel","date"], ascending=[False,False,True])
-
     material = anomalies[anomalies["material"]]
     stats = {
         "ohl_inconsistent_rows_raw": int(raw_bad.sum()),
@@ -114,6 +112,42 @@ def qualify_ohlc(merged: pd.DataFrame) -> tuple[pd.Series, pd.Series, pd.DataFra
     return raw_bad, material_bad, anomalies, stats
 
 
+def repair_ohlc(merged: pd.DataFrame, material_bad: pd.Series) -> tuple[pd.DataFrame, pd.DataFrame]:
+    repaired = merged.copy()
+    idx = repaired.index[material_bad]
+    if len(idx) == 0:
+        return repaired, pd.DataFrame()
+
+    before = repaired.loc[idx, ["date","asset_class","isin","ticker","open","high","low","close","origin"]].copy()
+    vals = repaired.loc[idx, ["open","high","low","close"]].apply(pd.to_numeric, errors="coerce")
+
+    # Non-positive O/H/L values are invalid price observations. Close is governed separately
+    # and is already required to be positive. Replace invalid open by close, then construct
+    # the narrowest valid daily envelope containing all remaining positive observations.
+    open_valid = vals["open"].where(vals["open"] > 0, vals["close"])
+    high_valid = vals["high"].where(vals["high"] > 0, np.nan)
+    low_valid = vals["low"].where(vals["low"] > 0, np.nan)
+    candidates = pd.concat([open_valid.rename("open"), high_valid.rename("high"), low_valid.rename("low"), vals["close"].rename("close")], axis=1)
+    new_high = candidates.max(axis=1, skipna=True)
+    new_low = candidates.min(axis=1, skipna=True)
+
+    repaired.loc[idx, "open"] = open_valid.values
+    repaired.loc[idx, "high"] = new_high.values
+    repaired.loc[idx, "low"] = new_low.values
+
+    log = before.rename(columns={"open":"open_before","high":"high_before","low":"low_before","close":"close_before"})
+    log["open_after"] = repaired.loc[idx, "open"].values
+    log["high_after"] = repaired.loc[idx, "high"].values
+    log["low_after"] = repaired.loc[idx, "low"].values
+    log["close_after"] = repaired.loc[idx, "close"].values
+    log["repair_policy"] = "MINIMAL_POSITIVE_OHLC_ENVELOPE"
+    log["close_preserved"] = True
+    log["high_changed"] = ~np.isclose(pd.to_numeric(log["high_before"], errors="coerce"), pd.to_numeric(log["high_after"], errors="coerce"), equal_nan=True)
+    log["low_changed"] = ~np.isclose(pd.to_numeric(log["low_before"], errors="coerce"), pd.to_numeric(log["low_after"], errors="coerce"), equal_nan=True)
+    log["open_changed"] = ~np.isclose(pd.to_numeric(log["open_before"], errors="coerce"), pd.to_numeric(log["open_after"], errors="coerce"), equal_nan=True)
+    return repaired, log
+
+
 def main() -> int:
     ap=argparse.ArgumentParser(); ap.add_argument("--inputs",type=Path,required=True); ap.add_argument("--out",type=Path,required=True); a=ap.parse_args(); a.out.mkdir(parents=True,exist_ok=True)
     old=read_canonical(a.inputs); new=read_recent(a.inputs)
@@ -122,22 +156,66 @@ def main() -> int:
     merged=merged[(merged["date"]>=pd.Timestamp("2010-01-01"))&(merged["date"]<=pd.Timestamp("2026-08-31"))].copy()
     merged["priority"]=merged["origin"].map({"canonical_2010_2019":0,"v22_1_2018_2026":1}).fillna(0)
     merged=merged.sort_values(["isin","date","priority"]).drop_duplicates(["isin","date"],keep="last").drop(columns="priority")
+
     critical=merged[["isin","ticker","date","close"]].isna().any(axis=1)
-    _, material_bad, anomalies, ohl_stats = qualify_ohlc(merged)
-    nonpositive=(pd.to_numeric(merged["close"],errors="coerce")<=0)
-    duplicate=int(merged.duplicated(["isin","date"]).sum())
-    audit={"status":"PASS","period":[str(merged.date.min().date()),str(merged.date.max().date())],"rows":int(len(merged)),"unique_isin":int(merged["isin"].nunique()),"unique_tickers":int(merged.ticker.nunique()),"duplicate_isin_date":duplicate,"critical_null_rows":int(critical.sum()),**ohl_stats,"nonpositive_close_rows":int(nonpositive.fillna(False).sum()),"overlap_policy":"V22.1 recent source wins on duplicate ISIN/date in 2018-2019","pit_classification":"PRICE_ONLY_TECHNICAL_RECONSTRUCTION","survivorship_bias":True,"current_fundamentals_used_as_history":False,"future_returns_embedded":False,"mae_mfe_ready":bool(material_bad.sum()==0)}
-    if duplicate or audit["critical_null_rows"] or audit["nonpositive_close_rows"] or audit["ohl_inconsistent_rows_material"]:
+    _, material_bad_before, anomalies_before, ohl_stats_before = qualify_ohlc(merged)
+    repaired, repair_log = repair_ohlc(merged, material_bad_before)
+    _, material_bad_after, anomalies_after, ohl_stats_after = qualify_ohlc(repaired)
+
+    nonpositive=(pd.to_numeric(repaired["close"],errors="coerce")<=0)
+    duplicate=int(repaired.duplicated(["isin","date"]).sum())
+    audit={
+        "status":"PASS",
+        "period":[str(repaired.date.min().date()),str(repaired.date.max().date())],
+        "rows":int(len(repaired)),
+        "unique_isin":int(repaired["isin"].nunique()),
+        "unique_tickers":int(repaired.ticker.nunique()),
+        "duplicate_isin_date":duplicate,
+        "critical_null_rows":int(critical.sum()),
+        "ohl_before_repair":ohl_stats_before,
+        "ohl_repair_policy":"Minimal positive OHLC envelope: preserve close; replace non-positive open with close; set high=max(valid O/H/L/C), low=min(valid O/H/L/C). This is conservative and does not invent excursions beyond observed values.",
+        "ohl_repaired_rows":int(len(repair_log)),
+        "ohl_repaired_by_origin":{str(k):int(v) for k,v in repair_log.groupby("origin").size().items()} if len(repair_log) else {},
+        "ohl_after_repair":ohl_stats_after,
+        "nonpositive_close_rows":int(nonpositive.fillna(False).sum()),
+        "overlap_policy":"V22.1 recent source wins on duplicate ISIN/date in 2018-2019",
+        "pit_classification":"PRICE_ONLY_TECHNICAL_RECONSTRUCTION",
+        "survivorship_bias":True,
+        "current_fundamentals_used_as_history":False,
+        "future_returns_embedded":False,
+        "mae_mfe_ready":bool(material_bad_after.sum()==0),
+        "mae_mfe_data_quality":"REPAIRED_CONSERVATIVE_ENVELOPE" if len(repair_log) else "NATIVE_OHLC"
+    }
+    if duplicate or audit["critical_null_rows"] or audit["nonpositive_close_rows"] or int(material_bad_after.sum()):
         audit["status"]="FAIL"
+
     annual=[]
-    for y,g in merged.groupby(merged.date.dt.year): annual.append({"year":int(y),"rows":int(len(g)),"isins":int(g["isin"].nunique()),"actions":int(g.loc[g.asset_class.eq("ACTION"),"isin"].nunique()),"etfs":int(g.loc[g.asset_class.eq("ETF"),"isin"].nunique())})
-    outp=a.out/"PEA_OHLCV_2010_2026_CONSOLIDATED.parquet"; merged.to_parquet(outp,index=False,compression="zstd")
+    for y,g in repaired.groupby(repaired.date.dt.year):
+        annual.append({"year":int(y),"rows":int(len(g)),"isins":int(g["isin"].nunique()),"actions":int(g.loc[g.asset_class.eq("ACTION"),"isin"].nunique()),"etfs":int(g.loc[g.asset_class.eq("ETF"),"isin"].nunique())})
+
+    outp=a.out/"PEA_OHLCV_2010_2026_CONSOLIDATED.parquet"; repaired.to_parquet(outp,index=False,compression="zstd")
     coverage=a.out/"PEA_OHLCV_2010_2026_ANNUAL_COVERAGE.csv"; pd.DataFrame(annual).to_csv(coverage,index=False)
-    anomaly_path=a.out/"PEA_OHLCV_2010_2026_OHLC_ANOMALIES.csv"; anomalies.to_csv(anomaly_path,index=False)
+    anomaly_path=a.out/"PEA_OHLCV_2010_2026_OHLC_ANOMALIES_BEFORE_REPAIR.csv"; anomalies_before.to_csv(anomaly_path,index=False)
+    remaining_path=a.out/"PEA_OHLCV_2010_2026_OHLC_ANOMALIES_AFTER_REPAIR.csv"; anomalies_after.to_csv(remaining_path,index=False)
+    repair_path=a.out/"PEA_OHLCV_2010_2026_OHLC_REPAIRS.csv"; repair_log.to_csv(repair_path,index=False)
     audit_path=a.out/"PEA_OHLCV_2010_2026_AUDIT.json"; audit_path.write_text(json.dumps(audit,indent=2),encoding="utf-8")
-    actions=merged[merged.asset_class.eq("ACTION")].copy(); pit=build_pit(actions); pit_path=a.out/"PEA_TECHNICAL_PIT_2010_2026.parquet"; pit.to_parquet(pit_path,index=False,compression="zstd")
-    manifest={"version":"PEA_HISTORY_2010_2026_V2_OHLC_QUALIFIED","audit":audit,"technical_pit_rows":int(len(pit)),"technical_pit_isins":int(pit["isin"].nunique()),"limits":["Current governed universe reconstruction creates survivorship bias.","Only historical price/volume technical PIT is certified before separate dated non-price evidence exists.","No current fundamentals, consensus or sector scores are backfilled historically.","MAE/MFE backtest is blocked whenever material OHLC ordering anomalies remain."],"files":{}}
-    for p in [outp,coverage,anomaly_path,audit_path,pit_path]: manifest["files"][p.name]={"size_bytes":p.stat().st_size,"sha256":sha256(p)}
+    actions=repaired[repaired.asset_class.eq("ACTION")].copy(); pit=build_pit(actions); pit_path=a.out/"PEA_TECHNICAL_PIT_2010_2026.parquet"; pit.to_parquet(pit_path,index=False,compression="zstd")
+
+    manifest={
+        "version":"PEA_HISTORY_2010_2026_V3_OHLC_REPAIRED",
+        "audit":audit,
+        "technical_pit_rows":int(len(pit)),
+        "technical_pit_isins":int(pit["isin"].nunique()),
+        "limits":[
+            "Current governed universe reconstruction creates survivorship bias.",
+            "Only historical price/volume technical PIT is certified before separate dated non-price evidence exists.",
+            "No current fundamentals, consensus or sector scores are backfilled historically.",
+            "Repaired OHLC rows use the narrowest valid envelope around observed positive prices; MAE/MFE on those rows is conservative and may understate unobserved intraday excursion."
+        ],
+        "files":{}
+    }
+    for p in [outp,coverage,anomaly_path,remaining_path,repair_path,audit_path,pit_path]:
+        manifest["files"][p.name]={"size_bytes":p.stat().st_size,"sha256":sha256(p)}
     manifest_path=a.out/"MANIFEST.json"; manifest_path.write_text(json.dumps(manifest,indent=2),encoding="utf-8")
     print(json.dumps(manifest,indent=2))
     if audit["status"]!="PASS": raise RuntimeError("CONSOLIDATED_HISTORY_AUDIT_FAILED")
