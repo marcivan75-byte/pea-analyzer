@@ -31,9 +31,8 @@ def load_prior_high_targets(price_path: Path) -> pd.DataFrame:
     p = p.sort_values(["isin", "date"], kind="stable").drop_duplicates(["isin", "date"], keep="last")
     mins = {20: 10, 63: 20, 126: 40}
     for w in TARGET_WINDOWS:
-        p[f"prior_high_{w}s"] = (
-            p.groupby("isin", sort=False)["high"]
-            .transform(lambda s, w=w: s.shift(1).rolling(w, min_periods=mins[w]).max())
+        p[f"prior_high_{w}s"] = p.groupby("isin", sort=False)["high"].transform(
+            lambda s, w=w: s.shift(1).rolling(w, min_periods=mins[w]).max()
         )
     cols = ["isin", "date"] + [f"prior_high_{w}s" for w in TARGET_WINDOWS]
     return p[cols].dropna(subset=[f"prior_high_{w}s" for w in TARGET_WINDOWS], how="all")
@@ -57,12 +56,10 @@ def add_features(raw: pd.DataFrame) -> pd.DataFrame:
     close = n(x["close"])
     stop_pct = n(x["stop_pct_used"]) if "stop_pct_used" in x else pd.Series(STOP_DEFAULT, index=x.index)
     stop_pct = stop_pct.where(np.isfinite(stop_pct) & (stop_pct > 0), STOP_DEFAULT)
-
     target_candidates = pd.DataFrame(index=x.index)
     for w in TARGET_WINDOWS:
         t = n(x[f"prior_high_{w}s"])
         target_candidates[str(w)] = t.where(np.isfinite(t) & np.isfinite(close) & (close > 0) & (t > close))
-    # Nearest known overhead resistance across 20/63/126-session horizons.
     target = target_candidates.min(axis=1, skipna=True)
     valid_target = target.notna() & np.isfinite(target) & np.isfinite(close) & (close > 0) & (target > close)
     upside = pd.Series(np.nan, index=x.index, dtype=float)
@@ -117,7 +114,6 @@ def main() -> int:
     ap.add_argument("--price-parquet", type=Path, required=True)
     ap.add_argument("--out-dir", type=Path, required=True)
     args = ap.parse_args()
-
     targets = load_prior_high_targets(args.price_parquet)
     train_raw = attach_target(pd.read_csv(args.input_dir / "V22_1_TRAIN.csv", low_memory=False), targets)
     train = add_features(train_raw)
@@ -125,24 +121,22 @@ def main() -> int:
     train = train[train["date"] < cutoff].copy()
     if train.empty or train["date"].max() >= cutoff:
         raise SystemExit("BLOCK_RR_EMBARGO: pre-2023 26-week embargo violated")
-
     valid_rr = train["rr_ex_ante"].notna() & np.isfinite(train["rr_ex_ante"]) & (train["rr_ex_ante"] > 0)
     coverage = float(valid_rr.mean())
     n_valid = int(valid_rr.sum())
     if n_valid < 1000:
         raise SystemExit(f"BLOCK_RR_TARGET_COVERAGE: valid_positive_rr={n_valid} coverage={coverage:.4f}")
-
     split = int(len(train) * 0.80)
     valid = train.iloc[split:].copy()
-    rows = evaluate(valid)
-    val = pd.DataFrame(rows)
+    val = pd.DataFrame(evaluate(valid))
     if val.empty or int(val["n"].max()) < 100:
         raise SystemExit("BLOCK_RR_VALIDATION: insufficient valid RR observations")
     if (pd.to_numeric(val["mean_rr_ex_ante"], errors="coerce") <= 0).any():
         raise SystemExit("BLOCK_RR_SIGN: non-positive RR survived validation")
-
     args.out_dir.mkdir(parents=True, exist_ok=True)
     val.to_csv(args.out_dir / "RR_EX_ANTE_VALIDATION_PRE2023.csv", index=False)
+    signal_cols = [c for c in ["date", "isin", "ticker", "rr_target", "rr_ex_ante", "rr_target_valid"] if c in train.columns]
+    train.loc[valid_rr, signal_cols].to_csv(args.out_dir / "RR_EX_ANTE_SIGNALS_PRE2023.csv", index=False)
     report = {
         "version": "V22.1_RR_EX_ANTE_PIT_4_NEAREST_RESISTANCE",
         "status": "READY",
@@ -156,6 +150,7 @@ def main() -> int:
         "holdout_scope": "SEALED_UNTIL_FINAL_FROZEN_EVALUATION",
         "embargo_weeks": 26,
         "train_max_date": str(train["date"].max().date()),
+        "signal_artifact": "RR_EX_ANTE_SIGNALS_PRE2023.csv",
         "anti_lookahead": "all target highs use shift(1); no signal-day high, future MFE, future return, future entry open, or 2023-2026 holdout used for RR construction/selection",
     }
     (args.out_dir / "RR_EX_ANTE_REPORT.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
