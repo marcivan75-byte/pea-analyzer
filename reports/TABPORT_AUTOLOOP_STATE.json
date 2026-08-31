@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "updated_utc": "2026-08-31T21:17:45Z",
+  "active_pass": 2,
+  "passes": {
+    "1_rr_ex_ante_pit": {
+      "status": "SUCCESS_AUDITED",
+      "run_id": 33437318505,
+      "head_sha": "f97a3d205e7834cc0dcbd13e680a3f3681628ba6",
+      "artifact_id": 9774901835,
+      "result": {
+        "rr_target_source": "GOVERNED_OHLC_HIGH_PRIOR_126_TRADING_SESSIONS_SHIFT_1",
+        "coverage_train": 0.9828929780636582,
+        "coverage_holdout": 0.9980364530247616,
+        "chosen_ranking_pre2023": "rank_rr_only"
+      },
+      "audit": "PIT target uses prior 126-session high with shift(1); no signal-day high, future MFE, future return, or future entry open in RR. Holdout not used for tuning. Mean RR of selected holdout top-k is negative, so RR requires later ranking/target-quality audit and is not promoted alone."
+    },
+    "2_hybrid_false_positive": {
+      "status": "LAUNCHED",
+      "workflow": "V22.1 hybrid false-positive research"
+    },
+    "3_selective_ranking": {"status": "PENDING"},
+    "4_regime_adaptive": {"status": "PENDING"},
+    "5_realistic_portfolio_robustness": {"status": "PENDING"},
+    "6_final_ensemble_stability": {"status": "PENDING"}
+  },
+  "governance": {
+    "holdout_tuning_prohibited": true,
+    "holdout_period": "2023-2026",
+    "embargo_weeks": 26,
+    "survivorship_bias_disclosed": true,
+    "non_pit_data_prohibited": true
+  }
+}
