@@ -5,6 +5,9 @@ HEBDO AT META - classement par EV proxy avec garde-fous de calibration explicite
 
 import pandas as pd, numpy as np
 
+META_VALID_STATUS='TRAINED_PURGED_TEMPORAL_OOS'
+MAE_VALID_STATUS='CALIBRATED_TEMPORAL_OOS'
+
 class ExpectedValueRanker:
     def __init__(self, avg_win=0.14, avg_loss=-0.09, fee=0.003):
         self.avg_win=avg_win; self.avg_loss=avg_loss; self.fee=fee
@@ -16,11 +19,9 @@ class ExpectedValueRanker:
 
         mae_status=row.get('mae_model_status','UNAVAILABLE')
         raw_loss=row.get('prob_stop_9',np.nan)
-        if mae_status=='CALIBRATED_TEMPORAL_OOS' and pd.notna(raw_loss):
+        if mae_status==MAE_VALID_STATUS and pd.notna(raw_loss):
             p_loss=float(np.clip(raw_loss,0,1))
         else:
-            # Tant que le modèle MAE n'est pas calibré OOS, ne pas transformer
-            # le proxy heuristique en probabilité. Base conservatrice explicite.
             p_loss=0.30
 
         total=p_win+p_loss
@@ -42,9 +43,8 @@ class ExpectedValueRanker:
         if pd.notna(vol_z) and vol_z>4: malus-=0.025*mult
         if pd.notna(dte) and 0 <= dte <= 3: malus-=0.08
 
-        # Le proxy MAE peut seulement agir comme malus de risque, jamais comme probabilité.
         proxy=row.get('risk_stop_9_proxy',np.nan)
-        if mae_status!='CALIBRATED_TEMPORAL_OOS' and pd.notna(proxy):
+        if mae_status!=MAE_VALID_STATUS and pd.notna(proxy):
             malus-=max(0.0, float(proxy)-0.5)*0.04
         return float(ev_brut+malus-self.fee)
 
@@ -66,13 +66,13 @@ class ExpectedValueRanker:
         df.loc[(df['EV_net']>=ct_floor)&(df['EV_net']<tct_floor),'tier']='CT_WATCH'
         df.loc[df['EV_net']<0,'tier']='EXCLU'
 
-        meta_trained = df.get('meta_model_status', pd.Series('', index=df.index)).eq('TRAINED_TEMPORAL_OOS')
-        mae_calibrated = df.get('mae_model_status', pd.Series('', index=df.index)).eq('CALIBRATED_TEMPORAL_OOS')
+        meta_trained = df.get('meta_model_status', pd.Series('', index=df.index)).eq(META_VALID_STATUS)
+        mae_calibrated = df.get('mae_model_status', pd.Series('', index=df.index)).eq(MAE_VALID_STATUS)
         fully_calibrated = meta_trained & mae_calibrated
         df.loc[(df['tier']=='TCT') & ~fully_calibrated, 'tier']='CT_WATCH'
         df['selection_confidence']=np.where(
             fully_calibrated,
-            'FULL_TEMPORAL_OOS_CALIBRATION',
+            'FULL_PURGED_TEMPORAL_OOS_CALIBRATION',
             'DEGRADED_PARTIAL_OR_UNCALIBRATED_MODELS'
         )
         df['ev_model_status']=self.ev_status
