@@ -26,11 +26,21 @@ def main() -> None:
         required=False,
     )
 
+    # Preserve the historical public import contract without creating duplicate
+    # re-exports when the alias is formatted across multiple lines.
     selected = ROOT / "src/v182/sources/boursorama_selected_etf.py"
     selected_text = selected.read_text(encoding="utf-8")
-    compatibility = "from v182.sources.boursorama_etf_collect import collect_selected_etf_context_cached as collect_selected_etf_context_cached"
-    if compatibility not in selected_text:
-        selected.write_text(selected_text.rstrip() + f"\n\n# Compatibility re-export for governed callers.\n{compatibility}\n", encoding="utf-8")
+    compatibility_marker = "collect_selected_etf_context_cached as collect_selected_etf_context_cached"
+    compatibility_line = (
+        "from v182.sources.boursorama_etf_collect import "
+        "collect_selected_etf_context_cached as collect_selected_etf_context_cached"
+    )
+    if compatibility_marker not in selected_text:
+        selected.write_text(
+            selected_text.rstrip()
+            + f"\n\n# Compatibility re-export for governed callers.\n{compatibility_line}\n",
+            encoding="utf-8",
+        )
 
     weekly_tests = [
         "tests/test_action_ct_shared_history_runtime_v21_13_10.py",
