@@ -45,32 +45,112 @@ jobs:
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: data/cache/
-          key: ohlcv-v3-v22-1-prepare-${{ github.run_id }}
+          key: ohlcv-v4-v22-1-2023-2026-${{ github.run_id }}
           restore-keys: |
+            ohlcv-v4-v22-1-2023-2026-
             ohlcv-v3-
-      - name: Download missing OHLCV and reconstruct technical PIT
-        run: python tools/v22_1_data/prepare_historical_data.py --root . --batch-size 80
+      - name: Extend governed technical PIT through 2026 YTD
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("tools/v22_1_data/prepare_historical_data.py")
+          s = p.read_text(encoding="utf-8")
+          s = s.replace('END_DOWNLOAD = "2025-07-15"  # warmup + 126 sessions after 2024-12-31', 'END_DOWNLOAD = "2026-09-01"  # inclusive data target through 2026-08-31; yfinance end is exclusive')
+          s = s.replace('PIT_END = pd.Timestamp("2024-12-31")', 'PIT_END = pd.Timestamp("2026-08-28")  # last completed W-FRI at run design date')
+          s = s.replace('for year in range(2018, 2026):', 'for year in range(2018, 2027):')
+          p.write_text(s, encoding="utf-8")
+          PY
+          python tools/v22_1_data/prepare_historical_data.py --root . --batch-size 80
+          mv outputs/hebdo/data_v22_1/V22_1_OHLCV_2018_2025.parquet outputs/hebdo/data_v22_1/V22_1_OHLCV_2018_2026.parquet
+          mv outputs/hebdo/data_v22_1/V22_1_TECHNICAL_PIT_2019_2024.parquet outputs/hebdo/data_v22_1/V22_1_TECHNICAL_PIT_2019_2026.parquet
       - name: Persist historical ADV20 liquidity in PIT
         run: |
           python tools/v22_1_data/enrich_liquidity_pit.py \
-            --pit outputs/hebdo/data_v22_1/V22_1_TECHNICAL_PIT_2019_2024.parquet \
-            --ohlcv outputs/hebdo/data_v22_1/V22_1_OHLCV_2018_2025.parquet \
+            --pit outputs/hebdo/data_v22_1/V22_1_TECHNICAL_PIT_2019_2026.parquet \
+            --ohlcv outputs/hebdo/data_v22_1/V22_1_OHLCV_2018_2026.parquet \
             --min-adv-eur 800000 \
             --report outputs/hebdo/data_v22_1/V22_1_LIQUIDITY_PIT_REPORT.json \
-            --liquid-output outputs/hebdo/data_v22_1/V22_1_TECHNICAL_PIT_2019_2024_LIQUID.parquet
+            --liquid-output outputs/hebdo/data_v22_1/V22_1_TECHNICAL_PIT_2019_2026_LIQUID.parquet
       - name: Validate non-price PIT evidence fail-closed
         run: python tools/v22_1_data/validate_readiness.py
-      - name: Run optimized fixed -9pct full + liquid pair
+      - name: Run frozen 2019-2022 model against 2023-2026 OOS
         run: |
           python -m v182.hebdo.backtest_v22_1_fixed_pair \
-            --features outputs/hebdo/data_v22_1/V22_1_TECHNICAL_PIT_2019_2024.parquet \
-            --ohlcv outputs/hebdo/data_v22_1/V22_1_OHLCV_2018_2025.parquet \
+            --features outputs/hebdo/data_v22_1/V22_1_TECHNICAL_PIT_2019_2026.parquet \
+            --ohlcv outputs/hebdo/data_v22_1/V22_1_OHLCV_2018_2026.parquet \
             --start 2019-01-01 \
-            --end 2024-12-31 \
-            --holdout-start 2024-01-01 \
+            --end 2026-08-28 \
+            --holdout-start 2023-01-01 \
             --min-adv-eur 800000 \
             --out-root outputs/hebdo/backtest_v22_1
-      - name: Publish readiness, liquidity, fixed-stop comparison and quarterly statistics
+      - name: Build Full plus MAE 2023-2026 annual and quarterly validation tables
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import numpy as np
+          import pandas as pd
+
+          src = Path("outputs/hebdo/backtest_v22_1/fixed/V22_1_HOLDOUT_LEDGER.csv")
+          out = Path("outputs/hebdo/backtest_v22_1/fixed")
+          df = pd.read_csv(src)
+          df["as_of_date"] = pd.to_datetime(df["as_of_date"], errors="coerce")
+          df = df[df["as_of_date"].dt.year.between(2023, 2026)].copy()
+          df = df[df["mae_status"].eq("OK")].copy()
+          df["year"] = df["as_of_date"].dt.year.astype("Int64")
+          df["quarter"] = df["as_of_date"].dt.to_period("Q").astype(str)
+
+          def safe(v):
+              if v is None or pd.isna(v) or not np.isfinite(float(v)):
+                  return None
+              return float(v)
+
+          def metrics(g):
+              r = pd.to_numeric(g.get("forward_ret_true_26w"), errors="coerce")
+              matured = g.loc[r.notna()].copy()
+              rv = r.dropna()
+              wins = rv[rv > 0]
+              losses = rv[rv <= 0]
+              gain_mean = wins.mean() if len(wins) else np.nan
+              loss_mean = losses.mean() if len(losses) else np.nan
+              gross_gain = wins.sum() if len(wins) else 0.0
+              gross_loss = losses.sum() if len(losses) else 0.0
+              stop = matured.get("hit_stop")
+              stop_count = int(stop.fillna(False).astype(bool).sum()) if stop is not None else 0
+              mae = pd.to_numeric(matured.get("mae"), errors="coerce")
+              mfe = pd.to_numeric(matured.get("mfe"), errors="coerce")
+              return {
+                  "signals_after_mae": int(len(g)),
+                  "matured_26w": int(len(rv)),
+                  "unmatured_26w": int(len(g) - len(rv)),
+                  "gains": int((rv > 0).sum()),
+                  "losses_false_positives": int((rv <= 0).sum()),
+                  "win_rate": safe((rv > 0).mean()) if len(rv) else None,
+                  "avg_gain": safe(gain_mean),
+                  "avg_loss": safe(loss_mean),
+                  "expectancy": safe(rv.mean()) if len(rv) else None,
+                  "profit_factor": safe(gross_gain / abs(gross_loss)) if gross_loss < 0 else None,
+                  "rr_observed": safe(gain_mean / abs(loss_mean)) if pd.notna(gain_mean) and pd.notna(loss_mean) and loss_mean < 0 else None,
+                  "stops": stop_count,
+                  "stop_rate": safe(stop_count / len(rv)) if len(rv) else None,
+                  "mae_mean": safe(mae.mean()) if len(mae) else None,
+                  "mfe_mean": safe(mfe.mean()) if len(mfe) else None,
+              }
+
+          annual = []
+          for year, g in df.groupby("year", sort=True):
+              annual.append({"year": int(year), **metrics(g)})
+          quarterly = []
+          for quarter, g in df.groupby("quarter", sort=True):
+              quarterly.append({"quarter": quarter, **metrics(g)})
+
+          pd.DataFrame(annual).to_csv(out / "V22_1_FULL_MAE_ANNUAL_2023_2026.csv", index=False)
+          pd.DataFrame(quarterly).to_csv(out / "V22_1_FULL_MAE_QUARTERLY_2023_2026.csv", index=False)
+          (out / "V22_1_FULL_MAE_ANNUAL_2023_2026.json").write_text(json.dumps(annual, indent=2), encoding="utf-8")
+          (out / "V22_1_FULL_MAE_QUARTERLY_2023_2026.json").write_text(json.dumps(quarterly, indent=2), encoding="utf-8")
+          print(json.dumps({"annual": annual, "quarterly": quarterly}, indent=2))
+          PY
+      - name: Publish readiness, fixed-stop comparison and Full plus MAE validation statistics
         if: always()
         run: |
           for F in \
@@ -78,10 +158,10 @@ jobs:
             outputs/hebdo/data_v22_1/V22_1_LIQUIDITY_PIT_REPORT.json \
             outputs/hebdo/backtest_v22_1/V22_1_FIXED_PAIR_COMPARISON.json \
             outputs/hebdo/backtest_v22_1/fixed/V22_1_BACKTEST_REPORT.json \
-            outputs/hebdo/backtest_v22_1/fixed_liquid/V22_1_BACKTEST_REPORT.json \
             outputs/hebdo/backtest_v22_1/fixed/V22_1_GOVERNED_WEIGHTS.json \
             outputs/hebdo/backtest_v22_1/fixed/V22_1_QUARTERLY_STATS.json \
-            outputs/hebdo/backtest_v22_1/fixed_liquid/V22_1_QUARTERLY_STATS.json; do
+            outputs/hebdo/backtest_v22_1/fixed/V22_1_FULL_MAE_ANNUAL_2023_2026.json \
+            outputs/hebdo/backtest_v22_1/fixed/V22_1_FULL_MAE_QUARTERLY_2023_2026.json; do
             if [ -f "$F" ]; then
               echo "## $F" >> "$GITHUB_STEP_SUMMARY"
               echo '```json' >> "$GITHUB_STEP_SUMMARY"
@@ -90,16 +170,16 @@ jobs:
               cat "$F"
             fi
           done
-      - name: Upload prepared historical data and optimized fixed-stop results
+      - name: Upload prepared historical data and 2023-2026 validation results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: v22-1-historical-data-${{ github.run_id }}
+          name: v22-1-historical-data-2023-2026-${{ github.run_id }}
           path: |
             outputs/hebdo/data_v22_1/V22_1_VALIDATED_IDENTITIES.csv
-            outputs/hebdo/data_v22_1/V22_1_OHLCV_2018_2025.parquet
-            outputs/hebdo/data_v22_1/V22_1_TECHNICAL_PIT_2019_2024.parquet
-            outputs/hebdo/data_v22_1/V22_1_TECHNICAL_PIT_2019_2024_LIQUID.parquet
+            outputs/hebdo/data_v22_1/V22_1_OHLCV_2018_2026.parquet
+            outputs/hebdo/data_v22_1/V22_1_TECHNICAL_PIT_2019_2026.parquet
+            outputs/hebdo/data_v22_1/V22_1_TECHNICAL_PIT_2019_2026_LIQUID.parquet
             outputs/hebdo/data_v22_1/V22_1_LIQUIDITY_PIT_REPORT.json
             outputs/hebdo/data_v22_1/V22_1_DOWNLOAD_FAILURES.json
             outputs/hebdo/data_v22_1/V22_1_DATA_READINESS.json
