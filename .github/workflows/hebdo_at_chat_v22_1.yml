@@ -1,0 +1,86 @@
+name: HEBDO AT CHAT V22.1 Friday
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 22 * * 5"
+      timezone: "Europe/Paris"
+
+concurrency:
+  group: hebdo-at-chat-v22-1
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PIP_CONSTRAINT: ${{ github.workspace }}/constraints-ci.txt
+  PYTHONPATH: ${{ github.workspace }}/src
+
+jobs:
+  hebdo-v22-1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Restore governed HEBDO V22.1 state
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: state/hebdo_v22_1/
+          key: hebdo-v22-1-state-${{ github.run_id }}
+          restore-keys: |
+            hebdo-v22-1-state-
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-runtime.txt
+      - name: Install runtime
+        run: python -m pip install --prefer-binary -r requirements-runtime.txt
+      - name: Validate required PIT weekly state
+        id: state
+        shell: bash
+        run: |
+          mkdir -p outputs/hebdo
+          missing=0
+          for f in state/hebdo_v22_1/PIT_FEATURES_LATEST.csv state/hebdo_v22_1/GOVERNED_WEIGHTS.json state/hebdo_v22_1/CAC40_PIT_DAILY.csv; do
+            if [ ! -s "$f" ]; then echo "Missing required state: $f"; missing=1; fi
+          done
+          if [ "$missing" -eq 1 ]; then
+            printf '%s\n' '{"version":"V22.1","status":"BLOCK_DATA","reason":"PIT features, governed weights or CAC40 PIT history missing","real_orders_enabled":false}' > outputs/hebdo/HEBDO_AT_CHAT_V22_1_BLOCK.json
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Derive governed CAC40 regime
+        if: steps.state.outputs.ready == 'true'
+        id: regime
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import pandas as pd
+          from v182.hebdo.hebdo_at_chat_v22 import detect_market_regime
+          df = pd.read_csv('state/hebdo_v22_1/CAC40_PIT_DAILY.csv')
+          regime = detect_market_regime(df)
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as fh:
+              fh.write(f"name={regime.name}\n")
+              fh.write(f"ret={regime.two_week_return}\n")
+          PY
+      - name: Run V22.1 weekly selection and Friday dashboard
+        if: steps.state.outputs.ready == 'true'
+        run: |
+          python -m v182.hebdo.hebdo_at_chat_v22_1 --features state/hebdo_v22_1/PIT_FEATURES_LATEST.csv --weights state/hebdo_v22_1/GOVERNED_WEIGHTS.json --regime "${{ steps.regime.outputs.name }}" --cac40-2w-return "${{ steps.regime.outputs.ret }}" --root .
+      - name: Publish HEBDO status
+        if: always()
+        shell: bash
+        run: |
+          if [ -f outputs/hebdo/HEBDO_AT_CHAT_V22_1_DASHBOARD.json ]; then cat outputs/hebdo/HEBDO_AT_CHAT_V22_1_DASHBOARD.json >> "$GITHUB_STEP_SUMMARY"; elif [ -f outputs/hebdo/HEBDO_AT_CHAT_V22_1_BLOCK.json ]; then cat outputs/hebdo/HEBDO_AT_CHAT_V22_1_BLOCK.json >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Upload HEBDO V22.1 audit artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hebdo-at-chat-v22-1-${{ github.run_id }}
+          path: outputs/hebdo/
+          if-no-files-found: error
+          retention-days: 30
