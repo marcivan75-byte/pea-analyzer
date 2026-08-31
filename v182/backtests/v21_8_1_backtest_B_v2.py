@@ -70,7 +70,6 @@ def compute_true_26w_pnl(entry_price: float, hist_126d: pd.DataFrame, stop_pct: 
             "block_reason": None,
         }
 
-    # Sans stop, un horizon incomplet ne constitue pas un vrai P&L 26 semaines.
     if len(hist_126d) < expected_days:
         return {**block, "block_reason": f"BLOCK_DATA_INCOMPLETE_HORIZON_{len(hist_126d)}d"}
 
@@ -91,13 +90,54 @@ def compute_true_26w_pnl(entry_price: float, hist_126d: pd.DataFrame, stop_pct: 
     }
 
 
+def _signal_date(idx, sig: pd.Series):
+    raw = sig.get('date', idx)
+    try:
+        return pd.Timestamp(raw)
+    except Exception:
+        return None
+
+
+def _future_path(df_prices: pd.DataFrame, ticker: str, signal_date, forward: int) -> pd.DataFrame:
+    """Retourne uniquement le chemin futur du ticker concerné, trié chronologiquement."""
+    if signal_date is None:
+        return pd.DataFrame()
+    prices = df_prices.copy()
+    if 'ticker' in prices.columns:
+        prices = prices[prices['ticker'].astype(str) == str(ticker)]
+    elif ticker:
+        # Univers multi-titres sans colonne ticker : impossible de garantir l'isolation.
+        return pd.DataFrame()
+
+    if 'date' in prices.columns:
+        dates = pd.to_datetime(prices['date'], errors='coerce')
+        if dates.isna().any():
+            return pd.DataFrame()
+        prices = prices.assign(_bt_date=dates).sort_values('_bt_date')
+        prices = prices[prices['_bt_date'] > pd.Timestamp(signal_date)].drop(columns=['_bt_date'])
+        return prices.iloc[:forward]
+
+    if isinstance(prices.index, pd.DatetimeIndex):
+        prices = prices.sort_index()
+        return prices.loc[prices.index > pd.Timestamp(signal_date)].iloc[:forward]
+
+    # Sans axe temporel explicite, le backtest ne peut pas établir le futur sans ambiguïté.
+    return pd.DataFrame()
+
+
 def run_backtest_B_v2(df_signals: pd.DataFrame, df_prices: pd.DataFrame, stop_pct=0.09, forward=126) -> pd.DataFrame:
-    """Évalue chaque signal à partir de la séance suivante, sans inclure la barre d'entrée."""
+    """Évalue chaque signal sur son ticker uniquement, à partir de la séance suivante."""
+    if 'B_signal' not in df_signals.columns:
+        raise ValueError('BLOCK_DATA_BACKTEST: B_signal missing')
     results = []
     for idx, sig in df_signals[df_signals['B_signal']].iterrows():
-        entry = sig['close']
-        hist = df_prices.loc[idx:].iloc[1:forward + 1] if idx in df_prices.index else pd.DataFrame()
+        entry = sig.get('close')
+        ticker = str(sig.get('ticker', ''))
+        signal_date = _signal_date(idx, sig)
+        hist = _future_path(df_prices, ticker, signal_date, forward)
         res = compute_true_26w_pnl(entry, hist, stop_pct, expected_days=forward)
-        res.update({"date": idx, "ticker": sig.get('ticker', ''), "entry": entry, "type": sig.get('B_signal_type', '')})
+        if hist.empty and res.get('block_reason') == 'BLOCK_DATA':
+            res['block_reason'] = 'BLOCK_DATA_PRICE_PATH'
+        res.update({"date": signal_date, "ticker": ticker, "entry": entry, "type": sig.get('B_signal_type', '')})
         results.append(res)
     return pd.DataFrame(results)
