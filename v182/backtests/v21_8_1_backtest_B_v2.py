@@ -9,12 +9,9 @@ def _detect_B_one(df_daily: pd.DataFrame) -> pd.DataFrame:
     if missing: raise ValueError(f"BLOCK_DATA_B_DETECT: missing {sorted(missing)}")
     for c in required: df[c]=pd.to_numeric(df[c],errors='coerce')
     if not np.isfinite(df[list(required)].to_numpy(dtype=float)).all(): raise ValueError('BLOCK_DATA_B_DETECT: non-finite OHLCV')
-    if 'date' in df.columns:
-        dates=pd.to_datetime(df['date'],errors='coerce',utc=True)
-    elif isinstance(df.index,pd.DatetimeIndex):
-        dates=pd.to_datetime(df.index,errors='coerce',utc=True)
-    else:
-        raise ValueError('BLOCK_DATA_B_DETECT: explicit date or DatetimeIndex required')
+    if 'date' in df.columns: dates=pd.to_datetime(df['date'],errors='coerce',utc=True)
+    elif isinstance(df.index,pd.DatetimeIndex): dates=pd.to_datetime(df.index,errors='coerce',utc=True)
+    else: raise ValueError('BLOCK_DATA_B_DETECT: explicit date or DatetimeIndex required')
     if pd.isna(dates).any() or pd.Index(dates).duplicated().any(): raise ValueError('BLOCK_DATA_B_DETECT: invalid/duplicate dates')
     df=df.assign(_b_date=dates).sort_values('_b_date').drop(columns=['_b_date'])
     df['volume_avg20']=df['volume'].rolling(20,min_periods=20).mean(); df['volume_std20']=df['volume'].rolling(20,min_periods=20).std()
@@ -31,30 +28,43 @@ def _detect_B_one(df_daily: pd.DataFrame) -> pd.DataFrame:
 def detect_B_v2(df_daily:pd.DataFrame)->pd.DataFrame:
     if df_daily.empty: return df_daily.copy()
     work=df_daily.copy(); work['_b_order']=np.arange(len(work))
-    if 'ticker' not in work.columns:
-        return _detect_B_one(work).sort_values('_b_order').drop(columns=['_b_order'])
+    if 'ticker' not in work.columns: return _detect_B_one(work).sort_values('_b_order').drop(columns=['_b_order'])
     if work['ticker'].isna().any() or work['ticker'].astype(str).str.strip().eq('').any(): raise ValueError('BLOCK_DATA_B_DETECT: invalid ticker')
     parts=[_detect_B_one(g) for _,g in work.groupby('ticker',sort=False)]
     return pd.concat(parts).sort_values('_b_order').drop(columns=['_b_order'])
 
 
+def _valid_ohlc_row(row: pd.Series):
+    vals=pd.to_numeric(row[['open','high','low','close']],errors='coerce')
+    if vals.isna().any() or not np.isfinite(vals.to_numpy(dtype=float)).all(): return None,'BLOCK_DATA_OHLC_NONFINITE'
+    o,h,l,c=map(float,[vals['open'],vals['high'],vals['low'],vals['close']])
+    if min(o,h,l,c)<=0: return None,'BLOCK_DATA_OHLC_NONPOSITIVE'
+    if l>h or o<l or o>h or c<l or c>h: return None,'BLOCK_DATA_OHLC_INCONSISTENT'
+    return (o,h,l,c),None
+
+
 def compute_true_26w_pnl(entry_price:float,hist_126d:pd.DataFrame,stop_pct:float=0.09,expected_days:int=126)->Dict:
+    """Valide les barres séquentiellement: une donnée postérieure à la sortie ne peut invalider le trade."""
     block={'pnl':None,'hit_stop':None,'day_stop':None,'mae':None,'mfe':None,'exit_price':None}
     entry=pd.to_numeric(pd.Series([entry_price]),errors='coerce').iloc[0]
     if hist_126d is None or len(hist_126d)==0 or pd.isna(entry) or not np.isfinite(float(entry)) or entry<=0: return {**block,'block_reason':'BLOCK_DATA'}
-    entry=float(entry); required={'open','high','low','close'}; missing=required-set(hist_126d.columns)
+    required={'open','high','low','close'}; missing=required-set(hist_126d.columns)
     if missing: return {**block,'block_reason':f"BLOCK_DATA_OHLC_MISSING_{'_'.join(sorted(missing))}"}
-    ohlc=hist_126d[['open','high','low','close']].apply(pd.to_numeric,errors='coerce')
-    if not np.isfinite(ohlc.to_numpy(dtype=float)).all(): return {**block,'block_reason':'BLOCK_DATA_OHLC_NONFINITE'}
-    if (ohlc<=0).any().any(): return {**block,'block_reason':'BLOCK_DATA_OHLC_NONPOSITIVE'}
-    if ((ohlc['low']>ohlc['high'])|(ohlc['open']<ohlc['low'])|(ohlc['open']>ohlc['high'])|(ohlc['close']<ohlc['low'])|(ohlc['close']>ohlc['high'])).any(): return {**block,'block_reason':'BLOCK_DATA_OHLC_INCONSISTENT'}
     if not (0<stop_pct<1) or expected_days<1: return {**block,'block_reason':'BLOCK_DATA_BACKTEST_PARAMETERS'}
-    lows=ohlc['low']; highs=ohlc['high']; opens=ohlc['open']; closes=ohlc['close']; stop_level=entry*(1-stop_pct); hit=lows<=stop_level
-    if hit.any():
-        pos=int(np.flatnonzero(hit.to_numpy())[0]); day=pos+1; open_px=float(opens.iloc[pos]); exit_px=open_px if open_px<stop_level else stop_level
-        return {'pnl':float(exit_px/entry-1),'hit_stop':True,'day_stop':day,'mae':float(lows.iloc[:day].min()/entry-1),'mfe':float(highs.iloc[:day].max()/entry-1),'exit_price':float(exit_px),'block_reason':None}
+    entry=float(entry); stop_level=entry*(1-stop_pct); lows_seen=[]; highs_seen=[]
+    horizon=min(len(hist_126d),expected_days)
+    for pos in range(horizon):
+        vals,err=_valid_ohlc_row(hist_126d.iloc[pos])
+        if err: return {**block,'block_reason':err}
+        open_px,high_px,low_px,close_px=vals
+        lows_seen.append(low_px); highs_seen.append(high_px)
+        if low_px<=stop_level:
+            exit_px=open_px if open_px<stop_level else stop_level
+            return {'pnl':float(exit_px/entry-1),'hit_stop':True,'day_stop':pos+1,'mae':float(min(lows_seen)/entry-1),'mfe':float(max(highs_seen)/entry-1),'exit_price':float(exit_px),'block_reason':None}
     if len(hist_126d)<expected_days: return {**block,'block_reason':f'BLOCK_DATA_INCOMPLETE_HORIZON_{len(hist_126d)}d'}
-    exit_px=float(closes.iloc[expected_days-1]); return {'pnl':float(exit_px/entry-1),'hit_stop':False,'day_stop':expected_days,'mae':float(lows.iloc[:expected_days].min()/entry-1),'mfe':float(highs.iloc[:expected_days].max()/entry-1),'exit_price':exit_px,'block_reason':None}
+    # Toutes les barres jusqu'à l'horizon ont déjà été validées dans la boucle.
+    exit_px=float(pd.to_numeric(hist_126d.iloc[expected_days-1]['close'],errors='coerce'))
+    return {'pnl':float(exit_px/entry-1),'hit_stop':False,'day_stop':expected_days,'mae':float(min(lows_seen)/entry-1),'mfe':float(max(highs_seen)/entry-1),'exit_price':exit_px,'block_reason':None}
 
 
 def _signal_date(idx,sig):
@@ -69,10 +79,8 @@ def _future_path(df_prices:pd.DataFrame,ticker:str,signal_date,forward:int)->pd.
     prices=df_prices.copy()
     if 'ticker' in prices.columns: prices=prices[prices['ticker'].astype(str)==str(ticker)]
     elif ticker: return pd.DataFrame()
-    if 'date' in prices.columns:
-        dates=pd.to_datetime(prices['date'],errors='coerce',utc=True)
-    elif isinstance(prices.index,pd.DatetimeIndex):
-        dates=pd.to_datetime(prices.index,errors='coerce',utc=True)
+    if 'date' in prices.columns: dates=pd.to_datetime(prices['date'],errors='coerce',utc=True)
+    elif isinstance(prices.index,pd.DatetimeIndex): dates=pd.to_datetime(prices.index,errors='coerce',utc=True)
     else: return pd.DataFrame()
     if pd.isna(dates).any(): return pd.DataFrame()
     prices=prices.assign(_bt_date=dates).sort_values('_bt_date')
