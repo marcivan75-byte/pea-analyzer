@@ -4,6 +4,8 @@ import numpy as np
 from v182.hebdo.confirmation_entry import ConfirmationEntry
 from v182.hebdo.fp_early_exit import FPEarlyExit
 from v182.hebdo.meta_labeler import MetaLabeler
+from v182.hebdo.false_positive_filter import FalsePositiveFilter
+from v182.hebdo.expected_value_ranker import ExpectedValueRanker
 from v182.hebdo.hebdo_at_meta import HebdoATMeta
 
 
@@ -38,6 +40,49 @@ def test_meta_pipeline_fail_closed_missing_feature():
         assert False, 'expected BLOCK_DATA_META'
     except ValueError as e:
         assert 'BLOCK_DATA_META' in str(e)
+
+
+def test_meta_pipeline_fail_closed_missing_liquidity():
+    df=make_features().drop(columns=['adv_20m_eur'])
+    try:
+        HebdoATMeta().run(df)
+        assert False, 'expected BLOCK_DATA_META'
+    except ValueError as e:
+        assert 'BLOCK_DATA_META' in str(e)
+
+
+def test_meta_pipeline_blocks_if_all_filtered():
+    df=make_features(10)
+    df['adv_20m_eur']=1000
+    try:
+        HebdoATMeta().run(df)
+        assert False, 'expected fully rejected BLOCK_DATA_META'
+    except ValueError as e:
+        assert 'fully rejected' in str(e)
+
+
+def test_past_earnings_are_not_future_event_exclusions():
+    f=FalsePositiveFilter()
+    row=pd.Series({
+        'close':100,'sma200':90,'drawdown_4w':-0.02,'atr_14_pct':0.03,
+        'vol_z':1,'days_to_earnings':-2,'adv_20m_eur':2_000_000,'mom_26w_sector':0,
+    })
+    blocked, reason=f.is_loser_certain(row)
+    assert blocked is False and reason == ''
+
+
+def test_negative_ev_never_promoted():
+    r=ExpectedValueRanker(avg_win=0.01, avg_loss=-0.20, fee=0.02)
+    df=pd.DataFrame({
+        'prob_meta':[0.1,0.2,0.3],
+        'prob_stop_9':[0.8,0.7,0.6],
+        'mom_26w_sector':[0,0,0],
+        'drawdown_4w':[0,0,0],
+        'vol_z':[0,0,0],
+    })
+    out=r.rank_batch(df)
+    assert (out['EV_net']<0).all()
+    assert (out['tier']=='EXCLU').all()
 
 
 def test_confirmation_uses_requested_ticker():
