@@ -11,13 +11,12 @@ def _detect_B_one(df_daily: pd.DataFrame) -> pd.DataFrame:
     if not np.isfinite(df[list(required)].to_numpy(dtype=float)).all(): raise ValueError('BLOCK_DATA_B_DETECT: non-finite OHLCV')
     if 'date' in df.columns:
         dates=pd.to_datetime(df['date'],errors='coerce',utc=True)
-        if dates.isna().any() or dates.duplicated().any(): raise ValueError('BLOCK_DATA_B_DETECT: invalid/duplicate dates')
-        df=df.assign(_b_date=dates).sort_values('_b_date').drop(columns=['_b_date'])
     elif isinstance(df.index,pd.DatetimeIndex):
-        dates=pd.to_datetime(df.index,utc=True)
-        if dates.duplicated().any(): raise ValueError('BLOCK_DATA_B_DETECT: duplicate dates')
-        df=df.assign(_b_date=dates).sort_values('_b_date').drop(columns=['_b_date'])
-    # Recalcul systématique dans le groupe: aucun indicateur pré-calculé potentiellement contaminé n'est approuvé.
+        dates=pd.to_datetime(df.index,errors='coerce',utc=True)
+    else:
+        raise ValueError('BLOCK_DATA_B_DETECT: explicit date or DatetimeIndex required')
+    if pd.isna(dates).any() or pd.Index(dates).duplicated().any(): raise ValueError('BLOCK_DATA_B_DETECT: invalid/duplicate dates')
+    df=df.assign(_b_date=dates).sort_values('_b_date').drop(columns=['_b_date'])
     df['volume_avg20']=df['volume'].rolling(20,min_periods=20).mean(); df['volume_std20']=df['volume'].rolling(20,min_periods=20).std()
     df['sma20']=df['close'].rolling(20,min_periods=20).mean(); df['sma200']=df['close'].rolling(200,min_periods=200).mean()
     prev=df['close'].shift(1); tr=pd.concat([(df['high']-df['low']),(df['high']-prev).abs(),(df['low']-prev).abs()],axis=1).max(axis=1)
