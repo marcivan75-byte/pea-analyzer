@@ -28,11 +28,21 @@ def make_features(n=100):
     })
 
 
+class FakePreopen:
+    def enrich(self, df, as_of_date):
+        out=df.copy()
+        out['gap_overnight']=0.01
+        out['preopen_data_status']='OK'
+        out['score_preopen']=out['EV_net']
+        return out
+
+
 def test_meta_pipeline_runs_and_ranks():
     out=HebdoATMeta().run(make_features())
     assert len(out)>0
     assert {'EV_net','tier','prob_stop_9','prob_meta','META_STATUS','selection_confidence','mae_model_status'}.issubset(out.columns)
     assert out['EV_net'].is_monotonic_decreasing
+    assert (out['process_stage']=='RANKED').all()
 
 
 def test_uncalibrated_models_never_promote_tct():
@@ -40,6 +50,22 @@ def test_uncalibrated_models_never_promote_tct():
     assert not (out['tier']=='TCT').any()
     assert (out['selection_confidence']=='DEGRADED_PARTIAL_OR_UNCALIBRATED_MODELS').all()
     assert (out['mae_model_status']=='HEURISTIC_UNCALIBRATED').all()
+
+
+def test_staged_orchestrator_preopen_confirmation_and_exit():
+    proc=HebdoATMeta(preopen_enricher=FakePreopen())
+    ranked=proc.run(make_features(40))
+    pre=proc.run_preopen(ranked, '2026-01-05')
+    assert not pre.empty
+    assert (pre['process_stage']=='PREOPEN_ENRICHED').all()
+    first=pre.iloc[[0]].copy()
+    first['date']='2026-01-02'
+    bars=pd.DataFrame([{'ticker':first.iloc[0]['ticker'],'date':'2026-01-05','open':first.iloc[0]['close'],'close':first.iloc[0]['close']*1.01,'vol_z':1}])
+    confirmed=proc.run_confirmation_j1(first,bars)
+    assert len(confirmed)==1 and bool(confirmed.iloc[0]['enter_confirmed']) is True
+    assert confirmed.iloc[0]['process_stage']=='J1_CONFIRMATION'
+    hit=proc.check_early_exit(100, {'open':100,'close':97,'low':96.5}, 2)
+    assert hit[0] is True and hit[1].startswith('FAIL_FAST_J2')
 
 
 def test_meta_pipeline_fail_closed_missing_feature():
@@ -66,6 +92,13 @@ def test_invalid_critical_rows_are_dropped_not_scored():
     out=HebdoATMeta().run(df)
     assert int(out['meta_invalid_rows_dropped'].iloc[0]) == 1
     assert 'T0' not in set(out['ticker'])
+
+
+def test_infinite_critical_values_are_dropped():
+    df=make_features(20)
+    df.loc[0,'vol_z']=np.inf
+    out=HebdoATMeta().run(df)
+    assert int(out['meta_invalid_rows_dropped'].iloc[0]) == 1
 
 
 def test_meta_pipeline_blocks_if_all_filtered():
