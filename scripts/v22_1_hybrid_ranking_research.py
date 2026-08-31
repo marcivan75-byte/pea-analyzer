@@ -24,7 +24,7 @@ def load_prior_high_targets(price_path: Path) -> pd.DataFrame:
     date_col = next((c for c in ("date", "market_data_date", "as_of_date") if c in p.columns), None)
     if date_col is None or "isin" not in p.columns or "high" not in p.columns:
         raise SystemExit("BLOCK_RR_TARGET_DATA: governed OHLC history lacks isin/date/high")
-    p["date"] = pd.to_datetime(p[date_col], errors="coerce").dt.normalize()
+    p["date"] = pd.to_datetime(p[date_col], errors="coerce").dt.normalize().astype("datetime64[ns]")
     p["high"] = n(p["high"])
     p = p.dropna(subset=["isin", "date", "high"])
     p = p.sort_values(["isin", "date"], kind="stable").drop_duplicates(["isin", "date"], keep="last")
@@ -39,7 +39,7 @@ def load_prior_high_targets(price_path: Path) -> pd.DataFrame:
 
 def attach_target(raw: pd.DataFrame, target_hist: pd.DataFrame) -> pd.DataFrame:
     x = raw.copy()
-    x["date"] = pd.to_datetime(x["as_of_date"], errors="coerce").dt.normalize()
+    x["date"] = pd.to_datetime(x["as_of_date"], errors="coerce").dt.normalize().astype("datetime64[ns]")
     x["_row_id"] = np.arange(len(x))
     left = x.dropna(subset=["isin", "date"]).sort_values(["date", "isin"], kind="stable")
     right = target_hist.sort_values(["date", "isin"], kind="stable")
