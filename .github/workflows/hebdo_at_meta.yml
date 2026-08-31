@@ -7,6 +7,7 @@ on:
       - 'v182/**'
       - 'tests/test_hebdo_at_meta.py'
       - 'tests/test_backtest_B_v2.py'
+      - 'tests/test_pit_loader_meta.py'
       - '.github/workflows/hebdo_at_meta.yml'
   workflow_dispatch:
 
@@ -35,4 +36,4 @@ jobs:
       - name: Compile Meta modules
         run: python -m compileall -q v182
       - name: Run HEBDO AT META tests
-        run: python -m pytest -q tests/test_backtest_B_v2.py tests/test_hebdo_at_meta.py
+        run: python -m pytest -q tests/test_backtest_B_v2.py tests/test_hebdo_at_meta.py tests/test_pit_loader_meta.py
