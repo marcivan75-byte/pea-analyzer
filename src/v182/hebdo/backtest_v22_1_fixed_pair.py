@@ -119,12 +119,24 @@ def _write_variant(
 ) -> dict[str, object]:
     ledger = ledger.copy()
     ledger["as_of_date"] = pd.to_datetime(ledger["as_of_date"], errors="coerce")
-    train = ledger[ledger["as_of_date"] < pd.Timestamp(holdout_start)].copy()
-    holdout = ledger[ledger["as_of_date"] >= pd.Timestamp(holdout_start)].copy()
+    ledger["label_end_date_26w"] = pd.to_datetime(ledger["label_end_date_26w"], errors="coerce")
+    holdout_ts = pd.Timestamp(holdout_start)
+    train = ledger[
+        ledger["label_end_date_26w"].notna()
+        & (ledger["label_end_date_26w"] < holdout_ts)
+    ].copy()
+    embargo = ledger[
+        (ledger["as_of_date"] < holdout_ts)
+        & ledger["label_end_date_26w"].notna()
+        & (ledger["label_end_date_26w"] >= holdout_ts)
+    ].copy()
+    holdout = ledger[ledger["as_of_date"] >= holdout_ts].copy()
     if len(train) < 150 or len(holdout) < 30:
         raise HistoricalPITUnavailable(
             f"BLOCK_DATA_BACKTEST: temporal split insufficient train={len(train)} holdout={len(holdout)}"
         )
+    if not embargo.empty and bool((train["label_end_date_26w"] >= holdout_ts).any()):
+        raise HistoricalPITUnavailable("BLOCK_LOOKAHEAD_BACKTEST: training label crosses holdout boundary")
 
     ic_train, weights, model_meta = train_governed_model(train, feature_columns=FIXED_NO_ATR_FEATURE_COLUMNS)
     mae_model = train_stop_model(train)
@@ -153,6 +165,8 @@ def _write_variant(
         "fixed_stop_pct": 0.09,
         "atr_removed_from_stop_and_ranking": True,
         "execution_policy": "NEXT_SESSION_OPEN_J1",
+        "label_embargo": "EXACT_26W_LABEL_END_BEFORE_HOLDOUT",
+        "embargo_rows": int(len(embargo)),
         "universe": universe,
         "full_enhanced_pit_claimed": False,
         "train_rows": int(len(train)),
@@ -181,6 +195,7 @@ def _write_variant(
     out_dir.mkdir(parents=True, exist_ok=True)
     ledger.to_csv(out_dir / "V22_1_TRUE_FORWARD_LEDGER.csv", index=False)
     train.to_csv(out_dir / "V22_1_TRAIN_LEDGER.csv", index=False)
+    embargo.to_csv(out_dir / "V22_1_EMBARGO_LEDGER.csv", index=False)
     holdout.to_csv(out_dir / "V22_1_HOLDOUT_LEDGER.csv", index=False)
     ic_train.to_csv(out_dir / "V22_1_IC_TRAIN_26W.csv", index=False)
     q.to_csv(out_dir / "V22_1_QUARTERLY_STATS.csv", index=False)
@@ -237,6 +252,7 @@ def main() -> int:
     comparison = {
         "runtime_design": "ONE_FIXED_FORWARD_LEDGER_REUSED_FOR_FULL_AND_LIQUID",
         "atr_removed_from_stop_and_ranking": True,
+        "label_embargo": "EXACT_26W_LABEL_END_BEFORE_HOLDOUT",
         "min_adv_eur": args.min_adv_eur,
         "full": full_report,
         "liquid": liquid_report,
