@@ -8,6 +8,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from v22_1_hybrid_ranking_research import add_features as add_rr_features
+from v22_1_hybrid_ranking_research import attach_target, load_prior_high_targets
+
 HOLDOUT_START = pd.Timestamp("2023-01-01")
 EMBARGO = pd.Timedelta(weeks=26)
 BIG_WIN = 0.15
@@ -26,7 +29,7 @@ def num(df: pd.DataFrame, col: str) -> pd.Series:
 
 def build(df: pd.DataFrame) -> pd.DataFrame:
     x = pd.DataFrame(index=df.index)
-    x["date"] = pd.to_datetime(df["as_of_date"], errors="coerce")
+    x["date"] = pd.to_datetime(df["as_of_date"], errors="coerce").dt.normalize()
     x["ret26"] = num(df, "forward_ret_true_26w")
     x["stop"] = df["hit_stop"].astype("boolean")
     mom = num(df, "mom_26w")
@@ -44,9 +47,12 @@ def build(df: pd.DataFrame) -> pd.DataFrame:
     x["H_MOM_DD"] = mom * (1.0 - dd.abs())
     x["H_TREND_VOL"] = trend / (atr.abs() + eps)
     x["H_OPPORTUNITY_RISK"] = mom / (atr.abs() + dd.abs() + eps)
-    req = ["date", "ret26", "stop", "H_MOM_VOL", "H_TREND_DD", "H_RSI_TREND", "H_VOL_DD", "H_MOM_DD", "H_TREND_VOL", "H_OPPORTUNITY_RISK"]
+    rr = pd.to_numeric(df.get("rr_ex_ante"), errors="coerce")
+    x["H_RR_EX_ANTE"] = np.log1p(rr.where(np.isfinite(rr) & (rr > 0)))
+
+    technical = ["H_MOM_VOL", "H_TREND_DD", "H_RSI_TREND", "H_VOL_DD", "H_MOM_DD", "H_TREND_VOL", "H_OPPORTUNITY_RISK"]
     valid = x["date"].notna() & x["ret26"].notna() & x["stop"].notna()
-    for c in req[3:]:
+    for c in technical:
         valid &= np.isfinite(x[c])
     out = x.loc[valid].copy()
     out["stop"] = out["stop"].astype(bool)
@@ -57,44 +63,59 @@ def metrics(g: pd.DataFrame) -> dict[str, float | int | None]:
     if g.empty:
         return {"n": 0, "win_rate": None, "stop_rate": None, "expectancy": None, "profit_factor": None, "payoff_ratio": None, "big_winners": 0}
     r = g["ret26"].astype(float)
-    w = r[r > 0]
-    l = r[r <= 0]
-    gp = float(w.sum()) if len(w) else 0.0
-    gl = float((-l).sum()) if len(l) else 0.0
-    aw = float(w.mean()) if len(w) else None
-    al = float(l.mean()) if len(l) else None
-    return {"n": int(len(g)), "win_rate": float((r > 0).mean()), "stop_rate": float(g["stop"].mean()), "expectancy": float(r.mean()), "profit_factor": float(gp / gl) if gl > 0 else None, "payoff_ratio": float(aw / abs(al)) if aw is not None and al not in (None, 0.0) else None, "big_winners": int((r >= BIG_WIN).sum())}
+    w, l = r[r > 0], r[r <= 0]
+    gp, gl = float(w.sum()), float((-l).sum())
+    return {
+        "n": int(len(g)),
+        "win_rate": float((r > 0).mean()),
+        "stop_rate": float(g["stop"].mean()),
+        "expectancy": float(r.mean()),
+        "profit_factor": float(gp / gl) if gl > 0 else None,
+        "payoff_ratio": float(w.mean() / abs(l.mean())) if len(w) and len(l) and l.mean() != 0 else None,
+        "big_winners": int((r >= BIG_WIN).sum()),
+    }
 
 
-def percentile_risk(valid: pd.DataFrame, target: pd.DataFrame, col: str) -> tuple[np.ndarray, int, float]:
-    vv = valid[[col, "stop"]].dropna()
-    corr = float(vv[col].rank(method="average").corr(vv["stop"].astype(float).rank(method="average"))) if len(vv) > 2 else 0.0
+def percentile_risk(fit: pd.DataFrame, target: pd.DataFrame, col: str) -> tuple[np.ndarray, int, float]:
+    vv = fit[[col, "stop"]].dropna()
+    if len(vv) < 100:
+        return np.ones(len(target), dtype=float), 1, 0.0
+    corr = float(vv[col].rank(method="average").corr(vv["stop"].astype(float).rank(method="average")))
     direction = 1 if corr >= 0 else -1
-    ref = np.sort(valid[col].to_numpy(float) * direction)
-    vals = target[col].to_numpy(float) * direction
-    ranks = np.searchsorted(ref, vals, side="right") / max(len(ref), 1)
-    return ranks, direction, corr
+    ref = np.sort(vv[col].to_numpy(float) * direction)
+    vals = target[col].to_numpy(float)
+    risk = np.ones(len(target), dtype=float)  # missing PIT input fails closed
+    ok = np.isfinite(vals)
+    risk[ok] = np.searchsorted(ref, vals[ok] * direction, side="right") / max(len(ref), 1)
+    return risk, direction, corr
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--input-dir", type=Path, required=True)
+    ap.add_argument("--price-parquet", type=Path, required=True)
     ap.add_argument("--out-dir", type=Path, required=True)
     args = ap.parse_args()
 
-    # Pass 2 is deliberately blind to V22_1_HOLDOUT.csv. 2023-2026 remains sealed
-    # until the final frozen evaluation after pass 6.
-    train = build(pd.read_csv(args.input_dir / "V22_1_TRAIN.csv", low_memory=False))
+    raw = pd.read_csv(args.input_dir / "V22_1_TRAIN.csv", low_memory=False)
+    targets = load_prior_high_targets(args.price_parquet)
+    raw = add_rr_features(attach_target(raw, targets))
+    train = build(raw)
+
     embargo_cutoff = HOLDOUT_START - EMBARGO
     if train.empty or train["date"].max() >= embargo_cutoff:
         raise SystemExit(f"BLOCK_HYBRID_EMBARGO: train max date must be before {embargo_cutoff.date()}")
 
-    split = int(len(train) * 0.80)
-    valid = train.iloc[split:].copy()
-    if len(valid) < 1000:
-        raise SystemExit("BLOCK_HYBRID_DATA: insufficient pre2023 validation")
+    dates = np.array(sorted(train["date"].dropna().unique()))
+    if len(dates) < 20:
+        raise SystemExit("BLOCK_HYBRID_DATA: insufficient distinct pre2023 dates")
+    split_date = pd.Timestamp(dates[max(1, int(len(dates) * 0.80))])
+    fit = train[train["date"] < split_date].copy()
+    valid = train[train["date"] >= split_date].copy()
+    if len(fit) < 1000 or len(valid) < 1000:
+        raise SystemExit("BLOCK_HYBRID_DATA: insufficient fit/validation sample")
 
-    hybrids = [c for c in valid.columns if c.startswith("H_")]
+    hybrids = [c for c in train.columns if c.startswith("H_")]
     base = metrics(valid)
     base_big = max(int(base["big_winners"] or 0), 1)
     base_pf = float(base["profit_factor"] or 0.0)
@@ -102,9 +123,9 @@ def main() -> int:
 
     valid_risk, directions = {}, {}
     for c in hybrids:
-        vr, direction, corr = percentile_risk(valid, valid, c)
+        vr, direction, corr = percentile_risk(fit, valid, c)
         valid_risk[c] = vr
-        directions[c] = {"risk_direction": direction, "validation_stop_spearman": corr}
+        directions[c] = {"risk_direction": direction, "fit_stop_spearman": corr}
 
     rows = []
     best = None
@@ -132,20 +153,25 @@ def main() -> int:
 
     combo, keep_level = best[1], best[2]
     report = {
-        "version": "V22.1_HYBRID_FP_RESEARCH_2_PRE2023_ONLY",
+        "version": "V22.1_HYBRID_FP_RESEARCH_3_RR_FIT_VALID",
         "governance": {
-            "training_source": "PRE_2023_TECHNICAL_PIT_ONLY",
-            "selection_source": "LAST_20_PERCENT_PRE2023_VALIDATION_ONLY",
+            "training_source": "PRE_2023_PIT_ONLY",
+            "fit_source": "FIRST_80_PERCENT_OF_DISTINCT_PRE2023_DATES",
+            "selection_source": "LAST_20_PERCENT_OF_DISTINCT_PRE2023_DATES",
+            "fit_max_date": str(fit["date"].max().date()),
+            "validation_min_date": str(valid["date"].min().date()),
             "holdout_accessed": False,
             "holdout_scope": "SEALED_UNTIL_FINAL_PASS6_EVALUATION",
             "embargo_weeks": 26,
             "embargo_cutoff": str(embargo_cutoff.date()),
             "train_max_date": str(train["date"].max().date()),
-            "new_raw_features_added": False,
+            "rr_source": "PASS1_NEAREST_OVERHEAD_PRIOR_HIGH_20_63_126_SHIFT1",
+            "rr_missing_policy": "FAIL_CLOSED_AS_MAX_RISK_WHEN_USED",
             "big_winner_definition": BIG_WIN,
             "guards": {"min_keep_rate": MIN_KEEP, "min_big_winner_recall": MIN_BIG_RECALL, "max_expectancy_giveback": MAX_EXPECTANCY_GIVEBACK, "min_pf_ratio_vs_full": MIN_PF_RATIO},
         },
         "hybrid_definitions": {
+            "H_RR_EX_ANTE": "log1p(pass1_rr_ex_ante)",
             "H_MOM_VOL": "mom_26w/(abs(atr_14_pct)+0.01)",
             "H_TREND_DD": "close_vs_sma200-abs(drawdown_4w)",
             "H_RSI_TREND": "((rsi_14_hebdo-50)/25)*close_vs_sma200",
@@ -154,6 +180,8 @@ def main() -> int:
             "H_TREND_VOL": "close_vs_sma200/(abs(atr_14_pct)+0.01)",
             "H_OPPORTUNITY_RISK": "mom_26w/(abs(atr_14_pct)+abs(drawdown_4w)+0.01)",
         },
+        "rr_coverage_fit": float(fit["H_RR_EX_ANTE"].notna().mean()),
+        "rr_coverage_validation": float(valid["H_RR_EX_ANTE"].notna().mean()),
         "risk_directions": directions,
         "validation_full": base,
         "selected": {"criteria": list(combo), "keep_level": keep_level, "validation": best[3]},
