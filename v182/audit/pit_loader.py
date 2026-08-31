@@ -21,9 +21,13 @@ class PITLoader:
 
     def _cutoff(self, as_of_date: pd.Timestamp) -> pd.Timestamp:
         as_of = pd.Timestamp(as_of_date)
+        # Le jour de décision est toujours interprété en Europe/Paris.
+        if as_of.tzinfo is None:
+            as_of = as_of.tz_localize(self.paris_tz)
+        else:
+            as_of = as_of.tz_convert(self.paris_tz)
         local_date = as_of.date()
-        cutoff = pd.Timestamp.combine(local_date, time(22, 0)).tz_localize(self.paris_tz) - pd.Timedelta(days=1)
-        return cutoff
+        return pd.Timestamp.combine(local_date, time(22, 0)).tz_localize(self.paris_tz) - pd.Timedelta(days=1)
 
     def _provenance_time(self, path: Path):
         sidecar = Path(str(path) + '.meta.json')
