@@ -90,7 +90,6 @@ jobs:
           from pathlib import Path
           import numpy as np
           import pandas as pd
-
           src = Path("outputs/hebdo/backtest_v22_1/fixed/V22_1_HOLDOUT_LEDGER.csv")
           out = Path("outputs/hebdo/backtest_v22_1/fixed")
           df = pd.read_csv(src)
@@ -99,76 +98,30 @@ jobs:
           df = df[df["mae_status"].eq("OK")].copy()
           df["year"] = df["as_of_date"].dt.year.astype("Int64")
           df["quarter"] = df["as_of_date"].dt.to_period("Q").astype(str)
-
           def safe(v):
-              if v is None or pd.isna(v) or not np.isfinite(float(v)):
-                  return None
+              if v is None or pd.isna(v) or not np.isfinite(float(v)): return None
               return float(v)
-
           def metrics(g):
               r = pd.to_numeric(g.get("forward_ret_true_26w"), errors="coerce")
-              matured = g.loc[r.notna()].copy()
-              rv = r.dropna()
-              wins = rv[rv > 0]
-              losses = rv[rv <= 0]
-              gain_mean = wins.mean() if len(wins) else np.nan
-              loss_mean = losses.mean() if len(losses) else np.nan
-              gross_gain = wins.sum() if len(wins) else 0.0
-              gross_loss = losses.sum() if len(losses) else 0.0
-              stop = matured.get("hit_stop")
-              stop_count = int(stop.fillna(False).astype(bool).sum()) if stop is not None else 0
-              mae = pd.to_numeric(matured.get("mae"), errors="coerce")
-              mfe = pd.to_numeric(matured.get("mfe"), errors="coerce")
-              return {
-                  "signals_after_mae": int(len(g)),
-                  "matured_26w": int(len(rv)),
-                  "unmatured_26w": int(len(g) - len(rv)),
-                  "gains": int((rv > 0).sum()),
-                  "losses_false_positives": int((rv <= 0).sum()),
-                  "win_rate": safe((rv > 0).mean()) if len(rv) else None,
-                  "avg_gain": safe(gain_mean),
-                  "avg_loss": safe(loss_mean),
-                  "expectancy": safe(rv.mean()) if len(rv) else None,
-                  "profit_factor": safe(gross_gain / abs(gross_loss)) if gross_loss < 0 else None,
-                  "rr_observed": safe(gain_mean / abs(loss_mean)) if pd.notna(gain_mean) and pd.notna(loss_mean) and loss_mean < 0 else None,
-                  "stops": stop_count,
-                  "stop_rate": safe(stop_count / len(rv)) if len(rv) else None,
-                  "mae_mean": safe(mae.mean()) if len(mae) else None,
-                  "mfe_mean": safe(mfe.mean()) if len(mfe) else None,
-              }
-
-          annual = []
-          for year, g in df.groupby("year", sort=True):
-              annual.append({"year": int(year), **metrics(g)})
-          quarterly = []
-          for quarter, g in df.groupby("quarter", sort=True):
-              quarterly.append({"quarter": quarter, **metrics(g)})
-
-          pd.DataFrame(annual).to_csv(out / "V22_1_FULL_MAE_ANNUAL_2023_2026.csv", index=False)
-          pd.DataFrame(quarterly).to_csv(out / "V22_1_FULL_MAE_QUARTERLY_2023_2026.csv", index=False)
-          (out / "V22_1_FULL_MAE_ANNUAL_2023_2026.json").write_text(json.dumps(annual, indent=2), encoding="utf-8")
-          (out / "V22_1_FULL_MAE_QUARTERLY_2023_2026.json").write_text(json.dumps(quarterly, indent=2), encoding="utf-8")
-          print(json.dumps({"annual": annual, "quarterly": quarterly}, indent=2))
+              matured = g.loc[r.notna()].copy(); rv = r.dropna(); wins = rv[rv > 0]; losses = rv[rv <= 0]
+              gain_mean = wins.mean() if len(wins) else np.nan; loss_mean = losses.mean() if len(losses) else np.nan
+              gross_gain = wins.sum() if len(wins) else 0.0; gross_loss = losses.sum() if len(losses) else 0.0
+              stop = matured.get("hit_stop"); stop_count = int(stop.fillna(False).astype(bool).sum()) if stop is not None else 0
+              mae = pd.to_numeric(matured.get("mae"), errors="coerce"); mfe = pd.to_numeric(matured.get("mfe"), errors="coerce")
+              return {"signals_after_mae":int(len(g)),"matured_26w":int(len(rv)),"unmatured_26w":int(len(g)-len(rv)),"gains":int((rv>0).sum()),"losses_false_positives":int((rv<=0).sum()),"win_rate":safe((rv>0).mean()) if len(rv) else None,"avg_gain":safe(gain_mean),"avg_loss":safe(loss_mean),"expectancy":safe(rv.mean()) if len(rv) else None,"profit_factor":safe(gross_gain/abs(gross_loss)) if gross_loss<0 else None,"rr_observed":safe(gain_mean/abs(loss_mean)) if pd.notna(gain_mean) and pd.notna(loss_mean) and loss_mean<0 else None,"stops":stop_count,"stop_rate":safe(stop_count/len(rv)) if len(rv) else None,"mae_mean":safe(mae.mean()) if len(mae) else None,"mfe_mean":safe(mfe.mean()) if len(mfe) else None}
+          annual=[{"year":int(year),**metrics(g)} for year,g in df.groupby("year",sort=True)]
+          quarterly=[{"quarter":quarter,**metrics(g)} for quarter,g in df.groupby("quarter",sort=True)]
+          pd.DataFrame(annual).to_csv(out/"V22_1_FULL_MAE_ANNUAL_2023_2026.csv",index=False)
+          pd.DataFrame(quarterly).to_csv(out/"V22_1_FULL_MAE_QUARTERLY_2023_2026.csv",index=False)
+          (out/"V22_1_FULL_MAE_ANNUAL_2023_2026.json").write_text(json.dumps(annual,indent=2),encoding="utf-8")
+          (out/"V22_1_FULL_MAE_QUARTERLY_2023_2026.json").write_text(json.dumps(quarterly,indent=2),encoding="utf-8")
+          print(json.dumps({"annual":annual,"quarterly":quarterly},indent=2))
           PY
       - name: Publish readiness, fixed-stop comparison and Full plus MAE validation statistics
         if: always()
         run: |
-          for F in \
-            outputs/hebdo/data_v22_1/V22_1_DATA_READINESS.json \
-            outputs/hebdo/data_v22_1/V22_1_LIQUIDITY_PIT_REPORT.json \
-            outputs/hebdo/backtest_v22_1/V22_1_FIXED_PAIR_COMPARISON.json \
-            outputs/hebdo/backtest_v22_1/fixed/V22_1_BACKTEST_REPORT.json \
-            outputs/hebdo/backtest_v22_1/fixed/V22_1_GOVERNED_WEIGHTS.json \
-            outputs/hebdo/backtest_v22_1/fixed/V22_1_QUARTERLY_STATS.json \
-            outputs/hebdo/backtest_v22_1/fixed/V22_1_FULL_MAE_ANNUAL_2023_2026.json \
-            outputs/hebdo/backtest_v22_1/fixed/V22_1_FULL_MAE_QUARTERLY_2023_2026.json; do
-            if [ -f "$F" ]; then
-              echo "## $F" >> "$GITHUB_STEP_SUMMARY"
-              echo '```json' >> "$GITHUB_STEP_SUMMARY"
-              cat "$F" >> "$GITHUB_STEP_SUMMARY"
-              echo '```' >> "$GITHUB_STEP_SUMMARY"
-              cat "$F"
-            fi
+          for F in outputs/hebdo/data_v22_1/V22_1_DATA_READINESS.json outputs/hebdo/data_v22_1/V22_1_LIQUIDITY_PIT_REPORT.json outputs/hebdo/backtest_v22_1/V22_1_FIXED_PAIR_COMPARISON.json outputs/hebdo/backtest_v22_1/fixed/V22_1_BACKTEST_REPORT.json outputs/hebdo/backtest_v22_1/fixed/V22_1_GOVERNED_WEIGHTS.json outputs/hebdo/backtest_v22_1/fixed/V22_1_QUARTERLY_STATS.json outputs/hebdo/backtest_v22_1/fixed/V22_1_FULL_MAE_ANNUAL_2023_2026.json outputs/hebdo/backtest_v22_1/fixed/V22_1_FULL_MAE_QUARTERLY_2023_2026.json; do
+            if [ -f "$F" ]; then echo "## $F" >> "$GITHUB_STEP_SUMMARY"; echo '```json' >> "$GITHUB_STEP_SUMMARY"; cat "$F" >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"; cat "$F"; fi
           done
       - name: Upload prepared historical data and 2023-2026 validation results
         if: always()
@@ -187,3 +140,5 @@ jobs:
           if-no-files-found: warn
           compression-level: 1
           retention-days: 14
+
+# Autopilot hard-chain retrigger 2026-08-31
