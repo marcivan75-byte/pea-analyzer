@@ -75,10 +75,9 @@ class HebdoATChatV22:
         return df
 
     def score_universe_v22(self, df_universe: pd.DataFrame, lasso_weights=None):
-        df=df_universe.copy()
-        df['HEBDO_STATUS']=''
+        df=df_universe.copy(); df['HEBDO_STATUS']=''
         if 'market_cap_m' in df.columns and 'vol_z' in df.columns:
-            mask_noise=(df['market_cap_m']<self.min_market_cap_m)&(df['vol_z']>2.5)
+            mask_noise=(pd.to_numeric(df['market_cap_m'],errors='coerce')<self.min_market_cap_m)&(pd.to_numeric(df['vol_z'],errors='coerce')>2.5)
             df.loc[mask_noise,'HEBDO_STATUS']='BLOCK_NOISE_SMALLCAP'
         if 'mom_26w' not in df.columns:
             raise ValueError('BLOCK_DATA_LEGACY_CHAT: mom_26w missing')
@@ -88,7 +87,7 @@ class HebdoATChatV22:
                 return (x-x.mean())/sd if pd.notna(sd) and sd>0 else pd.Series(np.nan,index=x.index)
             df['mom_26w_sector']=df.groupby('secteur')['mom_26w'].transform(zscore)
         else:
-            df['mom_26w_sector']=df['mom_26w']
+            df['mom_26w_sector']=pd.to_numeric(df['mom_26w'],errors='coerce')
         if lasso_weights:
             score=pd.Series(0.0,index=df.index)
             for feat,meta in lasso_weights.items():
@@ -97,7 +96,10 @@ class HebdoATChatV22:
                     score=score+direction*float(meta['weight'])*pd.to_numeric(df[feat],errors='coerce').fillna(0)
             df['hebdo_score']=score
         else:
-            df['hebdo_score']=df['mom_26w_sector'].fillna(0)*0.5-df.get('vol_z',0)*0.2-df.get('drawdown_4w',0).abs()*0.1-df.get('B_signal',False).astype(int)*1.0
+            vol=pd.to_numeric(df['vol_z'],errors='coerce').fillna(0) if 'vol_z' in df.columns else pd.Series(0.0,index=df.index)
+            dd=pd.to_numeric(df['drawdown_4w'],errors='coerce').fillna(0) if 'drawdown_4w' in df.columns else pd.Series(0.0,index=df.index)
+            b=df['B_signal'].fillna(False).astype(bool).astype(int) if 'B_signal' in df.columns else pd.Series(0,index=df.index,dtype=int)
+            df['hebdo_score']=df['mom_26w_sector'].fillna(0)*0.5-vol*0.2-dd.abs()*0.1-b*1.0
         return df.sort_values('hebdo_score',ascending=False)
 
     def run_hebdo_audit(self, as_of_date: str, **kwargs):
