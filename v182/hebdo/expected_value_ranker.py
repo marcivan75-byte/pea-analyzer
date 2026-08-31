@@ -35,7 +35,7 @@ class ExpectedValueRanker:
     def rank_batch(self, df: pd.DataFrame):
         df=df.copy()
         if df.empty:
-            for col in ['EV_net','tier','market_quality','q85_threshold','q60_threshold']:
+            for col in ['EV_net','tier','market_quality','q85_threshold','q60_threshold','selection_confidence']:
                 df[col]=pd.Series(dtype='float64' if col in {'EV_net','q85_threshold','q60_threshold'} else 'object')
             return df
         df['EV_net']=df.apply(self.compute_ev, axis=1)
@@ -44,12 +44,21 @@ class ExpectedValueRanker:
         else:
             q85=df['EV_net'].median(); q60=df['EV_net'].quantile(0.4)
         df['tier']='EXCLU'
-        # Un quantile relatif ne doit jamais promouvoir une EV négative.
         tct_floor=max(float(q85),0.0)
         ct_floor=max(float(q60),0.0)
         df.loc[df['EV_net']>=tct_floor,'tier']='TCT'
         df.loc[(df['EV_net']>=ct_floor)&(df['EV_net']<tct_floor),'tier']='CT_WATCH'
         df.loc[df['EV_net']<0,'tier']='EXCLU'
+
+        # Aucune conviction TCT ne peut reposer sur prob_meta=0.5 par défaut.
+        if 'meta_model_status' in df.columns:
+            trained = df['meta_model_status'].eq('TRAINED_TEMPORAL_OOS')
+            df.loc[(df['tier']=='TCT') & ~trained, 'tier'] = 'CT_WATCH'
+            df['selection_confidence'] = np.where(trained, 'TEMPORAL_OOS_MODEL', 'DEGRADED_UNTRAINED_META')
+        else:
+            df.loc[df['tier']=='TCT','tier']='CT_WATCH'
+            df['selection_confidence']='DEGRADED_NO_META_STATUS'
+
         df['market_quality']='NORMAL' if q85>0.02 else ('POOR' if q85>0.005 else 'CRASH')
         df['q85_threshold']=q85; df['q60_threshold']=q60
         return df.sort_values('EV_net', ascending=False)
