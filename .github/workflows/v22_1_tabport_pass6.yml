@@ -14,8 +14,8 @@ permissions:
 
 env:
   BACKTEST_RUN_ID: '33420487572'
-  PASS4_RUN_ID: '33445458151'
-  PASS5_RUN_ID: '33445652407'
+  PASS4_RUN_ID: '33446929385'
+  PASS5_RUN_ID: '33447165236'
 
 jobs:
   final-ensemble-stability:
@@ -39,7 +39,7 @@ jobs:
           gh run download "$BACKTEST_RUN_ID" -n "$artifact" -D inputs
           p4="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PASS4_RUN_ID}/artifacts" --jq '.artifacts[] | select(.name | startswith("v22-1-tabport-pass4-")) | .name' | head -n1)"
           p5="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PASS5_RUN_ID}/artifacts" --jq '.artifacts[] | select(.name | startswith("v22-1-tabport-pass5-")) | .name' | head -n1)"
-          test -n "$p4" && test -n "$p5"
+          test -n "$p4" && test -n "$p5" || { echo 'BLOCK_PASS6_DATA: upstream artifact missing'; exit 1; }
           gh run download "$PASS4_RUN_ID" -n "$p4" -D pass4
           gh run download "$PASS5_RUN_ID" -n "$p5" -D pass5
           test -f inputs/V22_1_TRAIN.csv
