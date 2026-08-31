@@ -1,6 +1,6 @@
 """
 v182/hebdo/fp_early_exit.py
-HEBDO AT META - early exits for false positives with coherent realized P&L semantics.
+HEBDO AT META - early exits for false positives with conservative realized P&L semantics.
 """
 
 from typing import Tuple, Optional
@@ -14,13 +14,18 @@ class FPEarlyExit:
     def check_exit(self, entry_price: float, current_bar: dict, days_held: int, sector_bar: dict = None) -> Tuple[bool, str, Optional[float]]:
         close = current_bar.get('close')
         low = current_bar.get('low', close)
-        if close is None or low is None or entry_price is None or entry_price <= 0:
+        open_px = current_bar.get('open', close)
+        if close is None or low is None or open_px is None or entry_price is None or entry_price <= 0:
             return False, "BLOCK_DATA", None
 
         pnl = close / entry_price - 1
         pnl_low = low / entry_price - 1
+        pnl_open = open_px / entry_price - 1
         if pnl_low <= self.stop_final:
-            return True, f"STOP_FINAL_{self.stop_final:.0%}_HIT", self.stop_final
+            # Si l'ouverture est déjà sous le stop, l'exécution au stop théorique est impossible.
+            realized = pnl_open if pnl_open < self.stop_final else self.stop_final
+            reason = "STOP_GAP_THROUGH" if realized < self.stop_final else "STOP_FINAL"
+            return True, f"{reason}_{realized:.2%}", realized
 
         if days_held == 2 and pnl <= self.fail_fast_j2:
             return True, f"FAIL_FAST_J2_{pnl:.2%}", pnl
