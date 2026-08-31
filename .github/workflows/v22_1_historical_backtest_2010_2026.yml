@@ -7,6 +7,8 @@ on:
       - v22/pit-mae-mfe-preopen
     paths:
       - "src/v182/hebdo/backtest_v22_1.py"
+      - "src/v182/hebdo/backtest_v22_1_fast.py"
+      - "tests/test_hebdo_backtest_v22_1_fast.py"
       - ".github/workflows/v22_1_historical_backtest_2010_2026.yml"
 
 permissions:
@@ -24,7 +26,7 @@ concurrency:
 jobs:
   historical-backtest:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
@@ -35,7 +37,12 @@ jobs:
           cache-dependency-path: requirements-runtime.txt
 
       - name: Install runtime
-        run: python -m pip install --prefer-binary -r requirements-runtime.txt
+        run: |
+          python -m pip install --prefer-binary -r requirements-runtime.txt
+          python -m pip install pytest==9.1.1
+
+      - name: Prove fast engine equivalence
+        run: python -m pytest -q tests/test_hebdo_backtest_v22_1_fast.py
 
       - name: Resolve latest governed repaired history
         id: source
@@ -68,14 +75,14 @@ jobs:
           jq -e '.audit.future_returns_embedded == false' "$manifest" >/dev/null || { echo "BLOCK_LOOKAHEAD_BACKTEST: future returns embedded in historical features"; exit 1; }
           jq -e '.audit.current_fundamentals_used_as_history == false' "$manifest" >/dev/null || { echo "BLOCK_LOOKAHEAD_BACKTEST: current fundamentals backfilled historically"; exit 1; }
 
-      - name: Run embargoed technical PIT holdout 2023-2026
+      - name: Run optimized embargoed technical PIT holdout 2023-2026
         shell: bash
         run: |
           set -euo pipefail
           features="$(find inputs_history -name PEA_TECHNICAL_PIT_2010_2026.parquet -print -quit)"
           ohlcv="$(find inputs_history -name PEA_OHLCV_2010_2026_CONSOLIDATED.parquet -print -quit)"
           test -n "$features" && test -n "$ohlcv" || { echo "BLOCK_DATA_BACKTEST: required repaired PIT files missing"; exit 1; }
-          python -m v182.hebdo.backtest_v22_1 \
+          time python -m v182.hebdo.backtest_v22_1_fast \
             --features "$features" \
             --ohlcv "$ohlcv" \
             --out-dir outputs/hebdo/backtest_v22_1_history \
