@@ -2,7 +2,7 @@
   "version": 1,
   "branch": "v22/pit-mae-mfe-preopen",
   "wip": 1,
-  "current_pass": 3,
+  "current_pass": 4,
   "passes": {
     "1": {
       "status": "completed",
@@ -19,17 +19,36 @@
       "version": "V22.1_HYBRID_FP_RESEARCH_3_RR_FIT_VALID",
       "selected_criteria": ["H_MOM_VOL", "H_MOM_DD"],
       "keep_level": 0.9,
+      "validation_stop_rate": 0.6051462869754798,
+      "validation_big_winner_recall": 0.933117970806413,
+      "validation_expectancy": 0.03502175553184585,
+      "validation_profit_factor": 1.6297029813861288,
       "holdout_accessed": false,
       "embargo_weeks": 26
     },
     "3": {
-      "status": "launched",
-      "expected_head_sha": "090bcbfe1242d747295792447df0051ad88068af"
+      "status": "completed",
+      "run_id": 33449622525,
+      "artifact": "v22-1-tabport-pass3-33449622525",
+      "version": "V22.1_TABPORT_PASS3_CAUSAL_5_GENERIC_PASS2",
+      "selected_variant": "R_STOP_50",
+      "n": 112,
+      "stop_rate": 0.5357142857142857,
+      "big_winners": 30,
+      "expectancy": 0.0894197308388492,
+      "profit_factor": 2.8259060456466867,
+      "median_rr_ex_ante": 0.2336608541656034,
+      "holdout_accessed": false,
+      "embargo_weeks": 26
     },
-    "4": {"status": "pending"},
+    "4": {
+      "status": "launched",
+      "run_id": 33449756490,
+      "expected_head_sha": "f4e0ea79b4d96731cd1b90ddd4b910a7f202f922"
+    },
     "5": {"status": "pending"},
     "6": {"status": "pending"}
   },
   "holdout_policy": "2023-2026 sealed until final frozen evaluation after pass 6",
-  "last_audit_note": "Pass 2 completed with stop rate 0.6051 vs 0.6204 baseline, big-winner recall 0.9331, expectancy 0.0350 and PF 1.6297. Pass 3 generalized to consume the validated two-criterion pass-2 filter and chained to the current pass-2 artifact."
+  "last_audit_note": "Pass 3 completed: R_STOP_50 reduces stop rate from 76.8% capacity baseline to 53.6%, raises expectancy to 8.94% and PF to 2.83 with 30 big winners vs 22 baseline. RR>3.3 forcing is explicitly rejected because it worsens stop rate to 74.1%; RR remains diagnostic rather than forced. Pass 4 is launched with exact replay of the validated pass-2 filter and pass-3 50% anti-stop static weight."
 }
