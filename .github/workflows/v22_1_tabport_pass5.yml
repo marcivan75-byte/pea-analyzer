@@ -45,6 +45,16 @@ jobs:
           test -f pass4/PASS4_REPORT.json
           test -f pass4/PASS4_SELECTED_PRE2023.csv
           test -f history/PEA_OHLCV_2010_2026_CONSOLIDATED.parquet
+      - name: Normalize governed signal timestamp for exact causal join
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          p='inputs/V22_1_TRAIN.csv'
+          x=pd.read_csv(p,low_memory=False)
+          d=pd.to_datetime(x['as_of_date'],errors='coerce')
+          x['as_of_date']=d.dt.normalize().dt.strftime('%Y-%m-%d')
+          x.to_csv(p,index=False)
+          PY
       - name: Run realistic portfolio robustness
         run: |
           python scripts/v22_1_portfolio_robustness_pass5.py \
