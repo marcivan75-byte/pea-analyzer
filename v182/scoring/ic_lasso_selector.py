@@ -22,22 +22,24 @@ def compute_information_coefficient(df_features: pd.DataFrame, forward_ret: pd.S
             ics[col] = None
         else:
             ic, _ = spearmanr(x[mask], y[mask])
-            ics[col] = float(ic)
+            ics[col] = None if pd.isna(ic) else float(ic)
     return ics
 
 
 def lasso_select_features(X: pd.DataFrame, y: pd.Series, cv=5):
     """Sélection Lasso sans mélange futur/passé.
 
-    Important: X et y doivent être triés dans l'ordre temporel croissant.
-    Le scaler est placé dans le pipeline afin d'être ajusté seulement sur chaque fold d'entraînement.
+    X/y doivent être triés dans l'ordre temporel croissant. Les labels futurs
+    absents sont exclus : ils ne sont jamais imputés à zéro.
     """
     if len(X) != len(y):
         raise ValueError('BLOCK_DATA_LASSO: X/y length mismatch')
-    if len(X) < max(30, cv + 5):
-        raise ValueError('BLOCK_DATA_LASSO: insufficient temporal sample')
-    Xf = X.fillna(0)
-    yf = y.fillna(0)
+    valid_y = y.notna()
+    Xf = X.loc[valid_y].copy()
+    yf = y.loc[valid_y].astype(float)
+    if len(Xf) < max(30, cv + 5):
+        raise ValueError('BLOCK_DATA_LASSO: insufficient temporal sample after dropping missing labels')
+    Xf = Xf.fillna(0)
     splitter = TimeSeriesSplit(n_splits=cv)
     model = Pipeline([
         ('scaler', StandardScaler()),
@@ -52,6 +54,8 @@ def lasso_select_features(X: pd.DataFrame, y: pd.Series, cv=5):
         'selected': selected.to_dict(),
         'alpha': float(lasso.alpha_),
         'cv_scheme': 'TimeSeriesSplit',
+        'n_labeled': int(len(Xf)),
+        'n_dropped_missing_label': int((~valid_y).sum()),
     }
 
 
