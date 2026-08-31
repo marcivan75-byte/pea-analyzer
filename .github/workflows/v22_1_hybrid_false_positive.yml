@@ -6,6 +6,7 @@ on:
     branches: [v22/pit-mae-mfe-preopen]
     paths:
       - scripts/v22_1_hybrid_false_positive_research.py
+      - scripts/v22_1_hybrid_ranking_research.py
       - .github/workflows/v22_1_hybrid_false_positive.yml
 
 permissions:
@@ -14,6 +15,7 @@ permissions:
 
 env:
   BACKTEST_RUN_ID: '33420487572'
+  HISTORY_RUN_ID: '33393842087'
 
 jobs:
   hybrid-fp:
@@ -25,7 +27,7 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: requirements-runtime.txt
-      - run: python -m pip install --prefer-binary 'pandas>=2.2' 'numpy>=2.0' 'scipy>=1.10'
+      - run: python -m pip install --prefer-binary 'pandas>=2.2' 'numpy>=2.0' 'pyarrow>=18'
       - name: Download governed signal ledger
         env:
           GH_TOKEN: ${{ github.token }}
@@ -35,9 +37,23 @@ jobs:
           artifact="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${BACKTEST_RUN_ID}/artifacts" --jq '.artifacts[] | select(.name | startswith("v22-1-historical-weekly-backtest-")) | .name' | head -n1)"
           test -n "$artifact" || { echo 'BLOCK_HYBRID_DATA: governed backtest artifact missing'; exit 1; }
           gh run download "$BACKTEST_RUN_ID" -n "$artifact" -D inputs
-          test -f inputs/V22_1_TRAIN.csv && test -f inputs/V22_1_HOLDOUT.csv
+          test -f inputs/V22_1_TRAIN.csv
+      - name: Download governed repaired OHLC history
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p history
+          artifact="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${HISTORY_RUN_ID}/artifacts" --jq '.artifacts[] | select(.name | startswith("pea-history-2010-2026-")) | .name' | head -n1)"
+          test -n "$artifact" || { echo 'BLOCK_HYBRID_RR_DATA: governed repaired history missing'; exit 1; }
+          gh run download "$HISTORY_RUN_ID" -n "$artifact" -D history
+          test -f history/PEA_OHLCV_2010_2026_CONSOLIDATED.parquet
       - name: Run hybrid false-positive research
-        run: python scripts/v22_1_hybrid_false_positive_research.py --input-dir inputs --out-dir outputs/hybrid_fp
+        run: |
+          python scripts/v22_1_hybrid_false_positive_research.py \
+            --input-dir inputs \
+            --price-parquet history/PEA_OHLCV_2010_2026_CONSOLIDATED.parquet \
+            --out-dir outputs/hybrid_fp
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: v22-1-hybrid-fp-${{ github.run_id }}
