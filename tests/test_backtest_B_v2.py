@@ -34,6 +34,13 @@ def test_incomplete_horizon_without_stop_is_blocked():
     assert res['block_reason'].startswith('BLOCK_DATA_INCOMPLETE_HORIZON_')
 
 
+def test_ohlc_missing_or_inconsistent_is_blocked():
+    missing_open=pd.DataFrame({'low':[95], 'high':[101], 'close':[100]})
+    assert compute_true_26w_pnl(100, missing_open)['block_reason']=='BLOCK_DATA_OHLC_MISSING_open'
+    bad=pd.DataFrame({'open':[102], 'low':[99], 'high':[101], 'close':[100]})
+    assert compute_true_26w_pnl(100, bad)['block_reason']=='BLOCK_DATA_OHLC_INCONSISTENT'
+
+
 def test_B1_vol_detection():
     df = pd.DataFrame({'close':[100]*25, 'volume':[1e6]*20+[4e6,4e6,1e6,1e6,1e6], 'high':[101]*25, 'low':[99]*25})
     df.loc[20, 'close'] = 98
@@ -49,6 +56,19 @@ def test_B2_daily_J1():
     assert bool(res['B2_daily'].iloc[21]) is True
 
 
+def test_B_detection_isolated_by_ticker():
+    dates=pd.date_range('2025-01-01', periods=25, freq='B')
+    a=pd.DataFrame({'date':dates,'ticker':'AAA','close':[100.0]*25,'volume':[1e6]*25,'high':[101.0]*25,'low':[99.0]*25})
+    b=pd.DataFrame({'date':dates,'ticker':'BBB','close':[50.0]*25,'volume':[2e6]*25,'high':[51.0]*25,'low':[49.0]*25})
+    # Un choc volume/prix uniquement sur AAA à J21.
+    a.loc[20,'volume']=6e6; a.loc[20,'close']=97.0; a.loc[20,'low']=96.0
+    mixed=pd.concat([a,b], ignore_index=True)
+    out=detect_B_v2(mixed)
+    assert bool(out[(out['ticker']=='AAA')].iloc[20]['B1_vol']) is True
+    assert not out[out['ticker']=='BBB']['B1_vol'].any()
+    assert not out[out['ticker']=='BBB']['B2_daily'].any()
+
+
 def test_mae_mfe_logged():
     hist = pd.DataFrame({'open':[100,100,100], 'low':[90,95,100], 'high':[105,110,115], 'close':[91,108,112]})
     res = compute_true_26w_pnl(100, hist, 0.09)
@@ -56,9 +76,7 @@ def test_mae_mfe_logged():
 
 
 def test_mae_mfe_stop_ignore_future_bars():
-    hist = pd.DataFrame({
-        'open':[100,100,100], 'low':[90,50,40], 'high':[103,160,180], 'close':[91,150,170],
-    })
+    hist = pd.DataFrame({'open':[100,100,100], 'low':[90,50,40], 'high':[103,160,180], 'close':[91,150,170]})
     res = compute_true_26w_pnl(100, hist, 0.09)
     assert res['day_stop'] == 1
     assert abs(res['mae'] - (-0.10)) < 1e-12
@@ -67,9 +85,7 @@ def test_mae_mfe_stop_ignore_future_bars():
 
 def test_backtest_price_path_is_isolated_by_ticker_and_future_date():
     signal_date=pd.Timestamp('2025-01-02')
-    signals=pd.DataFrame([
-        {'date':signal_date,'ticker':'AAA','close':100,'B_signal':True,'B_signal_type':'B1_VOL'}
-    ])
+    signals=pd.DataFrame([{'date':signal_date,'ticker':'AAA','close':100,'B_signal':True,'B_signal_type':'B1_VOL'}])
     dates=pd.date_range('2025-01-03', periods=126, freq='B')
     aaa=pd.DataFrame({'date':dates,'ticker':'AAA','open':100,'low':95,'high':110,'close':105})
     bbb=pd.DataFrame({'date':dates,'ticker':'BBB','open':50,'low':1,'high':60,'close':2})
@@ -77,5 +93,5 @@ def test_backtest_price_path_is_isolated_by_ticker_and_future_date():
     out=run_backtest_B_v2(signals, prices, forward=126)
     assert len(out)==1
     assert out.iloc[0]['ticker']=='AAA'
-    assert out.iloc[0]['hit_stop'] is False
+    assert bool(out.iloc[0]['hit_stop']) is False
     assert abs(out.iloc[0]['pnl']-0.05)<1e-12
