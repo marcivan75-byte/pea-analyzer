@@ -1,5 +1,6 @@
 name: V22.1 CI corrections + canonical 2010-2019 data
 
+# Recovery trigger: tactical DAG contract aligned with governed callback wiring.
 on:
   push:
     branches: [v22/pit-mae-mfe-preopen]
