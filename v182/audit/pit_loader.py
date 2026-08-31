@@ -1,35 +1,86 @@
 """
 v182/audit/pit_loader.py
-V22.5 AUDIT 5/5 - PIT strict T-1 22h fail-closed, mtime check, no future leak
-Conforme MASTER_DATA_CONTRACT_V21_9
+HEBDO AT META - loader PIT T-1 22h Europe/Paris avec provenance explicite si disponible.
+
+Une métadonnée sidecar `<fichier>.meta.json` peut fournir `available_at` ou `snapshot_at`.
+En mode strict_provenance=True, l'absence de cette métadonnée bloque le chargement.
 """
+import json
 import pandas as pd
 from pathlib import Path
-from datetime import datetime, time
+from datetime import time
+from zoneinfo import ZoneInfo
+
 
 class PITLoader:
-    def __init__(self, root: Path = Path(".")):
-        self.root=root
-        self.audit_dir=root/"outputs"/"audit"
-    def load_as_of(self, as_of_date: pd.Timestamp, asset_type="ACTION") -> pd.DataFrame:
-        as_of=pd.Timestamp(as_of_date)
-        cutoff=pd.Timestamp.combine(as_of.date(), time(22,0)) - pd.Timedelta(days=1)  # T-1 22h
-        # Cherche fichiers avec mtime <= cutoff
-        candidates=list(self.audit_dir.glob(f"{asset_type.lower()}*.parquet")) + list(self.audit_dir.glob(f"{asset_type.lower()}*.csv"))
-        valid=[]
+    def __init__(self, root: Path = Path('.'), strict_provenance: bool = False):
+        self.root = Path(root)
+        self.audit_dir = self.root / 'outputs' / 'audit'
+        self.strict_provenance = strict_provenance
+        self.paris_tz = ZoneInfo('Europe/Paris')
+
+    def _cutoff(self, as_of_date: pd.Timestamp) -> pd.Timestamp:
+        as_of = pd.Timestamp(as_of_date)
+        local_date = as_of.date()
+        cutoff = pd.Timestamp.combine(local_date, time(22, 0)).tz_localize(self.paris_tz) - pd.Timedelta(days=1)
+        return cutoff
+
+    def _provenance_time(self, path: Path):
+        sidecar = Path(str(path) + '.meta.json')
+        if sidecar.exists():
+            try:
+                meta = json.loads(sidecar.read_text(encoding='utf-8'))
+                raw = meta.get('available_at') or meta.get('snapshot_at')
+                if raw:
+                    ts = pd.Timestamp(raw)
+                    if ts.tzinfo is None:
+                        ts = ts.tz_localize(self.paris_tz)
+                    else:
+                        ts = ts.tz_convert(self.paris_tz)
+                    return ts, 'sidecar'
+            except (json.JSONDecodeError, OSError, ValueError, TypeError):
+                if self.strict_provenance:
+                    raise ValueError(f'BLOCK_DATA PIT: invalid provenance sidecar {sidecar}')
+        if self.strict_provenance:
+            raise ValueError(f'BLOCK_DATA PIT: explicit provenance required for {path}')
+        mtime = pd.Timestamp(path.stat().st_mtime, unit='s', tz='UTC').tz_convert(self.paris_tz)
+        return mtime, 'filesystem_mtime'
+
+    def _read(self, path: Path) -> pd.DataFrame:
+        if path.suffix == '.parquet':
+            return pd.read_parquet(path)
+        return pd.read_csv(path)
+
+    def load_as_of(self, as_of_date: pd.Timestamp, asset_type='ACTION') -> pd.DataFrame:
+        cutoff = self._cutoff(as_of_date)
+        candidates = (
+            list(self.audit_dir.glob(f'{asset_type.lower()}*.parquet'))
+            + list(self.audit_dir.glob(f'{asset_type.lower()}*.csv'))
+        )
+        valid = []
         for p in candidates:
-            mtime=pd.Timestamp.fromtimestamp(p.stat().st_mtime)
-            if mtime <= cutoff:
-                valid.append((mtime,p))
+            ts, source = self._provenance_time(p)
+            if ts <= cutoff:
+                valid.append((ts, p, source))
+
         if not valid:
-            # Fallback: si pas d'audit, essaie master PIT
-            master=self.root/f"data/master/{asset_type.lower()}_master.parquet"
-            if master.exists() and pd.Timestamp.fromtimestamp(master.stat().st_mtime) <= cutoff:
-                return pd.read_parquet(master)
-            raise FileNotFoundError(f"BLOCK_DATA PIT: aucun fichier {asset_type} avec mtime <= {cutoff} dans {self.audit_dir}")
-        # Prend le plus récent <= cutoff
+            master = self.root / f'data/master/{asset_type.lower()}_master.parquet'
+            if master.exists():
+                ts, source = self._provenance_time(master)
+                if ts <= cutoff:
+                    df = self._read(master)
+                    df.attrs['pit_snapshot_time'] = ts.isoformat()
+                    df.attrs['pit_provenance_source'] = source
+                    df.attrs['pit_cutoff'] = cutoff.isoformat()
+                    return df
+            raise FileNotFoundError(
+                f'BLOCK_DATA PIT: aucun fichier {asset_type} disponible avant {cutoff.isoformat()}'
+            )
+
         valid.sort(key=lambda x: x[0], reverse=True)
-        latest=valid[0][1]
-        if latest.suffix=='.parquet':
-            return pd.read_parquet(latest)
-        return pd.read_csv(latest)
+        ts, latest, source = valid[0]
+        df = self._read(latest)
+        df.attrs['pit_snapshot_time'] = ts.isoformat()
+        df.attrs['pit_provenance_source'] = source
+        df.attrs['pit_cutoff'] = cutoff.isoformat()
+        return df
