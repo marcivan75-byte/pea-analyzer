@@ -12,6 +12,7 @@ from v182.scoring.ic_lasso_selector import lasso_select_features
 
 def make_features(n=100):
     return pd.DataFrame({
+        'date':pd.date_range('2025-01-01', periods=n, freq='D'),
         'ticker':[f'T{i}' for i in range(n)],
         'close':np.linspace(20,120,n),
         'vol_z':np.linspace(-1,3,n),
@@ -30,8 +31,15 @@ def make_features(n=100):
 def test_meta_pipeline_runs_and_ranks():
     out=HebdoATMeta().run(make_features())
     assert len(out)>0
-    assert {'EV_net','tier','prob_stop_9','prob_meta','META_STATUS'}.issubset(out.columns)
+    assert {'EV_net','tier','prob_stop_9','prob_meta','META_STATUS','selection_confidence'}.issubset(out.columns)
     assert out['EV_net'].is_monotonic_decreasing
+
+
+def test_untrained_meta_never_promotes_tct():
+    out=HebdoATMeta().run(make_features())
+    assert (out['meta_model_status']=='UNTRAINED').all()
+    assert not (out['tier']=='TCT').any()
+    assert (out['selection_confidence']=='DEGRADED_UNTRAINED_META').all()
 
 
 def test_meta_pipeline_fail_closed_missing_feature():
@@ -50,6 +58,14 @@ def test_meta_pipeline_fail_closed_missing_liquidity():
         assert False, 'expected BLOCK_DATA_META'
     except ValueError as e:
         assert 'BLOCK_DATA_META' in str(e)
+
+
+def test_invalid_critical_rows_are_dropped_not_scored():
+    df=make_features(20)
+    df.loc[0,'close']=np.nan
+    out=HebdoATMeta().run(df)
+    assert int(out['meta_invalid_rows_dropped'].iloc[0]) == 1
+    assert 'T0' not in set(out['ticker'])
 
 
 def test_meta_pipeline_blocks_if_all_filtered():
@@ -80,6 +96,7 @@ def test_negative_ev_never_promoted():
         'mom_26w_sector':[0,0,0],
         'drawdown_4w':[0,0,0],
         'vol_z':[0,0,0],
+        'meta_model_status':['TRAINED_TEMPORAL_OOS']*3,
     })
     out=r.rank_batch(df)
     assert (out['EV_net']<0).all()
@@ -93,11 +110,38 @@ def test_confirmation_uses_requested_ticker():
     assert len(out)==1 and bool(out.iloc[0]['enter_confirmed']) is True
 
 
+def test_confirmation_blocks_ambiguous_duplicate_bars_without_dates():
+    friday=pd.DataFrame([{'ticker':'ABC','close':100}])
+    bars=pd.DataFrame([
+        {'ticker':'ABC','open':100,'close':101,'vol_z':1},
+        {'ticker':'ABC','open':101,'close':102,'vol_z':1},
+    ])
+    out=ConfirmationEntry().filter_batch_j1(friday,bars)
+    assert out.iloc[0]['enter_confirmed'] is None
+    assert out.iloc[0]['confirm_reason']=='BLOCK_DATA_NEXT_BAR_AMBIGUOUS'
+
+
+def test_confirmation_with_dates_uses_first_bar_after_signal():
+    friday=pd.DataFrame([{'ticker':'ABC','close':100,'date':'2026-01-02'}])
+    bars=pd.DataFrame([
+        {'ticker':'ABC','date':'2026-01-06','open':100,'close':99,'vol_z':1},
+        {'ticker':'ABC','date':'2026-01-05','open':100,'close':101,'vol_z':1},
+    ])
+    out=ConfirmationEntry().filter_batch_j1(friday,bars)
+    assert bool(out.iloc[0]['enter_confirmed']) is True
+
+
 def test_fail_fast_only_below_minus_2_5pct():
     ex=FPEarlyExit()
-    assert ex.check_exit(100, {'close':100.5,'low':100}, 2)[0] is False
-    hit=ex.check_exit(100, {'close':97,'low':96.5}, 2)
+    assert ex.check_exit(100, {'open':100,'close':100.5,'low':100}, 2)[0] is False
+    hit=ex.check_exit(100, {'open':100,'close':97,'low':96.5}, 2)
     assert hit[0] is True and hit[1].startswith('FAIL_FAST_J2')
+
+
+def test_gap_through_stop_uses_open_loss():
+    ex=FPEarlyExit()
+    hit=ex.check_exit(100, {'open':85,'close':86,'low':84}, 1)
+    assert hit[0] is True and abs(hit[2] - (-0.15)) < 1e-12
 
 
 def test_meta_training_sparse_classes_blocks_safely():
@@ -107,10 +151,19 @@ def test_meta_training_sparse_classes_blocks_safely():
     assert result['status'].startswith('BLOCK_')
 
 
+def test_meta_training_requires_temporal_evidence():
+    df=make_features(80).drop(columns=['date'])
+    df['meta_label']=np.tile([0,1],40)
+    try:
+        MetaLabeler().train(df)
+        assert False, 'expected temporal-order block'
+    except ValueError as e:
+        assert 'temporal order evidence missing' in str(e)
+
+
 def test_meta_training_uses_chronological_oos_split():
     n=150
     df=make_features(n)
-    # Chaque segment temporel contient les deux classes.
     df['meta_label']=np.tile([0,1], n//2)
     result=MetaLabeler().train(df)
     assert result['status']=='TRAINED_TEMPORAL_OOS'
@@ -118,12 +171,15 @@ def test_meta_training_uses_chronological_oos_split():
     assert result['n_train'] < n and result['n_test'] > 0
 
 
-def test_lasso_uses_time_series_split():
+def test_lasso_uses_time_series_split_and_drops_missing_labels():
     n=80
     X=pd.DataFrame({
         'f1':np.linspace(-1,1,n),
         'f2':np.sin(np.linspace(0,8,n)),
     })
     y=pd.Series(0.5*X['f1'] + 0.1*X['f2'])
+    y.iloc[-3:]=np.nan
     result=lasso_select_features(X,y,cv=4)
     assert result['cv_scheme']=='TimeSeriesSplit'
+    assert result['n_labeled']==77
+    assert result['n_dropped_missing_label']==3
