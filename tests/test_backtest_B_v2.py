@@ -7,16 +7,31 @@ from v182.backtests.v21_8_1_backtest_B_v2 import compute_true_26w_pnl, detect_B_
 
 
 def test_stop_bloque():
-    entry = 100
-    hist = pd.DataFrame({'low':[99,90,101], 'high':[101,101,102], 'close':[100,91,102]})
-    res = compute_true_26w_pnl(entry, hist, 0.09)
+    hist = pd.DataFrame({'open':[100,100,100], 'low':[99,90,101], 'high':[101,101,102], 'close':[100,91,102]})
+    res = compute_true_26w_pnl(100, hist, 0.09)
     assert res['hit_stop'] is True and res['pnl'] == -0.09
 
 
+def test_gap_through_stop_is_not_filled_at_theoretical_stop():
+    hist = pd.DataFrame({'open':[85], 'low':[84], 'high':[88], 'close':[86]})
+    res = compute_true_26w_pnl(100, hist, 0.09)
+    assert res['hit_stop'] is True
+    assert abs(res['pnl'] - (-0.15)) < 1e-12
+    assert abs(res['exit_price'] - 85) < 1e-12
+
+
 def test_vrai_pnl_sans_stop():
-    hist = pd.DataFrame({'low':[95]*126, 'high':[110]*126, 'close':[105]*126})
+    hist = pd.DataFrame({'open':[100]*126, 'low':[95]*126, 'high':[110]*126, 'close':[105]*126})
     res = compute_true_26w_pnl(100, hist, 0.09)
     assert abs(res['pnl'] - 0.05) < 1e-6 and res['hit_stop'] is False
+    assert res['day_stop'] == 126
+
+
+def test_incomplete_horizon_without_stop_is_blocked():
+    hist = pd.DataFrame({'open':[100,101,102], 'low':[95,96,97], 'high':[101,102,103], 'close':[100,101,102]})
+    res = compute_true_26w_pnl(100, hist, 0.09)
+    assert res['pnl'] is None
+    assert res['block_reason'].startswith('BLOCK_DATA_INCOMPLETE_HORIZON_')
 
 
 def test_B1_vol_detection():
@@ -35,14 +50,14 @@ def test_B2_daily_J1():
 
 
 def test_mae_mfe_logged():
-    hist = pd.DataFrame({'low':[95,95,100], 'high':[105,110,115], 'close':[102,108,112]})
+    hist = pd.DataFrame({'open':[100,100,100], 'low':[90,95,100], 'high':[105,110,115], 'close':[91,108,112]})
     res = compute_true_26w_pnl(100, hist, 0.09)
     assert res['mae'] is not None and res['mfe'] is not None
 
 
 def test_mae_mfe_stop_ignore_future_bars():
-    # Stop dès J1. Les extrêmes J2/J3 ne doivent jamais contaminer MAE/MFE.
     hist = pd.DataFrame({
+        'open':[100, 100, 100],
         'low':[90, 50, 40],
         'high':[103, 160, 180],
         'close':[91, 150, 170],
@@ -51,9 +66,3 @@ def test_mae_mfe_stop_ignore_future_bars():
     assert res['day_stop'] == 1
     assert abs(res['mae'] - (-0.10)) < 1e-12
     assert abs(res['mfe'] - 0.03) < 1e-12
-
-
-def test_day_stop_no_stop_is_actual_horizon_length():
-    hist = pd.DataFrame({'low':[95,96,97], 'high':[101,102,103], 'close':[100,101,102]})
-    res = compute_true_26w_pnl(100, hist, 0.09)
-    assert res['day_stop'] == 3
