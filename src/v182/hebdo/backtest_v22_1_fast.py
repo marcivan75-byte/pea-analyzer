@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import math
+from collections.abc import Mapping
+
 import numpy as np
 import pandas as pd
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import brier_score_loss, roc_auc_score
+from sklearn.preprocessing import StandardScaler
 
 from v182.hebdo import backtest_v22_1 as base
+from v182.hebdo import mae_predictor as mae_mod
 
 
 MAX_HORIZON = max(base.HORIZON_DAYS.values())
@@ -32,13 +39,7 @@ def add_true_forward_returns_fast(
     stop_pct: float = 0.09,
     stop_policy: str = "fixed",
 ) -> pd.DataFrame:
-    """Vectorized equivalent of the governed V22.1 forward ledger.
-
-    Semantics intentionally match ``base.add_true_forward_returns``: the last market
-    observation at/before the PIT date defines the signal, execution is next-session
-    open, an intraday stop locks realised P&L, MAE/MFE uses the complete 126-session
-    window, and horizons are 5/10/20/63/126 sessions.
-    """
+    """Vectorized equivalent of the governed V22.1 forward ledger."""
     f, o = base._validate_inputs(features, ohlcv)
     f = f.reset_index(drop=True)
     n = len(f)
@@ -60,6 +61,7 @@ def add_true_forward_returns_fast(
         str(ticker): grp.sort_values("date", kind="stable").reset_index(drop=True)
         for ticker, grp in o.groupby("ticker", sort=False)
     }
+    steps = np.arange(MAX_HORIZON, dtype=np.int64)
 
     for ticker, positions in f.groupby(f["ticker"].astype(str), sort=False).groups.items():
         hist = market.get(str(ticker))
@@ -95,9 +97,6 @@ def add_true_forward_returns_fast(
         entry_date[vp] = dates[ve]
         entry_price[vp] = opens[ve]
 
-        # One 126-session index matrix per ticker. Shorter horizons are slices of
-        # the same matrix; this removes the former repeated 5/10/20/63/126 scans.
-        steps = np.arange(MAX_HORIZON, dtype=np.int64)
         raw_idx = ve[:, None] + steps[None, :]
         valid_step = raw_idx < len(hist)
         safe_idx = np.minimum(raw_idx, len(hist) - 1)
@@ -160,8 +159,152 @@ def add_true_forward_returns_fast(
     return result
 
 
+def _mae_feature_frame(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
+    required = set(mae_mod.RAW_REQUIRED_FEATURES)
+    missing = required.difference(frame.columns)
+    if missing:
+        raise mae_mod.MAEDataUnavailable(f"BLOCK_DATA_MAE_TRAIN: missing {sorted(missing)}")
+
+    vol_z = pd.to_numeric(frame["vol_z"], errors="coerce")
+    drawdown = pd.to_numeric(frame["drawdown_4w"], errors="coerce")
+    close = pd.to_numeric(frame["close"], errors="coerce")
+    sma200 = pd.to_numeric(frame["sma200"], errors="coerce")
+    atr = pd.to_numeric(frame["atr_14_pct"], errors="coerce")
+    valid = (
+        vol_z.notna() & np.isfinite(vol_z)
+        & drawdown.notna() & np.isfinite(drawdown)
+        & close.notna() & np.isfinite(close)
+        & sma200.notna() & np.isfinite(sma200) & (sma200 > 0)
+        & atr.notna() & np.isfinite(atr) & (atr >= 0)
+    )
+    X = pd.DataFrame(
+        {
+            "vol_z": vol_z,
+            "drawdown_4w": drawdown,
+            "close_vs_sma200": close / sma200 - 1.0,
+            "atr_14_pct": atr,
+        },
+        index=frame.index,
+    )
+    return X, valid
+
+
+def train_stop_model_fast(
+    history: pd.DataFrame,
+    *,
+    label_col: str = "hit_stop",
+    date_col: str = "as_of_date",
+) -> dict[str, object]:
+    required = set(mae_mod.RAW_REQUIRED_FEATURES) | {label_col, date_col}
+    missing = required.difference(history.columns)
+    if missing:
+        raise mae_mod.MAEDataUnavailable(f"BLOCK_DATA_MAE_TRAIN: missing {sorted(missing)}")
+
+    work = history.copy()
+    work[date_col] = pd.to_datetime(work[date_col], errors="coerce")
+    X, feature_valid = _mae_feature_frame(work)
+    labels = work[label_col].astype("boolean")
+    valid = feature_valid & labels.notna() & work[date_col].notna()
+    clean = X.loc[valid].copy()
+    clean["label"] = labels.loc[valid].astype(int).to_numpy()
+    clean["date"] = work.loc[valid, date_col].to_numpy()
+    clean = clean.sort_values("date", kind="stable")
+
+    if len(clean) < mae_mod.MIN_TRAIN_ROWS:
+        raise mae_mod.MAEDataUnavailable(f"BLOCK_DATA_MAE_TRAIN: only {len(clean)} complete rows")
+    if clean["label"].nunique() < 2:
+        raise mae_mod.MAEDataUnavailable("BLOCK_DATA_MAE_TRAIN: label has only one class")
+
+    split = int(len(clean) * 0.80)
+    train = clean.iloc[:split]
+    valid_frame = clean.iloc[split:]
+    if len(valid_frame) < 30 or train["label"].nunique() < 2:
+        raise mae_mod.MAEDataUnavailable("BLOCK_DATA_MAE_TRAIN: temporal validation split insufficient")
+
+    names = list(mae_mod.REQUIRED_FEATURES)
+    X_train = train[names].astype(float)
+    y_train = train["label"].astype(int)
+    X_valid = valid_frame[names].astype(float)
+    y_valid = valid_frame["label"].astype(int)
+
+    scaler = StandardScaler().fit(X_train)
+    model = LogisticRegression(max_iter=5000, class_weight="balanced", random_state=42)
+    model.fit(scaler.transform(X_train), y_train)
+    prob = model.predict_proba(scaler.transform(X_valid))[:, 1]
+
+    auc = float(roc_auc_score(y_valid, prob)) if y_valid.nunique() == 2 else None
+    brier = float(brier_score_loss(y_valid, prob))
+    return {
+        "version": "V22.1_LOGIT_1",
+        "features": names,
+        "training_mean": {f: float(v) for f, v in zip(names, scaler.mean_, strict=True)},
+        "training_scale": {f: float(v) for f, v in zip(names, scaler.scale_, strict=True)},
+        "coef": {f: float(v) for f, v in zip(names, model.coef_[0], strict=True)},
+        "intercept": float(model.intercept_[0]),
+        "threshold": mae_mod.DEFAULT_THRESHOLD,
+        "n_train": int(len(train)),
+        "n_validation": int(len(valid_frame)),
+        "validation_auc": auc,
+        "validation_brier": brier,
+        "train_end": str(train["date"].max()),
+        "validation_start": str(valid_frame["date"].min()),
+        "validation_end": str(valid_frame["date"].max()),
+    }
+
+
+def apply_mae_filter_fast(
+    frame: pd.DataFrame,
+    threshold: float = mae_mod.DEFAULT_THRESHOLD,
+    *,
+    trained_artifact: Mapping[str, object] | None = None,
+    require_trained: bool = False,
+) -> pd.DataFrame:
+    if not 0.0 < threshold < 1.0:
+        raise ValueError("threshold must be in (0, 1)")
+    if require_trained and trained_artifact is None:
+        raise mae_mod.MAEDataUnavailable("BLOCK_DATA_MAE_MODEL: trained artifact required")
+    if trained_artifact is None:
+        return mae_mod.apply_mae_filter(frame, threshold, trained_artifact=None, require_trained=require_trained)
+
+    names = list(trained_artifact.get("features", []))
+    if names != list(mae_mod.REQUIRED_FEATURES):
+        raise mae_mod.MAEDataUnavailable("BLOCK_DATA_MAE_MODEL: incompatible feature contract")
+
+    X, valid = _mae_feature_frame(frame)
+    try:
+        means = trained_artifact["training_mean"]
+        scales = trained_artifact["training_scale"]
+        coefs = trained_artifact["coef"]
+        linear = np.full(len(frame), float(trained_artifact["intercept"]), dtype=float)
+        for name in names:
+            mean_ = float(means[name])
+            scale_ = float(scales[name])
+            coef_ = float(coefs[name])
+            if not np.isfinite(mean_) or not np.isfinite(scale_) or scale_ <= 0 or not np.isfinite(coef_):
+                raise ValueError
+            values = pd.to_numeric(X[name], errors="coerce").to_numpy(dtype=float, copy=False)
+            linear += coef_ * ((values - mean_) / scale_)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise mae_mod.MAEDataUnavailable("BLOCK_DATA_MAE_MODEL: invalid trained artifact") from exc
+
+    probability = np.full(len(frame), np.nan, dtype=float)
+    idx = valid.to_numpy(dtype=bool, copy=False)
+    probability[idx] = 1.0 / (1.0 + np.exp(-linear[idx]))
+    status = np.full(len(frame), "BLOCK_DATA_MAE", dtype=object)
+    status[idx] = np.where(probability[idx] > threshold, "EXCLU_MAE", "OK")
+
+    out = frame.copy()
+    out["stop_prob"] = probability
+    out["mae_status"] = status
+    out["EXCLU_MAE"] = out["mae_status"].eq("EXCLU_MAE")
+    out["mae_model_type"] = "TRAINED"
+    return out
+
+
 def main() -> int:
     base.add_true_forward_returns = add_true_forward_returns_fast
+    base.train_stop_model = train_stop_model_fast
+    base.apply_mae_filter = apply_mae_filter_fast
     return base.main()
 
 
