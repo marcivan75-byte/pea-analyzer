@@ -44,15 +44,17 @@ def main():
     valid['pgov']=valid.gov.rank(pct=True); valid['pvold_good']=1-valid.vold.rank(pct=True)
     valid['ptrend']=valid.trend.rank(pct=True); valid['patr']=valid.atr.rank(pct=True)
     valid['STATIC']=.92*valid.pgov+.08*valid.pvold_good
-    # PIT regime-adaptive penalties. Regime boundaries are pre-2023 empirical terciles only.
     tq1,tq2=valid.trend.quantile([1/3,2/3]); aq1,aq2=valid.atr.quantile([1/3,2/3])
     wt=np.where(valid.trend<=tq1,.12,np.where(valid.trend>=tq2,.04,.08))
     wv=np.where(valid.atr>=aq2,.12,np.where(valid.atr<=aq1,.04,.08))
     wc=np.clip((wt+wv)/2,.04,.12)
+    wr=.08 + np.where(valid.trend<=tq1,.02,0.0) + np.where(valid.atr>=aq2,.02,0.0)
+    wr=np.clip(wr,.08,.12)
     valid['TREND_ADAPT']=(1-wt)*valid.pgov+wt*valid.pvold_good
     valid['VOL_ADAPT']=(1-wv)*valid.pgov+wv*valid.pvold_good
     valid['COMBINED_ADAPT']=(1-wc)*valid.pgov+wc*valid.pvold_good
-    variants=['STATIC','TREND_ADAPT','VOL_ADAPT','COMBINED_ADAPT']; sels={v:cap(valid,v) for v in variants}; base=sels['STATIC']; bm=met(base); basebig=max(bm['big_winners'],1)
+    valid['RISK_ADD_ADAPT']=(1-wr)*valid.pgov+wr*valid.pvold_good
+    variants=['STATIC','TREND_ADAPT','VOL_ADAPT','COMBINED_ADAPT','RISK_ADD_ADAPT']; sels={v:cap(valid,v) for v in variants}; base=sels['STATIC']; bm=met(base); basebig=max(bm['big_winners'],1)
     rows=[]; best=None
     for v in variants:
         s=sels[v]; m=met(s); br=m['big_winners']/basebig; admiss=br>=MIN_BIG_RECALL and m['expectancy']>=bm['expectancy']*MIN_EXP_RATIO and m['profit_factor']>=bm['profit_factor']*MIN_PF_RATIO
@@ -62,6 +64,6 @@ def main():
     if best is None: raise SystemExit('BLOCK_PASS4_MODEL: no adaptive regime variant satisfies guards')
     if best[1]=='STATIC' or best[2]['stop_rate']>=bm['stop_rate']: raise SystemExit('BLOCK_PASS4_MODEL: no adaptive stop improvement')
     out=a.out_dir; out.mkdir(parents=True,exist_ok=True); pd.DataFrame(rows).to_csv(out/'PASS4_VARIANTS.csv',index=False); sels[best[1]].to_csv(out/'PASS4_SELECTED_PRE2023.csv',index=False)
-    report={'version':'V22.1_TABPORT_PASS4_REGIME_ADAPTIVE_1','governance':{'holdout_accessed':False,'holdout_scope':'SEALED_UNTIL_FINAL_PASS6_EVALUATION','training_source':'PRE_2023_PIT_ONLY','embargo_weeks':26,'train_max_date':str(x.date.max().date()),'regime_inputs':['close/sma200-1','atr_14_pct'],'regime_threshold_source':'PRE2023_VALIDATION_TERCILES','capacity':{'max_entries_month':5,'max_entries_year':40}},'regime_thresholds':{'trend_q33':float(tq1),'trend_q67':float(tq2),'atr_q33':float(aq1),'atr_q67':float(aq2)},'static':bm,'selected':{'variant':best[1],'metrics':best[2]},'variants':rows,'promotion_automatic':False}
+    report={'version':'V22.1_TABPORT_PASS4_REGIME_ADAPTIVE_2','governance':{'holdout_accessed':False,'holdout_scope':'SEALED_UNTIL_FINAL_PASS6_EVALUATION','training_source':'PRE_2023_PIT_ONLY','embargo_weeks':26,'train_max_date':str(x.date.max().date()),'regime_inputs':['close/sma200-1','atr_14_pct'],'regime_threshold_source':'PRE2023_VALIDATION_TERCILES','capacity':{'max_entries_month':5,'max_entries_year':40}},'regime_thresholds':{'trend_q33':float(tq1),'trend_q67':float(tq2),'atr_q33':float(aq1),'atr_q67':float(aq2)},'static':bm,'selected':{'variant':best[1],'metrics':best[2]},'variants':rows,'promotion_automatic':False}
     (out/'PASS4_REPORT.json').write_text(json.dumps(report,indent=2,sort_keys=True)); print(json.dumps(report,indent=2,sort_keys=True)); return 0
 if __name__=='__main__': raise SystemExit(main())
