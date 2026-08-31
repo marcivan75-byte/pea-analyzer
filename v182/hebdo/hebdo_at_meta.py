@@ -13,6 +13,7 @@ REQUIRED = {
     'ticker','close','sma200','vol_z','drawdown_4w','atr_14_pct',
     'mom_26w_sector','adv_20m_eur'
 }
+CRITICAL_NUMERIC = ['close','sma200','vol_z','drawdown_4w','atr_14_pct','mom_26w_sector','adv_20m_eur']
 
 class HebdoATMeta:
     def __init__(self, meta_labeler=None):
@@ -29,8 +30,7 @@ class HebdoATMeta:
             raise ValueError("BLOCK_DATA_META: empty universe")
         if df['ticker'].isna().all() or df['ticker'].astype(str).str.strip().eq('').all():
             raise ValueError("BLOCK_DATA_META: no valid ticker")
-        critical=['close','sma200','vol_z','drawdown_4w','atr_14_pct','mom_26w_sector','adv_20m_eur']
-        all_missing=[c for c in critical if df[c].isna().all()]
+        all_missing=[c for c in CRITICAL_NUMERIC if df[c].isna().all()]
         if all_missing:
             raise ValueError(f"BLOCK_DATA_META: entirely missing critical columns {all_missing}")
 
@@ -43,18 +43,30 @@ class HebdoATMeta:
         n0 = len(df)
         if n0 == 0:
             raise ValueError("BLOCK_DATA_META: no valid ticker after cleanup")
+
+        # Fail-closed au niveau ligne : aucune valeur critique absente/non numérique,
+        # aucun prix/liquidité/ATR non positif ne peut atteindre le scoring.
+        for col in CRITICAL_NUMERIC:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        invalid = df[CRITICAL_NUMERIC].isna().any(axis=1)
+        invalid |= (df['close'] <= 0) | (df['sma200'] <= 0) | (df['atr_14_pct'] <= 0) | (df['adv_20m_eur'] <= 0)
+        n_invalid = int(invalid.sum())
+        df = df.loc[~invalid].copy()
+        if df.empty:
+            raise ValueError(f"BLOCK_DATA_META: all rows invalid after critical-data validation (initial={n0})")
+
         df = self.fp.filter_batch(df)
         if df.empty:
             raise ValueError(f"BLOCK_DATA_META: universe fully rejected by false-positive filter (initial={n0})")
         df['stage_fp_kept'] = True
         df = self.mae.predict_batch(df)
-        # MAE is a risk flag, not an automatic hard exclusion at this stage.
         df = self.meta.predict_proba(df)
         df = self.ev.rank_batch(df)
         if df.empty:
             raise ValueError("BLOCK_DATA_META: empty universe after ranking")
         df['META_STATUS'] = df['tier']
         df['meta_universe_initial'] = n0
+        df['meta_invalid_rows_dropped'] = n_invalid
         df['meta_universe_after_fp'] = len(df)
         return df
 
@@ -88,6 +100,7 @@ def main():
     summary={
         'status':'OK', 'version':'HEBDO_AT_META_V1',
         'universe_initial':int(ranked['meta_universe_initial'].iloc[0]),
+        'invalid_rows_dropped':int(ranked['meta_invalid_rows_dropped'].iloc[0]),
         'universe_after_fp':int(ranked['meta_universe_after_fp'].iloc[0]),
         'TCT':int((ranked['tier']=='TCT').sum()),
         'CT_WATCH':int((ranked['tier']=='CT_WATCH').sum()),
