@@ -8,6 +8,7 @@ on:
       - 'v182/hebdo/tabport_publish.py'
       - 'v182/hebdo/tabport_antifp.py'
       - 'v182/hebdo/tabport_antifp_publish.py'
+      - 'v182/hebdo/tabport_antifp_attribution.py'
       - 'tests/test_tabport_enriched_publish.py'
       - '.github/workflows/tabport_enriched_publish.yml'
   workflow_dispatch:
@@ -58,6 +59,8 @@ jobs:
         run: python -m v182.hebdo.tabport_publish --cache data/cache/actions --output-dir outputs/tabport_enriched
       - name: Publish anti-FP ablation matrix
         run: python -m v182.hebdo.tabport_antifp_publish --cache data/cache/actions --output-dir outputs/tabport_antifp
+      - name: Publish paired anti-FP attribution
+        run: python -m v182.hebdo.tabport_antifp_attribution --root outputs/tabport_antifp
       - name: Validate publication contracts
         run: |
           python - <<'PY'
@@ -74,9 +77,11 @@ jobs:
           assert diag['status']=='PUBLISHED', diag
           required_scenarios={'BASELINE','CONFIRM_J1_ONLY','CONFIRM_FAIL_FAST','CONFIRM_TRAIL_BE','CONFIRM_MOM_DEAD_J3','CONFIRM_FAIL_FAST_TRAIL','CONFIRM_FAIL_FAST_MOM','FULL_ANTIFP'}
           assert required_scenarios == {r['scenario'] for r in diag['scenarios']}, diag
-          for name in ['TABPORT_ANTIFP_COMPARAISON.csv','TABPORT_CONFIRMATION_J1_AUDIT.csv','TABPORT_SIGNALS_CONFIRMES.csv']:
+          attr=json.loads((anti/'TABPORT_ANTIFP_PAIRED_ATTRIBUTION.json').read_text())
+          assert attr['status']=='PUBLISHED' and attr['reference']=='CONFIRM_J1_ONLY', attr
+          for name in ['TABPORT_ANTIFP_COMPARAISON.csv','TABPORT_CONFIRMATION_J1_AUDIT.csv','TABPORT_SIGNALS_CONFIRMES.csv','TABPORT_ANTIFP_PAIRED_ATTRIBUTION.csv','TABPORT_ANTIFP_PAIRED_DETAIL.csv']:
               p=anti/name; assert p.exists() and p.stat().st_size>0, name
-          print(json.dumps(diag,indent=2))
+          print(json.dumps({'diagnostic':diag,'attribution':attr},indent=2))
           PY
       - name: Upload TABPORT enriched publication
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
