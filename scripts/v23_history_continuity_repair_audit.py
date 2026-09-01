@@ -37,7 +37,7 @@ def norm_history(df: pd.DataFrame) -> pd.DataFrame:
         'close': pd.to_numeric(df[pick('close','adj_close','adjusted_close')], errors='coerce'),
     })
     z = z.dropna().query('close > 0').copy()
-    z = z[z.date < CUTOFF].drop_duplicates(['isin','date'], keep='last').sort_values(['isin','date'])
+    z = z[z['date'] < CUTOFF].drop_duplicates(['isin','date'], keep='last').sort_values(['isin','date'])
     return z
 
 
@@ -55,27 +55,27 @@ def fetch(ticker: str) -> pd.DataFrame:
         'source_close': pd.to_numeric(x.get('Close'), errors='coerce'),
         'source_adj_close': pd.to_numeric(x.get('Adj Close'), errors='coerce') if 'Adj Close' in x else np.nan,
     }).dropna(subset=['date','source_close'])
-    return out[out.date < CUTOFF].sort_values('date')
+    return out[out['date'] < CUTOFF].sort_values('date')
 
 
 def audit_one(z: pd.DataFrame, isin: str, meta: dict) -> tuple[dict, pd.DataFrame]:
-    h = z[z.isin.eq(isin)][['date','close']].copy().sort_values('date')
+    h = z[z['isin'].eq(isin)][['date','close']].copy().sort_values('date')
     s = fetch(meta['ticker'])
     merged = h.merge(s, on='date', how='outer', indicator=True).sort_values('date')
-    overlap = merged[merged['_merge'].eq('both') & merged.close.notna() & merged.source_close.notna()].copy()
+    overlap = merged[merged['_merge'].eq('both') & merged['close'].notna() & merged['source_close'].notna()].copy()
     if len(overlap):
-        ratio = overlap.close / overlap.source_close
+        ratio = overlap['close'] / overlap['source_close']
         med_ratio = float(ratio.median())
         mad_ratio = float((ratio - ratio.median()).abs().median())
         corr = float(overlap[['close','source_close']].corr().iloc[0,1]) if len(overlap) > 1 else None
     else:
         med_ratio = mad_ratio = corr = None
 
-    h_last = h.date.max() if len(h) else pd.NaT
-    s_last = s.date.max() if len(s) else pd.NaT
-    source_after_hist = int((s.date > h_last).sum()) if pd.notna(h_last) else int(len(s))
-    source_2020_2022 = int(((s.date >= '2020-01-01') & (s.date < CUTOFF)).sum())
-    hist_2020_2022 = int(((h.date >= '2020-01-01') & (h.date < CUTOFF)).sum())
+    h_last = h['date'].max() if len(h) else pd.NaT
+    s_last = s['date'].max() if len(s) else pd.NaT
+    source_after_hist = int((s['date'] > h_last).sum()) if pd.notna(h_last) else int(len(s))
+    source_2020_2022 = int(((s['date'] >= '2020-01-01') & (s['date'] < CUTOFF)).sum())
+    hist_2020_2022 = int(((h['date'] >= '2020-01-01') & (h['date'] < CUTOFF)).sum())
     source_continues = bool(source_2020_2022 >= 100)
 
     result = {
@@ -116,7 +116,7 @@ def main() -> None:
         rows.append(r); details.append(d)
     summary = pd.DataFrame(rows)
     detail = pd.concat(details, ignore_index=True) if details else pd.DataFrame()
-    confirmed = int(summary.classification.eq('HISTORY_CONTINUITY_BREAK_CONFIRMED').sum())
+    confirmed = int(summary['classification'].eq('HISTORY_CONTINUITY_BREAK_CONFIRMED').sum())
     report = {
         'version': 'V23_HISTORY_CONTINUITY_REPAIR_AUDIT_1',
         'purpose': 'diagnose the five non-terminal 2019 execution gaps against independent public ticker histories',
