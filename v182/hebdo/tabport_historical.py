@@ -3,7 +3,7 @@
 Aucune génération, interpolation ou donnée synthétique. Le runner bloque si les
 fichiers, la couverture demandée ou la provenance PIT ligne par ligne sont insuffisants.
 Il accepte aussi directement le cache OHLCV gouverné en blocs Parquet wide
-(Date en index, colonnes MultiIndex ticker/champ) et le normalise en OHLC long.
+(Date en index, colonnes MultiIndex ticker/champ) et le normalise en OHLCV long.
 """
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from v182.hebdo.tabport import Tabport65k, TabportConfig
 
 
 OHLC_FIELDS = {"open", "high", "low", "close"}
+VOLUME_FIELD = "volume"
 
 
 def _sha256(path: Path) -> str:
@@ -88,11 +89,14 @@ def _tuple_columns_if_encoded(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _wide_ohlc_to_long(df: pd.DataFrame, source_name: str) -> pd.DataFrame:
-    """Normalize governed cache blocks to date/ticker/open/high/low/close."""
+    """Normalize governed cache blocks to date/ticker/OHLC plus volume when present."""
     lower = {str(c).lower(): c for c in df.columns}
     if {"date", "ticker", *OHLC_FIELDS}.issubset(lower):
-        rename = {lower[k]: k for k in ["date", "ticker", "open", "high", "low", "close"]}
-        return df.rename(columns=rename)[["date", "ticker", "open", "high", "low", "close"]].copy()
+        names = ["date", "ticker", "open", "high", "low", "close"]
+        if VOLUME_FIELD in lower:
+            names.append(VOLUME_FIELD)
+        rename = {lower[k]: k for k in names}
+        return df.rename(columns=rename)[names].copy()
 
     work = _tuple_columns_if_encoded(df)
     if not isinstance(work.columns, pd.MultiIndex) or work.columns.nlevels != 2:
@@ -118,14 +122,17 @@ def _wide_ohlc_to_long(df: pd.DataFrame, source_name: str) -> pd.DataFrame:
         by_field = {str(c[field_level]).strip().lower(): c for c in cols}
         if not OHLC_FIELDS.issubset(by_field):
             continue
-        part = pd.DataFrame({
+        data = {
             "date": dates,
             "ticker": str(ticker).strip().upper(),
             "open": work[by_field["open"]].to_numpy(),
             "high": work[by_field["high"]].to_numpy(),
             "low": work[by_field["low"]].to_numpy(),
             "close": work[by_field["close"]].to_numpy(),
-        })
+        }
+        if VOLUME_FIELD in by_field:
+            data[VOLUME_FIELD] = work[by_field[VOLUME_FIELD]].to_numpy()
+        part = pd.DataFrame(data)
         # Les caches de marché peuvent contenir des lignes NaN avant cotation ou
         # après radiation. Elles ne sont pas synthétisées: elles sont simplement absentes.
         part = part.dropna(subset=["open", "high", "low", "close"], how="any")
@@ -255,7 +262,7 @@ def run_historical(
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--signals", required=True)
-    p.add_argument("--ohlc", required=True, help="OHLC long file or governed cache directory")
+    p.add_argument("--ohlc", required=True, help="OHLC/OHLCV long file or governed cache directory")
     p.add_argument("--start", required=True)
     p.add_argument("--end", required=True)
     p.add_argument("--output-dir", default="outputs/tabport_historical")
