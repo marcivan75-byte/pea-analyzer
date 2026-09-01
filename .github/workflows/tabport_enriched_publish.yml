@@ -140,3 +140,5 @@ jobs:
             outputs/tabport_adaptive_stop/
           if-no-files-found: error
           retention-days: 30
+
+# Publication trigger after PRE2023 governance validation.
