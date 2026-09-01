@@ -44,6 +44,14 @@ def _wide_ohlcv_to_long(df: pd.DataFrame, source: str) -> pd.DataFrame:
             part[field] = pd.to_numeric(work[by_field[field]].to_numpy(), errors="coerce")
         part = part.dropna(subset=["open", "high", "low", "close", "volume"])
         part = part[(part[["open", "high", "low", "close"]] > 0).all(axis=1) & (part["volume"] >= 0)]
+        consistent = (
+            (part["low"] <= part["high"])
+            & (part["open"] >= part["low"])
+            & (part["open"] <= part["high"])
+            & (part["close"] >= part["low"])
+            & (part["close"] <= part["high"])
+        )
+        part = part[consistent].copy()
         if not part.empty:
             pieces.append(part)
     if not pieces:
@@ -182,7 +190,9 @@ def publish(cache_dir: str | Path, output_dir: str | Path) -> dict:
                 "rows": int(len(prices)),
                 "source_min_date": str(pd.to_datetime(prices["date"], utc=True).min()),
                 "source_max_date": str(pd.to_datetime(prices["date"], utc=True).max()),
-                "source_files": files, "layout_normalization": "GOVERNED_WIDE_CACHE_TO_LONG",
+                "source_files": files,
+                "layout_normalization": "GOVERNED_WIDE_CACHE_TO_LONG",
+                "ohlc_quality_policy": "DROP_MALFORMED_BARS_FAIL_CLOSED_NO_REPAIR",
             },
         },
         "config": cfg.__dict__,
