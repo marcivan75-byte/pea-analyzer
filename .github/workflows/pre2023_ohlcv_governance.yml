@@ -4,6 +4,7 @@ on:
   push:
     branches: [hebdo-at-meta]
     paths:
+      - 'v182/data/__init__.py'
       - 'v182/data/pre2023_ohlcv_eodhd.py'
       - 'tests/test_pre2023_ohlcv_eodhd.py'
       - '.github/workflows/pre2023_ohlcv_governance.yml'
