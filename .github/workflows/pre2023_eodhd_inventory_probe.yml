@@ -5,6 +5,7 @@ on:
     branches: [hebdo-at-meta]
     paths:
       - 'config/pre2023_eodhd_scope_probe.csv'
+      - '.github/workflows/pre2023_eodhd_inventory_probe.yml'
 
 permissions:
   contents: read
