@@ -19,11 +19,39 @@ En cas de conflit, la décision la plus récente et explicitement validée prév
 
 ## État courant vérifié
 
-### HEAD
+### HEAD technique de la branche avant cette mise à jour documentaire
 
-- Commit: `98bbf4b3508f2239e6f34680f9dc309d4732382c`
-- Message: `ci(pre2023): build governed Yahoo development corpus`
-- Date: 2026-09-01T19:35:12Z
+- Commit: `fdf995a5857e1d736b39bb82c60925aed411c5ec`
+- Message: `ci(meta): validate governed 2010-2026 access`
+- Date: 2026-09-01T19:49:50Z
+- Nature: validation technique/gouvernance de l'accès aux historiques 2010-2026; ce commit ne constitue pas à lui seul une nouvelle version métier postérieure à Audit 73.
+
+### Référence fonctionnelle Work — Audit 73
+
+La dernière référence fonctionnelle officielle communiquée par Work pour `HEBDO AT META` est **Audit 73 intégré**.
+
+Référence communiquée:
+
+- commit court annoncé: `f456281`;
+- message annoncé: `audit73(hebdo-meta): preserve Boursorama consensus history`;
+- statut fonctionnel: **référence officielle Audit 73 à préserver**;
+- particularité: conservation de l'historique du consensus Boursorama.
+
+Le SHA court `f456281` n'est actuellement pas résolu par l'historique GitHub accessible de `marcivan75-byte/pea-analyzer`. Cette absence de résolution ne doit pas conduire à déclasser Audit 73 ni à effacer sa décision fonctionnelle. Elle doit être traitée comme une anomalie de traçabilité Git à investiguer.
+
+Les commits techniques ultérieurs présents sur `hebdo-at-meta` (PRE2023, accès gouverné 2010-2026, CI) **ne sont pas assimilés à un Audit 74** sauf décision fonctionnelle Work explicite.
+
+### Statut Boursorama après Audit 73
+
+Audit 73 impose de **préserver l'historique du consensus Boursorama**. En conséquence:
+
+- l'historique Boursorama n'est plus classé `LEGACY_OR_UNRESOLVED` en tant que donnée/historique à conserver;
+- sa collecte, sa conservation chronologique et sa traçabilité PIT doivent être préservées lorsque disponibles;
+- aucune observation historique ne doit être remplacée rétroactivement par la dernière valeur connue;
+- l'absence d'une valeur historique ne doit pas être comblée avec une valeur future;
+- la conservation de cet historique ne signifie pas automatiquement que `consensus BUY/STRONG_BUY`, le potentiel, les révisions ou le nombre d'analystes sont des **critères de scoring actifs** du moteur Meta courant.
+
+Le moteur `v182/hebdo/hebdo_at_meta.py` vérifié au HEAD ne référence pas directement une colonne Boursorama/consensus parmi ses colonnes obligatoires. Toute promotion du consensus Boursorama en filtre, bonus, pondération ou critère décisionnel actif doit donc être démontrée par le code/tests/workflow correspondant ou par une décision Work explicite distincte.
 
 ### TABPORT enrichi
 
@@ -89,8 +117,12 @@ Le corpus Yahoo PRE2023 gouverné a été construit et validé:
 
 Le corpus brut 2010-2022 exclut fail-closed les lignes OHLCV invalides/incomplètes et ne doit pas injecter de données >=2023 dans le développement.
 
+Le HEAD technique `fdf995a5857e1d736b39bb82c60925aed411c5ec` ajoute en outre la validation de l'accès gouverné 2010-2026 avec séparation développement 2010-2022 / holdout 2023-2026 et blocage du fit sur le holdout.
+
 ## Contraintes Work récentes à préserver
 
+- Audit 73 est la référence fonctionnelle officielle tant qu'un audit métier ultérieur n'est pas explicitement identifié;
+- préserver l'historique du consensus Boursorama conformément à Audit 73;
 - PIT T-1 22h Paris pour les données utilisées dans la décision;
 - fail-closed si historique requis incomplet;
 - pas de TCT exploitable sans Meta temporel/OOS dûment entraîné;
@@ -111,29 +143,29 @@ Paramètres TABPORT implémentés au stade de validation du 1er septembre 2026:
 
 ## Règles anciennes / non automatiquement actives
 
-Les directives antérieures telles que:
+La **conservation de l'historique Boursorama est acquise par Audit 73**. En revanche, les usages décisionnels suivants restent à distinguer de cette conservation et ne doivent pas être déclarés `ACTIVE` sans preuve technique ou décision Work explicite:
 
 - objectif médian >= +20%;
-- consensus BUY/STRONG_BUY;
+- filtre consensus BUY/STRONG_BUY;
 - bonus de révision de consensus;
 - nombre d'analystes comme mesure de confiance;
 - WAIT en cas de données fondamentales absentes;
-- collecte Boursorama/Finnhub concentrée sur les finalistes Meta;
-- chaîne J -> J+1 -> filtre fondamental -> entrée J+2;
+- collecte Boursorama/Finnhub uniquement sur les finalistes Meta;
+- chaîne J -> J+1 -> filtre fondamental -> entrée J+2.
 
-ne doivent **pas** être considérées comme actives uniquement parce qu'elles apparaissent dans un ancien chat. Leur statut est `LEGACY_OR_UNRESOLVED` tant qu'une décision Work plus récente, un module au HEAD, un test ou un workflow validé ne démontre pas leur promotion dans la chaîne active.
-
-Cela n'implique pas qu'elles soient rejetées: cela interdit seulement leur réintroduction rétrograde sans preuve de leur statut le plus récent.
+Leur statut décisionnel est `LEGACY_OR_UNRESOLVED` tant qu'un module au HEAD, un test, un workflow validé ou une décision Work plus récente ne démontre pas leur promotion dans la chaîne active.
 
 ## Discipline de mise à jour
 
 À chaque reprise du projet:
 
 1. relire le HEAD `hebdo-at-meta`;
-2. vérifier les derniers runs Actions;
-3. récupérer les décisions Work récentes disponibles;
-4. comparer leur chronologie;
-5. mettre à jour ce document si l'état de référence change;
-6. seulement ensuite proposer ou appliquer une modification du process.
+2. identifier séparément le dernier commit technique et la dernière référence fonctionnelle Work;
+3. vérifier les derniers runs Actions;
+4. récupérer les décisions Work récentes disponibles;
+5. comparer leur chronologie;
+6. préserver explicitement les acquis Audit 73, notamment l'historique Boursorama;
+7. mettre à jour ce document si l'état de référence change;
+8. seulement ensuite proposer ou appliquer une modification du process.
 
-Aucun ancien extrait de conversation ne doit, à lui seul, remplacer l'état courant vérifié.
+Aucun ancien extrait de conversation ne doit, à lui seul, remplacer l'état courant vérifié; inversement, un commit purement technique ultérieur ne doit pas être présenté comme une nouvelle version fonctionnelle sans preuve.
