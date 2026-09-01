@@ -338,3 +338,15 @@ def test_master_config_registers_runtime_optimization_policy() -> None:
     assert budget["standalone_postmarket_jobs_eliminated_per_average_month"]==21.74
     assert budget["validation_steps_scheduled"] is False
     assert opt["daily_profile"]["decision_logic_changed"] is False
+def test_consensus_pit_history_keeps_original_timestamp_and_deduplicates(tmp_path) -> None:
+    path=tmp_path/"consensus_history.csv"
+    observations=[
+        {"ticker":"AAA","field":"consensus_delta_4w","value":2.5,"source":"Finnhub","fetched_at_utc":"2026-08-01T12:00:00+00:00","cache_state":"LIVE_REFRESH"},
+        {"ticker":"AAA","field":"consensus_delta_4w","value":2.5,"source":"Finnhub","fetched_at_utc":"2026-08-01T12:00:00+00:00","cache_state":"CACHE_HIT"},
+        {"ticker":"AAA","field":"consensus_status","value":"OK","source":"Finnhub","fetched_at_utc":"2026-08-01T12:00:00+00:00"},
+    ]
+    first=finnhub.append_consensus_pit_history(observations,path)
+    second=finnhub.append_consensus_pit_history(observations,path)
+    saved=pd.read_csv(path)
+    assert first["appended"]==1 and second["appended"]==0 and len(saved)==1
+    assert saved.iloc[0]["fetched_at_utc"]=="2026-08-01T12:00:00+00:00"
