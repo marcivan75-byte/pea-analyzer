@@ -250,7 +250,7 @@ def wave4_info_actions(actions_df: pd.DataFrame, cfg: dict, top_n: int = 300) ->
 
 
 def wave5_consensus_finnhub(actions_df: pd.DataFrame, api_key: str, top_n: int = 300, cfg: dict | None = None) -> tuple[list[dict], list[dict]]:
-    from v182.sources.finnhub_consensus import fetch_consensus_cached
+    from v182.sources.finnhub_consensus import fetch_consensus_cached, append_consensus_pit_history
     selected=actions_df.copy(); ticker_to_isin={str(t):i for t,i in zip(selected["yahoo_ticker"],selected["isin"]) if not is_missing(t)}
     root=Path(__file__).resolve().parents[3]
     if cfg is None:
@@ -275,6 +275,7 @@ def wave5_consensus_finnhub(actions_df: pd.DataFrame, api_key: str, top_n: int =
         tier_obs,tier_fail,tier_metric=fetch_consensus_cached(tickers,api_key,cache_path,refresh_budget=int(policy.get("refresh_budget",0)),max_cache_age_days=float(policy.get("max_cache_age_days",42)),negative_cache_days=float(opt.get("negative_cache_days",7)),recommendation_ttl_days=float(policy.get("recommendation_ttl_days",14)),target_ttl_days=float(policy.get("target_ttl_days",28)),target_refresh_budget=int(policy.get("target_refresh_budget",max(0,int(policy.get("refresh_budget",0))//2))),delay_seconds=float(opt.get("delay_seconds",1.1)),max_workers=int(opt.get("max_workers",8)),refresh_due=_slow_source_refresh_due_enabled())
         obs_raw.extend(tier_obs); failures.extend(tier_fail); tier_metrics[tier]=tier_metric
     metrics={"policy":"HORIZON_AWARE_HOT_WARM_COLD_INDEPENDENT_RECOMMENDATION_TARGET_TTLS","tier_counts":{tier:sum(1 for value in tiers.values() if value==tier) for tier in ("HOT","WARM","COLD")},"tiers":tier_metrics,"requested":len(ticker_to_isin),"refresh_due_enabled":_slow_source_refresh_due_enabled(),"due_refresh_suppressed":sum(int(m.get("due_refresh_suppressed",0)) for m in tier_metrics.values()),"live_refresh_requested":sum(int(m.get("live_refresh_requested",0)) for m in tier_metrics.values()),"target_live_refresh_requested":sum(int(m.get("target_live_refresh_requested",0)) for m in tier_metrics.values()),"target_calls_avoided":sum(int(m.get("target_calls_avoided",0)) for m in tier_metrics.values()),"cache_hit_tickers":sum(int(m.get("cache_hit_tickers",0)) for m in tier_metrics.values()),"full_universe_preserved":True,"horizon_demand":horizon_audit}
+    metrics["pit_history"]=append_consensus_pit_history(obs_raw,root/"state"/"provenance"/"consensus_history"/"FINNHUB_CONSENSUS_PIT_HISTORY.csv")
     audit_path=root/"outputs"/"audit"/"FINNHUB_CONSENSUS_CACHE_V1.json"; audit_path.parent.mkdir(parents=True,exist_ok=True); audit_path.write_text(json.dumps(metrics,ensure_ascii=False,indent=2),encoding="utf-8")
     result=[]
     for row in obs_raw:
