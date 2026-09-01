@@ -12,7 +12,10 @@ def test_convex_exit_extends_only_large_winner():
     prices=pd.DataFrame(rows); signals=pd.DataFrame([{'date':'2025-01-01','ticker':'AAA','EV_net':1.0,'tier':'TCT'}])
     base=ConvexExitRunner(False).run(signals,prices)['ledger'].iloc[0]
     convex=ConvexExitRunner(True).run(signals,prices)['ledger'].iloc[0]
+    half=ConvexExitRunner(True,partial=True).run(signals,prices)['ledger'].iloc[0]
     assert base['sessions_held']==126 and base['exit_reason']=='TIME_26W'
     assert convex['sessions_held']==189 and convex['exit_reason']=='TIME_39W_CONVEX'
     assert convex['return_net']>base['return_net']
+    assert base['return_net']<half['return_net']<convex['return_net']
+    assert half['shares']==base['shares']
     assert bool(convex['extension_activated']) is True
