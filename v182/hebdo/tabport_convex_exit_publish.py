@@ -50,7 +50,7 @@ class ConvexExitRunner:
             pnl=(gross-fee)-pos['cash_out']; ledger.append({'ticker':ticker,'signal_date':pos['signal_date'],'entry_date':pos['entry_date'],'exit_date':date,
                 'shares':pos['shares'],'entry_price':pos['entry_price'],'exit_price':sell,'entry_fee':pos['entry_fee'],'exit_fee':fee,'fees_total':pos['entry_fee']+fee,
                 'slippage_rate_side':self.cfg.slippage_rate,'cash_invested':pos['cash_out'],'pnl_net':pnl,'return_net':pnl/pos['cash_out'],'exit_reason':reason,
-                'sessions_held':pos['sessions'],'mae':pos['mae'],'mfe':pos['mfe'],'EV_net_signal':pos['EV_net'],'extension_activated':pos['extended']})
+                'sessions_held':pos['sessions'],'mae':pos['mae'],'mfe':pos['mfe'],'EV_net_signal':pos['EV_net'],'stop_pct_signal':self.cfg.stop_pct,'extension_activated':pos['extended']})
         def mark(pos,bar):
             pos['last_close']=float(bar['close']); pos['mae']=min(pos['mae'],float(bar['low'])/pos['entry_price']-1); pos['mfe']=max(pos['mfe'],float(bar['high'])/pos['entry_price']-1); pos['peak']=max(pos['peak'],float(bar['high']))
         for date in dates:
