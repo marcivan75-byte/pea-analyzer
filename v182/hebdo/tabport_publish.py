@@ -11,6 +11,7 @@ import pandas as pd
 
 from v182.hebdo.hebdo_at_meta import HebdoATMeta
 from v182.hebdo.tabport import Tabport65k, TabportConfig
+from v182.hebdo.tabport_antifp import add_antifp_features, apply_j1_confirmation
 from v182.hebdo.tabport_historical import _tuple_columns_if_encoded, _validate_row_level_pit, _sha256_source
 from v182.hebdo.tabport_enriched import publish_enriched
 
@@ -177,26 +178,37 @@ def publish(cache_dir: str | Path, output_dir: str | Path) -> dict:
     signals, signal_audit = build_weekly_meta_signals(ohlcv)
     signal_path = out / "TABPORT_META_SIGNALS_MATURES.csv"
     signals.to_csv(signal_path, index=False)
-    start = str(pd.to_datetime(signals["date"], utc=True).min().date())
+    feature_tickers = set(signals["ticker"].astype(str))
+    features = add_antifp_features(ohlcv[ohlcv["ticker"].astype(str).isin(feature_tickers)].copy())
+    confirmed, confirmation_audit = apply_j1_confirmation(signals, features)
+    if confirmed.empty:
+        raise ValueError("BLOCK_TABPORT_PUBLISH: J1 confirmation rejected every signal")
+    confirmed_path = out / "TABPORT_META_SIGNALS_CONFIRMES_J1.csv"
+    confirmed.to_csv(confirmed_path, index=False)
+    confirmation_audit.to_csv(out / "TABPORT_CONFIRMATION_J1_AUDIT.csv", index=False)
+    start = str(pd.to_datetime(confirmed["date"], utc=True).min().date())
     end = str(pd.to_datetime(ohlcv["date"], utc=True).max().date())
     cfg = TabportConfig()
-    pit_min, pit_max = _validate_row_level_pit(signals)
-    needed_tickers = set(signals["ticker"].astype(str))
+    pit_min, pit_max = _validate_row_level_pit(confirmed)
+    needed_tickers = set(confirmed["ticker"].astype(str))
     prices = ohlcv[ohlcv["ticker"].astype(str).isin(needed_tickers)][["date", "ticker", "open", "high", "low", "close"]].copy()
     if prices.empty:
         raise ValueError("BLOCK_TABPORT_PUBLISH: no OHLC for selected Meta signals")
-    result = Tabport65k(cfg).run(signals, prices)
+    result = Tabport65k(cfg).run(confirmed, prices)
     result["manifest"] = {
         "status": "OK",
         "engine": "TABPORT_HEBDO_AT_META_ENRICHI",
         "window": {"start": start, "end": end},
         "inputs": {
             "signals": {
-                "path": str(signal_path), "rows": int(len(signals)),
-                "source_min_date": str(pd.to_datetime(signals["date"], utc=True).min()),
-                "source_max_date": str(pd.to_datetime(signals["date"], utc=True).max()),
+                "path": str(confirmed_path), "rows": int(len(confirmed)),
+                "source_min_date": str(pd.to_datetime(confirmed["date"], utc=True).min()),
+                "source_max_date": str(pd.to_datetime(confirmed["date"], utc=True).max()),
                 "pit_snapshot_min": str(pit_min), "pit_snapshot_max": str(pit_max),
                 "pit_validation": "ROW_LEVEL_T_MINUS_1_22H_EUROPE_PARIS",
+                "selection_policy": "META_ELIGIBLE_THEN_J1_CONFIRMATION",
+                "pre_confirmation_path": str(signal_path),
+                "pre_confirmation_rows": int(len(signals)),
             },
             "ohlc": {
                 "path": str(cache_dir), "sha256": _sha256_source(Path(cache_dir)),
@@ -216,15 +228,20 @@ def publish(cache_dir: str | Path, output_dir: str | Path) -> dict:
             "name": "TABPORT_ENRICHI",
             "signal_audit": signal_audit,
             "cache_files": files,
-            "primary_cohort": "MATURED_126_SESSIONS",
+            "primary_cohort": "MATURED_126_SESSIONS_J1_CONFIRMED",
+            "confirmation_counts": {str(k): int(v) for k, v in confirmation_audit["status"].value_counts(dropna=False).to_dict().items()},
+            "rejected_components": ["EARLY_EXIT_ALL", "STOP_RISK_VETO", "STOP_RISK_RANKING_REPLACEMENT", "ATR_ADAPTIVE_STOP", "CLOSE09_HARD15"],
+            "retained_components": ["DETERMINISTIC_FP_FILTER", "META_RANKING", "J1_CONFIRMATION", "FIXED_STOP_09"],
         },
     }
     enriched = publish_enriched(result, out, initial_cash=cfg.initial_cash)
     publication = {
         "status": "PUBLISHED",
         "name": "TABPORT_ENRICHI",
-        "primary_cohort": "MATURED_126_SESSIONS",
+        "primary_cohort": "MATURED_126_SESSIONS_J1_CONFIRMED",
         "signal_audit": signal_audit,
+        "confirmation_counts": {str(k): int(v) for k, v in confirmation_audit["status"].value_counts(dropna=False).to_dict().items()},
+        "decision_chain": "B_V2_TO_META_TO_J1_CONFIRM_TO_FIXED09_TABPORT",
         "summary": enriched["summary"],
         "files": sorted(p.name for p in out.iterdir() if p.is_file()),
     }
