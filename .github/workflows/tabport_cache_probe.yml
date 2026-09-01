@@ -28,7 +28,7 @@ jobs:
           restore-keys: |
             ohlcv-v3-
       - name: Install parquet reader
-        run: python -m pip install --prefer-binary pandas pyarrow
+        run: python -m pip install --prefer-binary pandas numpy pyarrow
       - name: Inventory and validate restored cache
         run: |
           echo "CACHE_HIT=${{ steps.cache.outputs.cache-hit }}"
@@ -69,10 +69,6 @@ jobs:
                               rec['index_span_days']=int((valid_idx.max()-valid_idx.min()).days)
                               rec['index_monotonic']=bool(valid_idx.is_monotonic_increasing)
                               rec['index_duplicates']=int(valid_idx.duplicated().sum())
-                      for c in ('date','signal_date','timestamp'):
-                          if c in df.columns and len(df):
-                              s=pd.to_datetime(df[c],errors='coerce',utc=True)
-                              rec[f'{c}_min']=str(s.min()); rec[f'{c}_max']=str(s.max())
                       parquet_rows.append(rec)
                   elif p.suffix.lower()=='.csv':
                       df=pd.read_csv(p,nrows=5)
@@ -113,7 +109,37 @@ jobs:
           if failures:
               raise SystemExit('BLOCK_HISTORICAL_CACHE_VALIDATION: '+ '; '.join(failures[:20]))
           PY
-      - name: Upload cache inventory only
+      - name: Smoke-test TABPORT parser on real governed cache
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          from v182.hebdo.tabport_historical import _read_ohlc_source
+
+          checks={}
+          for name in ('actions','etf'):
+              root=Path('data/cache')/name
+              if not root.exists():
+                  raise SystemExit(f'BLOCK_CACHE_LAYOUT: missing {root}')
+              df, files=_read_ohlc_source(root)
+              required={'date','ticker','open','high','low','close'}
+              if set(df.columns) != required:
+                  raise SystemExit(f'BLOCK_CACHE_LAYOUT: {name} columns={list(df.columns)}')
+              if df.empty:
+                  raise SystemExit(f'BLOCK_CACHE_LAYOUT: {name} normalized empty')
+              if df.duplicated(['date','ticker']).any():
+                  raise SystemExit(f'BLOCK_CACHE_LAYOUT: {name} duplicate bars')
+              checks[name]={
+                  'source_files':len(files),
+                  'normalized_rows':int(len(df)),
+                  'tickers':int(df['ticker'].nunique()),
+                  'min_date':str(df['date'].min()),
+                  'max_date':str(df['date'].max()),
+              }
+          Path('/tmp/tabport_cache_parser_smoke.json').write_text(json.dumps(checks,indent=2),encoding='utf-8')
+          print(json.dumps(checks,indent=2))
+          PY
+      - name: Upload cache audit evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -122,5 +148,6 @@ jobs:
             /tmp/tabport_cache_files.txt
             /tmp/tabport_cache_inventory.json
             /tmp/tabport_cache_summary.json
+            /tmp/tabport_cache_parser_smoke.json
           if-no-files-found: warn
           retention-days: 14
