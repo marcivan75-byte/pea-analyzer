@@ -57,6 +57,9 @@ def main() -> None:
 
         rawf = _extract_ticker_frame(raw,ticker)
         repf = _extract_ticker_frame(repaired,ticker)
+        if (not rawf.empty) and repf.empty:
+            rows.append({"ticker":ticker,"status":"REPAIR_ERROR","detail":"raw history present but repaired history empty"})
+            continue
         raw_bad = _geometry(rawf)
         rep_bad = _geometry(repf)
         raw_count = int(raw_bad.sum()) if len(raw_bad) else 0
@@ -93,6 +96,8 @@ def main() -> None:
         "holdout_accessed_for_prices":False,
         "sample_tickers":int(len(df)),
         "ok_tickers":int(len(ok)),
+        "no_history_tickers":int(df.status.eq("NO_HISTORY").sum()),
+        "request_error_tickers":int(df.status.isin(["REQUEST_ERROR","REPAIR_ERROR"]).sum()),
         "raw_invalid":int(pd.to_numeric(ok.raw_invalid,errors="coerce").fillna(0).sum()) if len(ok) else 0,
         "repaired_invalid":int(pd.to_numeric(ok.repaired_invalid,errors="coerce").fillna(0).sum()) if len(ok) else 0,
         "invalid_resolved":int(pd.to_numeric(ok.invalid_resolved,errors="coerce").fillna(0).sum()) if len(ok) else 0,
