@@ -8,9 +8,11 @@ on:
       - 'src/v182/sources/boursorama_selected_audit73.py'
       - 'src/v182/reporting/ci_light_source_context_v4.py'
       - 'src/v182/backtest/hebdo_meta_consensus_gate_audit73.py'
+      - 'src/v182/backtest/hebdo_meta_consensus_gate_audit73_v4.py'
       - 'tests/test_boursorama_consensus_history_audit73.py'
       - 'tests/test_boursorama_selected_audit73.py'
       - 'tests/test_hebdo_meta_consensus_gate_audit73.py'
+      - 'tests/test_hebdo_meta_consensus_gate_audit73_v4.py'
       - '.github/workflows/hebdo_at_meta_audit73_consensus.yml'
   workflow_dispatch:
 
@@ -39,7 +41,8 @@ jobs:
             src/v182/sources/boursorama_consensus_history.py \
             src/v182/sources/boursorama_selected_audit73.py \
             src/v182/reporting/ci_light_source_context_v4.py \
-            src/v182/backtest/hebdo_meta_consensus_gate_audit73.py
+            src/v182/backtest/hebdo_meta_consensus_gate_audit73.py \
+            src/v182/backtest/hebdo_meta_consensus_gate_audit73_v4.py
       - name: Run Audit73 preservation tests
         env:
           PYTHONPATH: src
@@ -51,4 +54,6 @@ jobs:
       - name: Run strict PIT gate tests
         env:
           PYTHONPATH: src
-        run: pytest -q tests/test_hebdo_meta_consensus_gate_audit73.py
+        run: |
+          pytest -q tests/test_hebdo_meta_consensus_gate_audit73.py
+          pytest -q tests/test_hebdo_meta_consensus_gate_audit73_v4.py
