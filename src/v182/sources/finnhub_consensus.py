@@ -5,6 +5,7 @@ import json
 import math
 from pathlib import Path
 import re
+import pandas as pd
 
 from v182.sources.rate_limit import StartRateLimiter
 
@@ -13,6 +14,12 @@ _SCORE_WEIGHTS = {"strongBuy": 5, "buy": 4, "hold": 3, "sell": 2, "strongSell": 
 CACHE_VERSION = "FINNHUB_CONSENSUS_CACHE_V2"
 LEGACY_CACHE_VERSION = "FINNHUB_CONSENSUS_CACHE_V1"
 TARGET_FIELDS = {"target_price", "target_last_updated"}
+PIT_HISTORY_FIELDS = {
+    "consensus","consensus_rating","consensus_score","consensus_period",
+    "buy_n","hold_n","sell_n","n_analysts","consensus_delta_4w",
+    "net_upgrades_30d","broker_weighted_revision_30d","target_price",
+    "target_last_updated",
+}
 _NO_DATA_REASONS = {"NO_RECOMMENDATION_DATA", "EMPTY_RECOMMENDATION_COUNTS"}
 _AUTH_DENIED_REASON = "FINNHUB_AUTH_OR_ENTITLEMENT_DENIED"
 _SOURCE_BLOCKED_REASON = "FINNHUB_SOURCE_DISABLED_AUTH_OR_ENTITLEMENT"
@@ -269,6 +276,37 @@ def _save_cache(path: Path,payload: dict) -> None:
     temp=path.with_suffix(path.suffix+".tmp")
     temp.write_text(json.dumps(payload,ensure_ascii=False,indent=2,default=str),encoding="utf-8")
     temp.replace(path)
+
+
+def append_consensus_pit_history(observations: list[dict], path: str | Path) -> dict:
+    """Persist immutable consensus observations using their original fetch time.
+
+    Cache hits retain the timestamp of the live observation that created them, so
+    repeated runs cannot manufacture new historical consensus points.
+    """
+    target=Path(path); rows=[]
+    for raw in observations:
+        field=str(raw.get("field") or "")
+        fetched=_parse_utc(raw.get("fetched_at_utc"))
+        if field not in PIT_HISTORY_FIELDS or fetched is None or raw.get("value") is None: continue
+        rows.append({
+            "ticker":str(raw.get("ticker") or ""),"field":field,
+            "value_json":json.dumps(raw.get("value"),ensure_ascii=False,sort_keys=True,default=str),
+            "fetched_at_utc":fetched.isoformat(),"source":str(raw.get("source") or "Finnhub"),
+        })
+    incoming=pd.DataFrame(rows)
+    if incoming.empty:
+        return {"status":"NO_VALID_OBSERVATIONS","appended":0,"rows":0}
+    incoming=incoming[incoming["ticker"].ne("")].drop_duplicates(["ticker","field","fetched_at_utc"],keep="last")
+    existing=pd.DataFrame()
+    if target.exists():
+        try: existing=pd.read_csv(target,dtype=str)
+        except Exception as exc: raise ValueError(f"BLOCK_CONSENSUS_PIT_HISTORY_READ:{type(exc).__name__}") from exc
+    combined=pd.concat([existing,incoming],ignore_index=True)
+    before=len(existing); combined=combined.drop_duplicates(["ticker","field","fetched_at_utc"],keep="last").sort_values(["fetched_at_utc","ticker","field"])
+    target.parent.mkdir(parents=True,exist_ok=True); temp=target.with_suffix(target.suffix+".tmp")
+    combined.to_csv(temp,index=False); temp.replace(target)
+    return {"status":"APPENDED","appended":int(len(combined)-before),"rows":int(len(combined)),"path":str(target)}
 
 
 def _entry_observations(
