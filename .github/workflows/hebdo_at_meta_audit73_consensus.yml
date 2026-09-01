@@ -7,12 +7,14 @@ on:
       - 'src/v182/sources/boursorama_consensus_history.py'
       - 'src/v182/sources/boursorama_selected_audit73.py'
       - 'src/v182/sources/finnhub_recommendation_history_audit73.py'
+      - 'src/v182/mapping/finnhub_isin_resolver_audit73.py'
       - 'src/v182/reporting/ci_light_source_context_v4.py'
       - 'src/v182/backtest/hebdo_meta_consensus_gate_audit73.py'
       - 'src/v182/backtest/hebdo_meta_consensus_gate_audit73_v4.py'
       - 'tests/test_boursorama_consensus_history_audit73.py'
       - 'tests/test_boursorama_selected_audit73.py'
       - 'tests/test_finnhub_recommendation_history_audit73.py'
+      - 'tests/test_finnhub_isin_resolver_audit73.py'
       - 'tests/test_hebdo_meta_consensus_gate_audit73.py'
       - 'tests/test_hebdo_meta_consensus_gate_audit73_v4.py'
       - '.github/workflows/hebdo_at_meta_audit73_consensus.yml'
@@ -43,6 +45,7 @@ jobs:
             src/v182/sources/boursorama_consensus_history.py \
             src/v182/sources/boursorama_selected_audit73.py \
             src/v182/sources/finnhub_recommendation_history_audit73.py \
+            src/v182/mapping/finnhub_isin_resolver_audit73.py \
             src/v182/reporting/ci_light_source_context_v4.py \
             src/v182/backtest/hebdo_meta_consensus_gate_audit73.py \
             src/v182/backtest/hebdo_meta_consensus_gate_audit73_v4.py
@@ -52,6 +55,7 @@ jobs:
         run: |
           pytest -q tests/test_boursorama_consensus_history_audit73.py
           pytest -q tests/test_finnhub_recommendation_history_audit73.py
+          pytest -q tests/test_finnhub_isin_resolver_audit73.py
       - name: Run Audit73 production persistence tests
         env:
           PYTHONPATH: src
