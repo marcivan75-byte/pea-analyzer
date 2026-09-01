@@ -9,7 +9,7 @@ from v182.backtests.v21_8_1_backtest_B_v2 import compute_true_26w_pnl, detect_B_
 def test_stop_bloque():
     hist = pd.DataFrame({'open':[100,100,100], 'low':[99,90,101], 'high':[101,101,102], 'close':[100,91,102]})
     res = compute_true_26w_pnl(100, hist, 0.09)
-    assert res['hit_stop'] is True and res['pnl'] == -0.09
+    assert res['hit_stop'] is True and abs(res['pnl'] - (-0.09)) < 1e-12
 
 
 def test_gap_through_stop_is_not_filled_at_theoretical_stop():
