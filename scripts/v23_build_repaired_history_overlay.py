@@ -16,12 +16,19 @@ MAX_RATIO_DEVIATION = 0.001
 MAX_REL_MAD = 0.001
 MIN_PATCH_ROWS = 100
 
+# Whitelist frozen from diagnosed execution gaps only. Adding a security here is a
+# data-quality repair action, not a strategy-selection action. Every patch must pass
+# exact/near-exact overlap identity gates before any missing history is appended.
 MAP = {
     'NO0010708068': {'name': 'Vow ASA', 'ticker': 'VOW.OL'},
     'NO0010598683': {'name': 'Hofseth BioCare ASA', 'ticker': 'HBC.OL'},
     'IT0001469995': {'name': 'Digital Bros S.p.A.', 'ticker': 'DIB.MI'},
     'NO0010159684': {'name': 'Medistim ASA', 'ticker': 'MEDI.OL'},
     'NL0000334118': {'name': 'ASM International N.V.', 'ticker': 'ASM.AS'},
+    'DK0060520450': {'name': 'Napatech A/S', 'ticker': 'NAPA.OL'},
+    'FR0011716265': {'name': 'Crossject SA', 'ticker': 'ALCJ.PA'},
+    'IT0003895668': {'name': 'Eurotech S.p.A.', 'ticker': 'ETH.MI'},
+    'NO0010205966': {'name': 'Navamedic ASA', 'ticker': 'NAVA.OL'},
 }
 
 
@@ -76,7 +83,7 @@ def main():
     overlay.to_parquet(a.out_dir/'PEA_CLOSE_PRE2023_REPAIRED_OVERLAY.parquet',index=False)
     patch.to_csv(a.out_dir/'REPAIR_PATCH_ROWS.csv',index=False)
     pd.DataFrame(prov).to_csv(a.out_dir/'REPAIR_PROVENANCE.csv',index=False)
-    report={'version':'V23_PRE2023_HISTORY_REPAIR_OVERLAY_1','canonical_master_mutated':False,'strategy_tuning':False,'holdout_2023_2026_accessed':False,'survivorship_bias_remains':True,'patched_isins':len(prov),'patch_rows_total':int(len(patch)),'quality_gates':{'min_overlap':MIN_OVERLAP,'min_corr':MIN_CORR,'max_ratio_deviation':MAX_RATIO_DEVIATION,'max_relative_mad':MAX_REL_MAD,'min_patch_rows':MIN_PATCH_ROWS},'provenance':prov}
+    report={'version':'V23_PRE2023_HISTORY_REPAIR_OVERLAY_2','canonical_master_mutated':False,'strategy_tuning':False,'holdout_2023_2026_accessed':False,'survivorship_bias_remains':True,'patched_isins':len(prov),'patch_rows_total':int(len(patch)),'quality_gates':{'min_overlap':MIN_OVERLAP,'min_corr':MIN_CORR,'max_ratio_deviation':MAX_RATIO_DEVIATION,'max_relative_mad':MAX_REL_MAD,'min_patch_rows':MIN_PATCH_ROWS},'provenance':prov}
     (a.out_dir/'REPAIR_REPORT.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
     print(json.dumps(report,indent=2))
 
