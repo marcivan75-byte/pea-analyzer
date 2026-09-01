@@ -26,10 +26,11 @@ class ConvexExitConfig:
     max_entries_month:int=5; max_entries_year:int=40; fee_rate:float=0.002; slippage_rate:float=0.001
     stop_pct:float=0.09; base_hold:int=126; extended_hold:int=189
     extension_trigger:float=0.20; profit_floor:float=0.10; trail_from_peak:float=0.20
+    partial_exit_fraction:float=0.50
 
 
 class ConvexExitRunner:
-    def __init__(self,extend:bool,cfg:ConvexExitConfig|None=None): self.extend=bool(extend); self.cfg=cfg or ConvexExitConfig()
+    def __init__(self,extend:bool,cfg:ConvexExitConfig|None=None,partial:bool=False): self.extend=bool(extend); self.partial=bool(partial); self.cfg=cfg or ConvexExitConfig()
 
     def run(self,signals:pd.DataFrame,prices:pd.DataFrame)->dict:
         s=Tabport65k._normalize_signals(signals); p=Tabport65k._normalize_prices(prices)
@@ -47,8 +48,9 @@ class ConvexExitRunner:
         def close(ticker,date,reason,raw_exit):
             nonlocal cash
             pos=positions.pop(ticker); sell=float(raw_exit)*(1-self.cfg.slippage_rate); gross=sell*pos['shares']; fee=gross*self.cfg.fee_rate; cash+=gross-fee
-            pnl=(gross-fee)-pos['cash_out']; ledger.append({'ticker':ticker,'signal_date':pos['signal_date'],'entry_date':pos['entry_date'],'exit_date':date,
-                'shares':pos['shares'],'entry_price':pos['entry_price'],'exit_price':sell,'entry_fee':pos['entry_fee'],'exit_fee':fee,'fees_total':pos['entry_fee']+fee,
+            proceeds=(gross-fee)+pos['partial_proceeds']; pnl=proceeds-pos['cash_out']; exit_fee=fee+pos['partial_fee']; weighted_exit=(sell*pos['shares']+pos['partial_exit_value'])/pos['original_shares']
+            ledger.append({'ticker':ticker,'signal_date':pos['signal_date'],'entry_date':pos['entry_date'],'exit_date':date,
+                'shares':pos['original_shares'],'entry_price':pos['entry_price'],'exit_price':weighted_exit,'entry_fee':pos['entry_fee'],'exit_fee':exit_fee,'fees_total':pos['entry_fee']+exit_fee,
                 'slippage_rate_side':self.cfg.slippage_rate,'cash_invested':pos['cash_out'],'pnl_net':pnl,'return_net':pnl/pos['cash_out'],'exit_reason':reason,
                 'sessions_held':pos['sessions'],'mae':pos['mae'],'mfe':pos['mfe'],'EV_net_signal':pos['EV_net'],'stop_pct_signal':self.cfg.stop_pct,'extension_activated':pos['extended']})
         def mark(pos,bar):
@@ -71,7 +73,11 @@ class ConvexExitRunner:
                     raw=op if op<stop else stop; close(ticker,date,'STOP_GAP_THROUGH' if raw<stop else 'STOP_-9%',raw)
                 elif pos['sessions']>=self.cfg.base_hold:
                     ret=float(bar['close'])/pos['entry_price']-1
-                    if self.extend and ret>=self.cfg.extension_trigger: pos['extended']=True
+                    if self.extend and ret>=self.cfg.extension_trigger:
+                        pos['extended']=True
+                        if self.partial and pos['shares']>1:
+                            sold=max(1,floor(pos['shares']*self.cfg.partial_exit_fraction)); sell=float(bar['close'])*(1-self.cfg.slippage_rate); gross=sold*sell; fee=gross*self.cfg.fee_rate
+                            cash+=gross-fee; pos['shares']-=sold; pos['partial_proceeds']+=gross-fee; pos['partial_fee']+=fee; pos['partial_exit_value']+=sold*sell
                     else: close(ticker,date,'TIME_26W',float(bar['close']))
                 elif date==last_price_date[ticker]: close(ticker,date,'EOP_DATA_END',float(bar['close']))
             candidates=sorted(scheduled.get(date,[]),key=lambda r:(-float(r['EV_net']),str(r['ticker'])))
@@ -87,7 +93,8 @@ class ConvexExitRunner:
                 gross=shares*buy; fee=gross*self.cfg.fee_rate; cash_out=gross+fee
                 if cash_out>cash+1e-9: continue
                 cash-=cash_out; pos={'signal_date':sig['date'],'entry_date':date,'shares':shares,'entry_price':buy,'entry_fee':fee,'cash_out':cash_out,'EV_net':float(sig['EV_net']),
-                    'sessions':1,'mae':0.0,'mfe':0.0,'last_close':float(bar['close']),'peak':buy,'extended':False}; positions[ticker]=pos; mark(pos,bar); em[ym]=em.get(ym,0)+1; ey[date.year]=ey.get(date.year,0)+1
+                    'sessions':1,'mae':0.0,'mfe':0.0,'last_close':float(bar['close']),'peak':buy,'extended':False,'original_shares':shares,
+                    'partial_proceeds':0.0,'partial_fee':0.0,'partial_exit_value':0.0}; positions[ticker]=pos; mark(pos,bar); em[ym]=em.get(ym,0)+1; ey[date.year]=ey.get(date.year,0)+1
                 stop=buy*(1-self.cfg.stop_pct); op=float(bar['open'])
                 if float(bar['low'])<=stop:
                     raw=op if op<stop else stop; close(ticker,date,'STOP_GAP_THROUGH' if raw<stop else 'STOP_-9%',raw)
@@ -110,19 +117,19 @@ def publish(cache_dir:str|Path,output_dir:str|Path)->dict:
     if confirmed.empty: raise ValueError('BLOCK_CONVEX_EXIT: no 189-session mature signals')
     confirmed.to_csv(out/'TABPORT_CONVEX_EXIT_SIGNALS_189_MATURES.csv',index=False); audit.to_csv(out/'TABPORT_CONVEX_EXIT_CONFIRM_AUDIT.csv',index=False)
     prices=ohlcv[['date','ticker','open','high','low','close']].copy(); results={}; summaries=[]; years=[]
-    for name,extend in [('BASE_TIME126',False),('EXTEND20_TRAIL20_FLOOR10',True)]:
-        res=ConvexExitRunner(extend).run(confirmed,prices); results[name]=res; s=overall_summary(res['ledger'],res['equity'],65000); s['scenario']=name; summaries.append(s); years.append(_year_metrics(res['ledger'],name))
+    for name,extend,partial in [('BASE_TIME126',False,False),('EXTEND20_TRAIL20_FLOOR10',True,False),('HALF126_HALF_CONVEX',True,True)]:
+        res=ConvexExitRunner(extend,partial=partial).run(confirmed,prices); results[name]=res; s=overall_summary(res['ledger'],res['equity'],65000); s['scenario']=name; summaries.append(s); years.append(_year_metrics(res['ledger'],name))
         d=out/name.lower(); d.mkdir(parents=True,exist_ok=True); res['ledger'].to_csv(d/'ledger.csv',index=False); res['equity'].to_csv(d/'nav.csv',index=False); res['skipped'].to_csv(d/'skipped.csv',index=False)
     comp=pd.DataFrame(summaries); comp.to_csv(out/'TABPORT_CONVEX_EXIT_COMPARISON.csv',index=False); year=pd.concat(years,ignore_index=True); year.to_csv(out/'TABPORT_CONVEX_EXIT_YEAR_STABILITY.csv',index=False)
-    table,attr=_attribution(results['BASE_TIME126']['ledger'],results['EXTEND20_TRAIL20_FLOOR10']['ledger']); table.to_csv(out/'TABPORT_CONVEX_EXIT_ATTRIBUTION.csv',index=False)
-    b,c=summaries; by=year[year.scenario=='BASE_TIME126'].set_index('year').pnl_net_eur; cy=year[year.scenario=='EXTEND20_TRAIL20_FLOOR10'].set_index('year').pnl_net_eur; yd=cy.sub(by,fill_value=0); required=ceil(.75*len(yd))
+    table,attr=_attribution(results['BASE_TIME126']['ledger'],results['HALF126_HALF_CONVEX']['ledger']); table.to_csv(out/'TABPORT_CONVEX_EXIT_ATTRIBUTION.csv',index=False)
+    b,_,c=summaries; by=year[year.scenario=='BASE_TIME126'].set_index('year').pnl_net_eur; cy=year[year.scenario=='HALF126_HALF_CONVEX'].set_index('year').pnl_net_eur; yd=cy.sub(by,fill_value=0); required=ceil(.75*len(yd))
     checks={'return_improved':c['rendement_total_depuis_65000_pct']>b['rendement_total_depuis_65000_pct'],'pf_improved':c['profit_factor']>b['profit_factor'],
         'rr_improved':c['rr_payoff']>b['rr_payoff'],'expectancy_improved':c['esperance_pct']>b['esperance_pct'],'stops_not_increased':c['stops']<=b['stops'],
         'drawdown_not_worse':c['drawdown_max_pct']>=b['drawdown_max_pct'],'positive_without_top_candidate_only_trade':attr['robust_without_top_candidate_only_trade'],
         'year_stability_75pct':int((yd>0).sum())>=required}
     promoted=bool(all(checks.values())); diag={'status':'PUBLISHED','name':'TABPORT_CONVEX_EXIT_126_TO_189','retuning':False,'holdout_unlocked':False,'confirmed_signals_189_mature':int(len(confirmed)),
         'market_cutoff':str(cutoff),'rule':{'extension_trigger':.20,'profit_floor':.10,'trail_from_peak':.20,'base_hold':126,'extended_hold':189},'scenarios':summaries,
-        'extended_trades':int(results['EXTEND20_TRAIL20_FLOOR10']['ledger']['extension_activated'].sum()),'attribution':attr,'year_pnl_deltas_eur':{str(k):float(v) for k,v in yd.items()},
+        'extended_trades':int(results['HALF126_HALF_CONVEX']['ledger']['extension_activated'].sum()),'attribution':attr,'year_pnl_deltas_eur':{str(k):float(v) for k,v in yd.items()},
         'checks':checks,'promoted':promoted,'decision':'PROMOTE_CONVEX_EXIT' if promoted else 'REJECT_KEEP_TIME126'}
     (out/'TABPORT_CONVEX_EXIT_DIAGNOSTIC.json').write_text(json.dumps(diag,indent=2,default=str),encoding='utf-8'); print(json.dumps(diag,default=str)); return diag
 
