@@ -70,7 +70,7 @@ jobs:
         run: python -m pytest --import-mode=importlib -q tests/test_pre2023_ohlcv_eodhd.py tests/test_pre2023_symbol_registry.py tests/test_pre2023_eodhd_inventory.py
 
   provider-inventory-probe:
-    if: ${{ github.event_name == 'push' && startsWith(github.event.head_commit.message, 'probe(data-source):') }}
+    if: "${{ github.event_name == 'push' && startsWith(github.event.head_commit.message, 'probe-data-source') }}"
     needs: governance-tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
