@@ -88,6 +88,7 @@ jobs:
             src/v182/reporting/ci_selection_gate_v22_2_2.py \
             src/v182/reporting/ci_light_v4.py \
             src/v182/reporting/ci_light_source_context_v4.py \
+            src/v182/sources/boursorama_selected_audit73.py \
             src/v182/decision/tct_timing_exact_v24_1_7.py \
             src/v182/reporting/market_orientation_v22_2.py \
             src/v182/reporting/weekly_unified_super_runner_v22_2_3.py \
@@ -99,6 +100,7 @@ jobs:
             tests/test_ci_entry_watch_v22_2_1.py \
             tests/test_ci_selection_gate_v22_2_2.py \
             tests/test_ci_light_v4.py \
+            tests/test_boursorama_selected_audit73.py \
             tests/test_tct_exact_v24_1_7.py \
             tests/test_market_orientation_v22_2.py \
             tests/test_market_orientation_ci_integration_v22_2.py \
@@ -149,6 +151,16 @@ jobs:
             state/action_ct_v22_1/
             state/provenance/
           key: decision-state-v1-v22-2-3-test-${{ github.run_id }}
+
+      - name: Upload Audit73 Boursorama PIT history
+        if: ${{ always() && hashFiles('state/provenance/source_cache/CI_LIGHT_V4_BOURSORAMA_ACTIONS.json') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: audit73-boursorama-pit-${{ github.run_id }}
+          path: state/provenance/source_cache/CI_LIGHT_V4_BOURSORAMA_ACTIONS.json
+          if-no-files-found: error
+          compression-level: 9
+          retention-days: 90
 
       - name: Upload V22.2.3 test results
         if: always()
