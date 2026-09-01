@@ -14,6 +14,7 @@ on:
       - 'v182/hebdo/tabport_risk_overlay_publish.py'
       - 'v182/hebdo/tabport_tiebreak_publish.py'
       - 'v182/hebdo/tabport_convexity_publish.py'
+      - 'v182/hebdo/tabport_continuous_convexity_publish.py'
       - 'tests/test_tabport_enriched_publish.py'
       - '.github/workflows/tabport_enriched_publish.yml'
   workflow_dispatch:
@@ -28,7 +29,7 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     env:
       PYTHONPATH: ${{ github.workspace }}
     steps:
@@ -74,6 +75,8 @@ jobs:
         run: python -m v182.hebdo.tabport_tiebreak_publish --cache data/cache/actions --output-dir outputs/tabport_tiebreak
       - name: Publish calibrated convexity tie-break
         run: python -m v182.hebdo.tabport_convexity_publish --cache data/cache/actions --output-dir outputs/tabport_convexity
+      - name: Publish continuous convexity tie-break
+        run: python -m v182.hebdo.tabport_continuous_convexity_publish --cache data/cache/actions --output-dir outputs/tabport_continuous_convexity
       - name: Validate publication contracts
         run: |
           python - <<'PY'
@@ -91,29 +94,28 @@ jobs:
           assert diag['status']=='PUBLISHED' and required_scenarios == {r['scenario'] for r in diag['scenarios']}, diag
           attr=json.loads((anti/'TABPORT_ANTIFP_PAIRED_ATTRIBUTION.json').read_text())
           assert attr['status']=='PUBLISHED' and attr['reference']=='CONFIRM_J1_ONLY', attr
-          wf=Path('outputs/tabport_walkforward')
-          wfdiag=json.loads((wf/'TABPORT_WF_DIAGNOSTIC.json').read_text())
+          wf=Path('outputs/tabport_walkforward'); wfdiag=json.loads((wf/'TABPORT_WF_DIAGNOSTIC.json').read_text())
           assert wfdiag['status'] in {'PUBLISHED','BLOCKED'}, wfdiag
-          overlay=Path('outputs/tabport_risk_overlay')
-          ovdiag=json.loads((overlay/'TABPORT_RISK_OVERLAY_DIAGNOSTIC.json').read_text())
+          overlay=Path('outputs/tabport_risk_overlay'); ovdiag=json.loads((overlay/'TABPORT_RISK_OVERLAY_DIAGNOSTIC.json').read_text())
           assert ovdiag['status']=='PUBLISHED' and ovdiag['ranking_changed'] is False and ovdiag['exit_logic_changed'] is False, ovdiag
-          tb=Path('outputs/tabport_tiebreak')
-          tbdiag=json.loads((tb/'TABPORT_TIEBREAK_DIAGNOSTIC.json').read_text())
+          tb=Path('outputs/tabport_tiebreak'); tbdiag=json.loads((tb/'TABPORT_TIEBREAK_DIAGNOSTIC.json').read_text())
           assert tbdiag['status']=='PUBLISHED' and tbdiag['epsilon']<1e-6, tbdiag
-          cv=Path('outputs/tabport_convexity')
-          cvdiag=json.loads((cv/'TABPORT_CONVEXITY_DIAGNOSTIC.json').read_text())
+          cv=Path('outputs/tabport_convexity'); cvdiag=json.loads((cv/'TABPORT_CONVEXITY_DIAGNOSTIC.json').read_text())
           assert cvdiag['status']=='PUBLISHED' and cvdiag['big_win_threshold']==0.20 and cvdiag['epsilon']<1e-6, cvdiag
-          for name in ['TABPORT_ANTIFP_COMPARAISON.csv','TABPORT_CONFIRMATION_J1_AUDIT.csv','TABPORT_SIGNALS_CONFIRMES.csv','TABPORT_ANTIFP_PAIRED_ATTRIBUTION.csv','TABPORT_ANTIFP_PAIRED_DETAIL.csv']:
-              p=anti/name; assert p.exists() and p.stat().st_size>0, name
-          for name in ['TABPORT_WF_CANDIDATES.csv','TABPORT_WF_MATURE_OUTCOMES.csv','TABPORT_WF_MODEL_VINTAGES.csv','TABPORT_WF_DIAGNOSTIC.json']:
-              p=wf/name; assert p.exists() and p.stat().st_size>0, name
-          for name in ['TABPORT_RISK_OVERLAY_VINTAGES.csv','TABPORT_RISK_OVERLAY_SCORES.csv','TABPORT_RISK_OVERLAY_BASELINE_CONFIRMED.csv','TABPORT_RISK_OVERLAY_COMPARISON.csv','TABPORT_RISK_OVERLAY_DIAGNOSTIC.json']:
-              p=overlay/name; assert p.exists() and p.stat().st_size>0, name
-          for name in ['TABPORT_TIEBREAK_BASELINE_CONFIRMED.csv','TABPORT_TIEBREAK_COMPARISON.csv','TABPORT_TIEBREAK_DIAGNOSTIC.json']:
-              p=tb/name; assert p.exists() and p.stat().st_size>0, name
-          for name in ['TABPORT_CONVEXITY_VINTAGES.csv','TABPORT_CONVEXITY_SCORES.csv','TABPORT_CONVEXITY_BASELINE_CONFIRMED.csv','TABPORT_CONVEXITY_COMPARISON.csv','TABPORT_CONVEXITY_DIAGNOSTIC.json']:
-              p=cv/name; assert p.exists() and p.stat().st_size>0, name
-          print(json.dumps({'anti_fp':diag,'attribution':attr,'walkforward':wfdiag,'risk_overlay':ovdiag,'tiebreak':tbdiag,'convexity':cvdiag},indent=2))
+          ccv=Path('outputs/tabport_continuous_convexity'); ccvdiag=json.loads((ccv/'TABPORT_CONT_CONVEXITY_DIAGNOSTIC.json').read_text())
+          assert ccvdiag['status']=='PUBLISHED' and ccvdiag['epsilon']<1e-6 and ccvdiag['holdout_unlocked'] is False, ccvdiag
+          checks={
+            anti:['TABPORT_ANTIFP_COMPARAISON.csv','TABPORT_CONFIRMATION_J1_AUDIT.csv','TABPORT_SIGNALS_CONFIRMES.csv','TABPORT_ANTIFP_PAIRED_ATTRIBUTION.csv','TABPORT_ANTIFP_PAIRED_DETAIL.csv'],
+            wf:['TABPORT_WF_CANDIDATES.csv','TABPORT_WF_MATURE_OUTCOMES.csv','TABPORT_WF_MODEL_VINTAGES.csv','TABPORT_WF_DIAGNOSTIC.json'],
+            overlay:['TABPORT_RISK_OVERLAY_VINTAGES.csv','TABPORT_RISK_OVERLAY_SCORES.csv','TABPORT_RISK_OVERLAY_BASELINE_CONFIRMED.csv','TABPORT_RISK_OVERLAY_COMPARISON.csv','TABPORT_RISK_OVERLAY_DIAGNOSTIC.json'],
+            tb:['TABPORT_TIEBREAK_BASELINE_CONFIRMED.csv','TABPORT_TIEBREAK_COMPARISON.csv','TABPORT_TIEBREAK_DIAGNOSTIC.json'],
+            cv:['TABPORT_CONVEXITY_VINTAGES.csv','TABPORT_CONVEXITY_SCORES.csv','TABPORT_CONVEXITY_BASELINE_CONFIRMED.csv','TABPORT_CONVEXITY_COMPARISON.csv','TABPORT_CONVEXITY_DIAGNOSTIC.json'],
+            ccv:['TABPORT_CONT_CONVEXITY_VINTAGES.csv','TABPORT_CONT_CONVEXITY_SCORES.csv','TABPORT_CONT_CONVEXITY_BASELINE_CONFIRMED.csv','TABPORT_CONT_CONVEXITY_COMPARISON.csv','TABPORT_CONT_CONVEXITY_DIAGNOSTIC.json'],
+          }
+          for root,names in checks.items():
+              for name in names:
+                  p=root/name; assert p.exists() and p.stat().st_size>0, str(p)
+          print(json.dumps({'anti_fp':diag,'walkforward':wfdiag,'risk_overlay':ovdiag,'tiebreak':tbdiag,'convexity':cvdiag,'continuous_convexity':ccvdiag},indent=2))
           PY
       - name: Upload TABPORT enriched publication
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -126,5 +128,6 @@ jobs:
             outputs/tabport_risk_overlay/
             outputs/tabport_tiebreak/
             outputs/tabport_convexity/
+            outputs/tabport_continuous_convexity/
           if-no-files-found: error
           retention-days: 30
