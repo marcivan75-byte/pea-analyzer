@@ -132,12 +132,23 @@ def build_weekly_meta_signals(ohlcv: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         raise ValueError("BLOCK_TABPORT_PUBLISH: candidates invalid after technical warmup")
 
     ranked_parts = []
+    meta_rejected_groups = 0
+    meta_rejected_candidates = 0
     for decision, grp in candidates.groupby("date", sort=True):
         base = grp.copy()
-        ranked = HebdoATMeta().run(base)
+        try:
+            ranked = HebdoATMeta().run(base)
+        except ValueError as exc:
+            if "universe fully rejected by false-positive filter" in str(exc):
+                meta_rejected_groups += 1
+                meta_rejected_candidates += int(len(grp))
+                continue
+            raise
         ranked["date"] = decision
         ranked["pit_snapshot_time"] = grp.set_index("ticker").reindex(ranked["ticker"])["pit_snapshot_time"].to_numpy()
         ranked_parts.append(ranked)
+    if not ranked_parts:
+        raise ValueError("BLOCK_TABPORT_PUBLISH: Meta rejected every matured weekly candidate")
     signals = pd.concat(ranked_parts, ignore_index=True)
     signals = signals[signals["tier"].isin(["TCT", "CT_WATCH"]) & (pd.to_numeric(signals["EV_net"], errors="coerce") >= 0)].copy()
     signals = signals.sort_values(["date", "EV_net", "ticker"], ascending=[True, False, True]).reset_index(drop=True)
@@ -147,6 +158,8 @@ def build_weekly_meta_signals(ohlcv: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         "source_rows_ohlcv": int(len(ohlcv)),
         "source_tickers": int(ohlcv["ticker"].nunique()),
         "weekly_B_candidates_matured": int(len(candidates)),
+        "meta_rejected_groups": int(meta_rejected_groups),
+        "meta_rejected_candidates": int(meta_rejected_candidates),
         "meta_signals_eligible": int(len(signals)),
         "first_signal": str(pd.to_datetime(signals["date"], utc=True).min()),
         "last_signal": str(pd.to_datetime(signals["date"], utc=True).max()),
