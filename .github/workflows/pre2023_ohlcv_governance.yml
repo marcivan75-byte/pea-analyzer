@@ -22,7 +22,7 @@ on:
         type: string
       start:
         required: false
-        default: '2012-01-01'
+        default: '2010-01-01'
         type: string
       end:
         required: false
