@@ -1,7 +1,7 @@
 """Runner historique TABPORT 65 k€ sur signaux PIT et OHLC réels.
 
 Aucune génération, interpolation ou donnée synthétique. Le runner bloque si les
-fichiers, la couverture demandée ou la provenance minimale sont insuffisants.
+fichiers, la couverture demandée ou la provenance PIT ligne par ligne sont insuffisants.
 """
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from v182.audit.pit_loader import PITLoader
 from v182.hebdo.tabport import Tabport65k, TabportConfig
 
 
@@ -35,6 +36,11 @@ def _read_table(path: Path) -> pd.DataFrame:
     raise ValueError(f"BLOCK_DATA_HISTORICAL: unsupported input format {suffix}")
 
 
+def _as_utc(value: str | pd.Timestamp) -> pd.Timestamp:
+    ts = pd.Timestamp(value)
+    return ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+
+
 def _date_bounds(df: pd.DataFrame, name: str) -> tuple[pd.Timestamp, pd.Timestamp]:
     if "date" not in df.columns:
         raise ValueError(f"BLOCK_DATA_HISTORICAL: {name} missing date")
@@ -42,6 +48,28 @@ def _date_bounds(df: pd.DataFrame, name: str) -> tuple[pd.Timestamp, pd.Timestam
     if dates.isna().any() or dates.empty:
         raise ValueError(f"BLOCK_DATA_HISTORICAL: {name} invalid dates")
     return dates.min(), dates.max()
+
+
+def _validate_row_level_pit(signals: pd.DataFrame) -> tuple[pd.Timestamp, pd.Timestamp]:
+    if "pit_snapshot_time" not in signals.columns:
+        raise ValueError("BLOCK_DATA_HISTORICAL: signals missing pit_snapshot_time")
+    signal_dates = pd.to_datetime(signals["date"], errors="coerce", utc=True)
+    snapshots = pd.to_datetime(signals["pit_snapshot_time"], errors="coerce", utc=True)
+    if signal_dates.isna().any() or snapshots.isna().any():
+        raise ValueError("BLOCK_DATA_HISTORICAL: invalid signal/PIT timestamps")
+    loader = PITLoader(strict_provenance=True)
+    bad = []
+    for idx, (decision, snapshot) in enumerate(zip(signal_dates, snapshots)):
+        cutoff = loader.cutoff_for(decision)
+        snapshot_paris = snapshot.tz_convert(loader.paris_tz)
+        if snapshot_paris > cutoff:
+            bad.append((idx, snapshot_paris.isoformat(), cutoff.isoformat()))
+    if bad:
+        idx, snapshot, cutoff = bad[0]
+        raise ValueError(
+            f"BLOCK_DATA_HISTORICAL: PIT look-ahead row={idx} snapshot={snapshot} cutoff={cutoff}"
+        )
+    return snapshots.min(), snapshots.max()
 
 
 def run_historical(
@@ -54,8 +82,7 @@ def run_historical(
 ) -> dict:
     signals_path, ohlc_path = Path(signals_path), Path(ohlc_path)
     out = Path(output_dir); out.mkdir(parents=True, exist_ok=True)
-    start_ts = pd.Timestamp(start, tz="UTC")
-    end_ts = pd.Timestamp(end, tz="UTC")
+    start_ts, end_ts = _as_utc(start), _as_utc(end)
     if end_ts < start_ts:
         raise ValueError("BLOCK_DATA_HISTORICAL: end before start")
 
@@ -72,6 +99,8 @@ def run_historical(
         raise ValueError("BLOCK_DATA_HISTORICAL: no signals in requested window")
     if ohlc.empty:
         raise ValueError("BLOCK_DATA_HISTORICAL: no OHLC in requested window")
+
+    pit_min, pit_max = _validate_row_level_pit(signals)
 
     # Fail closed: les prix doivent couvrir au moins la première et la dernière
     # date de signal retenue. TABPORT contrôle ensuite J+1 et chaque barre utile.
@@ -94,7 +123,9 @@ def run_historical(
         "window": {"start": str(start_ts), "end": str(end_ts)},
         "inputs": {
             "signals": {"path": str(signals_path), "sha256": _sha256(signals_path), "rows": int(len(signals)),
-                        "source_min_date": str(sig_min), "source_max_date": str(sig_max)},
+                        "source_min_date": str(sig_min), "source_max_date": str(sig_max),
+                        "pit_snapshot_min": str(pit_min), "pit_snapshot_max": str(pit_max),
+                        "pit_validation": "ROW_LEVEL_T_MINUS_1_22H_EUROPE_PARIS"},
             "ohlc": {"path": str(ohlc_path), "sha256": _sha256(ohlc_path), "rows": int(len(ohlc)),
                      "source_min_date": str(px_min), "source_max_date": str(px_max)},
         },
