@@ -8,7 +8,7 @@ import json
 
 import pandas as pd
 
-from v182.sources.boursorama_selected import collect_selected_action_context_cached
+from v182.sources.boursorama_selected_audit73 import collect_selected_action_context_cached
 from v182.sources.boursorama_selected_etf import collect_selected_etf_context_cached
 from v182.sources.rate_limit import StartRateLimiter
 from v182.sources.tradingview_technical import collect_technical_context_cached
@@ -154,6 +154,9 @@ def collect_ci_light_context(rows: pd.DataFrame, root: Path) -> tuple[pd.DataFra
         "source_can_create_ci_light_candidate": True,
         "source_can_create_ci_candidate": False,
         "raw_html_persisted": False,
+        "audit73_boursorama_history_enabled": bool(action_result and action_result.metrics.get("audit73_pit_history_enabled")),
+        "audit73_boursorama_captures_appended": int(action_result.metrics.get("audit73_captures_appended", 0)) if action_result is not None else 0,
+        "audit73_boursorama_rows_appended": int(action_result.metrics.get("audit73_rows_appended", 0)) if action_result is not None else 0,
     }
     (auditdir / "CI_LIGHT_V4_INDEPENDENT_SOURCE_CONTEXT.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
