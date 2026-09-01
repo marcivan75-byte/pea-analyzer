@@ -189,6 +189,14 @@ def test_fail_fast_only_below_minus_2_5pct():
     hit=ex.check_exit(100,{'open':100,'close':97,'low':96.5},2); assert hit[0] is True and hit[1].startswith('FAIL_FAST_J2')
 
 
+def test_entry_day_structural_invalidation_requires_both_levels_broken():
+    ex=FPEarlyExit(enabled_rules={'STOP','STRUCTURE_INVALID_ENTRY_DAY'})
+    keep=ex.check_exit(100,{'open':100,'close':99,'low':98,'signal_level':98.5,'confirmation_low':97.5},1)
+    assert keep[0] is False
+    hit=ex.check_exit(100,{'open':100,'close':97,'low':96.5,'signal_level':98.5,'confirmation_low':97.5},1)
+    assert hit[0] is True and hit[1].startswith('STRUCTURE_INVALID_ENTRY_DAY')
+
+
 def test_gap_through_stop_uses_open_loss():
     hit=FPEarlyExit().check_exit(100,{'open':85,'close':86,'low':84},1); assert hit[0] is True and abs(hit[2]-(-0.15))<1e-12
 
