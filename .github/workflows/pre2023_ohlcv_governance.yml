@@ -7,18 +7,20 @@ on:
       - 'v182/data/__init__.py'
       - 'v182/data/pre2023_ohlcv_eodhd.py'
       - 'v182/data/pre2023_symbol_registry.py'
+      - 'v182/data/pre2023_eodhd_inventory.py'
       - 'tests/test_pre2023_ohlcv_eodhd.py'
       - 'tests/test_pre2023_symbol_registry.py'
+      - 'tests/test_pre2023_eodhd_inventory.py'
       - '.github/workflows/pre2023_ohlcv_governance.yml'
   workflow_dispatch:
     inputs:
       build_corpus:
-        description: 'Build governed PRE-2023 corpus (requires EODHD_API_TOKEN and symbols file)'
+        description: 'Build governed PRE-2023 corpus (requires EODHD_API_TOKEN and certified registry)'
         required: true
         default: false
         type: boolean
-      symbols_path:
-        description: 'CSV with ticker,eodhd_symbol'
+      registry_path:
+        description: 'Certified historical registry CSV'
         required: false
         default: 'data/reference/pre2023_symbols.csv'
         type: string
@@ -56,13 +58,15 @@ jobs:
           assert str(root) in sys.path, f'BLOCK_PRE2023_IMPORT_ROOT: {root} absent from sys.path'
           import v182.data.pre2023_ohlcv_eodhd as collector
           import v182.data.pre2023_symbol_registry as registry
+          import v182.data.pre2023_eodhd_inventory as inventory
           print(f'PRE2023_IMPORT_OK={collector.__file__}')
           print(f'PRE2023_REGISTRY_IMPORT_OK={registry.__file__}')
+          print(f'PRE2023_INVENTORY_IMPORT_OK={inventory.__file__}')
           PY
       - name: Compile PRE2023 data governance modules
-        run: python -m compileall -q v182/data/pre2023_ohlcv_eodhd.py v182/data/pre2023_symbol_registry.py
+        run: python -m compileall -q v182/data/pre2023_ohlcv_eodhd.py v182/data/pre2023_symbol_registry.py v182/data/pre2023_eodhd_inventory.py
       - name: Run fail-closed governance tests
-        run: python -m pytest --import-mode=importlib -q tests/test_pre2023_ohlcv_eodhd.py tests/test_pre2023_symbol_registry.py
+        run: python -m pytest --import-mode=importlib -q tests/test_pre2023_ohlcv_eodhd.py tests/test_pre2023_symbol_registry.py tests/test_pre2023_eodhd_inventory.py
 
   build-corpus:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_corpus }}
@@ -79,15 +83,24 @@ jobs:
           python-version: '3.12'
       - name: Install collector runtime
         run: python -m pip install --prefer-binary pandas pyarrow
-      - name: Refuse missing secret or mapping
+      - name: Refuse missing secret or registry
         shell: bash
         run: |
           test -n "$EODHD_API_TOKEN" || { echo 'BLOCK_PRE2023_SECRET: EODHD_API_TOKEN missing'; exit 2; }
-          test -s "${{ inputs.symbols_path }}" || { echo 'BLOCK_PRE2023_SYMBOLS: mapping file missing/empty'; exit 2; }
+          test -s "${{ inputs.registry_path }}" || { echo 'BLOCK_PRE2023_SYMBOLS: certified registry missing/empty'; exit 2; }
+      - name: Validate certified historical registry and export collector mapping
+        run: |
+          python - <<'PY'
+          from v182.data.pre2023_symbol_registry import validate_registry, export_collector_mapping
+          registry = validate_registry("${{ inputs.registry_path }}")
+          path = export_collector_mapping(registry, "data/dev_pre2023/collector_symbols.csv")
+          print(f'PRE2023_REGISTRY_ROWS={len(registry)}')
+          print(f'PRE2023_COLLECTOR_MAPPING={path}')
+          PY
       - name: Build isolated PRE2023 corpus
         run: |
           python v182/data/pre2023_ohlcv_eodhd.py \
-            --symbols "${{ inputs.symbols_path }}" \
+            --symbols data/dev_pre2023/collector_symbols.csv \
             --start "${{ inputs.start }}" \
             --end "${{ inputs.end }}" \
             --output-dir data/dev_pre2023/eodhd
@@ -109,6 +122,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: PRE2023-OHLCV-EODHD-${{ github.run_id }}
-          path: data/dev_pre2023/eodhd/
+          path: data/dev_pre2023/
           if-no-files-found: error
           retention-days: 30
