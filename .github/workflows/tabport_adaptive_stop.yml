@@ -57,9 +57,10 @@ jobs:
           assert d['status']=='PUBLISHED' and d['holdout_unlocked'] is False, d
           assert d['rules']==['FIXED_09','ATR2_CAP13','ATR2_CAP15','ATR2_5_CAP15'], d
           assert d['selection_changed'] is False and d['ranking_changed'] is False, d
-          assert d['decision'] in {'PROMOTE_ATR2_5_CAP15_RISK_PARITY','REJECT_KEEP_FIXED_09'}, d
+          assert d['decision'] in {'PROMOTE_ATR2_5_CAP15_RISK_PARITY','PROMOTE_CLOSE09_HARD15_RISK_PARITY','REJECT_KEEP_FIXED_09'}, d
           assert 'ATR2_5_CAP15_RISK_PARITY' in d['robustness_attribution'], d
-          for f in ['TABPORT_ADAPTIVE_STOP_CONFIRMED.csv','TABPORT_ADAPTIVE_STOP_COMPARISON.csv','TABPORT_ADAPTIVE_STOP_DIAGNOSTIC.json','TABPORT_ADAPTIVE_STOP_YEAR_STABILITY.csv','TABPORT_ADAPTIVE_STOP_EXTREME_BAR_AUDIT.csv','TABPORT_ATR2_5_CAP15_ATTRIBUTION.csv','TABPORT_ATR2_5_CAP15_RISK_PARITY_ATTRIBUTION.csv']:
+          assert 'CLOSE09_HARD15_RISK_PARITY' in d['candidate_economic_checks'], d
+          for f in ['TABPORT_ADAPTIVE_STOP_CONFIRMED.csv','TABPORT_ADAPTIVE_STOP_COMPARISON.csv','TABPORT_ADAPTIVE_STOP_DIAGNOSTIC.json','TABPORT_ADAPTIVE_STOP_YEAR_STABILITY.csv','TABPORT_ADAPTIVE_STOP_EXTREME_BAR_AUDIT.csv','TABPORT_ATR2_5_CAP15_ATTRIBUTION.csv','TABPORT_ATR2_5_CAP15_RISK_PARITY_ATTRIBUTION.csv','TABPORT_CLOSE09_HARD15_RISK_PARITY_ATTRIBUTION.csv']:
               p=root/f; assert p.exists() and p.stat().st_size>0, f
           print(json.dumps(d,indent=2))
           PY
