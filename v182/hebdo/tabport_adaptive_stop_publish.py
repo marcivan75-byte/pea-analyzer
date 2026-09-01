@@ -33,10 +33,12 @@ class AdaptiveConfig:
 
 
 class AdaptiveRunner:
-    def __init__(self,rule_name:str,cfg:AdaptiveConfig|None=None,risk_parity:bool=False):
+    def __init__(self,rule_name:str,cfg:AdaptiveConfig|None=None,risk_parity:bool=False,stop_mode:str='INTRADAY'):
         if rule_name not in RULES: raise ValueError('BLOCK_ADAPT_STOP: unknown rule')
-        self.rule_name=rule_name; self.rule=RULES[rule_name]; self.cfg=cfg or AdaptiveConfig(); self.risk_parity=bool(risk_parity)
-        self.scenario_name=f'{rule_name}_RISK_PARITY' if self.risk_parity else rule_name
+        if stop_mode not in {'INTRADAY','CLOSE09_HARD15'}: raise ValueError('BLOCK_ADAPT_STOP: unknown stop mode')
+        self.rule_name=rule_name; self.rule=RULES[rule_name]; self.cfg=cfg or AdaptiveConfig(); self.risk_parity=bool(risk_parity); self.stop_mode=stop_mode
+        base='CLOSE09_HARD15' if stop_mode=='CLOSE09_HARD15' else rule_name
+        self.scenario_name=f'{base}_RISK_PARITY' if self.risk_parity else base
 
     def run(self,signals:pd.DataFrame,prices:pd.DataFrame)->dict:
         s=Tabport65k._normalize_signals(signals); p=Tabport65k._normalize_prices(prices)
@@ -63,7 +65,7 @@ class AdaptiveRunner:
                 'fees_total':pos['entry_fee']+fee,'slippage_rate_side':self.cfg.slippage_rate,'cash_invested':pos['cash_out'],'pnl_net':pnl,
                 'return_net':pnl/pos['cash_out'],'exit_reason':reason,'sessions_held':pos['sessions'],'mae':pos['mae'],'mfe':pos['mfe'],
                 'EV_net_signal':pos['EV_net'],'atr_14_pct_signal':pos['atr'],'stop_pct_signal':pos['stop_pct'],'stop_rule':self.rule_name,
-                'sizing_policy':'CONSTANT_STOP_RISK' if self.risk_parity else 'FIXED_NOTIONAL'})
+                'sizing_policy':'CONSTANT_STOP_RISK' if self.risk_parity else 'FIXED_NOTIONAL','stop_mode':self.stop_mode})
         def mark(ticker,bar):
             pos=positions[ticker]; pos['last_close']=float(bar['close']); pos['mae']=min(pos['mae'],float(bar['low'])/pos['entry_price']-1); pos['mfe']=max(pos['mfe'],float(bar['high'])/pos['entry_price']-1)
             return pos['entry_price']*(1-pos['stop_pct']),float(bar['open'])
@@ -71,11 +73,16 @@ class AdaptiveRunner:
             day=bars_by_date[date]
             for ticker in list(positions):
                 if ticker not in day.index: continue
-                bar=day.loc[ticker]; positions[ticker]['sessions']+=1; stop_level,op=mark(ticker,bar)
+                bar=day.loc[ticker]
+                if positions[ticker].get('pending_close_stop',False):
+                    close(ticker,date,'STOP_CLOSE09_J1',float(bar['open'])); continue
+                positions[ticker]['sessions']+=1; stop_level,op=mark(ticker,bar)
                 if float(bar['low'])<=stop_level:
-                    raw=op if op<stop_level else stop_level; close(ticker,date,'STOP_GAP_THROUGH' if raw<stop_level else 'STOP_ADAPT',raw)
+                    raw=op if op<stop_level else stop_level; close(ticker,date,'STOP_GAP_THROUGH' if raw<stop_level else ('STOP_HARD15' if self.stop_mode=='CLOSE09_HARD15' else 'STOP_ADAPT'),raw)
                 elif positions[ticker]['sessions']>=self.cfg.max_hold_sessions: close(ticker,date,'TIME_26W',float(bar['close']))
                 elif date==last_price_date[ticker]: close(ticker,date,'EOP_DATA_END',float(bar['close']))
+                elif self.stop_mode=='CLOSE09_HARD15' and float(bar['close'])<=positions[ticker]['entry_price']*0.91:
+                    positions[ticker]['pending_close_stop']=True
             candidates=sorted(scheduled.get(date,[]),key=lambda r:(-float(r['EV_net']),str(r['ticker'])))
             for sig in candidates:
                 ticker=str(sig['ticker'])
@@ -86,7 +93,7 @@ class AdaptiveRunner:
                 if em.get(ym,0)>=self.cfg.max_entries_month: skipped.append({'signal_date':sig['date'],'ticker':ticker,'reason':'MAX_ENTRIES_MONTH'}); continue
                 if ey.get(date.year,0)>=self.cfg.max_entries_year: skipped.append({'signal_date':sig['date'],'ticker':ticker,'reason':'MAX_ENTRIES_YEAR'}); continue
                 bar=day.loc[ticker]; buy=float(bar['open'])*(1+self.cfg.slippage_rate)
-                atr=float(sig['atr_14_pct']); stop_pct=float(self.rule(atr))
+                atr=float(sig['atr_14_pct']); stop_pct=0.15 if self.stop_mode=='CLOSE09_HARD15' else float(self.rule(atr))
                 position_cap=self.cfg.max_position_eur
                 if self.risk_parity:
                     # Le budget de perte avant frais reste celui de 4 500 EUR a -9 %.
@@ -97,12 +104,14 @@ class AdaptiveRunner:
                 if cash_out>cash+1e-9: continue
                 cash-=cash_out
                 positions[ticker]={'signal_date':sig['date'],'entry_date':date,'shares':shares,'entry_price':buy,'entry_fee':entry_fee,'cash_out':cash_out,
-                    'EV_net':float(sig['EV_net']),'sessions':1,'mae':0.0,'mfe':0.0,'last_close':float(bar['close']),'atr':atr,'stop_pct':stop_pct}
+                    'EV_net':float(sig['EV_net']),'sessions':1,'mae':0.0,'mfe':0.0,'last_close':float(bar['close']),'atr':atr,'stop_pct':stop_pct,'pending_close_stop':False}
                 em[ym]=em.get(ym,0)+1; ey[date.year]=ey.get(date.year,0)+1
                 stop_level,op=mark(ticker,bar)
                 if float(bar['low'])<=stop_level:
-                    raw=op if op<stop_level else stop_level; close(ticker,date,'STOP_GAP_THROUGH' if raw<stop_level else 'STOP_ADAPT',raw)
+                    raw=op if op<stop_level else stop_level; close(ticker,date,'STOP_GAP_THROUGH' if raw<stop_level else ('STOP_HARD15' if self.stop_mode=='CLOSE09_HARD15' else 'STOP_ADAPT'),raw)
                 elif date==last_price_date[ticker]: close(ticker,date,'EOP_DATA_END',float(bar['close']))
+                elif self.stop_mode=='CLOSE09_HARD15' and float(bar['close'])<=positions[ticker]['entry_price']*0.91:
+                    positions[ticker]['pending_close_stop']=True
             mv=sum(pos['shares']*pos['last_close'] for pos in positions.values()); equity.append({'date':date,'cash':cash,'market_value':mv,'equity':cash+mv,'open_positions':len(positions)})
         if positions: raise ValueError(f'BLOCK_ADAPT_STOP: unclosed {sorted(positions)}')
         return {'ledger':pd.DataFrame(ledger),'equity':pd.DataFrame(equity).sort_values('date').reset_index(drop=True),'skipped':pd.DataFrame(skipped)}
@@ -165,7 +174,8 @@ def _extreme_bar_audit(ledger:pd.DataFrame,ohlcv:pd.DataFrame)->pd.DataFrame:
             'previous_close':prev_close,'high_vs_prev_close':float(bar['high']/prev_close-1) if np.isfinite(prev_close) else np.nan,
             'close_vs_prev_close':float(bar['close']/prev_close-1) if np.isfinite(prev_close) else np.nan,
             'intraday_high_vs_close':float(bar['high']/bar['close']-1),
-            'extreme_data_review_required':bool(float(trade['mfe'])>2 or (np.isfinite(prev_close) and abs(float(bar['close']/prev_close-1))>0.5))})
+            'extreme_outcome_review_required':bool(float(trade['mfe'])>2),
+            'extreme_data_anomaly_detected':bool(np.isfinite(prev_close) and (abs(float(bar['close']/prev_close-1))>0.5 or float(bar['high']/prev_close-1)>1 or float(bar['high']/bar['close']-1)>1))})
     return pd.DataFrame(rows)
 
 
@@ -175,9 +185,9 @@ def publish(cache_dir:str|Path,output_dir:str|Path)->dict:
     if confirmed.empty: raise ValueError('BLOCK_ADAPT_STOP: no confirmed signals')
     confirmed.to_csv(out/'TABPORT_ADAPTIVE_STOP_CONFIRMED.csv',index=False); audit.to_csv(out/'TABPORT_ADAPTIVE_STOP_CONFIRM_AUDIT.csv',index=False)
     plain=ohlcv[['date','ticker','open','high','low','close']].copy(); scenarios=[]; results={}; stability=[]
-    specs=[(rule,False) for rule in RULES]+[('ATR2_5_CAP15',True)]
-    for rule,risk_parity in specs:
-        runner=AdaptiveRunner(rule,risk_parity=risk_parity); scenario=runner.scenario_name
+    specs=[(rule,False,'INTRADAY') for rule in RULES]+[('ATR2_5_CAP15',True,'INTRADAY'),('FIXED_09',False,'CLOSE09_HARD15'),('FIXED_09',True,'CLOSE09_HARD15')]
+    for rule,risk_parity,stop_mode in specs:
+        runner=AdaptiveRunner(rule,risk_parity=risk_parity,stop_mode=stop_mode); scenario=runner.scenario_name
         res=runner.run(confirmed,plain); results[scenario]=res; s=overall_summary(res['ledger'],res['equity'],65000.0); s['scenario']=scenario
         if not res['ledger'].empty:
             s['avg_stop_pct_signal']=float(res['ledger']['stop_pct_signal'].mean()); s['median_stop_pct_signal']=float(res['ledger']['stop_pct_signal'].median()); s['max_stop_pct_signal']=float(res['ledger']['stop_pct_signal'].max())
@@ -189,28 +199,38 @@ def publish(cache_dir:str|Path,output_dir:str|Path)->dict:
             'win_rate_delta_pct':float(s['taux_gain_pct']-base['taux_gain_pct']),'pf_delta':float(s['profit_factor']-base['profit_factor']),
             'rr_delta':float(s['rr_payoff']-base['rr_payoff']),'expectancy_delta_pct':float(s['esperance_pct']-base['esperance_pct']),
             'stops_delta':int(s['stops']-base['stops']),'drawdown_delta_pct':float(s['drawdown_max_pct']-base['drawdown_max_pct'])})
-    pd.concat(stability,ignore_index=True).to_csv(out/'TABPORT_ADAPTIVE_STOP_YEAR_STABILITY.csv',index=False)
+    stability_df=pd.concat(stability,ignore_index=True); stability_df.to_csv(out/'TABPORT_ADAPTIVE_STOP_YEAR_STABILITY.csv',index=False)
     robustness={}
-    for scenario in ('ATR2_5_CAP15','ATR2_5_CAP15_RISK_PARITY'):
+    for scenario in ('ATR2_5_CAP15','ATR2_5_CAP15_RISK_PARITY','CLOSE09_HARD15','CLOSE09_HARD15_RISK_PARITY'):
         table,stats=_attribution(results['FIXED_09']['ledger'],results[scenario]['ledger']); table.to_csv(out/f'TABPORT_{scenario}_ATTRIBUTION.csv',index=False); robustness[scenario]=stats
-    extreme=_extreme_bar_audit(results['ATR2_5_CAP15']['ledger'],ohlcv); extreme.to_csv(out/'TABPORT_ADAPTIVE_STOP_EXTREME_BAR_AUDIT.csv',index=False)
-    candidate=next(s for s in scenarios if s['scenario']=='ATR2_5_CAP15_RISK_PARITY')
-    economic_checks={
-        'return_improved':bool(candidate['rendement_total_depuis_65000_pct']>base['rendement_total_depuis_65000_pct']),
-        'pf_improved':bool(candidate['profit_factor']>base['profit_factor']),
-        'rr_improved':bool(candidate['rr_payoff']>base['rr_payoff']),
-        'expectancy_improved':bool(candidate['esperance_pct']>base['esperance_pct']),
-        'stops_not_increased':bool(candidate['stops']<=base['stops']),
-        'drawdown_not_worse':bool(candidate['drawdown_max_pct']>=base['drawdown_max_pct']),
-        'positive_without_top_candidate_only_trade':bool(robustness['ATR2_5_CAP15_RISK_PARITY']['robust_without_top_candidate_only_trade']),
-    }
-    promoted=bool(all(economic_checks.values()))
+    extreme=_extreme_bar_audit(results['ATR2_5_CAP15_RISK_PARITY']['ledger'],ohlcv); extreme.to_csv(out/'TABPORT_ADAPTIVE_STOP_EXTREME_BAR_AUDIT.csv',index=False)
+    base_year=stability_df[stability_df['scenario']=='FIXED_09'].set_index('period')['pnl_net_eur']
+    all_checks={}
+    for candidate_name in ('ATR2_5_CAP15_RISK_PARITY','CLOSE09_HARD15_RISK_PARITY'):
+        candidate=next(s for s in scenarios if s['scenario']==candidate_name)
+        cand_year=stability_df[stability_df['scenario']==candidate_name].set_index('period')['pnl_net_eur']; yd=cand_year.sub(base_year,fill_value=0)
+        positive_years=int((yd>0).sum()); required_years=int(np.ceil(0.75*len(yd)))
+        all_checks[candidate_name]={
+            'return_improved':bool(candidate['rendement_total_depuis_65000_pct']>base['rendement_total_depuis_65000_pct']),
+            'pf_improved':bool(candidate['profit_factor']>base['profit_factor']),
+            'rr_improved':bool(candidate['rr_payoff']>base['rr_payoff']),
+            'expectancy_improved':bool(candidate['esperance_pct']>base['esperance_pct']),
+            'stops_not_increased':bool(candidate['stops']<=base['stops']),
+            'drawdown_not_worse':bool(candidate['drawdown_max_pct']>=base['drawdown_max_pct']),
+            'positive_without_top_candidate_only_trade':bool(robustness[candidate_name]['robust_without_top_candidate_only_trade']),
+            'year_stability_75pct':bool(positive_years>=required_years),'positive_years':positive_years,'required_positive_years':required_years,
+            'year_pnl_deltas_eur':{str(k):float(v) for k,v in yd.items()},
+        }
+    data_anomaly=bool(extreme.get('extreme_data_anomaly_detected',pd.Series(dtype=bool)).any())
+    eligible=[name for name,checks in all_checks.items() if all(v for k,v in checks.items() if k not in {'positive_years','required_positive_years','year_pnl_deltas_eur'}) and not data_anomaly]
+    promoted_name=max(eligible,key=lambda n:next(s['rendement_total_depuis_65000_pct'] for s in scenarios if s['scenario']==n)) if eligible else None
+    promoted=promoted_name is not None
     diag={'status':'PUBLISHED','name':'TABPORT_PIT_ATR_ADAPTIVE_STOP_ABLATION','retuning':False,'holdout_unlocked':False,'selection_changed':False,'ranking_changed':False,
           'atr_source':'atr_14_pct from confirmed PIT signal before entry','rules':list(RULES),'confirmed_signals':int(len(confirmed)),'scenarios':scenarios,'deltas_vs_fixed_09':deltas,
-          'robustness_attribution':robustness,'extreme_bar_review_required':bool(extreme.get('extreme_data_review_required',pd.Series(dtype=bool)).any()),
-          'risk_parity_economic_checks':economic_checks,'promoted':promoted,
-          'decision':'PROMOTE_ATR2_5_CAP15_RISK_PARITY' if promoted else 'REJECT_KEEP_FIXED_09',
-          'promotion_rule':'Promotion requires all economic checks, resilience after removing the largest candidate-only trade, and no worse drawdown. Original Tabport65k remains unchanged unless a later governed promotion is explicit.'}
+          'robustness_attribution':robustness,'extreme_outcome_review_required':bool(extreme.get('extreme_outcome_review_required',pd.Series(dtype=bool)).any()),
+          'extreme_data_anomaly_detected':data_anomaly,'candidate_economic_checks':all_checks,'promoted':promoted,
+          'decision':f'PROMOTE_{promoted_name}' if promoted else 'REJECT_KEEP_FIXED_09',
+          'promotion_rule':'Promotion requires all economic checks, resilience after removing the largest candidate-only trade, no worse drawdown, positive PnL delta in at least 75% of entry years, and no unresolved data anomaly. Original Tabport65k remains unchanged unless a later governed promotion is explicit.'}
     (out/'TABPORT_ADAPTIVE_STOP_DIAGNOSTIC.json').write_text(json.dumps(diag,indent=2,default=str),encoding='utf-8'); print(json.dumps(diag,default=str)); return diag
 
 
