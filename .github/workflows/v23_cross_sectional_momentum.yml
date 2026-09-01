@@ -1,0 +1,52 @@
+name: V23 cross-sectional momentum baseline
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - v23/tabport-reset-benchmark-first
+    paths:
+      - scripts/v23_cross_sectional_momentum_baseline.py
+      - .github/workflows/v23_cross_sectional_momentum.yml
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  cross-sectional-momentum:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Install minimal runtime
+        run: python -m pip install --prefer-binary 'pandas>=2.2' 'numpy>=2.0' 'pyarrow>=17'
+      - name: Download frozen 2010-2026 history artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p input_history
+          curl -L --fail --retry 3 \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9758563012/zip" \
+            -o input_history/history.zip
+          unzip -q input_history/history.zip -d input_history/unpacked
+          find input_history/unpacked -type f -maxdepth 4 -print
+          PARQUET=$(find input_history/unpacked -type f -name 'PEA_OHLCV_2010_2026_CONSOLIDATED.parquet' | head -1)
+          test -n "$PARQUET"
+          echo "HISTORY_PARQUET=$PARQUET" >> "$GITHUB_ENV"
+      - name: Run one frozen cross-sectional hypothesis
+        run: |
+          python scripts/v23_cross_sectional_momentum_baseline.py \
+            --history "$HISTORY_PARQUET" \
+            --out-dir outputs/v23_cross_sectional_momentum
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: v23-cross-sectional-momentum-${{ github.run_id }}
+          path: outputs/v23_cross_sectional_momentum
+          if-no-files-found: error
