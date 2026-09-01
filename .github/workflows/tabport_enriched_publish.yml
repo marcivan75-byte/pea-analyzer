@@ -51,7 +51,7 @@ jobs:
       - name: Compile publisher
         run: python -m compileall -q v182/hebdo
       - name: Test enriched analytics
-        run: python -m pytest -q tests/test_tabport_enriched_publish.py tests/test_tabport_historical_meta.py tests/test_tabport_meta.py
+        run: python -m pytest -q tests/test_backtest_B_v2.py tests/test_tabport_enriched_publish.py tests/test_tabport_historical_meta.py tests/test_tabport_meta.py
       - name: Publish TABPORT enriched on real governed history
         run: python -m v182.hebdo.tabport_publish --cache data/cache/actions --output-dir outputs/tabport_enriched
       - name: Validate publication contract
