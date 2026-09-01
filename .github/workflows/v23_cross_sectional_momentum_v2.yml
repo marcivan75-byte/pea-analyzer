@@ -7,6 +7,7 @@ on:
       - v23/tabport-reset-benchmark-first
     paths:
       - scripts/v23_cross_sectional_momentum_baseline_v2.py
+      - scripts/v23_cross_sectional_momentum_baseline_v2_runner.py
       - .github/workflows/v23_cross_sectional_momentum_v2.yml
 
 permissions:
@@ -41,7 +42,7 @@ jobs:
           test -n "$PARQUET"
           echo "HISTORY_PARQUET=$PARQUET" >> "$GITHUB_ENV"
       - name: Run corrected frozen hypothesis
-        run: python scripts/v23_cross_sectional_momentum_baseline_v2.py --history "$HISTORY_PARQUET" --out-dir outputs/v23_cross_sectional_momentum_v2
+        run: python scripts/v23_cross_sectional_momentum_baseline_v2_runner.py --history "$HISTORY_PARQUET" --out-dir outputs/v23_cross_sectional_momentum_v2
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: v23-cross-sectional-momentum-v2-${{ github.run_id }}
