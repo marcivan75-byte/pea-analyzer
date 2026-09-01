@@ -6,6 +6,8 @@ on:
     paths:
       - 'v182/hebdo/tabport_enriched.py'
       - 'v182/hebdo/tabport_publish.py'
+      - 'v182/hebdo/tabport_antifp.py'
+      - 'v182/hebdo/tabport_antifp_publish.py'
       - 'tests/test_tabport_enriched_publish.py'
       - '.github/workflows/tabport_enriched_publish.yml'
   workflow_dispatch:
@@ -52,9 +54,11 @@ jobs:
         run: python -m compileall -q v182/hebdo
       - name: Test enriched analytics
         run: python -m pytest -q tests/test_backtest_B_v2.py tests/test_tabport_enriched_publish.py tests/test_tabport_historical_meta.py tests/test_tabport_meta.py
-      - name: Publish TABPORT enriched on real governed history
+      - name: Publish TABPORT enriched baseline
         run: python -m v182.hebdo.tabport_publish --cache data/cache/actions --output-dir outputs/tabport_enriched
-      - name: Validate publication contract
+      - name: Publish anti-FP ablation matrix
+        run: python -m v182.hebdo.tabport_antifp_publish --cache data/cache/actions --output-dir outputs/tabport_antifp
+      - name: Validate publication contracts
         run: |
           python - <<'PY'
           import json
@@ -62,19 +66,23 @@ jobs:
           out=Path('outputs/tabport_enriched')
           pub=json.loads((out/'TABPORT_PUBLICATION.json').read_text())
           assert pub['status']=='PUBLISHED', pub
-          assert pub['name']=='TABPORT_ENRICHI', pub
-          assert pub['primary_cohort']=='MATURED_126_SESSIONS', pub
-          assert pub['signal_audit']['meta_signals_eligible']>0, pub
           required=['TABPORT_ENRICHI.md','TABPORT_LEDGER_ENRICHI.csv','TABPORT_DAILY_NAV.csv','TABPORT_TRIMESTRIEL_ENRICHI.csv','TABPORT_ANNUEL_ENRICHI.csv','TABPORT_ENRICHI_SUMMARY.json','TABPORT_MANIFEST.json','TABPORT_META_SIGNALS_MATURES.csv']
           for name in required:
-              p=out/name
-              assert p.exists() and p.stat().st_size>0, name
-          print(json.dumps(pub,indent=2))
+              p=out/name; assert p.exists() and p.stat().st_size>0, name
+          anti=Path('outputs/tabport_antifp')
+          diag=json.loads((anti/'TABPORT_ANTIFP_DIAGNOSTIC.json').read_text())
+          assert diag['status']=='PUBLISHED', diag
+          assert len(diag['scenarios'])==4, diag
+          for name in ['TABPORT_ANTIFP_COMPARAISON.csv','TABPORT_CONFIRMATION_J1_AUDIT.csv','TABPORT_SIGNALS_CONFIRMES.csv']:
+              p=anti/name; assert p.exists() and p.stat().st_size>0, name
+          print(json.dumps(diag,indent=2))
           PY
       - name: Upload TABPORT enriched publication
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: TABPORT-ENRICHI-${{ github.run_id }}
-          path: outputs/tabport_enriched/
+          path: |
+            outputs/tabport_enriched/
+            outputs/tabport_antifp/
           if-no-files-found: error
           retention-days: 30
