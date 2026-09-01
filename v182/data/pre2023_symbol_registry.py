@@ -1,9 +1,9 @@
-"""Governance validator for the PRE-2023 historical symbol registry.
+"""Governance validator for the PRE-2023 historical PEA symbol registry.
 
-This module does not invent or enrich market data. It validates a supplied
-historical instrument registry before any 2010-2022 OHLCV corpus can be built.
-The design is fail-closed and is intended to limit survivorship/ticker-history
-bias while preserving strict separation from the 2023-2026 holdout.
+The registry is a data-governance input, never a model feature.  It must prove
+both historical instrument existence and historical PEA-investability windows.
+Current-snapshot backfills are rejected.  No 2023+ date can enter the governed
+development universe.
 """
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from pathlib import Path
 import pandas as pd
 
 PRE2023_START = pd.Timestamp("2010-01-01", tz="UTC")
+PRE2023_END = pd.Timestamp("2022-12-31", tz="UTC")
 HOLDOUT_START = pd.Timestamp("2023-01-01", tz="UTC")
 
 REQUIRED_COLUMNS = [
@@ -21,10 +22,29 @@ REQUIRED_COLUMNS = [
     "exchange",
     "listing_start",
     "listing_end",
+    "eligibility_start",
+    "eligibility_end",
     "status_2022_12_31",
+    "universe_method",
+    "source_provider",
+    "source_retrieved_at",
     "source_evidence",
+    "eligibility_evidence",
 ]
-ALLOWED_STATUS = {"active", "delisted", "merged", "renamed", "unknown"}
+ALLOWED_STATUS = {"active", "delisted", "merged", "renamed"}
+ALLOWED_UNIVERSE_METHODS = {
+    "provider_active_plus_delisted",
+    "historical_membership_archive",
+    "historical_regulatory_archive",
+}
+FORBIDDEN_UNIVERSE_METHODS = {
+    "current_snapshot_backfill",
+    "current_universe_backfill",
+}
+
+
+def _utc_series(series: pd.Series) -> pd.Series:
+    return pd.to_datetime(series.replace("", pd.NA), errors="coerce", utc=True)
 
 
 def validate_registry(path: str | Path) -> pd.DataFrame:
@@ -39,7 +59,11 @@ def validate_registry(path: str | Path) -> pd.DataFrame:
     for c in REQUIRED_COLUMNS:
         df[c] = df[c].str.strip()
 
-    mandatory_nonblank = ["instrument_id", "ticker", "eodhd_symbol", "exchange", "status_2022_12_31", "source_evidence"]
+    mandatory_nonblank = [
+        "instrument_id", "ticker", "eodhd_symbol", "exchange",
+        "status_2022_12_31", "universe_method", "source_provider",
+        "source_retrieved_at", "source_evidence", "eligibility_evidence",
+    ]
     if any((df[c] == "").any() for c in mandatory_nonblank):
         raise ValueError("BLOCK_PRE2023_SYMBOLS_QUALITY: blank mandatory field")
     if df["instrument_id"].duplicated().any():
@@ -52,44 +76,92 @@ def validate_registry(path: str | Path) -> pd.DataFrame:
     if bad_status:
         raise ValueError(f"BLOCK_PRE2023_SYMBOLS_STATUS: unsupported values {sorted(bad_status)}")
 
-    # Parse both date columns with utc=True so empty listing_end values remain
-    # timezone-aware NaT and comparisons cannot mix tz-naive and tz-aware
-    # datetime arrays under current pandas versions.
-    starts = pd.to_datetime(df["listing_start"].replace("", pd.NA), errors="coerce", utc=True)
-    ends = pd.to_datetime(df["listing_end"].replace("", pd.NA), errors="coerce", utc=True)
+    methods = set(df["universe_method"].str.lower())
+    if methods & FORBIDDEN_UNIVERSE_METHODS:
+        raise ValueError("BLOCK_PRE2023_SURVIVORSHIP: current snapshot backfill is forbidden")
+    bad_methods = methods - ALLOWED_UNIVERSE_METHODS
+    if bad_methods:
+        raise ValueError(f"BLOCK_PRE2023_UNIVERSE_METHOD: unsupported values {sorted(bad_methods)}")
+
+    # Retrieval timestamp documents provenance only; it is never exposed as a
+    # feature. It must parse so the corpus can be reproduced/audited.
+    retrieved = pd.to_datetime(df["source_retrieved_at"], errors="coerce", utc=True)
+    if retrieved.isna().any():
+        raise ValueError("BLOCK_PRE2023_SOURCE_PROVENANCE: invalid source_retrieved_at")
+
+    starts = _utc_series(df["listing_start"])
+    ends = _utc_series(df["listing_end"])
+    elig_starts = _utc_series(df["eligibility_start"])
+    elig_ends = _utc_series(df["eligibility_end"])
     if starts.isna().any():
         raise ValueError("BLOCK_PRE2023_SYMBOLS_DATES: listing_start required/valid")
-    bad_order = ends.notna() & (ends < starts)
-    if bad_order.any():
+    if elig_starts.isna().any():
+        raise ValueError("BLOCK_PRE2023_ELIGIBILITY: eligibility_start required/valid")
+    if (ends.notna() & (ends < starts)).any():
         raise ValueError("BLOCK_PRE2023_SYMBOLS_DATES: listing_end before listing_start")
-    if (starts >= HOLDOUT_START).any():
-        raise ValueError("BLOCK_PRE2023_SYMBOLS_HOLDOUT: registry contains instrument starting in holdout")
-    if (ends.dropna() >= HOLDOUT_START).any():
-        raise ValueError("BLOCK_PRE2023_SYMBOLS_HOLDOUT: listing_end reaches holdout")
+    if (elig_ends.notna() & (elig_ends < elig_starts)).any():
+        raise ValueError("BLOCK_PRE2023_ELIGIBILITY: eligibility_end before eligibility_start")
 
-    overlaps_target = (starts <= pd.Timestamp("2022-12-31", tz="UTC")) & (ends.isna() | (ends >= PRE2023_START))
-    if not overlaps_target.any():
-        raise ValueError("BLOCK_PRE2023_SYMBOLS_COVERAGE: no instrument overlaps 2010-2022")
+    # Certified PRE2023 rows may never encode a boundary in the final holdout.
+    for label, values in {
+        "listing_start": starts,
+        "listing_end": ends,
+        "eligibility_start": elig_starts,
+        "eligibility_end": elig_ends,
+    }.items():
+        if (values.dropna() >= HOLDOUT_START).any():
+            raise ValueError(f"BLOCK_PRE2023_SYMBOLS_HOLDOUT: {label} reaches holdout")
 
-    # A registry made only of names still active at the end of 2022 is not
-    # sufficient evidence against survivorship bias. Fail closed unless at
-    # least one non-active historical row exists. This gate may only be
-    # overridden by replacing the registry with a historically complete one.
-    if set(df["status_2022_12_31"].str.lower()) <= {"active"}:
+    # Eligibility cannot precede listing or extend beyond a known listing end.
+    if (elig_starts < starts).any():
+        raise ValueError("BLOCK_PRE2023_ELIGIBILITY: eligibility starts before listing")
+    if (ends.notna() & elig_ends.notna() & (elig_ends > ends)).any():
+        raise ValueError("BLOCK_PRE2023_ELIGIBILITY: eligibility extends past listing end")
+
+    # A non-active status must have an effective end date in the development
+    # period; active at 2022-12-31 must not be given a synthetic listing end.
+    status = df["status_2022_12_31"].str.lower()
+    if ((status == "active") & ends.notna()).any():
+        raise ValueError("BLOCK_PRE2023_SYMBOLS_STATUS: active row has listing_end")
+    if ((status != "active") & ends.isna()).any():
+        raise ValueError("BLOCK_PRE2023_SYMBOLS_STATUS: inactive row missing listing_end")
+
+    overlaps_target = (starts <= PRE2023_END) & (ends.isna() | (ends >= PRE2023_START))
+    eligible_target = (elig_starts <= PRE2023_END) & (elig_ends.isna() | (elig_ends >= PRE2023_START))
+    if not (overlaps_target & eligible_target).any():
+        raise ValueError("BLOCK_PRE2023_SYMBOLS_COVERAGE: no eligible instrument overlaps 2010-2022")
+
+    # A provider-derived registry must contain historical exits; otherwise it
+    # is observationally indistinguishable from a survivor-only snapshot.
+    if set(status) <= {"active"}:
         raise ValueError("BLOCK_PRE2023_SURVIVORSHIP: registry contains only active survivors")
 
     out = df.copy()
     out["listing_start"] = starts
     out["listing_end"] = ends
-    out["status_2022_12_31"] = out["status_2022_12_31"].str.lower()
+    out["eligibility_start"] = elig_starts
+    out["eligibility_end"] = elig_ends
+    out["source_retrieved_at"] = retrieved
+    out["status_2022_12_31"] = status
+    out["universe_method"] = out["universe_method"].str.lower()
     return out
 
 
 def export_collector_mapping(registry: pd.DataFrame, output: str | Path) -> Path:
+    """Export stable instrument IDs as collector keys.
+
+    The collector's historical key is intentionally NOT the display ticker:
+    tickers can be reused or renamed.  `instrument_id` is stable and therefore
+    prevents two distinct historical securities from being merged.
+    """
     out = Path(output)
     out.parent.mkdir(parents=True, exist_ok=True)
-    mapping = registry[["ticker", "eodhd_symbol"]].drop_duplicates().sort_values(["ticker", "eodhd_symbol"])
+    mapping = registry[["instrument_id", "eodhd_symbol"]].drop_duplicates().copy()
+    mapping = mapping.rename(columns={"instrument_id": "ticker"})
+    mapping = mapping.sort_values(["ticker", "eodhd_symbol"])
     if mapping.empty:
         raise ValueError("BLOCK_PRE2023_SYMBOLS_COVERAGE: empty collector mapping")
+    if mapping["ticker"].duplicated().any() or mapping["eodhd_symbol"].duplicated().any():
+        raise ValueError("BLOCK_PRE2023_SYMBOLS_QUALITY: non-unique stable collector mapping")
     mapping.to_csv(out, index=False)
     return out
