@@ -32,3 +32,17 @@ def test_attribution_detects_single_trade_dependency():
     assert stats["total_pnl_delta_eur"] == 500.0
     assert stats["delta_excluding_top_candidate_only_trade_eur"] == 0.0
     assert stats["robust_without_top_candidate_only_trade"] is False
+
+
+def test_close_confirmed_stop_is_executed_on_next_open():
+    signals = pd.DataFrame([
+        {"date": "2025-01-01", "ticker": "AAA", "EV_net": 1.0, "tier": "TCT", "atr_14_pct": 0.03}
+    ])
+    prices = pd.DataFrame([
+        {"date": "2025-01-02", "ticker": "AAA", "open": 100.0, "high": 101.0, "low": 90.5, "close": 90.8},
+        {"date": "2025-01-03", "ticker": "AAA", "open": 89.0, "high": 91.0, "low": 88.0, "close": 90.0},
+    ])
+    trade = AdaptiveRunner("FIXED_09", stop_mode="CLOSE09_HARD15").run(signals, prices)["ledger"].iloc[0]
+    assert trade["exit_reason"] == "STOP_CLOSE09_J1"
+    assert str(trade["exit_date"]).startswith("2025-01-03")
+    assert trade["stop_pct_signal"] == 0.15
