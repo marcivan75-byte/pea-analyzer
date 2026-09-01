@@ -44,7 +44,6 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: python -m pytest -q tests/test_backtest_B_v2.py tests/test_hebdo_at_meta.py tests/test_pit_loader_meta.py tests/test_tabport_meta.py tests/test_tabport_historical_meta.py
       - name: Run src runtime optimization tests in isolated package context
-        working-directory: src
         env:
           PYTHONPATH: ${{ github.workspace }}/src
-        run: python -m pytest -q ../tests/test_source_runtime_optimization_v21_13_2.py
+        run: python -P -m pytest -q tests/test_source_runtime_optimization_v21_13_2.py
