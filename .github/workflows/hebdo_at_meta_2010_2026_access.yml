@@ -5,6 +5,7 @@ on:
     branches: [hebdo-at-meta]
     paths:
       - 'v182/hebdo/meta_price_history.py'
+      - 'v182/hebdo/tabport_historical.py'
       - '.github/workflows/hebdo_at_meta_2010_2026_access.yml'
   workflow_dispatch:
 
@@ -23,6 +24,8 @@ jobs:
           python-version: '3.12'
       - name: Install dependencies
         run: python -m pip install --prefer-binary pandas numpy pyarrow
+      - name: Compile historical loaders
+        run: python -m py_compile v182/hebdo/meta_price_history.py v182/hebdo/tabport_historical.py
       - name: Restore governed 2023-2026 holdout cache
         id: cache
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
@@ -44,13 +47,14 @@ jobs:
           test -s inputs/pre2023/PRE2023_YAHOO_DEVELOPMENT_OHLCV.parquet
           test -s inputs/pre2023/PRE2023_YAHOO_CORPUS_MANIFEST.json
           test -d data/cache/actions
-      - name: Validate HEBDO AT META governed access
+      - name: Validate HEBDO AT META governed access and volume continuity
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
+          import numpy as np
           import pandas as pd
           from v182.hebdo.meta_price_history import load_pre2023_development, load_holdout, load_2010_2026, assert_fit_window
 
@@ -71,6 +75,38 @@ jobs:
           else:
               raise SystemExit('BLOCK_META_HOLDOUT_FIT_GUARD_MISSING')
 
+          for name, frame in [('development', dev), ('holdout', hold), ('combined', combined)]:
+              if 'volume' not in frame.columns:
+                  raise SystemExit(f'BLOCK_META_VOLUME_COLUMN_MISSING:{name}')
+              volume = pd.to_numeric(frame['volume'], errors='coerce')
+              if volume.isna().any() or not np.isfinite(volume.to_numpy(dtype='float64', na_value=np.nan)).all():
+                  raise SystemExit(f'BLOCK_META_VOLUME_NONFINITE:{name}')
+              if (volume < 0).any():
+                  raise SystemExit(f'BLOCK_META_VOLUME_NEGATIVE:{name}')
+
+          early = combined.loc[(combined['date'] >= pd.Timestamp('2010-01-01', tz='UTC')) &
+                               (combined['date'] < pd.Timestamp('2017-01-01', tz='UTC'))].copy()
+          if early.empty:
+              raise SystemExit('BLOCK_META_2010_2016_VOLUME_WINDOW_EMPTY')
+          years = sorted(early['date'].dt.year.unique().tolist())
+          if years != list(range(2010, 2017)):
+              raise SystemExit(f'BLOCK_META_2010_2016_VOLUME_YEAR_GAP:{years}')
+
+          audited = combined.assign(year=combined['date'].dt.year)
+          volume_audit = audited.groupby('year', as_index=False).agg(
+              rows=('volume', 'size'),
+              tickers=('ticker', 'nunique'),
+              zero_volume_rows=('volume', lambda s: int((s == 0).sum())),
+              median_volume=('volume', 'median'),
+          )
+          volume_audit['zero_volume_pct'] = (
+              100.0 * volume_audit['zero_volume_rows'] / volume_audit['rows']
+          ).round(6)
+
+          out = Path('outputs/meta_2010_2026')
+          out.mkdir(parents=True, exist_ok=True)
+          volume_audit.to_csv(out/'HEBDO_AT_META_VOLUME_AUDIT_BY_YEAR.csv', index=False)
+
           summary = {
               'status':'OK',
               'engine':'HEBDO_AT_META',
@@ -82,21 +118,28 @@ jobs:
               'development_tickers':int(dev['ticker'].nunique()),
               'development_min_date':str(dev['date'].min()),
               'development_max_date':str(dev['date'].max()),
+              'development_zero_volume_rows':int((dev['volume'] == 0).sum()),
               'holdout_rows':int(len(hold)),
               'holdout_tickers':int(hold['ticker'].nunique()),
               'holdout_min_date':str(hold['date'].min()),
               'holdout_max_date':str(hold['date'].max()),
+              'holdout_zero_volume_rows':int((hold['volume'] == 0).sum()),
               'combined_rows':int(len(combined)),
               'combined_min_date':str(combined['date'].min()),
               'combined_max_date':str(combined['date'].max()),
+              'combined_volume_nonnull_pct':round(100.0 * combined['volume'].notna().mean(), 6),
+              'volume_basis':'RAW_MARKET_VOLUME_UNADJUSTED',
+              'volume_2010_2016_years_present':years,
+              'volume_2010_2016_rows':int(len(early)),
+              'volume_2010_2016_tickers':int(early['ticker'].nunique()),
+              'volume_2010_2016_zero_rows':int((early['volume'] == 0).sum()),
               'pre2023_price_basis':'YAHOO_ADJ_CLOSE_RATIO_OHLC',
               'historical_universe_certified':False,
               'survivorship_safe':False,
               'historical_pea_eligibility_certified':False,
               'retuning_with_holdout':False,
           }
-          Path('outputs/meta_2010_2026').mkdir(parents=True, exist_ok=True)
-          Path('outputs/meta_2010_2026/HEBDO_AT_META_2010_2026_ACCESS.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
+          (out/'HEBDO_AT_META_2010_2026_ACCESS.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
           print(json.dumps(summary,indent=2))
           PY
       - name: Upload access evidence
