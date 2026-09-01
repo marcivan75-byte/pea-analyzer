@@ -19,7 +19,13 @@ from pathlib import Path
 import json
 from typing import Callable
 
-from v182.sources.finnhub_consensus import FINNHUB_BASE, _SCORE_WEIGHTS, _counts, _label_from_score, _score_from_counts
+from v182.sources.finnhub_consensus import (
+    FINNHUB_BASE,
+    _counts,
+    _label_from_score,
+    _sanitize_detail,
+    _score_from_counts,
+)
 from v182.sources.rate_limit import StartRateLimiter
 
 VERSION = "AUDIT73_FINNHUB_RECOMMENDATION_HISTORY_V1"
@@ -118,6 +124,7 @@ def append_capture(path: str | Path, *, ticker: str, rows: list[dict], captured_
         "provider_period_used_as_available_at": False,
         "future_fill_forbidden": True,
         "production_scoring_influence": 0.0,
+        "secret_redaction_required": True,
     }
     _save(target, payload)
     return {"status": "APPENDED", "captures_appended": 1, "rows_appended": len(rows)}
@@ -176,7 +183,7 @@ def collect_recommendation_history_cached(
             preserved_rows += int(result["rows_appended"])
             observations.extend({"ticker": ticker, **row} for row in rows)
         except Exception as exc:
-            failures.append({"ticker": ticker, "reason": type(exc).__name__, "detail": str(exc)[:160]})
+            failures.append({"ticker": ticker, "reason": type(exc).__name__, "detail": _sanitize_detail(exc)})
     return observations, failures, {
         "version": VERSION,
         "requested": len(unique),
@@ -185,6 +192,7 @@ def collect_recommendation_history_cached(
         "failures": len(failures),
         "provider_period_used_as_available_at": False,
         "production_scoring_influence": 0.0,
+        "secret_redaction_required": True,
     }
 
 
