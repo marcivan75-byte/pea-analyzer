@@ -47,7 +47,7 @@ jobs:
           test -f history/PEA_OHLCV_2010_2026_CONSOLIDATED.parquet
       - name: Run final frozen 2023-2026 evaluation
         run: |
-          python scripts/v22_1_tabport_final_holdout.py \
+          PYTHONPATH=. python scripts/v22_1_tabport_final_holdout.py \
             --holdout inputs/V22_1_HOLDOUT.csv \
             --pass6-report pass6/PASS6_REPORT.json \
             --frozen-config pass6/PASS6_FROZEN_CONFIG.json \
