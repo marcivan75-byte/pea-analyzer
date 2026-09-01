@@ -5,11 +5,13 @@ from __future__ import annotations
 2010-2022 is the development segment. Yahoo raw bars are transformed to a
 corporate-action-consistent price basis using the contemporaneous row ratio
 Adj Close / Close, applied uniformly to OHLC. Raw OHLC are retained for audit.
-2023+ is the frozen HOLDOUT segment and is never accepted by fit inputs.
+Volume is retained as the raw traded-share count supplied by the market source;
+it is never price-adjusted. 2023+ is the frozen HOLDOUT segment and is never
+accepted by fit inputs.
 
 The historical identity bootstrap is still not survivorship-safe and historical
 PEA eligibility is not certified. Those limitations are metadata limitations,
-not reasons to mix development and holdout or to fabricate prices.
+not reasons to mix development and holdout or to fabricate prices or volume.
 """
 
 from pathlib import Path
@@ -23,6 +25,21 @@ HOLDOUT_START = pd.Timestamp("2023-01-01", tz="UTC")
 
 def _utc_dates(values) -> pd.Series:
     return pd.to_datetime(values, errors="coerce", utc=True)
+
+
+def _validate_volume(frame: pd.DataFrame, block_prefix: str) -> pd.DataFrame:
+    """Return a copy with numeric, finite, non-negative raw market volume."""
+    if "volume" not in frame.columns:
+        raise ValueError(f"{block_prefix}_MISSING_VOLUME")
+    out = frame.copy()
+    volume = pd.to_numeric(out["volume"], errors="coerce")
+    values = volume.to_numpy(dtype="float64", na_value=np.nan)
+    if volume.isna().any() or not np.isfinite(values).all():
+        raise ValueError(f"{block_prefix}_INVALID_VOLUME")
+    if (volume < 0).any():
+        raise ValueError(f"{block_prefix}_NEGATIVE_VOLUME")
+    out["volume"] = volume
+    return out
 
 
 def load_pre2023_development(corpus_path: str | Path, manifest_path: str | Path) -> pd.DataFrame:
@@ -42,6 +59,7 @@ def load_pre2023_development(corpus_path: str | Path, manifest_path: str | Path)
     need = {"date", "ticker", "open", "high", "low", "close", "adj_close", "volume"}
     if not need.issubset(df.columns):
         raise ValueError(f"BLOCK_META_PRE2023_COLUMNS:{sorted(need-set(df.columns))}")
+    df = _validate_volume(df, "BLOCK_META_PRE2023")
     df["date"] = _utc_dates(df["date"])
     if df["date"].isna().any() or df["date"].max() > DEVELOPMENT_END:
         raise ValueError("BLOCK_META_PRE2023_DATE_RANGE")
@@ -60,6 +78,7 @@ def load_pre2023_development(corpus_path: str | Path, manifest_path: str | Path)
         out[col] = out[f"raw_{col}"] * factor
     out["adjustment_factor"] = factor
     out["price_basis"] = "YAHOO_ADJ_CLOSE_RATIO_OHLC"
+    out["volume_basis"] = "RAW_MARKET_VOLUME_UNADJUSTED"
     out["segment"] = "DEVELOPMENT"
     out["fit_allowed"] = True
 
@@ -75,7 +94,7 @@ def load_holdout(ohlc_path: str | Path) -> pd.DataFrame:
     df, _ = _read_ohlc_source(Path(ohlc_path))
     if df.empty:
         raise ValueError("BLOCK_META_EMPTY_HOLDOUT")
-    df = df.copy()
+    df = _validate_volume(df, "BLOCK_META_HOLDOUT")
     df["date"] = _utc_dates(df["date"])
     df = df.loc[df["date"] >= HOLDOUT_START].copy()
     if df.empty:
@@ -85,6 +104,7 @@ def load_holdout(ohlc_path: str | Path) -> pd.DataFrame:
     df["segment"] = "HOLDOUT"
     df["fit_allowed"] = False
     df["price_basis"] = "GOVERNED_HOLDOUT_CACHE"
+    df["volume_basis"] = "RAW_MARKET_VOLUME_UNADJUSTED"
     return df
 
 
@@ -101,9 +121,15 @@ def assert_fit_window(frame: pd.DataFrame) -> None:
 def load_2010_2026(pre2023_corpus: str | Path, pre2023_manifest: str | Path, holdout_path: str | Path) -> pd.DataFrame:
     dev = load_pre2023_development(pre2023_corpus, pre2023_manifest)
     hold = load_holdout(holdout_path)
-    common = ["date", "ticker", "open", "high", "low", "close", "segment", "fit_allowed", "price_basis"]
+    common = [
+        "date", "ticker", "open", "high", "low", "close", "volume",
+        "segment", "fit_allowed", "price_basis", "volume_basis",
+    ]
     combined = pd.concat([dev[common], hold[common]], ignore_index=True)
     combined = combined.sort_values(["date", "ticker"]).reset_index(drop=True)
+    if combined.duplicated(["ticker", "date"]).any():
+        raise ValueError("BLOCK_META_2010_2026_DUPLICATES")
+    combined = _validate_volume(combined, "BLOCK_META_2010_2026")
     if combined["date"].min().year != 2010 or combined["date"].max().year < 2026:
         raise ValueError(f"BLOCK_META_2010_2026_COVERAGE:{combined['date'].min()}..{combined['date'].max()}")
     return combined
