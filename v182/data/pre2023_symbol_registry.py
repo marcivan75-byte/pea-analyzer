@@ -27,13 +27,6 @@ REQUIRED_COLUMNS = [
 ALLOWED_STATUS = {"active", "delisted", "merged", "renamed", "unknown"}
 
 
-def _date_or_na(value: str) -> pd.Timestamp | pd.NaT:
-    if value is None or str(value).strip() == "":
-        return pd.NaT
-    ts = pd.Timestamp(value)
-    return ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
-
-
 def validate_registry(path: str | Path) -> pd.DataFrame:
     p = Path(path)
     if not p.is_file() or p.stat().st_size == 0:
@@ -59,10 +52,13 @@ def validate_registry(path: str | Path) -> pd.DataFrame:
     if bad_status:
         raise ValueError(f"BLOCK_PRE2023_SYMBOLS_STATUS: unsupported values {sorted(bad_status)}")
 
-    starts = df["listing_start"].map(_date_or_na)
-    ends = df["listing_end"].map(_date_or_na)
+    # Parse both date columns with utc=True so empty listing_end values remain
+    # timezone-aware NaT and comparisons cannot mix tz-naive and tz-aware
+    # datetime arrays under current pandas versions.
+    starts = pd.to_datetime(df["listing_start"].replace("", pd.NA), errors="coerce", utc=True)
+    ends = pd.to_datetime(df["listing_end"].replace("", pd.NA), errors="coerce", utc=True)
     if starts.isna().any():
-        raise ValueError("BLOCK_PRE2023_SYMBOLS_DATES: listing_start required")
+        raise ValueError("BLOCK_PRE2023_SYMBOLS_DATES: listing_start required/valid")
     bad_order = ends.notna() & (ends < starts)
     if bad_order.any():
         raise ValueError("BLOCK_PRE2023_SYMBOLS_DATES: listing_end before listing_start")
