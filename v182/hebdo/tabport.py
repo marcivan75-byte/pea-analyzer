@@ -1,21 +1,13 @@
-"""TABPORT HEBDO AT META - simulateur de portefeuille gouverné, sans données synthétiques.
+"""TABPORT HEBDO AT META - simulateur de portefeuille 65 k€ gouverné.
 
-Contrat d'entrée
-----------------
-signals : DataFrame contenant au minimum ``date``, ``ticker`` et ``EV_net``.
-          Si ``tier`` est présent, seuls TCT/CT_WATCH sont éligibles par défaut.
-prices  : DataFrame journalier contenant ``date``, ``ticker``, ``open``, ``high``,
-          ``low`` et ``close``.
-
-La sélection est effectuée à la date du signal par EV_net décroissante, puis l'entrée
-est exécutée à l'ouverture de la première séance strictement postérieure (J+1 marché).
-Aucun accès à une barre future n'est utilisé pour classer les candidats.
+Entrées: signaux PIT (date, ticker, EV_net[, tier]) et OHLC journaliers réels.
+Sélection: EV_net décroissante à la date du signal; exécution à l'ouverture J+1 marché.
+Aucune donnée synthétique et aucun retuning du holdout ne sont effectués ici.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from math import floor
-from typing import Iterable
 
 import numpy as np
 import pandas as pd
@@ -81,19 +73,19 @@ class Tabport65k:
         arr = p[["open", "high", "low", "close"]].to_numpy(dtype=float)
         bad = p["date"].isna() | p["ticker"].isin(["", "NAN", "NONE"]) | ~np.isfinite(arr).all(axis=1)
         bad |= (p[["open", "high", "low", "close"]] <= 0).any(axis=1)
-        bad |= (p["low"] > p["high"]) | (p["open"] < p["low"]) | (p["open"] > p["high"]) | (p["close"] < p["low"]) | (p["close"] > p["high"])
+        bad |= ((p["low"] > p["high"]) | (p["open"] < p["low"]) | (p["open"] > p["high"]) |
+                (p["close"] < p["low"]) | (p["close"] > p["high"]))
         if bad.any():
             raise ValueError("BLOCK_DATA_TABPORT: invalid OHLC/date/ticker")
         if p.duplicated(["date", "ticker"]).any():
             raise ValueError("BLOCK_DATA_TABPORT: duplicate price bar")
         return p.sort_values(["date", "ticker"]).reset_index(drop=True)
 
-    def run(self, signals: pd.DataFrame, prices: pd.DataFrame) -> dict[str, pd.DataFrame | dict]:
+    def run(self, signals: pd.DataFrame, prices: pd.DataFrame) -> dict:
         s = self._normalize_signals(signals)
         p = self._normalize_prices(prices)
         if s.empty or p.empty:
             raise ValueError("BLOCK_DATA_TABPORT: empty signals/prices")
-
         if "tier" in s.columns:
             s = s[s["tier"].isin(self.cfg.allowed_tiers)].copy()
         s = s[s["EV_net"] >= 0].copy()
@@ -101,15 +93,15 @@ class Tabport65k:
             raise ValueError("BLOCK_DATA_TABPORT: no eligible non-negative-EV signals")
 
         price_dates = p.groupby("ticker")["date"].apply(list).to_dict()
+        last_price_date = p.groupby("ticker")["date"].max().to_dict()
         scheduled: dict[pd.Timestamp, list[dict]] = {}
-        skipped = []
+        skipped: list[dict] = []
         for _, row in s.iterrows():
-            dates = price_dates.get(row["ticker"], [])
-            nxt = next((d for d in dates if d > row["date"]), None)
+            nxt = next((d for d in price_dates.get(row["ticker"], []) if d > row["date"]), None)
             if nxt is None:
                 skipped.append({"signal_date": row["date"], "ticker": row["ticker"], "reason": "NO_J1_BAR"})
-                continue
-            scheduled.setdefault(nxt, []).append(row.to_dict())
+            else:
+                scheduled.setdefault(nxt, []).append(row.to_dict())
 
         bars_by_date = {d: g.set_index("ticker") for d, g in p.groupby("date", sort=True)}
         all_dates = sorted(bars_by_date)
@@ -120,7 +112,7 @@ class Tabport65k:
         entries_month: dict[tuple[int, int], int] = {}
         entries_year: dict[int, int] = {}
 
-        def close_position(ticker: str, date: pd.Timestamp, bar: pd.Series, reason: str, raw_exit: float) -> None:
+        def close_position(ticker: str, date: pd.Timestamp, reason: str, raw_exit: float) -> None:
             nonlocal cash
             pos = positions.pop(ticker)
             sell_px = float(raw_exit) * (1 - self.cfg.slippage_rate)
@@ -128,157 +120,134 @@ class Tabport65k:
             sell_fee = gross * self.cfg.fee_rate
             cash += gross - sell_fee
             pnl_net = (gross - sell_fee) - pos["cash_out"]
-            ret_net = pnl_net / pos["cash_out"]
             ledger.append({
-                "ticker": ticker,
-                "signal_date": pos["signal_date"],
-                "entry_date": pos["entry_date"],
-                "exit_date": date,
-                "shares": pos["shares"],
-                "entry_price": pos["entry_price"],
-                "exit_price": sell_px,
-                "entry_fee": pos["entry_fee"],
-                "exit_fee": sell_fee,
-                "fees_total": pos["entry_fee"] + sell_fee,
-                "slippage_rate_side": self.cfg.slippage_rate,
-                "cash_invested": pos["cash_out"],
-                "pnl_net": pnl_net,
-                "return_net": ret_net,
-                "exit_reason": reason,
-                "sessions_held": pos["sessions"],
-                "mae": pos["mae"],
-                "mfe": pos["mfe"],
+                "ticker": ticker, "signal_date": pos["signal_date"], "entry_date": pos["entry_date"],
+                "exit_date": date, "shares": pos["shares"], "entry_price": pos["entry_price"],
+                "exit_price": sell_px, "entry_fee": pos["entry_fee"], "exit_fee": sell_fee,
+                "fees_total": pos["entry_fee"] + sell_fee, "slippage_rate_side": self.cfg.slippage_rate,
+                "cash_invested": pos["cash_out"], "pnl_net": pnl_net,
+                "return_net": pnl_net / pos["cash_out"], "exit_reason": reason,
+                "sessions_held": pos["sessions"], "mae": pos["mae"], "mfe": pos["mfe"],
                 "EV_net_signal": pos["EV_net"],
             })
+
+        def mark_bar(ticker: str, bar: pd.Series) -> tuple[float, float]:
+            pos = positions[ticker]
+            pos["last_close"] = float(bar["close"])
+            pos["mae"] = min(pos["mae"], float(bar["low"]) / pos["entry_price"] - 1)
+            pos["mfe"] = max(pos["mfe"], float(bar["high"]) / pos["entry_price"] - 1)
+            return pos["entry_price"] * (1 - self.cfg.stop_pct), float(bar["open"])
 
         for date in all_dates:
             day = bars_by_date[date]
 
-            # 1) Gérer les positions déjà ouvertes. Les entrées du jour ne sont jamais
-            #    exposées artificiellement à la barre complète qui a précédé leur fill.
             for ticker in list(positions):
                 if ticker not in day.index:
                     continue
                 bar = day.loc[ticker]
-                pos = positions[ticker]
-                pos["sessions"] += 1
-                pos["mae"] = min(pos["mae"], float(bar["low"]) / pos["entry_price"] - 1)
-                pos["mfe"] = max(pos["mfe"], float(bar["high"]) / pos["entry_price"] - 1)
-                stop_level = pos["entry_price"] * (1 - self.cfg.stop_pct)
+                positions[ticker]["sessions"] += 1
+                stop_level, open_px = mark_bar(ticker, bar)
                 if float(bar["low"]) <= stop_level:
-                    raw_exit = min(stop_level, float(bar["open"])) if float(bar["open"]) < stop_level else stop_level
-                    close_position(ticker, date, bar, "STOP_-9%" if raw_exit == stop_level else "STOP_GAP_THROUGH", raw_exit)
-                elif pos["sessions"] >= self.cfg.max_hold_sessions:
-                    close_position(ticker, date, bar, "TIME_26W", float(bar["close"]))
+                    raw_exit = open_px if open_px < stop_level else stop_level
+                    close_position(ticker, date, "STOP_GAP_THROUGH" if raw_exit < stop_level else "STOP_-9%", raw_exit)
+                elif positions[ticker]["sessions"] >= self.cfg.max_hold_sessions:
+                    close_position(ticker, date, "TIME_26W", float(bar["close"]))
+                elif date == last_price_date[ticker]:
+                    close_position(ticker, date, "EOP_DATA_END", float(bar["close"]))
 
-            # 2) Entrées J+1, classement EV_net décroissant figé à la date du signal.
             candidates = sorted(scheduled.get(date, []), key=lambda r: (-float(r["EV_net"]), str(r["ticker"])))
             for sig in candidates:
                 ticker = str(sig["ticker"])
                 if ticker in positions:
-                    skipped.append({"signal_date": sig["date"], "ticker": ticker, "reason": "ALREADY_OPEN"})
-                    continue
+                    skipped.append({"signal_date": sig["date"], "ticker": ticker, "reason": "ALREADY_OPEN"}); continue
                 if ticker not in day.index:
-                    skipped.append({"signal_date": sig["date"], "ticker": ticker, "reason": "NO_ENTRY_BAR"})
-                    continue
+                    skipped.append({"signal_date": sig["date"], "ticker": ticker, "reason": "NO_ENTRY_BAR"}); continue
                 if len(positions) >= self.cfg.max_positions:
-                    skipped.append({"signal_date": sig["date"], "ticker": ticker, "reason": "MAX_POSITIONS"})
-                    continue
+                    skipped.append({"signal_date": sig["date"], "ticker": ticker, "reason": "MAX_POSITIONS"}); continue
                 ym = (date.year, date.month)
                 if entries_month.get(ym, 0) >= self.cfg.max_entries_month:
-                    skipped.append({"signal_date": sig["date"], "ticker": ticker, "reason": "MAX_ENTRIES_MONTH"})
-                    continue
+                    skipped.append({"signal_date": sig["date"], "ticker": ticker, "reason": "MAX_ENTRIES_MONTH"}); continue
                 if entries_year.get(date.year, 0) >= self.cfg.max_entries_year:
-                    skipped.append({"signal_date": sig["date"], "ticker": ticker, "reason": "MAX_ENTRIES_YEAR"})
-                    continue
-                open_px = float(day.loc[ticker, "open"])
-                buy_px = open_px * (1 + self.cfg.slippage_rate)
-                affordable_budget = min(self.cfg.max_position_eur, cash)
-                unit_cash = buy_px * (1 + self.cfg.fee_rate)
-                shares = floor(affordable_budget / unit_cash)
+                    skipped.append({"signal_date": sig["date"], "ticker": ticker, "reason": "MAX_ENTRIES_YEAR"}); continue
+
+                bar = day.loc[ticker]
+                buy_px = float(bar["open"]) * (1 + self.cfg.slippage_rate)
+                affordable = min(self.cfg.max_position_eur, cash)
+                shares = floor(affordable / (buy_px * (1 + self.cfg.fee_rate)))
                 if shares < 1:
-                    skipped.append({"signal_date": sig["date"], "ticker": ticker, "reason": "INSUFFICIENT_CASH"})
-                    continue
+                    skipped.append({"signal_date": sig["date"], "ticker": ticker, "reason": "INSUFFICIENT_CASH"}); continue
                 gross = shares * buy_px
                 entry_fee = gross * self.cfg.fee_rate
                 cash_out = gross + entry_fee
                 if cash_out > cash + 1e-9:
-                    skipped.append({"signal_date": sig["date"], "ticker": ticker, "reason": "INSUFFICIENT_CASH"})
-                    continue
+                    skipped.append({"signal_date": sig["date"], "ticker": ticker, "reason": "INSUFFICIENT_CASH"}); continue
                 cash -= cash_out
                 positions[ticker] = {
                     "signal_date": sig["date"], "entry_date": date, "shares": shares,
                     "entry_price": buy_px, "entry_fee": entry_fee, "cash_out": cash_out,
-                    "EV_net": float(sig["EV_net"]), "sessions": 0, "mae": 0.0, "mfe": 0.0,
+                    "EV_net": float(sig["EV_net"]), "sessions": 1, "mae": 0.0, "mfe": 0.0,
+                    "last_close": float(bar["close"]),
                 }
                 entries_month[ym] = entries_month.get(ym, 0) + 1
                 entries_year[date.year] = entries_year.get(date.year, 0) + 1
 
-            # 3) Valorisation quotidienne au close. Si un ticker n'a pas de barre ce jour,
-            #    dernière clôture connue interdite implicitement: valeur d'entrée conservatrice.
-            market_value = 0.0
-            for ticker, pos in positions.items():
-                px = float(day.loc[ticker, "close"]) if ticker in day.index else pos["entry_price"]
-                market_value += pos["shares"] * px
+                stop_level, open_px = mark_bar(ticker, bar)
+                if float(bar["low"]) <= stop_level:
+                    raw_exit = open_px if open_px < stop_level else stop_level
+                    close_position(ticker, date, "STOP_GAP_THROUGH" if raw_exit < stop_level else "STOP_-9%", raw_exit)
+                elif self.cfg.max_hold_sessions == 1:
+                    close_position(ticker, date, "TIME_26W", float(bar["close"]))
+                elif date == last_price_date[ticker]:
+                    close_position(ticker, date, "EOP_DATA_END", float(bar["close"]))
+
+            market_value = sum(pos["shares"] * pos["last_close"] for pos in positions.values())
             equity_rows.append({"date": date, "cash": cash, "market_value": market_value,
                                 "equity": cash + market_value, "open_positions": len(positions)})
 
-        # Clôture de fin de période au dernier close disponible, explicitement EOP.
-        last_date = all_dates[-1]
-        last_day = bars_by_date[last_date]
-        for ticker in list(positions):
-            if ticker in last_day.index:
-                close_position(ticker, last_date, last_day.loc[ticker], "EOP", float(last_day.loc[ticker, "close"]))
-            else:
-                skipped.append({"signal_date": positions[ticker]["signal_date"], "ticker": ticker, "reason": "BLOCK_EOP_NO_BAR"})
-        # Recalcul final de l'equity après liquidation EOP.
-        equity_rows.append({"date": last_date, "cash": cash, "market_value": 0.0,
-                            "equity": cash, "open_positions": len(positions)})
+        if positions:
+            raise ValueError(f"BLOCK_DATA_TABPORT: unclosed positions at EOP {sorted(positions)}")
 
         ledger_df = pd.DataFrame(ledger)
         equity_df = pd.DataFrame(equity_rows).sort_values("date").reset_index(drop=True)
         skipped_df = pd.DataFrame(skipped)
-        metrics = self._metrics(ledger_df, equity_df)
-        quarterly = self._period_returns(equity_df, "QE")
-        yearly = self._period_returns(equity_df, "YE")
-        return {"ledger": ledger_df, "equity": equity_df, "skipped": skipped_df,
-                "metrics": metrics, "quarterly": quarterly, "yearly": yearly}
+        return {
+            "ledger": ledger_df, "equity": equity_df, "skipped": skipped_df,
+            "metrics": self._metrics(ledger_df, equity_df),
+            "quarterly": self._period_returns(equity_df, "Q", self.cfg.initial_cash),
+            "yearly": self._period_returns(equity_df, "Y", self.cfg.initial_cash),
+        }
 
     def _metrics(self, ledger: pd.DataFrame, equity: pd.DataFrame) -> dict:
         final_value = float(equity.iloc[-1]["equity"])
         net = final_value - self.cfg.initial_cash
         ret = final_value / self.cfg.initial_cash - 1
         eq = equity.drop_duplicates("date", keep="last").set_index("date")["equity"].astype(float)
-        peak = eq.cummax(); dd = eq / peak - 1
+        values = np.concatenate([[self.cfg.initial_cash], eq.to_numpy()])
+        peak = np.maximum.accumulate(values)[1:]
+        dd = eq.to_numpy() / peak - 1
         days = max(1, (eq.index.max() - eq.index.min()).days)
         cagr = (final_value / self.cfg.initial_cash) ** (365.25 / days) - 1 if final_value > 0 else -1.0
         if ledger.empty:
-            wins = losses = pd.Series(dtype=float)
-            pf = np.nan
-            avg_win = avg_loss = rr = np.nan
-            win_rate = 0.0
-            fees = 0.0
-            stops = 0
-            mae = mfe = np.nan
+            pf = avg_win = avg_loss = rr = mae = mfe = np.nan
+            win_rate = fees = 0.0; stops = 0
         else:
             wins = ledger.loc[ledger["pnl_net"] > 0, "pnl_net"]
             losses = ledger.loc[ledger["pnl_net"] < 0, "pnl_net"]
-            gross_profit = float(wins.sum()); gross_loss = float(-losses.sum())
-            pf = gross_profit / gross_loss if gross_loss > 0 else (np.inf if gross_profit > 0 else np.nan)
+            gp, gl = float(wins.sum()), float(-losses.sum())
+            pf = gp / gl if gl > 0 else (np.inf if gp > 0 else np.nan)
             avg_win = float(wins.mean()) if len(wins) else np.nan
             avg_loss = float(losses.mean()) if len(losses) else np.nan
-            rr = avg_win / abs(avg_loss) if np.isfinite(avg_win) and np.isfinite(avg_loss) and avg_loss != 0 else np.nan
+            rr = avg_win / abs(avg_loss) if pd.notna(avg_win) and pd.notna(avg_loss) and avg_loss != 0 else np.nan
             win_rate = float((ledger["pnl_net"] > 0).mean())
             fees = float(ledger["fees_total"].sum())
             stops = int(ledger["exit_reason"].str.startswith("STOP").sum())
-            mae = float(ledger["mae"].mean()); mfe = float(ledger["mfe"].mean())
-        invested = equity["market_value"].sum()
-        gross_eq = (equity["cash"] + equity["market_value"]).replace(0, np.nan)
-        utilization = float((equity["market_value"] / gross_eq).mean())
+            mae, mfe = float(ledger["mae"].mean()), float(ledger["mfe"].mean())
+        capital = (equity["cash"] + equity["market_value"]).replace(0, np.nan)
+        utilization = float((equity["market_value"] / capital).mean())
         return {
             "initial_capital": self.cfg.initial_cash, "final_value": final_value,
             "net_result_eur": net, "return_pct": ret, "cagr": cagr,
-            "max_drawdown": float(dd.min()), "trades": int(len(ledger)),
+            "max_drawdown": float(np.min(dd)), "trades": int(len(ledger)),
             "wins": int((ledger["pnl_net"] > 0).sum()) if not ledger.empty else 0,
             "losses": int((ledger["pnl_net"] <= 0).sum()) if not ledger.empty else 0,
             "win_rate": win_rate, "profit_factor": float(pf) if pd.notna(pf) else np.nan,
@@ -288,13 +257,17 @@ class Tabport65k:
         }
 
     @staticmethod
-    def _period_returns(equity: pd.DataFrame, freq: str) -> pd.DataFrame:
+    def _period_returns(equity: pd.DataFrame, freq: str, initial_capital: float) -> pd.DataFrame:
         e = equity.drop_duplicates("date", keep="last").set_index("date")["equity"].astype(float)
         if e.empty:
             return pd.DataFrame(columns=["period", "start_equity", "end_equity", "return_pct"])
+        periods = e.index.tz_convert(None).to_period(freq)
+        ends = e.groupby(periods).last()
         rows = []
-        for period, grp in e.groupby(e.index.to_period(freq)):
-            start = float(grp.iloc[0]); end = float(grp.iloc[-1])
-            rows.append({"period": str(period), "start_equity": start, "end_equity": end,
-                         "return_pct": end / start - 1 if start else np.nan})
+        previous = float(initial_capital)
+        for period, end in ends.items():
+            end = float(end)
+            rows.append({"period": str(period), "start_equity": previous, "end_equity": end,
+                         "return_pct": end / previous - 1 if previous else np.nan})
+            previous = end
         return pd.DataFrame(rows)
