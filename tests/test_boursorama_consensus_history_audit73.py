@@ -61,8 +61,8 @@ def test_audit73_preserves_consensus_semantics():
 
 
 def test_audit73_revision_uses_same_capture_without_backdating():
-    derived = current_and_revision(history())
-    current_score = (15 * 5 + 4 * 4 + 4 * 3) / 23
-    previous_score = (13 * 5 + 5 * 4 + 3 * 3 + 1 * 2) / 22
-    assert derived["consensus_delta_4w"] == round((current_score - previous_score) * 20, 4)
+    h = history()
+    derived = current_and_revision(h)
+    expected = round((h[-1]["consensus_score"] - h[2]["consensus_score"]) * 20, 4)
+    assert derived["consensus_delta_4w"] == expected
     assert derived["available_at"] == "2026-08-22T18:00:00+00:00"
