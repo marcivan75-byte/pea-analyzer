@@ -5,6 +5,7 @@ on:
     paths:
       - "src/v182/reporting/ci_light_v4.py"
       - "src/v182/reporting/ci_light_source_context_v4.py"
+      - "src/v182/sources/boursorama_selected_audit73.py"
       - "config/CI_LIGHT_V4.json"
       - "inputs/CI_LIGHT_UNIVERSE_V4.csv"
       - "src/v182/sources/tradingview_technical.py"
@@ -29,6 +30,13 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - name: Restore persistent Audit73 source provenance
+        uses: actions/cache@v4
+        with:
+          path: state/provenance/source_cache
+          key: ci-light-v4-source-provenance-${{ github.run_id }}
+          restore-keys: |
+            ci-light-v4-source-provenance-
       - name: Install limited runtime
         run: python -m pip install -c constraints-ci.txt requests beautifulsoup4 lxml pandas openpyxl
       - name: Restore common enriched master data
@@ -55,6 +63,8 @@ jobs:
           assert audit['ci_selection_used'] is False, audit
           assert audit['ci_context_reused'] is False, audit
           assert audit['etf_rules']['morningstar_fallback'].startswith('>=4'), audit
+          cache = Path('state/provenance/source_cache/CI_LIGHT_V4_BOURSORAMA_ACTIONS.json')
+          assert cache.exists() and cache.stat().st_size > 0, 'Audit73 Boursorama provenance cache missing'
           summary = {
               'status': audit['status'],
               'input_rows': audit['input_rows'],
@@ -65,6 +75,7 @@ jobs:
               'boursorama_etfs': audit['source_context']['boursorama_etfs'],
               'tradingview': audit['source_context']['tradingview'],
               'investing_enabled': audit['investing_enabled'],
+              'audit73_provenance_cache_persisted': True,
           }
           print(json.dumps(summary, ensure_ascii=False, indent=2))
           Path('outputs/audit/CI_LIGHT_LIMITED_PUBLISHED_SUMMARY.json').write_text(
@@ -87,3 +98,4 @@ jobs:
             outputs/audit/CI_LIGHT_V4_INDEPENDENT_SOURCE_CONTEXT.json
             outputs/source_context/CI_LIGHT_V4_INDEPENDENT_SOURCE_OBSERVATIONS.csv
             outputs/source_context/CI_LIGHT_V4_INDEPENDENT_SOURCE_FAILURES.csv
+            state/provenance/source_cache/CI_LIGHT_V4_BOURSORAMA_ACTIONS.json
