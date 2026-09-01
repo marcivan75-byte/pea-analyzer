@@ -1,0 +1,87 @@
+name: PRE2023 Yahoo coverage probe
+
+on:
+  push:
+    branches: [hebdo-at-meta]
+    paths:
+      - '.github/workflows/pre2023_yahoo_probe.yml'
+      - 'scripts/pre2023_yahoo_probe.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  yahoo-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Restore governed current OHLCV cache for ticker identities only
+        id: cache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: data/cache/
+          key: ohlcv-v3-33132925283
+          restore-keys: |
+            ohlcv-v3-
+      - name: Install probe dependencies
+        run: python -m pip install --prefer-binary pandas numpy pyarrow yfinance
+      - name: Verify isolated probe contract
+        run: |
+          python -m py_compile scripts/pre2023_yahoo_probe.py
+          if [ ! -d data/cache/actions ]; then
+            echo 'BLOCK_YAHOO_PROBE_CACHE: governed action cache unavailable'
+            exit 2
+          fi
+          echo "CACHE_HIT=${{ steps.cache.outputs.cache-hit }}"
+          echo "CACHE_MATCHED_KEY=${{ steps.cache.outputs.cache-matched-key }}"
+      - name: Probe Yahoo 2010-2022 source feasibility
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python scripts/pre2023_yahoo_probe.py \
+            --cache-root data/cache/actions \
+            --output-dir outputs/pre2023_yahoo_probe \
+            --sample-size 120 \
+            --batch-size 20 \
+            --pause-seconds 0.5
+      - name: Validate fail-closed probe output
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+
+          root=Path('outputs/pre2023_yahoo_probe')
+          summary=json.loads((root/'PRE2023_YAHOO_PROBE_SUMMARY.json').read_text(encoding='utf-8'))
+          inv=pd.read_csv(root/'PRE2023_YAHOO_PROBE_INVENTORY.csv')
+          required={
+              'purpose':'SOURCE_FEASIBILITY_ONLY',
+              'historical_universe_certified':False,
+              'survivorship_safe':False,
+              'retuning':False,
+              'holdout_accessed_for_prices':False,
+              'requested_start':'2010-01-01',
+              'requested_end_exclusive':'2023-01-01',
+          }
+          for key,value in required.items():
+              if summary.get(key) != value:
+                  raise SystemExit(f'BLOCK_YAHOO_PROBE_CONTRACT:{key}={summary.get(key)!r}')
+          if len(inv) != int(summary.get('sample_tickers',-1)):
+              raise SystemExit('BLOCK_YAHOO_PROBE_ROWCOUNT')
+          if summary.get('max_observed_date') and pd.Timestamp(summary['max_observed_date']) >= pd.Timestamp('2023-01-01'):
+              raise SystemExit('BLOCK_YAHOO_HOLDOUT_LEAK')
+          print('PRE2023_YAHOO_PROBE_CONTRACT_OK')
+          PY
+      - name: Upload Yahoo probe evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pre2023-yahoo-probe-${{ github.run_id }}
+          path: outputs/pre2023_yahoo_probe/
+          if-no-files-found: warn
+          retention-days: 14
