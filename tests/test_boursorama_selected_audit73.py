@@ -51,14 +51,19 @@ def fetch_ok(url: str, *, timeout: float):
     return Response()
 
 
+def call(cache, stamp, fetcher=fetch_ok):
+    return collect_selected_action_context_cached(
+        rows(), cache, dynamic_ttl_hours=8, deep_ttl_hours=168,
+        refresh_budget=5, request_start_interval_seconds=0,
+        max_workers=1, fetcher=fetcher, now=stamp,
+        capture_clock=lambda: stamp,
+    )
+
+
 def test_live_consensus_refresh_appends_one_audit73_capture(tmp_path):
     cache = tmp_path / "b.json"
     now = datetime(2026, 8, 22, 18, 0, tzinfo=timezone.utc)
-    result = collect_selected_action_context_cached(
-        rows(), cache, dynamic_ttl_hours=8, deep_ttl_hours=168,
-        refresh_budget=5, request_start_interval_seconds=0,
-        max_workers=1, fetcher=fetch_ok, now=now,
-    )
+    result = call(cache, now)
     payload = json.loads(cache.read_text(encoding="utf-8"))
     entry = payload["entries"]["FR0000120271"]
     history = entry["audit73_consensus_history"]
@@ -67,21 +72,14 @@ def test_live_consensus_refresh_appends_one_audit73_capture(tmp_path):
     assert history[0]["captured_at_utc"] == "2026-08-22T18:00:00+00:00"
     assert result.metrics["audit73_captures_appended"] == 1
     assert result.metrics["audit73_rows_appended"] == 5
+    assert result.metrics["audit73_capture_timestamp_basis"] == "AFTER_SUCCESSFUL_HTTP_RESPONSE"
 
 
 def test_cache_hit_does_not_manufacture_new_pit_observation(tmp_path):
     cache = tmp_path / "b.json"
     now = datetime(2026, 8, 22, 18, 0, tzinfo=timezone.utc)
-    collect_selected_action_context_cached(
-        rows(), cache, dynamic_ttl_hours=8, deep_ttl_hours=168,
-        refresh_budget=5, request_start_interval_seconds=0,
-        max_workers=1, fetcher=fetch_ok, now=now,
-    )
-    second = collect_selected_action_context_cached(
-        rows(), cache, dynamic_ttl_hours=8, deep_ttl_hours=168,
-        refresh_budget=5, request_start_interval_seconds=0,
-        max_workers=1, fetcher=fetch_ok, now=now + timedelta(hours=1),
-    )
+    call(cache, now)
+    second = call(cache, now + timedelta(hours=1))
     payload = json.loads(cache.read_text(encoding="utf-8"))
     assert len(payload["entries"]["FR0000120271"]["audit73_consensus_history"]) == 1
     assert second.metrics["audit73_captures_appended"] == 0
@@ -91,11 +89,7 @@ def test_same_html_at_later_real_refresh_is_a_distinct_pit_capture(tmp_path):
     cache = tmp_path / "b.json"
     now = datetime(2026, 8, 22, 18, 0, tzinfo=timezone.utc)
     for stamp in (now, now + timedelta(hours=9)):
-        collect_selected_action_context_cached(
-            rows(), cache, dynamic_ttl_hours=8, deep_ttl_hours=168,
-            refresh_budget=5, request_start_interval_seconds=0,
-            max_workers=1, fetcher=fetch_ok, now=stamp,
-        )
+        call(cache, stamp)
     payload = json.loads(cache.read_text(encoding="utf-8"))
     history = payload["entries"]["FR0000120271"]["audit73_consensus_history"]
     assert len(history) == 2
@@ -106,20 +100,12 @@ def test_same_html_at_later_real_refresh_is_a_distinct_pit_capture(tmp_path):
 def test_failed_live_refresh_does_not_append_history(tmp_path):
     cache = tmp_path / "b.json"
     now = datetime(2026, 8, 22, 18, 0, tzinfo=timezone.utc)
-    collect_selected_action_context_cached(
-        rows(), cache, dynamic_ttl_hours=8, deep_ttl_hours=168,
-        refresh_budget=5, request_start_interval_seconds=0,
-        max_workers=1, fetcher=fetch_ok, now=now,
-    )
+    call(cache, now)
 
     def failed(url: str, *, timeout: float):
         return Response("error", 503)
 
-    result = collect_selected_action_context_cached(
-        rows(), cache, dynamic_ttl_hours=8, deep_ttl_hours=168,
-        refresh_budget=5, request_start_interval_seconds=0,
-        max_workers=1, fetcher=failed, now=now + timedelta(hours=9),
-    )
+    result = call(cache, now + timedelta(hours=9), fetcher=failed)
     payload = json.loads(cache.read_text(encoding="utf-8"))
     assert len(payload["entries"]["FR0000120271"]["audit73_consensus_history"]) == 1
     assert result.metrics["audit73_captures_appended"] == 0
@@ -128,11 +114,7 @@ def test_failed_live_refresh_does_not_append_history(tmp_path):
 def test_flattened_observation_is_directly_usable_by_strict_pit_study(tmp_path):
     cache = tmp_path / "b.json"
     now = datetime(2026, 8, 22, 18, 0, tzinfo=timezone.utc)
-    collect_selected_action_context_cached(
-        rows(), cache, dynamic_ttl_hours=8, deep_ttl_hours=168,
-        refresh_budget=5, request_start_interval_seconds=0,
-        max_workers=1, fetcher=fetch_ok, now=now,
-    )
+    call(cache, now)
     obs = load_audit73_pit_observations(cache, symbol_by_isin={"FR0000120271": "TTE.PA"})
     assert len(obs) == 1
     assert obs[0]["symbol"] == "TTE.PA"
