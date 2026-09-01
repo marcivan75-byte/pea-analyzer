@@ -72,7 +72,8 @@ jobs:
           anti=Path('outputs/tabport_antifp')
           diag=json.loads((anti/'TABPORT_ANTIFP_DIAGNOSTIC.json').read_text())
           assert diag['status']=='PUBLISHED', diag
-          assert len(diag['scenarios'])==4, diag
+          required_scenarios={'BASELINE','CONFIRM_J1_ONLY','CONFIRM_FAIL_FAST','CONFIRM_TRAIL_BE','CONFIRM_MOM_DEAD_J3','CONFIRM_FAIL_FAST_TRAIL','CONFIRM_FAIL_FAST_MOM','FULL_ANTIFP'}
+          assert required_scenarios == {r['scenario'] for r in diag['scenarios']}, diag
           for name in ['TABPORT_ANTIFP_COMPARAISON.csv','TABPORT_CONFIRMATION_J1_AUDIT.csv','TABPORT_SIGNALS_CONFIRMES.csv']:
               p=anti/name; assert p.exists() and p.stat().st_size>0, name
           print(json.dumps(diag,indent=2))
