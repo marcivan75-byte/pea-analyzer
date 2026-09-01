@@ -71,8 +71,6 @@ def _merge_captures(cache_path: Path, captures: dict[str, list[dict]]) -> dict[s
     for isin, capture_list in captures.items():
         entry = entries.get(isin)
         if not isinstance(entry, dict):
-            # The base collector rejected/removed this identity: do not create an
-            # Audit73-only entry that could masquerade as a usable current cache.
             continue
         history = list(entry.get(_AUDIT73_FIELD) or [])
         seen = {
@@ -112,12 +110,14 @@ def collect_selected_action_context_cached(
     max_workers: int = 4,
     fetcher: Callable[..., object] | None = None,
     now: datetime | None = None,
+    capture_clock: Callable[[], datetime] | None = None,
 ) -> BoursoramaSelectedResult:
     """Production-compatible selected collector with append-only Audit73 PIT history.
 
-    The base collector remains the authority for current observations and stale
-    fallback. Only successful live consensus HTTP responses can add an Audit73
-    capture. Re-reading a stale cache never manufactures a new history point.
+    Base cache timing uses ``now`` exactly as before. Audit73 ``available_at`` is
+    intentionally different: it is sampled only after a successful consensus HTTP
+    response, so a page can never be recorded as known before it was received.
+    ``capture_clock`` exists only for deterministic tests.
     """
     current = _utc(now)
     cache_file = Path(cache_path)
@@ -125,6 +125,7 @@ def collect_selected_action_context_cached(
     captures: dict[str, list[dict]] = {}
     capture_lock = Lock()
     delegate = fetcher or base._default_fetcher
+    clock = capture_clock or (lambda: datetime.now(timezone.utc))
 
     def audit73_fetch(url: str, *, timeout: float):
         response = delegate(url, timeout=timeout)
@@ -133,11 +134,12 @@ def collect_selected_action_context_cached(
             return response
         if hasattr(response, "raise_for_status"):
             response.raise_for_status()
+        captured = _utc(clock())
         html = str(getattr(response, "text", "") or "")
-        parsed = parse_factset_consensus_history(html, captured_at=current)
+        parsed = parse_factset_consensus_history(html, captured_at=captured)
         if parsed:
             capture = {
-                "captured_at_utc": current.isoformat(),
+                "captured_at_utc": captured.isoformat(),
                 "consensus_sha256": sha256(html.encode("utf-8", errors="replace")).hexdigest(),
                 "rows": parsed,
             }
@@ -164,6 +166,7 @@ def collect_selected_action_context_cached(
         "audit73_captures_appended": merge["captures_appended"],
         "audit73_rows_appended": merge["rows_appended"],
         "audit73_relative_dates_fabricated": False,
+        "audit73_capture_timestamp_basis": "AFTER_SUCCESSFUL_HTTP_RESPONSE",
     })
     return BoursoramaSelectedResult(result.observations, result.failures, metrics)
 
