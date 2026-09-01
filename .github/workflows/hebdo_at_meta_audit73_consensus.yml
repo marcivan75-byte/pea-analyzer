@@ -1,0 +1,38 @@
+name: HEBDO AT META Audit73 consensus PIT
+
+on:
+  push:
+    branches: [hebdo-at-meta]
+    paths:
+      - 'src/v182/sources/boursorama_consensus_history.py'
+      - 'src/v182/backtest/hebdo_meta_consensus_gate_audit73.py'
+      - 'tests/test_boursorama_consensus_history_audit73.py'
+      - 'tests/test_hebdo_meta_consensus_gate_audit73.py'
+      - '.github/workflows/hebdo_at_meta_audit73_consensus.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit73-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - name: Install focused dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy pytest lxml beautifulsoup4
+      - name: Run Audit73 preservation tests
+        env:
+          PYTHONPATH: src
+        run: pytest -q tests/test_boursorama_consensus_history_audit73.py
+      - name: Run strict PIT gate tests
+        env:
+          PYTHONPATH: src
+        run: pytest -q tests/test_hebdo_meta_consensus_gate_audit73.py
