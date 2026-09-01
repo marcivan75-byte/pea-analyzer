@@ -2,6 +2,12 @@ name: V23 benchmark-first Stage A
 
 on:
   workflow_dispatch:
+  push:
+    branches: [v23/tabport-reset-benchmark-first]
+    paths:
+      - scripts/v23_benchmark_first_stage_a.py
+      - config/TABPORT_V23_BENCHMARKS.json
+      - .github/workflows/v23_benchmark_first_stage_a.yml
 
 permissions:
   contents: read
