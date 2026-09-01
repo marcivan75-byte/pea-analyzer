@@ -1,8 +1,18 @@
+from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+
 import pandas as pd
 import pytest
 
-from v182.data.pre2023_symbol_registry import validate_registry
+# Load the exact repository registry implementation, matching the governed OHLCV
+# test strategy. This avoids pytest/plugin namespace collisions without weakening
+# any validation rule.
+REGISTRY_PATH = Path(__file__).resolve().parents[1] / "v182" / "data" / "pre2023_symbol_registry.py"
+_spec = spec_from_file_location("pea_pre2023_symbol_registry", REGISTRY_PATH)
+assert _spec is not None and _spec.loader is not None
+_registry = module_from_spec(_spec)
+_spec.loader.exec_module(_registry)
+validate_registry = _registry.validate_registry
 
 
 def _write(tmp_path: Path, rows: list[dict]) -> Path:
