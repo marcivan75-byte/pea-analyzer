@@ -1,9 +1,21 @@
+from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from v182.data.pre2023_ohlcv_eodhd import HOLDOUT_START, _load_symbols, _validate_bars, _validate_window
+# Load the exact repository collector file. This avoids pytest/plugin namespace
+# collisions while still exercising the production implementation byte-for-byte.
+COLLECTOR_PATH = Path(__file__).resolve().parents[1] / "v182" / "data" / "pre2023_ohlcv_eodhd.py"
+_spec = spec_from_file_location("pea_pre2023_ohlcv_eodhd", COLLECTOR_PATH)
+assert _spec is not None and _spec.loader is not None
+_collector = module_from_spec(_spec)
+_spec.loader.exec_module(_collector)
+
+HOLDOUT_START = _collector.HOLDOUT_START
+_load_symbols = _collector._load_symbols
+_validate_bars = _collector._validate_bars
+_validate_window = _collector._validate_window
 
 
 def test_window_rejects_holdout_start():
@@ -11,9 +23,11 @@ def test_window_rejects_holdout_start():
         _validate_window("2022-01-01", "2023-01-01")
 
 
-def test_window_accepts_pre2023_only():
-    start, end = _validate_window("2012-01-01", "2022-12-31")
-    assert start < end < HOLDOUT_START
+def test_window_accepts_full_2010_2022_development_period():
+    start, end = _validate_window("2010-01-01", "2022-12-31")
+    assert start == pd.Timestamp("2010-01-01", tz="UTC")
+    assert end == pd.Timestamp("2022-12-31", tz="UTC")
+    assert end < HOLDOUT_START
 
 
 def test_symbol_mapping_is_unique(tmp_path: Path):
