@@ -5,6 +5,7 @@ on:
     branches: [v23/tabport-reset-benchmark-first]
     paths:
       - scripts/v23_build_repaired_history_overlay.py
+      - scripts/v23_cross_sectional_momentum_baseline_v4.py
       - .github/workflows/v23_repaired_history_validation.yml
   workflow_dispatch:
 
@@ -42,8 +43,8 @@ jobs:
         run: python scripts/v23_build_repaired_history_overlay.py --history "$HISTORY_PARQUET" --out-dir outputs/v23_repaired_history
       - name: Re-run frozen tradability audit on repaired overlay
         run: python scripts/v23_momentum_tradability_audit.py --history outputs/v23_repaired_history/PEA_CLOSE_PRE2023_REPAIRED_OVERLAY.parquet --out-dir outputs/v23_repaired_tradability
-      - name: Run unchanged frozen momentum simulator on repaired overlay
-        run: python scripts/v23_cross_sectional_momentum_baseline_v3.py --history outputs/v23_repaired_history/PEA_CLOSE_PRE2023_REPAIRED_OVERLAY.parquet --out-dir outputs/v23_repaired_momentum
+      - name: Run unchanged frozen momentum with causal multi-exchange execution
+        run: python scripts/v23_cross_sectional_momentum_baseline_v4.py --history outputs/v23_repaired_history/PEA_CLOSE_PRE2023_REPAIRED_OVERLAY.parquet --out-dir outputs/v23_repaired_momentum
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
