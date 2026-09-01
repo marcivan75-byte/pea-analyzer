@@ -1,0 +1,40 @@
+{
+  "version": "TABPORT_V23_BENCHMARKS_1",
+  "status": "FROZEN_STAGE_A",
+  "governance": {
+    "selection_uses_2023_2026": false,
+    "purpose": "benchmark-only, never a stock-picking tuning target",
+    "initial_capital_eur": 65000.0,
+    "fee_each_side": 0.002,
+    "stress_slippage_each_side": 0.001,
+    "integer_shares": true,
+    "benchmark_reinvestment": "accumulating share class or total-return series preferred"
+  },
+  "primary": {
+    "id": "CW8_PA",
+    "name": "Amundi MSCI World Swap UCITS ETF EUR Acc",
+    "yahoo_symbol": "CW8.PA",
+    "isin": "LU1681043599",
+    "market": "Euronext Paris",
+    "currency": "EUR",
+    "role": "PRIMARY_PASSIVE_PEA_PROXY",
+    "pea_eligible_verified": true,
+    "first_nav_date": "2009-06-16",
+    "notes": "Broad-world accumulating PEA-eligible ETF; use adjusted price where available to represent reinvested distributions/corporate actions. Source identity to be audited separately from market data provider."
+  },
+  "secondary": [
+    {
+      "id": "CAC40_TR",
+      "name": "CAC 40 total-return benchmark",
+      "role": "FRANCE_EQUITY_REFERENCE",
+      "symbol": null,
+      "status": "SOURCE_TO_BE_VERIFIED_BEFORE_RUN",
+      "notes": "Use gross/net total-return series if a reliable source is available; never silently substitute the CAC 40 price index."
+    }
+  ],
+  "forbidden_substitutions": [
+    "price-only index when total-return series is claimed",
+    "ETF launched after evaluation start without explicit truncation",
+    "benchmark chosen after viewing V23 candidate results"
+  ]
+}
