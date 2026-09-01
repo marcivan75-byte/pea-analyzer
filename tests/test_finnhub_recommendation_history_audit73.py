@@ -3,6 +3,7 @@ import json
 
 from v182.sources.finnhub_recommendation_history_audit73 import (
     append_capture,
+    collect_recommendation_history_cached,
     load_strict_pit_observations,
     normalize_recommendation_series,
 )
@@ -63,3 +64,20 @@ def test_flattened_strict_pit_rows_all_use_capture_time(tmp_path):
     assert {row["available_at"] for row in flat} == {"2026-08-24T18:30:00+00:00"}
     assert {row["provider_period"] for row in flat} == {"2026-08-01", "2026-07-01", "2026-06-01", "2026-05-01"}
     assert all(row["provider_period_is_knowledge_timestamp"] is False for row in flat)
+
+
+def test_failure_detail_never_leaks_api_token(tmp_path):
+    secret = "SUPER_SECRET_TOKEN"
+
+    def failing_fetch(url, *, params, timeout):
+        raise RuntimeError(f"GET {url}?symbol={params['symbol']}&token={secret} failed")
+
+    observations, failures, metrics = collect_recommendation_history_cached(
+        ["TTE.PA"], secret, tmp_path / "finnhub.json",
+        delay_seconds=0, fetcher=failing_fetch,
+    )
+    assert observations == []
+    assert len(failures) == 1
+    assert secret not in failures[0]["detail"]
+    assert "<REDACTED>" in failures[0]["detail"]
+    assert metrics["secret_redaction_required"] is True
