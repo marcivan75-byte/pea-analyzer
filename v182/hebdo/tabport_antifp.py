@@ -57,6 +57,7 @@ def apply_j1_confirmation(signals: pd.DataFrame, prices_features: pd.DataFrame) 
         audit.append({"ticker":ticker,"signal_date":sd,"confirmation_date":bar["date"],"status":status,"reason":reason})
         if decision is True:
             r=sig.copy(); r["original_signal_date"]=sd; r["date"]=bar["date"]
+            r["signal_level"]=float(sig["close"]); r["confirmation_low"]=float(bar["low"])
             r["confirmation_reason"]=reason; r["confirmation_status"]="CONFIRMED"; rows.append(r)
     confirmed=pd.DataFrame(rows)
     if not confirmed.empty:
@@ -102,7 +103,8 @@ class TabportAntiFP65k(Tabport65k):
             pos=positions[ticker]; pos["sessions"]+=1; entry=pos["entry_price"]
             prior_peak=pos["mfe"]
             pos["last_close"]=float(bar["close"]); pos["mae"]=min(pos["mae"],float(bar["low"])/entry-1); pos["mfe"]=max(pos["mfe"],float(bar["high"])/entry-1)
-            cur={"open":bar["open"],"low":bar["low"],"close":bar["close"],"vol_z":bar.get("vol_z",np.nan),"rsi_14":bar.get("rsi_14",np.nan),"peak_pnl_prior":prior_peak}
+            cur={"open":bar["open"],"low":bar["low"],"close":bar["close"],"vol_z":bar.get("vol_z",np.nan),"rsi_14":bar.get("rsi_14",np.nan),"peak_pnl_prior":prior_peak,
+                "signal_level":pos.get("signal_level"),"confirmation_low":pos.get("confirmation_low")}
             exit_now,reason,realized=self.fp_exit.check_exit(entry,cur,pos["sessions"],None)
             if exit_now:
                 close_pos(ticker,date,reason,entry*(1+float(realized))); return True
@@ -128,7 +130,8 @@ class TabportAntiFP65k(Tabport65k):
                 gross=shares*buy; fee=gross*self.cfg.fee_rate; cash_out=gross+fee
                 if cash_out>cash+1e-9: skipped.append({"signal_date":sig["date"],"ticker":ticker,"reason":"INSUFFICIENT_CASH"}); continue
                 cash-=cash_out; positions[ticker]={"signal_date":sig["date"],"entry_date":date,"shares":shares,"entry_price":buy,"entry_fee":fee,"cash_out":cash_out,
-                    "EV_net":float(sig["EV_net"]),"sessions":0,"mae":0.0,"mfe":0.0,"last_close":float(bar["close"])}
+                    "EV_net":float(sig["EV_net"]),"sessions":0,"mae":0.0,"mfe":0.0,"last_close":float(bar["close"]),
+                    "signal_level":sig.get("signal_level"),"confirmation_low":sig.get("confirmation_low")}
                 em[ym]=em.get(ym,0)+1; ey[date.year]=ey.get(date.year,0)+1
                 evaluate(ticker,date,bar)
             mv=sum(pos["shares"]*pos["last_close"] for pos in positions.values()); equity.append({"date":date,"cash":cash,"market_value":mv,"equity":cash+mv,"open_positions":len(positions)})
