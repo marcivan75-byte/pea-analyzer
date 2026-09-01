@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# Isolated source-feasibility probe; intentionally never used for model tuning.
 import argparse
 import json
 import time
