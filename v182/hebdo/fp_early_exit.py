@@ -8,7 +8,7 @@ from typing import Tuple, Optional
 
 
 class FPEarlyExit:
-    ALL_RULES={'STOP','FAIL_FAST_J2','WEAK_VS_SECTOR','CAPITULATION','MOM_DEAD_J3','TRAIL_BE','TIME_DECAY_J10'}
+    ALL_RULES={'STOP','FAIL_FAST_J2','STRUCTURE_INVALID_ENTRY_DAY','WEAK_VS_SECTOR','CAPITULATION','MOM_DEAD_J3','TRAIL_BE','TIME_DECAY_J10'}
 
     def __init__(self, stop_final=-0.09, fail_fast_j2=-0.025, enabled_rules=None):
         self.stop_final=float(stop_final); self.fail_fast_j2=float(fail_fast_j2)
@@ -42,6 +42,13 @@ class FPEarlyExit:
 
         if 'FAIL_FAST_J2' in self.enabled_rules and days_held==2 and pnl<=self.fail_fast_j2:
             return True,f'FAIL_FAST_J2_{pnl:.2%}',pnl
+
+        if 'STRUCTURE_INVALID_ENTRY_DAY' in self.enabled_rules and days_held==1:
+            signal_level=current_bar.get('signal_level'); confirmation_low=current_bar.get('confirmation_low')
+            try: signal_level=float(signal_level); confirmation_low=float(confirmation_low)
+            except (TypeError,ValueError): signal_level=confirmation_low=float('nan')
+            if math.isfinite(signal_level) and math.isfinite(confirmation_low) and close<min(signal_level,confirmation_low):
+                return True,f'STRUCTURE_INVALID_ENTRY_DAY_{pnl:.2%}',pnl
 
         if 'WEAK_VS_SECTOR' in self.enabled_rules and 1<=days_held<=5 and sector_bar:
             stock_3d=current_bar.get('ret_3d'); sector_3d=sector_bar.get('ret_3d')
