@@ -1,8 +1,9 @@
 {
-  "version": 1,
+  "version": 2,
   "branch": "v22/pit-mae-mfe-preopen",
   "wip": 1,
-  "current_pass": 5,
+  "current_pass": 6,
+  "status": "completed_final_holdout_evaluated",
   "passes": {
     "1": {
       "status": "completed",
@@ -58,12 +59,63 @@
       "embargo_weeks": 26
     },
     "5": {
-      "status": "launched",
+      "status": "completed",
       "run_id": 33453640253,
-      "expected_head_sha": "96ba7b0e3a71e38775c04e4a51c7be9f8ea1c4f8"
+      "artifact": "v22-1-tabport-pass5-33453640253",
+      "version": "V22.1_TABPORT_PASS5_REALISTIC_PORTFOLIO_2_DAILY_MTM",
+      "base_cagr": 0.17273726448555715,
+      "base_net_pct": 0.5570522244348584,
+      "base_profit_factor": 3.4578801456724544,
+      "base_max_drawdown": -0.10592021238833849,
+      "stress_cagr": 0.1698068999779938,
+      "stress_profit_factor": 3.3587880227192692,
+      "slippage_dependency_flag": false,
+      "holdout_accessed": false,
+      "embargo_weeks": 26
     },
-    "6": {"status": "pending"}
+    "6": {
+      "status": "completed",
+      "run_id": 33458434377,
+      "artifact": "v22-1-tabport-pass6-33458434377",
+      "version": "V22.1_TABPORT_PASS6_FINAL_ENSEMBLE_2_EXACT_REPLAY",
+      "selected_variant": "ADAPT",
+      "n": 112,
+      "stop_rate": 0.5089285714285714,
+      "expectancy": 0.09957378512450775,
+      "profit_factor": 3.139534962599641,
+      "big_winners": 32,
+      "exact_pass4_replay": true,
+      "holdout_accessed": false,
+      "embargo_weeks": 26
+    }
   },
-  "holdout_policy": "2023-2026 sealed until final frozen evaluation after pass 6",
-  "last_audit_note": "Pass 4 completed on pre-2023 PIT validation only. RISK_ADD_ADAPT improves stop rate from 53.57% static to 50.89%, expectancy from 8.94% to 9.96%, PF from 2.83 to 3.14, and big winners from 30 to 32. Regime thresholds are derived only from pre-2023 validation terciles; holdout remains sealed. Pass 5 launched with capital 65000 EUR, max line 4500 EUR, 12 lines, integer shares, fees 0.20% each side and +0.10% slippage each side in stress."
+  "final_holdout": {
+    "status": "completed_frozen_no_retuning",
+    "run_id": 33458892663,
+    "artifact": "tabport-final-frozen-33458892663",
+    "version": "TABPORT_V22_1_FINAL_HOLDOUT_1_FROZEN",
+    "evaluation_signal_cutoff": "2026-02-27",
+    "selected_signals": 130,
+    "executed_trades": 91,
+    "signal_win_rate": 0.3769230769230769,
+    "signal_stop_rate": 0.5923076923076923,
+    "signal_expectancy": 0.024578358290092115,
+    "signal_profit_factor": 1.4522513468746474,
+    "median_rr_ex_ante": 0.09379857402555104,
+    "portfolio_net_eur": 4577.739920898413,
+    "portfolio_net_pct": 0.07042676801382175,
+    "portfolio_cagr": 0.019594633517108884,
+    "portfolio_profit_factor": 1.1959048710052036,
+    "portfolio_max_drawdown": -0.11718395484029653,
+    "portfolio_fees_eur": 1628.4939771571396,
+    "avg_capital_utilization": 0.5624895858270834,
+    "stress_cagr": 0.01624202702812938,
+    "stress_profit_factor": 1.1585393237900234,
+    "slippage_dependency_flag": false,
+    "objective_rr_gt_3_3_met": false,
+    "objective_net_annual_gt_15pct_met": false,
+    "holdout_use": "FINAL_FROZEN_EVALUATION_ONLY_NO_TUNING"
+  },
+  "holdout_policy": "2023-2026 used only after pass 6 success for final frozen evaluation; no post-holdout tuning permitted",
+  "last_audit_note": "Six-pass TABPORT chain completed with exact causal replay. Final frozen holdout evaluation through signal cutoff 2026-02-27 materially underperforms pre-2023 validation: portfolio CAGR 1.96%, PF 1.20, net +7.04%, max drawdown -11.72%, signal stop rate 59.23%, median ex-ante RR 0.094. Targets RR>3.3 and >15% net/year are not met. No parameters are changed after seeing holdout results."
 }
