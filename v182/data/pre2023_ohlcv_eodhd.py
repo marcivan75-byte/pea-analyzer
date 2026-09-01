@@ -26,6 +26,8 @@ from urllib.request import Request, urlopen
 import pandas as pd
 
 HOLDOUT_START = pd.Timestamp("2023-01-01", tz="UTC")
+DEFAULT_START = "2010-01-01"
+DEFAULT_END = "2022-12-31"
 REQUIRED = ["date", "open", "high", "low", "close", "volume"]
 
 
@@ -83,14 +85,17 @@ def _fetch_symbol(symbol: str, token: str, start: str, end: str, timeout: int = 
 def _validate_bars(df: pd.DataFrame, ticker: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
     out = df[REQUIRED + (["adjusted_close"] if "adjusted_close" in df.columns else [])].copy()
     out["date"] = pd.to_datetime(out["date"], errors="coerce", utc=True)
-    for c in ["open", "high", "low", "close", "volume"]:
+    numeric_cols = ["open", "high", "low", "close", "volume"] + (["adjusted_close"] if "adjusted_close" in out.columns else [])
+    for c in numeric_cols:
         out[c] = pd.to_numeric(out[c], errors="coerce")
-    if out["date"].isna().any() or out[["open", "high", "low", "close", "volume"]].isna().any().any():
+    if out["date"].isna().any() or out[numeric_cols].isna().any().any():
         raise ValueError(f"BLOCK_PRE2023_QUALITY: invalid dates/numerics for {ticker}")
     if out["date"].duplicated().any() or not out["date"].is_monotonic_increasing:
         raise ValueError(f"BLOCK_PRE2023_QUALITY: duplicate/non-monotonic dates for {ticker}")
     if (out[["open", "high", "low", "close"]] <= 0).any().any() or (out["volume"] < 0).any():
         raise ValueError(f"BLOCK_PRE2023_QUALITY: non-positive OHLC or negative volume for {ticker}")
+    if "adjusted_close" in out.columns and (out["adjusted_close"] <= 0).any():
+        raise ValueError(f"BLOCK_PRE2023_QUALITY: non-positive adjusted_close for {ticker}")
     bad_geometry = (out["high"] < out[["open", "close", "low"]].max(axis=1)) | (out["low"] > out[["open", "close", "high"]].min(axis=1))
     if bad_geometry.any():
         raise ValueError(f"BLOCK_PRE2023_QUALITY: impossible OHLC geometry for {ticker}")
@@ -156,8 +161,8 @@ def build(symbols_file: str | Path, start: str, end: str, output_dir: str | Path
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--symbols", required=True)
-    p.add_argument("--start", default="2012-01-01")
-    p.add_argument("--end", default="2022-12-31")
+    p.add_argument("--start", default=DEFAULT_START)
+    p.add_argument("--end", default=DEFAULT_END)
     p.add_argument("--output-dir", default="data/dev_pre2023/eodhd")
     p.add_argument("--sleep-s", type=float, default=0.05)
     args = p.parse_args()
