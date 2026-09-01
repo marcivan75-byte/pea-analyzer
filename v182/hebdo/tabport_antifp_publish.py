@@ -62,6 +62,7 @@ def publish(cache_dir:str|Path,output_dir:str|Path)->dict:
         "BASELINE":Tabport65k(cfg).run(signals,plain),
         "CONFIRM_J1_ONLY":Tabport65k(cfg).run(confirmed,plain),
         "CONFIRM_FAIL_FAST":_engine(cfg,{"STOP","FAIL_FAST_J2"}).run(confirmed,antifp_prices),
+        "CONFIRM_STRUCTURE_J2":_engine(cfg,{"STOP","STRUCTURE_INVALID_ENTRY_DAY"}).run(confirmed,antifp_prices),
         "CONFIRM_TRAIL_BE":_engine(cfg,{"STOP","TRAIL_BE"}).run(confirmed,antifp_prices),
         "CONFIRM_MOM_DEAD_J3":_engine(cfg,{"STOP","MOM_DEAD_J3"}).run(confirmed,antifp_prices),
         "CONFIRM_FAIL_FAST_TRAIL":_engine(cfg,{"STOP","FAIL_FAST_J2","TRAIL_BE"}).run(confirmed,antifp_prices),
