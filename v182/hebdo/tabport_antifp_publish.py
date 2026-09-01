@@ -23,6 +23,7 @@ def _scenario_summary(name:str, result:dict)->dict:
     s.update({
         "stop_final":int(er.str.startswith("STOP").sum()) if len(er) else 0,
         "fail_fast_j2":int(er.str.startswith("FAIL_FAST_J2").sum()) if len(er) else 0,
+        "structure_invalid_j2":int(er.str.startswith("STRUCTURE_INVALID_ENTRY_DAY").sum()) if len(er) else 0,
         "mom_dead_j3":int(er.str.startswith("MOM_DEAD_RSI").sum()) if len(er) else 0,
         "capitulation":int(er.str.startswith("CAPITULATION").sum()) if len(er) else 0,
         "trailing_be":int(er.str.startswith("TRAIL_BE").sum()) if len(er) else 0,
