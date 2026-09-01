@@ -58,7 +58,7 @@ jobs:
       - name: Compile PRE2023 collector
         run: python -m compileall -q v182/data/pre2023_ohlcv_eodhd.py
       - name: Run fail-closed governance tests
-        run: python -m pytest -q tests/test_pre2023_ohlcv_eodhd.py
+        run: python -m pytest --import-mode=importlib -q tests/test_pre2023_ohlcv_eodhd.py
 
   build-corpus:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_corpus }}
