@@ -6,7 +6,9 @@ on:
     paths:
       - 'v182/data/__init__.py'
       - 'v182/data/pre2023_ohlcv_eodhd.py'
+      - 'v182/data/pre2023_symbol_registry.py'
       - 'tests/test_pre2023_ohlcv_eodhd.py'
+      - 'tests/test_pre2023_symbol_registry.py'
       - '.github/workflows/pre2023_ohlcv_governance.yml'
   workflow_dispatch:
     inputs:
@@ -53,12 +55,14 @@ jobs:
           root=Path.cwd().resolve()
           assert str(root) in sys.path, f'BLOCK_PRE2023_IMPORT_ROOT: {root} absent from sys.path'
           import v182.data.pre2023_ohlcv_eodhd as collector
+          import v182.data.pre2023_symbol_registry as registry
           print(f'PRE2023_IMPORT_OK={collector.__file__}')
+          print(f'PRE2023_REGISTRY_IMPORT_OK={registry.__file__}')
           PY
-      - name: Compile PRE2023 collector
-        run: python -m compileall -q v182/data/pre2023_ohlcv_eodhd.py
+      - name: Compile PRE2023 data governance modules
+        run: python -m compileall -q v182/data/pre2023_ohlcv_eodhd.py v182/data/pre2023_symbol_registry.py
       - name: Run fail-closed governance tests
-        run: python -m pytest --import-mode=importlib -q tests/test_pre2023_ohlcv_eodhd.py
+        run: python -m pytest --import-mode=importlib -q tests/test_pre2023_ohlcv_eodhd.py tests/test_pre2023_symbol_registry.py
 
   build-corpus:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_corpus }}
