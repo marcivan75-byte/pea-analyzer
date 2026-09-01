@@ -17,6 +17,7 @@ def make_features(n=100):
         'close':np.linspace(20,120,n),'vol_z':np.linspace(-1,3,n),'drawdown_4w':np.linspace(-0.01,-0.10,n),
         'atr_14_pct':np.linspace(0.02,0.05,n),'mom_26w_sector':np.linspace(-1,2,n),'roe':0.10,
         'debt_to_equity':0.8,'sma200':50,'adv_20m_eur':2_000_000,'days_to_earnings':30,'rsi_14_hebdo':55,
+        'prob_stop_9':0.30,
     })
 
 
