@@ -54,13 +54,6 @@ def first_quote_after(byisin, isin, after_date):
     return pd.Timestamp(idx[0]) if len(idx) else None
 
 
-def first_quote_on_or_after(byisin, isin, date):
-    g=byisin.get(isin)
-    if g is None:return None
-    idx=g.index[g.index>=date]
-    return pd.Timestamp(idx[0]) if len(idx) else None
-
-
 def metrics(eq,tr,mode,signal_to_complete):
     peak=eq.equity_eur.cummax(); dd=eq.equity_eur/peak-1
     daily=eq.set_index('date').equity_eur.pct_change().dropna()
@@ -91,8 +84,6 @@ def simulate(z,signals,stress=False):
 
     for d in dates:
         d=pd.Timestamp(d); pxs=bydate[d]; lastpx.update({i:float(p) for i,p in pxs.items()})
-
-        # Process due orders before accepting a new signal. All decisions were made on earlier dates.
         due=event_queue.pop(d,[])
         for ev in due:
             typ=ev['type']; i=ev['isin']; sd=ev['signal_date']; raw=float(pxs[i])
@@ -103,10 +94,9 @@ def simulate(z,signals,stress=False):
                     trades.append({'date':d,'signal_date':sd,'isin':i,'side':'SELL_REBAL','qty':q,'px':px,'fee':fee})
                 active_rebalance['sells_remaining'].discard(i)
                 if not active_rebalance['sells_remaining'] and not active_rebalance.get('buys_scheduled',False):
-                    # Capital becomes known only after every old holding has actually sold.
                     ready=d; target_value=cash/TOP_N; active_rebalance['buys_scheduled']=True
                     for j in active_rebalance['targets']:
-                        bd=first_quote_on_or_after(byisin,j,ready)
+                        bd=first_quote_after(byisin,j,ready)
                         if bd is None or (bd-ready).days>MAX_LEG_DELAY_CAL_DAYS:
                             raise SystemExit(f'BLOCK_BUY_DELAY {sd.date()} {j} ready={ready.date()} buy={bd}')
                         enqueue(bd,{'type':'BUY','isin':j,'signal_date':sd,'target_value':target_value})
@@ -120,9 +110,7 @@ def simulate(z,signals,stress=False):
                 if not active_rebalance['buys_remaining']:
                     signal_to_complete[str(sd.date())]=(d-sd).days; active_rebalance=None
 
-        # On a signal close, schedule causal execution strictly after the signal.
         if d in targets:
-            # The final pre-2023 observation cannot be executed inside the evaluation window; ignore it as terminal censoring.
             future_dates=dates[dates>d]
             if len(future_dates)==0:continue
             if active_rebalance is not None:
@@ -138,7 +126,6 @@ def simulate(z,signals,stress=False):
                         raise SystemExit(f'BLOCK_SELL_DELAY {d.date()} {i} sell={sd}')
                     enqueue(sd,{'type':'SELL','isin':i,'signal_date':d})
             else:
-                # Initial portfolio: no sell leg; capital is already known at the signal close.
                 ready=d; tv=cash/TOP_N; active_rebalance['buys_scheduled']=True
                 for j in t:
                     bd=first_quote_after(byisin,j,d)
@@ -149,7 +136,6 @@ def simulate(z,signals,stress=False):
         if len(hold)>TOP_N:raise SystemExit('BLOCK_MAX_HOLDINGS')
         eqrows.append({'date':d,'equity_eur':mark(),'cash_eur':cash,'open_positions':len(hold)})
 
-    # Any unfinished final rebalance is censored rather than using post-2022 data.
     last=dates[-1]
     for i,q in list(hold.items()):
         raw=lastpx[i]; px=raw*(1-slip); fee=q*px*FEE; cash+=q*px-fee
@@ -177,8 +163,8 @@ def main():
     be,bt,bm=simulate(z,s,False);se,st,sm=simulate(z,s,True)
     a.out_dir.mkdir(parents=True,exist_ok=True)
     s.to_csv(a.out_dir/'MOMENTUM_V4_SIGNALS_PRE2023.csv',index=False);be.to_csv(a.out_dir/'MOMENTUM_V4_EQUITY_BASE_PRE2023.csv',index=False);bt.to_csv(a.out_dir/'MOMENTUM_V4_TRADES_BASE_PRE2023.csv',index=False)
-    r={'version':'TABPORT_V23_XSEC_MOMENTUM_4_CAUSAL_MULTI_EXCHANGE','hypothesis':'unchanged classic 12-1 momentum, top-10 monthly equal-weight target',
-       'execution_correction':'two-stage causal multi-exchange execution: old holdings sell on each own first quote after signal; after all sells complete, target notional is frozen and buys execute on each target own first quote on/after readiness; each leg capped at 10 calendar days',
+    r={'version':'TABPORT_V23_XSEC_MOMENTUM_4_CAUSAL_MULTI_EXCHANGE_2','hypothesis':'unchanged classic 12-1 momentum, top-10 monthly equal-weight target',
+       'execution_correction':'two-stage causal multi-exchange execution: old holdings sell on each own first quote after signal; after all sells complete, target notional is frozen and buys execute on each target own first quote strictly after readiness; each leg capped at 10 calendar days',
        'governance':{'holdout_2023_2026_accessed':False,'variant_count':1,'tuning':False,'signal_rule_changed':False,'survivorship_bias':True},
        'base':bm,'stress':sm,'base_subperiods':sub(be),'stress_subperiods':sub(se),
        'warnings':['Historical universe has survivorship bias','Price-only reconstruction','Five confirmed 2019 continuity holes are expected to be repaired by the supplied V23 overlay','Execution correction fixes multi-exchange calendar mechanics only; it does not alter ranking parameters']}
