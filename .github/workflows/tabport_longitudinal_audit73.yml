@@ -5,6 +5,9 @@ on:
     branches: [hebdo-at-meta]
     paths:
       - 'v182/hebdo/tabport_longitudinal_audit73.py'
+      - 'v182/hebdo/consensus_pit_join_audit73.py'
+      - 'src/v182/backtest/__init__.py'
+      - 'src/v182/backtest/hebdo_meta_consensus_gate_audit73.py'
       - '.github/workflows/tabport_longitudinal_audit73.yml'
   workflow_dispatch:
 
@@ -85,8 +88,6 @@ jobs:
           done < /tmp/ci_light_runs.txt
           echo "RECOVERED_SOURCE_ARTIFACTS=${recovered}"
           echo "RECOVERED_RUNS=$(wc -l < /tmp/ci_light_runs.txt)"
-          # Zero recovered snapshots is permitted: consensus variants then pass
-          # through with an explicit unavailable-criterion diagnosis.
 
       - name: Install longitudinal runtime
         run: |
@@ -139,6 +140,12 @@ jobs:
             'quarter_rows':len(q),
             'year_rows':len(y),
           }, indent=2, default=str))
+          print('---RANKING---')
+          print(pd.read_csv(root/'TABPORT_MODEL_STABILITY_RANKING.csv').to_csv(index=False))
+          print('---QUARTERLY---')
+          print(q.to_csv(index=False))
+          print('---YEARLY---')
+          print(y.to_csv(index=False))
           PY
 
       - name: Upload longitudinal TABPORT package
