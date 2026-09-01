@@ -55,6 +55,15 @@ def test_variant_stack_measures_target_consensus_revision_and_analyst_thresholds
     assert rows["J1_TARGET_GT_20_POSITIVE_CONSENSUS_IMPROVING_ANALYSTS_GE_15"]["trades"] == 0
 
 
+def test_missing_pit_is_not_misreported_as_filter_rejection():
+    payload = run_study(ledger(), observations(), StudyConfig(analyst_thresholds=(5,)))
+    row = {r["variant"]: r for r in payload["variants"]}["J1_TARGET_GT_20"]
+    assert row["pit_unassessable_trades_vs_j1"] == 1
+    assert row["winners_unassessable_missing_pit_vs_j1"] == 1
+    assert row["filter_rejections_among_pit"] == 0
+    assert row["winners_filtered_out_among_pit"] == 0
+
+
 def test_no_entry_price_means_fail_closed_not_published_upside_fallback():
     bad = ledger().drop(columns=["entry_price"])
     with pytest.raises(ValueError, match="ENTRY_PRICE_REQUIRED"):
@@ -74,3 +83,29 @@ def test_native_tabport_walkforward_fractional_returns_are_scaled_to_percent():
     assert baseline["stops"] == 1
     assert baseline["durable_false_positives"] == 1
     assert baseline["durable_false_positive_definition"] == "TABPORT_LOCKED_TRUE_FP_DURABLE"
+
+
+def test_csv_false_strings_do_not_become_true():
+    wf = pd.DataFrame([
+        {"ticker":"AAA","date":"2026-08-24T08:00:00Z","entry_outcome_price":100.0,"outcome_return":0.10,"hit_stop":"False","true_fp_durable":"False","endpoint_mark":"False"},
+        {"ticker":"BBB","date":"2026-08-24T08:00:00Z","entry_outcome_price":100.0,"outcome_return":-0.09,"hit_stop":"True","true_fp_durable":"True","endpoint_mark":"False"},
+    ])
+    payload = run_study(wf, observations(), StudyConfig(analyst_thresholds=(5,)))
+    baseline = payload["variants"][0]
+    assert baseline["trades"] == 2
+    assert baseline["stops"] == 1
+    assert baseline["durable_false_positives"] == 1
+
+
+def test_actual_tabport_pnl_drives_pf_and_initial_capital_return():
+    tab = pd.DataFrame([
+        {"ticker":"AAA","entry_date":"2026-08-24T08:00:00Z","exit_date":"2026-08-25T08:00:00Z","entry_price":100.0,"return_net":0.10,"pnl_net":450.0,"stop_declenche":"False"},
+        {"ticker":"BBB","entry_date":"2026-08-24T08:00:00Z","exit_date":"2026-08-26T08:00:00Z","entry_price":100.0,"return_net":-0.09,"pnl_net":-405.0,"stop_declenche":"True"},
+    ])
+    payload = run_study(tab, observations(), StudyConfig(analyst_thresholds=(5,), initial_capital_eur=65000.0))
+    baseline = payload["variants"][0]
+    assert baseline["pnl_basis"] == "ACTUAL_TABPORT_PNL_NET"
+    assert baseline["profit_factor"] == round(450.0 / 405.0, 4)
+    assert baseline["pnl_eur"] == 45.0
+    assert baseline["return_on_initial_capital_pct"] == round(45.0 / 65000.0 * 100.0, 4)
+    assert baseline["max_drawdown_basis"] == "REALIZED_EXIT_PNL_NOT_MARK_TO_MARKET"
