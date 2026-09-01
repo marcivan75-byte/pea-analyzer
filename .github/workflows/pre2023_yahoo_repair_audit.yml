@@ -28,7 +28,7 @@ jobs:
           restore-keys: |
             ohlcv-v3-
       - name: Install dependencies
-        run: python -m pip install --prefer-binary pandas numpy pyarrow yfinance
+        run: python -m pip install --prefer-binary pandas numpy pyarrow yfinance scipy scikit-learn
       - name: Compile diagnostic
         run: python -m py_compile scripts/pre2023_yahoo_repair_audit.py
       - name: Compare Yahoo raw vs repaired
@@ -47,6 +47,8 @@ jobs:
           required_false=('repair_promoted','historical_universe_certified','survivorship_safe','retuning','holdout_accessed_for_prices')
           if any(s.get(k) is not False for k in required_false):
               raise SystemExit('BLOCK_YAHOO_REPAIR_GOVERNANCE')
+          if s.get('request_error_tickers',0)>0:
+              raise SystemExit(f"BLOCK_YAHOO_REPAIR_REQUEST_ERRORS:{s.get('request_error_tickers')}")
           if s.get('new_invalid_after_repair',0)>0:
               raise SystemExit('BLOCK_YAHOO_REPAIR_CREATED_INVALID_BARS')
           print('PRE2023_YAHOO_REPAIR_AUDIT_CONTRACT_OK')
