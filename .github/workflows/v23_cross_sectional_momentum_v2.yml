@@ -13,6 +13,7 @@ permissions:
   contents: read
   actions: read
 
+# Frozen bug-correction rerun; no hyperparameter change.
 jobs:
   corrected-momentum:
     runs-on: ubuntu-24.04
