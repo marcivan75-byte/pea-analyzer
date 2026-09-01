@@ -1,0 +1,100 @@
+name: PRE2023 Yahoo corporate-action audit
+
+on:
+  push:
+    branches: [hebdo-at-meta]
+    paths:
+      - '.github/workflows/pre2023_yahoo_corporate_action_audit.yml'
+      - 'scripts/pre2023_yahoo_corporate_action_audit.py'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  corporate-action-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Install audit dependencies
+        run: python -m pip install --prefer-binary pandas numpy pyarrow
+      - name: Download governed PRE2023 corpus artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: '9817322742'
+        run: |
+          mkdir -p inputs/pre2023_corpus
+          curl -fL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" \
+            -o /tmp/pre2023_corpus.zip
+          unzip -q /tmp/pre2023_corpus.zip -d inputs/pre2023_corpus
+          test -s inputs/pre2023_corpus/PRE2023_YAHOO_DEVELOPMENT_OHLCV.parquet
+          test -s inputs/pre2023_corpus/PRE2023_YAHOO_CORPUS_MANIFEST.json
+      - name: Verify upstream governance manifest
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('inputs/pre2023_corpus/PRE2023_YAHOO_CORPUS_MANIFEST.json')
+          m=json.loads(p.read_text(encoding='utf-8'))
+          required={
+            'purpose':'DEVELOPMENT_PRICE_CORPUS_BOOTSTRAP',
+            'source':'YAHOO_YFINANCE_RAW',
+            'auto_adjust':False,
+            'repair':False,
+            'historical_universe_certified':False,
+            'survivorship_safe':False,
+            'historical_pea_eligibility_certified':False,
+            'retuning':False,
+            'holdout_accessed_for_prices':False,
+            'requested_end_exclusive':'2023-01-01',
+          }
+          for k,v in required.items():
+            if m.get(k) != v:
+              raise SystemExit(f'BLOCK_PRE2023_CA_UPSTREAM_CONTRACT:{k}={m.get(k)!r}')
+          print('PRE2023_CA_UPSTREAM_CONTRACT_OK')
+          PY
+      - name: Audit raw-price corporate-action discontinuities
+        run: |
+          python scripts/pre2023_yahoo_corporate_action_audit.py \
+            --corpus inputs/pre2023_corpus/PRE2023_YAHOO_DEVELOPMENT_OHLCV.parquet \
+            --output-dir outputs/pre2023_yahoo_corporate_action_audit
+      - name: Validate diagnostic contract
+        run: |
+          python - <<'PY'
+          import json
+          import pandas as pd
+          from pathlib import Path
+          p=Path('outputs/pre2023_yahoo_corporate_action_audit/PRE2023_YAHOO_CORPORATE_ACTION_SUMMARY.json')
+          s=json.loads(p.read_text(encoding='utf-8'))
+          required={
+            'purpose':'PRICE_SERIES_INTEGRITY_DIAGNOSTIC_ONLY',
+            'historical_universe_certified':False,
+            'survivorship_safe':False,
+            'historical_pea_eligibility_certified':False,
+            'retuning':False,
+            'holdout_accessed_for_prices':False,
+            'price_transformation_promoted':False,
+          }
+          for k,v in required.items():
+            if s.get(k) != v:
+              raise SystemExit(f'BLOCK_PRE2023_CA_CONTRACT:{k}={s.get(k)!r}')
+          if pd.Timestamp(s['max_date']) >= pd.Timestamp('2023-01-01'):
+            raise SystemExit('BLOCK_PRE2023_CA_HOLDOUT_LEAK')
+          print('PRE2023_YAHOO_CORPORATE_ACTION_AUDIT_CONTRACT_OK')
+          PY
+      - name: Upload corporate-action audit evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pre2023-yahoo-corporate-action-audit-${{ github.run_id }}
+          path: outputs/pre2023_yahoo_corporate_action_audit/
+          if-no-files-found: warn
+          retention-days: 14
