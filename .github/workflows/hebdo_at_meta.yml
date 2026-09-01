@@ -5,11 +5,14 @@ on:
     branches: [hebdo-at-meta]
     paths:
       - 'v182/**'
+      - 'src/v182/sources/finnhub_consensus.py'
+      - 'src/v182/reporting/waves.py'
       - 'tests/test_hebdo_at_meta.py'
       - 'tests/test_backtest_B_v2.py'
       - 'tests/test_pit_loader_meta.py'
       - 'tests/test_tabport_meta.py'
       - 'tests/test_tabport_historical_meta.py'
+      - 'tests/test_source_runtime_optimization_v21_13_2.py'
       - '.github/workflows/hebdo_at_meta.yml'
   workflow_dispatch:
 
@@ -36,6 +39,6 @@ jobs:
           python -m pip install --prefer-binary -r requirements-runtime.txt
           python -m pip install pytest scikit-learn scipy
       - name: Compile Meta modules
-        run: python -m compileall -q v182
+        run: python -m compileall -q v182 src/v182
       - name: Run HEBDO AT META + TABPORT tests
-        run: python -m pytest -q tests/test_backtest_B_v2.py tests/test_hebdo_at_meta.py tests/test_pit_loader_meta.py tests/test_tabport_meta.py tests/test_tabport_historical_meta.py
+        run: python -m pytest -q tests/test_backtest_B_v2.py tests/test_hebdo_at_meta.py tests/test_pit_loader_meta.py tests/test_tabport_meta.py tests/test_tabport_historical_meta.py tests/test_source_runtime_optimization_v21_13_2.py
