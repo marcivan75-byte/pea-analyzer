@@ -1,0 +1,151 @@
+name: TABPORT Audit73 longitudinal 2010-2026
+
+on:
+  push:
+    branches: [hebdo-at-meta]
+    paths:
+      - 'v182/hebdo/tabport_longitudinal_audit73.py'
+      - '.github/workflows/tabport_longitudinal_audit73.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: tabport-audit73-longitudinal-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  longitudinal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      GH_TOKEN: ${{ github.token }}
+      PRE2023_ARTIFACT_ID: '9817322742'
+      MASTER_ARTIFACT_ID: '9516854863'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-runtime.txt
+
+      - name: Restore governed 2023-2026 holdout cache
+        id: cache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: data/cache/
+          key: ohlcv-v3-33132925283
+          restore-keys: |
+            ohlcv-v3-
+
+      - name: Restore governed PRE2023 corpus and identity master
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p inputs/pre2023 inputs/master
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${PRE2023_ARTIFACT_ID}/zip" > /tmp/pre2023.zip
+          unzip -oq /tmp/pre2023.zip -d inputs/pre2023
+          test -s inputs/pre2023/PRE2023_YAHOO_DEVELOPMENT_OHLCV.parquet
+          test -s inputs/pre2023/PRE2023_YAHOO_CORPUS_MANIFEST.json
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${MASTER_ARTIFACT_ID}/zip" > /tmp/master.zip
+          unzip -oq /tmp/master.zip -d inputs/master
+          MASTER=$(find inputs/master -name 'V18.2_PEA_ACTIONS_MASTER_ENRICHED.csv' -print -quit)
+          test -n "$MASTER" && test -s "$MASTER"
+          cp "$MASTER" inputs/master/ACTIONS_MASTER_MAPPING.csv
+          test -d data/cache/actions
+          test -n "$(find data/cache/actions -name 'history_*.parquet' -print -quit)"
+
+      - name: Recover real CI LIGHT Boursorama snapshots since 22 August 2026
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p inputs/consensus_snapshots
+          gh api --paginate "/repos/${GITHUB_REPOSITORY}/actions/runs?per_page=100" \
+            --jq '.workflow_runs[] | select(.path==".github/workflows/ci_light_v22_2_3_limited.yml" and .created_at >= "2026-08-22T00:00:00Z" and .conclusion=="success") | .id' \
+            | sort -u > /tmp/ci_light_runs.txt
+          recovered=0
+          while read -r run_id; do
+            [ -n "$run_id" ] || continue
+            while read -r artifact_id; do
+              [ -n "$artifact_id" ] || continue
+              target="inputs/consensus_snapshots/run_${run_id}_artifact_${artifact_id}"
+              mkdir -p "$target"
+              if gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" > /tmp/snapshot.zip 2>/dev/null; then
+                unzip -oq /tmp/snapshot.zip -d "$target" || true
+                if find "$target" -name '*SOURCE_OBSERVATIONS.csv' -print -quit | grep -q .; then
+                  recovered=$((recovered+1))
+                fi
+              fi
+            done < <(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts?per_page=100" \
+              --jq '.artifacts[] | select(.expired==false and (.name | startswith("ci-light-v4-2-independent-"))) | .id' || true)
+          done < /tmp/ci_light_runs.txt
+          echo "RECOVERED_SOURCE_ARTIFACTS=${recovered}"
+          echo "RECOVERED_RUNS=$(wc -l < /tmp/ci_light_runs.txt)"
+          # Zero recovered snapshots is permitted: consensus variants then pass
+          # through with an explicit unavailable-criterion diagnosis.
+
+      - name: Install longitudinal runtime
+        run: |
+          python -m pip install --prefer-binary -r requirements-runtime.txt
+          python -m pip install pytest scikit-learn scipy
+
+      - name: Compile and focused validation
+        run: |
+          python -m py_compile v182/hebdo/tabport_longitudinal_audit73.py
+          python -m pytest -q tests/test_backtest_B_v2.py tests/test_hebdo_at_meta.py tests/test_tabport_meta.py tests/test_tabport_historical_meta.py
+
+      - name: Run longitudinal TABPORT variants
+        run: |
+          python -m v182.hebdo.tabport_longitudinal_audit73 \
+            --pre2023 inputs/pre2023/PRE2023_YAHOO_DEVELOPMENT_OHLCV.parquet \
+            --manifest inputs/pre2023/PRE2023_YAHOO_CORPUS_MANIFEST.json \
+            --holdout-cache data/cache/actions \
+            --snapshots inputs/consensus_snapshots \
+            --mapping-master inputs/master/ACTIONS_MASTER_MAPPING.csv \
+            --output-dir outputs/tabport_longitudinal_audit73
+
+      - name: Validate publication contract
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+          root=Path('outputs/tabport_longitudinal_audit73')
+          summary=json.loads((root/'TABPORT_LONGITUDINAL_AUDIT73_SUMMARY.json').read_text(encoding='utf-8'))
+          assert summary['status']=='SUCCESS', summary
+          assert summary['governance']['development']=='2010-2022', summary
+          assert summary['governance']['holdout_oos']=='2023-2026', summary
+          assert summary['governance']['retuning_on_holdout'] is False, summary
+          assert summary['governance']['synthetic_imputation'] is False, summary
+          q=pd.read_csv(root/'TABPORT_VARIANTS_2023_2026_TRIMESTRIEL.csv')
+          y=pd.read_csv(root/'TABPORT_VARIANTS_2010_2023_ANNUEL.csv')
+          assert not q.empty and not y.empty
+          qyears=pd.to_numeric(q['periode'].astype(str).str[:4], errors='coerce')
+          yyears=pd.to_numeric(y['periode'].astype(str).str[:4], errors='coerce')
+          assert qyears.dropna().between(2023,2026).all(), q['periode'].unique()
+          assert yyears.dropna().between(2010,2023).all(), y['periode'].unique()
+          required={'BASELINE','TARGET_GT20','TARGET_GT20_POSITIVE','TARGET_GT20_POSITIVE_IMPROVING'}
+          assert required.issubset(set(q['model'])) and required.issubset(set(y['model']))
+          print(json.dumps({
+            'status':summary['status'],
+            'best_observed_descriptive_model':summary['best_observed_descriptive_model'],
+            'quality':summary['quality'],
+            'consensus_audit':summary['consensus_audit'],
+            'quarter_rows':len(q),
+            'year_rows':len(y),
+          }, indent=2, default=str))
+          PY
+
+      - name: Upload longitudinal TABPORT package
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: TABPORT-AUDIT73-LONGITUDINAL-${{ github.run_id }}
+          path: outputs/tabport_longitudinal_audit73/
+          if-no-files-found: warn
+          retention-days: 30
