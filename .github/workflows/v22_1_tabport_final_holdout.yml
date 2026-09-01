@@ -1,4 +1,4 @@
-name: V22.1 TABPORT frozen final holdout
+name: V22.1 TABPORT final frozen holdout
 
 on:
   workflow_dispatch:
@@ -14,12 +14,11 @@ permissions:
 
 env:
   BACKTEST_RUN_ID: '33420487572'
+  PASS6_RUN_ID: '33458434377'
   HISTORY_RUN_ID: '33393842087'
-  PASS5_RUN_ID: '33445652407'
-  PASS6_RUN_ID: '33445827931'
 
 jobs:
-  final-holdout:
+  final-frozen-holdout:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -29,38 +28,33 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-runtime.txt
       - run: python -m pip install --prefer-binary 'pandas>=2.2' 'numpy>=2.0' 'pyarrow>=18'
-      - name: Download governed train/holdout, price history, and frozen upstream artifacts
+      - name: Download holdout, frozen config and governed OHLC
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p inputs history pass5 pass6
-          a="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${BACKTEST_RUN_ID}/artifacts" --jq '.artifacts[] | select(.name | startswith("v22-1-historical-weekly-backtest-")) | .name' | head -n1)"
-          test -n "$a" || { echo 'BLOCK_FINAL_DATA: backtest artifact missing'; exit 1; }
-          gh run download "$BACKTEST_RUN_ID" -n "$a" -D inputs
-          h="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${HISTORY_RUN_ID}/artifacts" --jq '.artifacts[] | select(.name | startswith("pea-history-2010-2026-")) | .name' | head -n1)"
-          test -n "$h" || { echo 'BLOCK_FINAL_DATA: history artifact missing'; exit 1; }
-          gh run download "$HISTORY_RUN_ID" -n "$h" -D history
-          p5="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PASS5_RUN_ID}/artifacts" --jq '.artifacts[] | select(.name | startswith("v22-1-tabport-pass5-")) | .name' | head -n1)"
-          test -n "$p5" || { echo 'BLOCK_FINAL_DATA: pass5 artifact missing'; exit 1; }
-          gh run download "$PASS5_RUN_ID" -n "$p5" -D pass5
+          mkdir -p inputs pass6 history
+          bt="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${BACKTEST_RUN_ID}/artifacts" --jq '.artifacts[] | select(.name | startswith("v22-1-historical-weekly-backtest-")) | .name' | head -n1)"
           p6="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PASS6_RUN_ID}/artifacts" --jq '.artifacts[] | select(.name | startswith("v22-1-tabport-pass6-")) | .name' | head -n1)"
-          test -n "$p6" || { echo 'BLOCK_FINAL_DATA: pass6 artifact missing'; exit 1; }
+          hist="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${HISTORY_RUN_ID}/artifacts" --jq '.artifacts[] | select(.name | startswith("pea-history-2010-2026-")) | .name' | head -n1)"
+          test -n "$bt" && test -n "$p6" && test -n "$hist" || { echo 'BLOCK_FINAL_DATA: artifact missing'; exit 1; }
+          gh run download "$BACKTEST_RUN_ID" -n "$bt" -D inputs
           gh run download "$PASS6_RUN_ID" -n "$p6" -D pass6
-          test -f inputs/V22_1_TRAIN.csv && test -f inputs/V22_1_HOLDOUT.csv
+          gh run download "$HISTORY_RUN_ID" -n "$hist" -D history
+          test -f inputs/V22_1_HOLDOUT.csv
+          test -f pass6/PASS6_REPORT.json
+          test -f pass6/PASS6_FROZEN_CONFIG.json
           test -f history/PEA_OHLCV_2010_2026_CONSOLIDATED.parquet
-          test -f pass5/PASS5_REPORT.json && test -f pass6/PASS6_FROZEN_CONFIG.json
-      - name: Run frozen holdout evaluation
+      - name: Run final frozen 2023-2026 evaluation
         run: |
           python scripts/v22_1_tabport_final_holdout.py \
-            --train inputs/V22_1_TRAIN.csv \
             --holdout inputs/V22_1_HOLDOUT.csv \
-            --price-parquet history/PEA_OHLCV_2010_2026_CONSOLIDATED.parquet \
+            --pass6-report pass6/PASS6_REPORT.json \
             --frozen-config pass6/PASS6_FROZEN_CONFIG.json \
-            --pass5-report pass5/PASS5_REPORT.json \
-            --out-dir outputs/final_holdout
+            --price-parquet history/PEA_OHLCV_2010_2026_CONSOLIDATED.parquet \
+            --out-dir outputs/tabport_final
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: v22-1-tabport-final-holdout-${{ github.run_id }}
-          path: outputs/final_holdout
+          name: tabport-final-frozen-${{ github.run_id }}
+          path: outputs/tabport_final
           if-no-files-found: error
