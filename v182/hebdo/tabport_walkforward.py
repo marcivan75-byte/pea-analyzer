@@ -66,8 +66,14 @@ def attach_mature_outcomes(candidates:pd.DataFrame,ohlcv:pd.DataFrame,horizon:in
         mae=float(lows.min()/entry-1); mfe=float(highs.max()/entry-1); stop_level=entry*(1-stop_pct); hit_mask=lows<=stop_level; hit_stop=bool(hit_mask.any())
         if hit_stop:
             first=int(np.flatnonzero(hit_mask.to_numpy())[0]); op=float(fut.iloc[first]['open']); outcome_return=float(op/entry-1) if op<stop_level else -stop_pct
+            post_stop_highs=highs.iloc[first+1:]
+            recovered_entry=bool((post_stop_highs>=entry).any()) if len(post_stop_highs) else False
+            later_plus10=bool((post_stop_highs>=entry*1.10).any()) if len(post_stop_highs) else False
         else: outcome_return=float(closes.iloc[-1]/entry-1)
-        z=r.to_dict(); z.update({'entry_outcome_price':entry,'mae':mae,'mfe':mfe,'hit_stop':hit_stop,'outcome_return':outcome_return,'outcome_end_date':pd.to_datetime(fut.iloc[-1]['date'],utc=True),'outcome_sessions':horizon})
+        if not hit_stop: recovered_entry=False; later_plus10=False
+        z=r.to_dict(); z.update({'entry_outcome_price':entry,'mae':mae,'mfe':mfe,'hit_stop':hit_stop,'recovered_entry_after_stop':recovered_entry,
+            'later_plus10_after_stop':later_plus10,'true_fp_durable':int(hit_stop and not recovered_entry),'outcome_return':outcome_return,
+            'outcome_end_date':pd.to_datetime(fut.iloc[-1]['date'],utc=True),'outcome_sessions':horizon})
         z['meta_label']=int((mfe>0.08) and (mae>-stop_pct) and (not hit_stop)); rows.append(z)
     out=pd.DataFrame(rows)
     if out.empty: raise ValueError('BLOCK_WALKFORWARD: no matured outcomes')
