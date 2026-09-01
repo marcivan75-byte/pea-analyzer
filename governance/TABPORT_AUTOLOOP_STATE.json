@@ -2,7 +2,7 @@
   "version": 1,
   "branch": "v22/pit-mae-mfe-preopen",
   "wip": 1,
-  "current_pass": 4,
+  "current_pass": 5,
   "passes": {
     "1": {
       "status": "completed",
@@ -42,13 +42,28 @@
       "embargo_weeks": 26
     },
     "4": {
-      "status": "launched",
+      "status": "completed",
       "run_id": 33449756490,
-      "expected_head_sha": "f4e0ea79b4d96731cd1b90ddd4b910a7f202f922"
+      "artifact": "v22-1-tabport-pass4-33449756490",
+      "version": "V22.1_TABPORT_PASS4_CAUSAL_REGIME_4_CHAINED",
+      "selected_variant": "RISK_ADD_ADAPT",
+      "n": 112,
+      "stop_rate": 0.5089285714285714,
+      "big_winners": 32,
+      "big_winner_recall_vs_static": 1.0666666666666667,
+      "expectancy": 0.09957378512450775,
+      "profit_factor": 3.139534962599641,
+      "win_rate": 0.44642857142857145,
+      "holdout_accessed": false,
+      "embargo_weeks": 26
     },
-    "5": {"status": "pending"},
+    "5": {
+      "status": "launched",
+      "run_id": 33453640253,
+      "expected_head_sha": "96ba7b0e3a71e38775c04e4a51c7be9f8ea1c4f8"
+    },
     "6": {"status": "pending"}
   },
   "holdout_policy": "2023-2026 sealed until final frozen evaluation after pass 6",
-  "last_audit_note": "Pass 3 completed: R_STOP_50 reduces stop rate from 76.8% capacity baseline to 53.6%, raises expectancy to 8.94% and PF to 2.83 with 30 big winners vs 22 baseline. RR>3.3 forcing is explicitly rejected because it worsens stop rate to 74.1%; RR remains diagnostic rather than forced. Pass 4 is launched with exact replay of the validated pass-2 filter and pass-3 50% anti-stop static weight."
+  "last_audit_note": "Pass 4 completed on pre-2023 PIT validation only. RISK_ADD_ADAPT improves stop rate from 53.57% static to 50.89%, expectancy from 8.94% to 9.96%, PF from 2.83 to 3.14, and big winners from 30 to 32. Regime thresholds are derived only from pre-2023 validation terciles; holdout remains sealed. Pass 5 launched with capital 65000 EUR, max line 4500 EUR, 12 lines, integer shares, fees 0.20% each side and +0.10% slippage each side in stress."
 }
