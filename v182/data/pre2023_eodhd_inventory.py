@@ -1,8 +1,8 @@
 """Build a governed PRE-2023 provider inventory from EODHD exchange lists.
 
-This is deliberately NOT a certified historical registry.  It merges the
-provider's active and delisted symbol lists without inventing listing dates.
-Certification happens only after historical EOD bars establish observed
+This is deliberately NOT a certified historical registry. It merges the
+provider's active and delisted common-stock lists without inventing listing
+dates. Certification happens only after historical EOD bars establish observed
 coverage and the registry validator accepts the resulting evidence.
 """
 from __future__ import annotations
@@ -105,7 +105,14 @@ def merge_active_delisted(active: pd.DataFrame, delisted: pd.DataFrame) -> pd.Da
 def fetch_exchange_symbols(exchange: str, token: str, *, delisted: bool) -> list[dict]:
     if not token:
         raise ValueError("BLOCK_PRE2023_SECRET: EODHD_API_TOKEN missing")
-    query = urlencode({"api_token": token, "fmt": "json", "delisted": int(delisted)})
+    # The PRE2023 stock-picking development universe is equities only. Request
+    # common stocks explicitly so ETFs/funds/warrants cannot enter by accident.
+    query = urlencode({
+        "api_token": token,
+        "fmt": "json",
+        "delisted": int(delisted),
+        "type": "common_stock",
+    })
     url = f"{BASE_URL}/{exchange}?{query}"
     with urlopen(url, timeout=60) as response:  # nosec B310 - fixed HTTPS provider endpoint
         payload = json.loads(response.read().decode("utf-8"))
