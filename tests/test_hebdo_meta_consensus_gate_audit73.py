@@ -59,3 +59,18 @@ def test_no_entry_price_means_fail_closed_not_published_upside_fallback():
     bad = ledger().drop(columns=["entry_price"])
     with pytest.raises(ValueError, match="ENTRY_PRICE_REQUIRED"):
         attach_latest_pit_snapshot(bad, observations())
+
+
+def test_native_tabport_walkforward_fractional_returns_are_scaled_to_percent():
+    wf = pd.DataFrame([
+        {"ticker":"AAA","date":"2026-08-24T08:00:00Z","entry_outcome_price":100.0,"outcome_return":0.25,"hit_stop":False,"true_fp_durable":0},
+        {"ticker":"BBB","date":"2026-08-24T08:00:00Z","entry_outcome_price":100.0,"outcome_return":-0.09,"hit_stop":True,"true_fp_durable":1},
+    ])
+    joined = attach_latest_pit_snapshot(wf, observations())
+    assert joined.loc[joined.symbol.eq("AAA"), "return_pct"].iloc[0] == 25.0
+    assert joined.loc[joined.symbol.eq("BBB"), "return_pct"].iloc[0] == -9.0
+    payload = run_study(wf, observations(), StudyConfig(analyst_thresholds=(5,)))
+    baseline = payload["variants"][0]
+    assert baseline["stops"] == 1
+    assert baseline["durable_false_positives"] == 1
+    assert baseline["durable_false_positive_definition"] == "TABPORT_LOCKED_TRUE_FP_DURABLE"
