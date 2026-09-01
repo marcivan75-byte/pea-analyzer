@@ -1,10 +1,9 @@
 """HEBDO AT META Audit 73 — strict PIT J+1 consensus-gate comparison.
 
-This research module never backfills a current analyst target into the past.  A
-consensus snapshot may influence a J+1 decision only when its real `available_at`
-is at or before the decision timestamp.  Relative FactSet history (3m/2m/1m/7d)
-is diagnostic evidence known at capture time; it is not treated as if collected
-at a fabricated historical date.
+No current analyst target is backfilled into the past. A consensus snapshot may
+influence a J+1 decision only when its real ``available_at`` is at or before the
+decision timestamp. Relative FactSet history (3m/2m/1m/7d) remains diagnostic
+evidence known at capture time and is never assigned a fabricated historical date.
 """
 from __future__ import annotations
 
@@ -33,41 +32,77 @@ def _dt(series: pd.Series) -> pd.Series:
 
 
 def _prepare_ledger(ledger: pd.DataFrame) -> pd.DataFrame:
+    """Normalize generic, TABPORT ledger and TABPORT walk-forward schemas.
+
+    Native TABPORT ``return_net`` and WF ``outcome_return`` are fractional
+    returns (0.10 == +10%), while an explicit ``return_pct`` is already percent.
+    """
     out = ledger.copy()
-    required = {"symbol", "return_pct"}
-    missing = required - set(out.columns)
-    if missing:
-        raise ValueError(f"BLOCK_AUDIT73_LEDGER_MISSING:{sorted(missing)}")
+    if "symbol" not in out.columns and "ticker" in out.columns:
+        out["symbol"] = out["ticker"]
+    if "symbol" not in out.columns:
+        raise ValueError("BLOCK_AUDIT73_LEDGER_MISSING:['symbol']")
+
     if "decision_at" not in out.columns:
-        if "entry_date" not in out.columns:
+        if "date" in out.columns:
+            out["decision_at"] = out["date"]
+        elif "entry_date" in out.columns:
+            out["decision_at"] = out["entry_date"]
+        else:
             raise ValueError("BLOCK_AUDIT73_NO_J1_DECISION_TIME")
-        out["decision_at"] = out["entry_date"]
     out["decision_at"] = _dt(out["decision_at"])
     if out["decision_at"].isna().any():
         raise ValueError("BLOCK_AUDIT73_INVALID_J1_DECISION_TIME")
+
+    if "entry_price" not in out.columns and "entry_outcome_price" in out.columns:
+        out["entry_price"] = out["entry_outcome_price"]
     if "entry_price" not in out.columns:
         raise ValueError("BLOCK_AUDIT73_ENTRY_PRICE_REQUIRED_FOR_HISTORICAL_UPSIDE")
     out["entry_price"] = pd.to_numeric(out["entry_price"], errors="coerce")
     if out["entry_price"].isna().any() or (out["entry_price"] <= 0).any():
         raise ValueError("BLOCK_AUDIT73_INVALID_ENTRY_PRICE")
-    out["return_pct"] = pd.to_numeric(out["return_pct"], errors="coerce")
+
+    if "return_pct" in out.columns:
+        out["return_pct"] = pd.to_numeric(out["return_pct"], errors="coerce")
+        out["return_source"] = "RETURN_PCT"
+    elif "outcome_return" in out.columns:
+        out["return_pct"] = pd.to_numeric(out["outcome_return"], errors="coerce") * 100.0
+        out["return_source"] = "TABPORT_WF_OUTCOME_RETURN_FRACTION"
+    elif "return_net" in out.columns:
+        out["return_pct"] = pd.to_numeric(out["return_net"], errors="coerce") * 100.0
+        out["return_source"] = "TABPORT_RETURN_NET_FRACTION"
+    else:
+        raise ValueError("BLOCK_AUDIT73_LEDGER_MISSING:['return_pct|outcome_return|return_net']")
     if out["return_pct"].isna().any():
         raise ValueError("BLOCK_AUDIT73_INVALID_RETURN")
+
+    if "durable_false_positive" not in out.columns and "true_fp_durable" in out.columns:
+        out["durable_false_positive"] = out["true_fp_durable"]
+    if "stop_triggered" not in out.columns:
+        if "hit_stop" in out.columns:
+            out["stop_triggered"] = out["hit_stop"]
+        elif "stop_declenche" in out.columns:
+            out["stop_triggered"] = out["stop_declenche"]
+    if "exit_category" not in out.columns and "exit_reason" in out.columns:
+        out["exit_category"] = out["exit_reason"]
+
+    out["symbol"] = out["symbol"].astype(str).str.strip().str.upper()
     return out.sort_values(["symbol", "decision_at"]).reset_index(drop=True)
 
 
 def _prepare_consensus(obs: pd.DataFrame) -> pd.DataFrame:
     out = obs.copy()
+    if "symbol" not in out.columns and "ticker" in out.columns:
+        out["symbol"] = out["ticker"]
     required = {"symbol", "available_at", "target_median", "consensus", "n_analysts"}
     missing = required - set(out.columns)
     if missing:
         raise ValueError(f"BLOCK_AUDIT73_CONSENSUS_MISSING:{sorted(missing)}")
+    out["symbol"] = out["symbol"].astype(str).str.strip().str.upper()
     out["available_at"] = _dt(out["available_at"])
     if out["available_at"].isna().any():
         raise ValueError("BLOCK_AUDIT73_INVALID_AVAILABLE_AT")
     if "period_kind" in out.columns:
-        # Relative rows are retained for diagnostics/revision but cannot masquerade
-        # as a historical current-state observation.
         out = out[out["period_kind"].fillna("CURRENT").astype(str).str.upper().eq("CURRENT")].copy()
     out["target_median"] = pd.to_numeric(out["target_median"], errors="coerce")
     out["n_analysts"] = pd.to_numeric(out["n_analysts"], errors="coerce")
@@ -144,15 +179,22 @@ def _metrics(selected: pd.DataFrame, baseline: pd.DataFrame, *, nominal_eur: flo
     rr = None
     if len(wins) and len(losses) and float(losses["return_pct"].mean()) != 0:
         rr = float(wins["return_pct"].mean() / abs(losses["return_pct"].mean()))
+
+    if "stop_triggered" in real.columns:
+        stops = int(real["stop_triggered"].fillna(False).astype(bool).sum())
+    else:
+        exit_category = real["exit_category"].astype(str) if "exit_category" in real.columns else pd.Series("", index=real.index)
+        stops = int(exit_category.str.contains("STOP", case=False, na=False).sum())
     exit_category = real["exit_category"].astype(str) if "exit_category" in real.columns else pd.Series("", index=real.index)
-    stops = int(exit_category.eq("PROTECTIVE_STOP").sum())
     early_fp = int(exit_category.eq("EARLY_FALSE_POSITIVE").sum())
+
     if "durable_false_positive" in real.columns:
-        durable_fp = int(real["durable_false_positive"].fillna(False).astype(bool).sum())
-        durable_fp_definition = "EXPLICIT_LEDGER_FIELD"
+        durable_fp = int(pd.to_numeric(real["durable_false_positive"], errors="coerce").fillna(0).astype(bool).sum())
+        durable_fp_definition = "TABPORT_LOCKED_TRUE_FP_DURABLE" if "true_fp_durable" in real.columns else "EXPLICIT_LEDGER_FIELD"
     else:
         durable_fp = None
         durable_fp_definition = "UNAVAILABLE_NO_LOCKED_DEFINITION"
+
     selected_ids = set(real.index)
     removed = base_real.loc[~base_real.index.isin(selected_ids)]
     winners_removed = int((removed["return_pct"] > 0).sum())
@@ -206,12 +248,13 @@ def run_study(ledger: pd.DataFrame, observations: pd.DataFrame, config: StudyCon
     coverage = float(joined["pit_snapshot_available"].mean() * 100.0) if len(joined) else 0.0
     return {
         "status": "SUCCESS",
-        "version": "HEBDO_META_CONSENSUS_GATE_AUDIT73_V1",
+        "version": "HEBDO_META_CONSENSUS_GATE_AUDIT73_V2",
         "policy": {
             "strict_pit": True,
             "current_target_backfill_forbidden": True,
             "relative_factset_periods_backdated": False,
             "target_upside_recomputed_from_target_and_j1_price": True,
+            "native_tabport_fractional_returns_normalized_to_pct": True,
             "target_threshold_pct": config.target_upside_threshold_pct,
             "positive_consensus": sorted(POSITIVE_CONSENSUS),
             "consensus_delta_threshold": config.consensus_delta_threshold,
@@ -224,7 +267,6 @@ def run_study(ledger: pd.DataFrame, observations: pd.DataFrame, config: StudyCon
             "BOURSORAMA_COLLECTION_START_2026_08_22",
             "RELATIVE_FACTSET_COLUMNS_NOT_EXACT_DATES",
             "HEADLINE_METRICS_REQUIRE_REAL_SNAPSHOTS_AVAILABLE_BY_J1",
-            "DURABLE_FALSE_POSITIVE_REQUIRES_EXPLICIT_LOCKED_LEDGER_FIELD",
         ],
     }
 
