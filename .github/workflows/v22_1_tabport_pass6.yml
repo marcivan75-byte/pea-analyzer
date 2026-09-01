@@ -14,8 +14,10 @@ permissions:
 
 env:
   BACKTEST_RUN_ID: '33420487572'
-  PASS4_RUN_ID: '33446929385'
-  PASS5_RUN_ID: '33447165236'
+  PASS2_RUN_ID: '33449455231'
+  PASS3_RUN_ID: '33449622525'
+  PASS4_RUN_ID: '33449756490'
+  PASS5_RUN_ID: '33453640253'
 
 jobs:
   final-ensemble-stability:
@@ -28,25 +30,37 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-runtime.txt
       - run: python -m pip install --prefer-binary 'pandas>=2.2' 'numpy>=2.0'
-      - name: Download sealed pre-2023 inputs and upstream reports
+      - name: Download sealed pre-2023 inputs and frozen upstream reports
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p inputs pass4 pass5
+          mkdir -p inputs pass2 pass3 pass4 pass5
           artifact="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${BACKTEST_RUN_ID}/artifacts" --jq '.artifacts[] | select(.name | startswith("v22-1-historical-weekly-backtest-")) | .name' | head -n1)"
-          test -n "$artifact" || { echo 'BLOCK_PASS6_DATA: governed artifact missing'; exit 1; }
-          gh run download "$BACKTEST_RUN_ID" -n "$artifact" -D inputs
+          p2="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PASS2_RUN_ID}/artifacts" --jq '.artifacts[] | select(.name | startswith("v22-1-hybrid-fp-")) | .name' | head -n1)"
+          p3="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PASS3_RUN_ID}/artifacts" --jq '.artifacts[] | select(.name | startswith("v22-1-tabport-pass3-")) | .name' | head -n1)"
           p4="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PASS4_RUN_ID}/artifacts" --jq '.artifacts[] | select(.name | startswith("v22-1-tabport-pass4-")) | .name' | head -n1)"
           p5="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PASS5_RUN_ID}/artifacts" --jq '.artifacts[] | select(.name | startswith("v22-1-tabport-pass5-")) | .name' | head -n1)"
-          test -n "$p4" && test -n "$p5" || { echo 'BLOCK_PASS6_DATA: upstream artifact missing'; exit 1; }
+          test -n "$artifact" && test -n "$p2" && test -n "$p3" && test -n "$p4" && test -n "$p5" || { echo 'BLOCK_PASS6_DATA: upstream artifact missing'; exit 1; }
+          gh run download "$BACKTEST_RUN_ID" -n "$artifact" -D inputs
+          gh run download "$PASS2_RUN_ID" -n "$p2" -D pass2
+          gh run download "$PASS3_RUN_ID" -n "$p3" -D pass3
           gh run download "$PASS4_RUN_ID" -n "$p4" -D pass4
           gh run download "$PASS5_RUN_ID" -n "$p5" -D pass5
           test -f inputs/V22_1_TRAIN.csv
+          test -f pass2/HYBRID_FP_REPORT.json
+          test -f pass3/PASS3_REPORT.json
           test -f pass4/PASS4_REPORT.json
           test -f pass5/PASS5_REPORT.json
-      - name: Run final ensemble and stability gate
-        run: python scripts/v22_1_final_ensemble_pass6.py --train inputs/V22_1_TRAIN.csv --pass4-report pass4/PASS4_REPORT.json --pass5-report pass5/PASS5_REPORT.json --out-dir outputs/pass6
+      - name: Run exact-replay final ensemble and stability gate
+        run: |
+          python scripts/v22_1_final_ensemble_pass6.py \
+            --train inputs/V22_1_TRAIN.csv \
+            --pass2-report pass2/HYBRID_FP_REPORT.json \
+            --pass3-report pass3/PASS3_REPORT.json \
+            --pass4-report pass4/PASS4_REPORT.json \
+            --pass5-report pass5/PASS5_REPORT.json \
+            --out-dir outputs/pass6
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: v22-1-tabport-pass6-${{ github.run_id }}
