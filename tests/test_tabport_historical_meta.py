@@ -34,9 +34,45 @@ def test_historical_runner_writes_provenance_and_no_synthetic_fallback(tmp_path)
     assert manifest['inputs']['signals']['pit_validation']=='ROW_LEVEL_T_MINUS_1_22H_EUROPE_PARIS'
     assert len(manifest['inputs']['signals']['sha256'])==64
     assert len(manifest['inputs']['ohlc']['sha256'])==64
+    assert manifest['inputs']['ohlc']['layout_normalization']=='LONG_OR_GOVERNED_WIDE_CACHE'
     assert (out/'TABPORT_LEDGER.csv').exists()
     assert (out/'TABPORT_DAILY_NAV.csv').exists()
     assert len(res['ledger'])==1
+
+
+def test_historical_runner_reads_governed_wide_parquet_cache_directory(tmp_path):
+    s,_ = _write_inputs(tmp_path)
+    cache = tmp_path/'cache'; cache.mkdir()
+    idx = pd.to_datetime(['2025-01-01','2025-01-02','2025-01-03'])
+    cols = pd.MultiIndex.from_tuples([
+        ('AAA','Open'),('AAA','High'),('AAA','Low'),('AAA','Close'),('AAA','Volume'),
+        ('BBB','Open'),('BBB','High'),('BBB','Low'),('BBB','Close'),('BBB','Volume'),
+    ])
+    wide = pd.DataFrame([
+        [100,101,99,100,1000, 50,51,49,50,500],
+        [100,102,99,101,1100, 50,52,49,51,550],
+        [101,103,100,102,1200, 51,53,50,52,600],
+    ], index=idx, columns=cols)
+    wide.index.name='Date'
+    wide.to_parquet(cache/'history_00000.parquet')
+    out=tmp_path/'wide_out'
+    res=run_historical(s,cache,'2025-01-01','2025-01-03',out,TabportConfig(max_hold_sessions=2))
+    manifest=json.loads((out/'TABPORT_MANIFEST.json').read_text())
+    assert manifest['status']=='OK'
+    assert manifest['inputs']['ohlc']['source_files']==[str(cache/'history_00000.parquet')]
+    assert manifest['inputs']['ohlc']['rows']==6
+    assert len(res['ledger'])==1
+
+
+def test_historical_runner_blocks_duplicate_bars_across_cache_blocks(tmp_path):
+    s,_ = _write_inputs(tmp_path)
+    cache=tmp_path/'cache'; cache.mkdir()
+    idx=pd.to_datetime(['2025-01-01','2025-01-02','2025-01-03'])
+    cols=pd.MultiIndex.from_tuples([('AAA','Open'),('AAA','High'),('AAA','Low'),('AAA','Close')])
+    wide=pd.DataFrame([[100,101,99,100],[100,102,99,101],[101,103,100,102]],index=idx,columns=cols)
+    wide.to_parquet(cache/'a.parquet'); wide.to_parquet(cache/'b.parquet')
+    with pytest.raises(ValueError,match='duplicate OHLC across cache blocks'):
+        run_historical(s,cache,'2025-01-01','2025-01-03',tmp_path/'out')
 
 
 def test_historical_runner_blocks_when_ohlc_do_not_span_signal_j1(tmp_path):
