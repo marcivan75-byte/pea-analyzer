@@ -27,21 +27,20 @@ def normalize(df):
 
 
 def one(g):
-    pre=g[g.date<=ANCHOR]
-    post=g[g.date>ANCHOR]
-    last_pre=pre.date.max() if len(pre) else pd.NaT
-    next_post=post.date.min() if len(post) else pd.NaT
-    row={'isin':str(g.isin.iloc[0]),'last_pre_anchor':None if pd.isna(last_pre) else str(last_pre.date()),
+    pre=g[g['date']<=ANCHOR]
+    post=g[g['date']>ANCHOR]
+    last_pre=pre['date'].max() if len(pre) else pd.NaT
+    next_post=post['date'].min() if len(post) else pd.NaT
+    row={'isin':str(g['isin'].iloc[0]),'last_pre_anchor':None if pd.isna(last_pre) else str(last_pre.date()),
          'days_since_last_quote_at_anchor':None if pd.isna(last_pre) else int((ANCHOR-last_pre).days),
          'next_quote_after_anchor':None if pd.isna(next_post) else str(next_post.date()),
          'days_to_next_quote':None if pd.isna(next_post) else int((next_post-ANCHOR).days),
-         'last_pre2023_quote':str(g.date.max().date()),'resumes_after_anchor':bool(len(post))}
+         'last_pre2023_quote':str(g['date'].max().date()),'resumes_after_anchor':bool(len(post))}
     for d in [20,40,60,120,252]:
         a=ANCHOR-pd.Timedelta(days=d)
-        row[f'quotes_prev_{d}cd']=int(((pre.date> a)&(pre.date<=ANCHOR)).sum())
-    # trailing inter-quote gap stats known at anchor
+        row[f'quotes_prev_{d}cd']=int(((pre['date']>a)&(pre['date']<=ANCHOR)).sum())
     p=pre.tail(120).copy()
-    gaps=p.date.diff().dt.days.dropna()
+    gaps=p['date'].diff().dt.days.dropna()
     row['max_gap_prev120obs_cd']=None if gaps.empty else int(gaps.max())
     row['median_gap_prev120obs_cd']=None if gaps.empty else float(gaps.median())
     return row
@@ -49,10 +48,10 @@ def one(g):
 
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument('--history',type=Path,required=True); ap.add_argument('--out-dir',type=Path,required=True); a=ap.parse_args()
-    z=normalize(pd.read_parquet(a.history)); q=z[z.isin.isin(ISINS)].copy()
+    z=normalize(pd.read_parquet(a.history)); q=z[z['isin'].isin(ISINS)].copy()
     rows=[]
     for isin in ISINS:
-        g=q[q.isin==isin]
+        g=q[q['isin']==isin]
         if g.empty: rows.append({'isin':isin,'status':'absent'}); continue
         r=one(g); r['status']='ok'; rows.append(r)
     out=pd.DataFrame(rows)
