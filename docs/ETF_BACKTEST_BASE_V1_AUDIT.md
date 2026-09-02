@@ -20,11 +20,32 @@ Créer une fondation de données dédiée aux backtests ETF MT/GROK sans modifie
 - Historique cible à partir du 2010-01-01, non glissant et append-only.
 - Collecte `auto_adjust=false` avec conservation séparée de `open/high/low/close`, `adj_close`, `volume`, `dividends`, `stock_splits`.
 - Clé primaire instrument = ISIN; ticker Yahoo utilisé comme identifiant de collecte et non comme identité durable.
+- Conservation de la date de séance locale de la place boursière: aucune conversion UTC susceptible de déplacer une séance quotidienne au jour calendaire précédent.
 - Contrôles de qualité par ETF: couverture Close, couverture Volume, volumes nuls/négatifs, prix non positifs, invariants OHLC, doublons, trous de séances, disponibilité d'au moins 756 séances pour les features 3 ans.
+- Deux certifications distinctes: `ETF_MT_CLOSE_ONLY` pour les backtests MT fondés sur Close/Adj Close/Volume et `FULL_OHLC_RESEARCH` pour les stratégies utilisant Open/High/Low.
 - Génération d'un manifeste avec hash SHA-256 des fichiers de contrôle.
 - Génération d'une table `ETF_PIT_MEMBERSHIP.csv` qui force l'explicitation des dates de présence et d'éligibilité PEA.
 - Tant que ces dates PIT ne sont pas complétées, `promotion_eligible=false` par construction.
 - Une reconstruction basée uniquement sur l'univers courant reste `RESEARCH_ONLY_CURRENT_UNIVERSE_RECONSTRUCTION` et ne peut pas être présentée comme OOS de promotion.
+
+## Résultats de l'audit exhaustif du 2026-09-03
+
+Audit live sur les 102 ETF du référentiel courant, avec collecte quotidienne demandée à partir du 2010-01-01:
+
+- instruments demandés: **102**;
+- instruments construits avec historique: **102 / 102**;
+- échecs de mapping ticker: **0**;
+- échecs de téléchargement: **0**;
+- séries validant la qualité Close/Adj Close/Volume: **101 / 102**;
+- séries disposant d'au moins 756 séances: **69 / 102**;
+- séries immédiatement utilisables pour le profil ETF MT close-only: **68 / 102**;
+- séries validant aussi le profil OHLC intégral strict: **28 / 102**.
+
+Les écarts OHLC observés sur certaines séries Yahoo ne sont donc pas masqués: ils bloquent le profil `FULL_OHLC_RESEARCH`, mais ne doivent pas invalider artificiellement un backtest ETF MT historiquement fondé sur Close/Volume si ces colonnes passent leurs propres contrôles.
+
+Un instrument avec profondeur MT suffisante reste bloqué par le contrôle de continuité: `GRE.PA` / ISIN `FR0010405431` présente un trou maximal observé de 23 jours ouvrés dans la source. Il doit être contrôlé par une source de secours avant d'être admis dans l'échantillon MT historique certifié.
+
+La base reste volontairement `promotion_eligible=false`: les 102 instruments proviennent encore du référentiel courant et les périodes historiques d'appartenance/éligibilité PEA ne sont pas complètes.
 
 ## Données qualitatives / structurelles
 
