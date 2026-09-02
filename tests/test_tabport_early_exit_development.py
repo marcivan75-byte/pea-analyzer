@@ -27,11 +27,18 @@ def test_structure_entry_day_uses_known_signal_and_confirmation_levels():
     assert yes is True and reason.startswith("STRUCTURE_INVALID_ENTRY_DAY")
 
 
-def test_trail_break_even_requires_prior_peak():
+def test_trail_break_even_exits_at_plus_one_when_open_above_trailing_level():
     e=FPEarlyExit(enabled_rules={"STOP","TRAIL_BE"})
-    x=bar(100.5,low=100.0,peak_pnl_prior=0.04)
+    x=bar(100.5,low=100.0,open_px=102.0,peak_pnl_prior=0.04)
     yes,reason,ret=e.check_exit(100.0,x,5)
     assert yes is True and reason.startswith("TRAIL_BE") and abs(ret-0.01)<1e-12
+
+
+def test_trail_break_even_gap_through_exits_at_open():
+    e=FPEarlyExit(enabled_rules={"STOP","TRAIL_BE"})
+    x=bar(100.5,low=100.0,open_px=100.0,peak_pnl_prior=0.04)
+    yes,reason,ret=e.check_exit(100.0,x,5)
+    assert yes is True and reason.startswith("TRAIL_BE") and abs(ret-0.0)<1e-12
 
 
 def test_capitulation_rule_is_disabled_when_not_selected():
