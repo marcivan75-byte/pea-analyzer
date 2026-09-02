@@ -53,6 +53,10 @@ def _normalise_history(frame: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=["date"] + REQUIRED_PRICE_COLUMNS + ["dividends", "stock_splits"])
     out = frame.copy()
     if isinstance(out.index, pd.DatetimeIndex):
+        # Daily exchange data are labelled by the exchange-local trading date.
+        # Converting Paris midnight to UTC before normalising can move Monday to Sunday.
+        if out.index.tz is not None:
+            out.index = out.index.tz_localize(None)
         out = out.reset_index()
     rename = {}
     for c in out.columns:
@@ -66,7 +70,10 @@ def _normalise_history(frame: pd.DataFrame) -> pd.DataFrame:
     out = out.rename(columns=rename)
     if "date" not in out.columns:
         raise ValueError("ETF_BACKTEST_HISTORY_DATE_MISSING")
-    out["date"] = pd.to_datetime(out["date"], errors="coerce", utc=True).dt.tz_convert(None).dt.normalize()
+    dates = pd.to_datetime(out["date"], errors="coerce")
+    if getattr(dates.dt, "tz", None) is not None:
+        dates = dates.dt.tz_localize(None)
+    out["date"] = dates.dt.normalize()
     out = out.dropna(subset=["date"]).sort_values("date")
     out = out.drop_duplicates("date", keep="last")
     for col in REQUIRED_PRICE_COLUMNS + ["dividends", "stock_splits"]:
@@ -95,13 +102,21 @@ def audit_history(isin: str, ticker: str, frame: pd.DataFrame, cfg: dict) -> Ins
     l = pd.to_numeric(out["low"], errors="coerce")
     c = close
     comparable = o.notna() & h.notna() & l.notna() & c.notna()
-    invariant_bad = comparable & ((h < l) | (h < o) | (h < c) | (l > o) | (l > c))
+    scale = pd.concat([o.abs(), h.abs(), l.abs(), c.abs()], axis=1).max(axis=1).fillna(0.0)
+    tol = (scale * 1e-6).clip(lower=1e-8)
+    invariant_bad = comparable & (
+        (h + tol < l)
+        | (h + tol < o)
+        | (h + tol < c)
+        | (l - tol > o)
+        | (l - tol > c)
+    )
     ohlc_bad = int(invariant_bad.sum())
 
     max_gap = 0
-    dates = pd.DatetimeIndex(out["date"].dropna().unique()).sort_values()
-    if len(dates) > 1:
-        for prev, cur in zip(dates[:-1], dates[1:]):
+    dates_idx = pd.DatetimeIndex(out["date"].dropna().unique()).sort_values()
+    if len(dates_idx) > 1:
+        for prev, cur in zip(dates_idx[:-1], dates_idx[1:]):
             gap = max(0, len(pd.bdate_range(prev, cur)) - 2)
             max_gap = max(max_gap, gap)
 
