@@ -30,8 +30,10 @@ jobs:
           cache: 'pip'
           cache-dependency-path: pyproject.toml
 
-      - name: Install project
-        run: python -m pip install -e .
+      - name: Install project and test runner
+        run: |
+          python -m pip install -e .
+          python -m pip install pytest
 
       - name: Validate ETF GROK configuration
         run: |
@@ -39,7 +41,7 @@ jobs:
           python -m json.tool config/V20.8.2_ETF_GROK_DYNAMIC.json >/dev/null
 
       - name: Run ETF GROK clone tests
-        run: pytest -q tests/test_etf_grok_clone.py
+        run: python -m pytest -q tests/test_etf_grok_clone.py
 
       - name: Run ETF GROK operational scoring
         env:
