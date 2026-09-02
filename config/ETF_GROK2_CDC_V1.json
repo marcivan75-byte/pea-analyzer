@@ -29,6 +29,7 @@
     "top_n": 2,
     "minimum_peer_count": 3,
     "minimum_liquidity_percentile": 20.0,
+    "max_selected_per_peer_group": 1,
     "peer_group_fields": ["category", "geo_exposure"]
   },
   "exit_policy": {
