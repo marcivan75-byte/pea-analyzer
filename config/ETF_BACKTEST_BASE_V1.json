@@ -44,9 +44,23 @@
     "maximum_duplicate_dates_per_instrument": 0,
     "maximum_nonpositive_close_rows": 0,
     "maximum_negative_volume_rows": 0,
-    "maximum_ohlc_invariant_violations": 0,
     "maximum_internal_gap_business_days": 10,
+    "full_ohlc_maximum_invariant_violations": 0,
+    "ohlc_rounding_absolute_tolerance": 0.005,
+    "ohlc_rounding_relative_tolerance": 0.0001,
     "block_promotion_on_missing_membership_dates": true
+  },
+  "quality_profiles": {
+    "ETF_MT_CLOSE_ONLY": {
+      "uses": ["close", "adj_close", "volume"],
+      "ohlc_invariants_required": false,
+      "minimum_history_sessions": 756
+    },
+    "FULL_OHLC_RESEARCH": {
+      "uses": ["open", "high", "low", "close", "adj_close", "volume"],
+      "ohlc_invariants_required": true,
+      "minimum_history_sessions": 1
+    }
   },
   "outputs": {
     "root": "data/backtest/etf_base_v1",
