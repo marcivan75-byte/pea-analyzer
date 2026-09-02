@@ -1,0 +1,53 @@
+name: ETF PIT Membership V2 Validation
+
+on:
+  pull_request:
+    paths:
+      - 'src/v182/backtest/etf_pit_membership_v2.py'
+      - 'tests/test_etf_pit_membership_v2.py'
+      - '.github/workflows/etf_pit_membership_v2_validation.yml'
+      - 'docs/ETF_PIT_MEMBERSHIP_V2.md'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -e . pytest
+      - name: Unit PIT tests
+        run: pytest -q tests/test_etf_pit_membership_v2.py tests/test_etf_backtest_base_v1.py
+      - name: Compile
+        run: python -m py_compile src/v182/backtest/etf_pit_membership_v2.py
+      - name: Build base audit
+        run: python -m v182.backtest.etf_backtest_base_v1
+      - name: Build PIT evidence layer
+        run: python -m v182.backtest.etf_pit_membership_v2
+      - name: Verify no fabricated eligibility
+        run: |
+          python - <<'PY'
+          import json
+          import pandas as pd
+          from pathlib import Path
+          base=Path('data/backtest/etf_base_v1')
+          m=pd.read_csv(base/'ETF_PIT_MEMBERSHIP_V2.csv', sep=';', dtype=str, keep_default_na=False)
+          r=json.loads((base/'ETF_PIT_COVERAGE_REPORT.json').read_text())
+          assert len(m) >= 100
+          assert m['trading_existence_start'].str.strip().ne('').sum() > 0
+          assert m['pea_eligibility_start'].str.strip().eq('').all()
+          assert r['promotion_eligible'] is False
+          assert r['current_universe_survivorship_bias_unresolved'] is True
+          print(r)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ETF_PIT_MEMBERSHIP_V2_AUDIT
+          path: |
+            data/backtest/etf_base_v1/ETF_PIT_MEMBERSHIP_V2.csv
+            data/backtest/etf_base_v1/ETF_PIT_COVERAGE_REPORT.json
+            data/backtest/etf_base_v1/ETF_BACKTEST_INSTRUMENT_QUALITY.csv
+          retention-days: 7
