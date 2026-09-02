@@ -95,7 +95,7 @@ def apply_dynamic_weighting(
         "selected": [{"isin": c.instrument_id, "score_final": c.score_final, "exposure_group": c.exposure_group} for c in selected],
         "historical_performance_attribution": "NONE_FOR_ETF_GROK_V20.8.2",
         "reference_attribution": "SOURCE ETF MT parity only while GROK strict clone remains unchanged",
-        "promotion_allowed": false if False else False,
+        "promotion_allowed": False,
         "live_orders_enabled": False,
     }
     return result, summary
