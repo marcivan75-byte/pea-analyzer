@@ -29,12 +29,15 @@ def _weekly_rsi_map(technical: pd.DataFrame, period:int=14) -> pd.DataFrame:
     base=technical[['date','ticker','close']].copy()
     base['week']=base['date'].dt.tz_localize(None).dt.to_period('W-FRI').astype(str)
     weekly=base.sort_values('date').groupby(['ticker','week'],as_index=False).tail(1).sort_values(['ticker','date'])
-    def one(g):
+    parts=[]
+    for ticker,g in weekly.groupby('ticker',sort=False):
         x=g.copy(); d=x['close'].astype(float).diff(); gain=d.clip(lower=0); loss=(-d.clip(upper=0))
         ag=gain.ewm(alpha=1/period,adjust=False,min_periods=period).mean(); al=loss.ewm(alpha=1/period,adjust=False,min_periods=period).mean()
         rs=ag/al.replace(0,np.nan); x['rsi_14_hebdo']=100-(100/(1+rs)); x.loc[(al==0)&(ag>0),'rsi_14_hebdo']=100.0
-        return x
-    weekly=weekly.groupby('ticker',group_keys=False).apply(one,include_groups=False).reset_index(drop=True)
+        x['ticker']=str(ticker); parts.append(x)
+    if not parts:
+        return pd.DataFrame(columns=['ticker','week','rsi_14_hebdo'])
+    weekly=pd.concat(parts,ignore_index=True)
     return weekly[['ticker','week','rsi_14_hebdo']]
 
 
