@@ -1,0 +1,60 @@
+{
+  "version": "ETF_GROK2_CDC_V1_2026_09_03",
+  "status": "RESEARCH_CHALLENGER_NO_REAL_ORDERS",
+  "base_model": "20.8.1-grok",
+  "cdc_reference": "CDC Selection ETF Moyen Terme v1.0 2026-09-02",
+  "design_principles": {
+    "momentum_is_confirmation_not_unique_thesis": true,
+    "peer_comparison_required_when_testable": true,
+    "lookthrough_required_operationally_but_not_backfilled_without_pit": true,
+    "vehicle_quality_required_operationally_but_static_2026_fields_not_backfilled": true,
+    "price_only_stop_is_not_primary_exit": true,
+    "quarterly_review_equivalent_sessions": 63
+  },
+  "quantitative_core": {
+    "group_multipliers": {
+      "Momentum court": 0.75,
+      "Momentum long": 0.80,
+      "Tendance": 1.00,
+      "Technique": 0.85,
+      "Risque": 1.20,
+      "Risque ajusté": 1.25,
+      "Liquidité": 1.30,
+      "Sensibilité marché": 1.10
+    },
+    "score_raw_weight": 0.45,
+    "global_rank_weight": 0.35,
+    "peer_rank_weight": 0.20,
+    "selection_threshold": 82.0,
+    "top_n": 2,
+    "minimum_peer_count": 3,
+    "minimum_liquidity_percentile": 20.0,
+    "peer_group_fields": ["category", "geo_exposure"]
+  },
+  "exit_policy": {
+    "id": "GROK2_CDC_THESIS_PROXY_Q63_H378_S25",
+    "minimum_holding_before_thesis_break_sessions": 63,
+    "hard_risk_stop_return": -0.25,
+    "max_holding_sessions": 378,
+    "take_profit_target": null,
+    "thesis_break": "CLOSE_BELOW_SMA200_AND_PERF_6M_LE_0",
+    "execution": "CLOSE"
+  },
+  "operational_cdc_overlay": {
+    "aum_warning_below_eur_m": 50,
+    "broad_ter_warning_pct": 0.25,
+    "theme_factor_ter_warning_pct": 0.50,
+    "tracking_difference_required_when_available": true,
+    "lookthrough_top10_required_when_available": true,
+    "overlap_required_when_portfolio_context_available": true,
+    "replication_documentation_required": true,
+    "static_overlay_can_create_historical_signal": false
+  },
+  "governance": {
+    "pit_price_features_required": true,
+    "historical_static_2026_backfill_forbidden": true,
+    "survivorship_bias_label_required": true,
+    "no_real_orders": true,
+    "compare_to_frozen_grok_v1_benchmark": true
+  }
+}
