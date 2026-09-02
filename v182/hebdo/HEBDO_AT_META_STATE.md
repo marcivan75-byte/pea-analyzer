@@ -1,222 +1,217 @@
 # Hebdo AT Meta — état de référence
 
-Dernière consolidation: 2026-09-01
-Branche de référence: `hebdo-at-meta`
+Dernière consolidation : **2026-09-02**  
+Branche de référence : `hebdo-at-meta`
 
-## Règle de gouvernance
+## Gouvernance
 
-Ce document est la porte d'entrée de l'état courant de Hebdo AT Meta.
+Ce document est la porte d'entrée de l'état courant de HEBDO AT META.
 
-Lorsqu'une directive ancienne provenant d'un chat, d'une note ou d'un artefact est rappelée, elle ne doit **jamais** être réintroduite automatiquement dans le process. Elle doit d'abord être confrontée aux éléments plus récents selon l'ordre de priorité suivant:
+Ordre de priorité en cas de conflit :
 
-1. code et workflow présents au HEAD de `hebdo-at-meta`;
-2. résultats des runs GitHub Actions réussis correspondant au HEAD ou à ses ancêtres récents;
-3. décisions Work les plus récentes récupérables et datées;
-4. artefacts publiés et leurs contrats de validation;
-5. seulement ensuite, directives de chats plus anciennes.
+1. code et workflows présents au HEAD de `hebdo-at-meta` ;
+2. runs GitHub Actions réussis correspondant au HEAD ou à ses ancêtres récents ;
+3. dernière décision fonctionnelle Work explicitement identifiée ;
+4. artefacts publiés et contrats de validation ;
+5. anciennes conversations seulement en dernier recours.
 
-En cas de conflit, la décision la plus récente et explicitement validée prévaut. Une règle ancienne non retrouvée dans le process courant est classée `LEGACY_OR_UNRESOLVED`, jamais `ACTIVE` par défaut.
+Aucune modification de recherche ne devient une règle active sans validation distincte. Les résultats 2023–2026 sont **holdout/OOS** et ne doivent jamais être utilisés pour retuner une règle choisie sur 2010–2022.
 
-## État courant vérifié
+## Référence fonctionnelle officielle
 
-### HEAD technique de la branche avant cette mise à jour documentaire
+La dernière référence fonctionnelle explicitement identifiée reste **Audit 73 intégré**.
 
-- Commit: `e495c33be08f88746bbde798b8b7046e1174e169`
-- Message: `test(audit73): forbid Finnhub token leakage in failures`
-- Date: 2026-09-01T20:47:52Z
-- Nature: consolidation technique post-Audit 73 des couches de conservation PIT Boursorama/Finnhub et de la méthodologie de comparaison des filtres. Ces commits techniques ne constituent pas à eux seuls un Audit 74 métier.
+Décision fonctionnelle à préserver : conservation chronologique PIT de l'historique consensus Boursorama, sans antidatation, sans remplacement rétroactif d'une valeur absente et sans activation automatique du consensus dans le scoring.
 
-### Référence fonctionnelle Work — Audit 73
+Les travaux techniques et études postérieurs décrits ci-dessous sont une **consolidation de recherche post-Audit 73**. Ils ne constituent pas un Audit 74 métier.
 
-La dernière référence fonctionnelle officielle communiquée par Work pour `HEBDO AT META` est **Audit 73 intégré**.
+## Règles PIT et historique
 
-Référence communiquée:
+- développement / fit : **2010–2022 uniquement** ;
+- holdout / OOS : **2023–2026**, évaluation uniquement ;
+- PIT / anti-look-ahead obligatoire ;
+- aucune donnée future utilisée pour combler une donnée manquante ;
+- aucune imputation synthétique dans les études longitudinales ;
+- données OHLCV incomplètes ou incohérentes exclues fail-closed ;
+- toute comparaison dépendant d'une donnée consensus/fondamentale doit utiliser une cohorte disposant réellement de cette donnée à la date de décision.
 
-- commit court annoncé: `f456281`;
-- message annoncé: `audit73(hebdo-meta): preserve Boursorama consensus history`;
-- statut fonctionnel: **référence officielle Audit 73 à préserver**;
-- particularité: conservation de l'historique du consensus Boursorama.
+Corpus gouverné PRE2023 :
+- run `33550367844` — SUCCESS ;
+- développement 2010–2022.
 
-Le SHA court `f456281` n'est actuellement pas résolu par l'historique GitHub accessible de `marcivan75-byte/pea-analyzer`. Cette absence de résolution ne doit pas conduire à déclasser Audit 73 ni à effacer sa décision fonctionnelle. Elle doit être traitée comme une anomalie de traçabilité Git à investiguer.
+Qualité longitudinalement vérifiée :
+- développement : `4 055 044` lignes utilisables, `1 623` tickers, aucune ligne imputée ;
+- holdout : `1 578 718` lignes utilisables, `1 782` tickers ;
+- `2 143` lignes holdout incomplètes/non fiables exclues ;
+- aucune imputation.
 
-Les commits techniques ultérieurs présents sur `hebdo-at-meta` (PRE2023, accès gouverné 2010-2026, CI, conservation PIT et études V4) **ne sont pas assimilés à un Audit 74** sauf décision fonctionnelle Work explicite.
+## Consensus Audit 73
 
-### Statut Boursorama après Audit 73
+### Boursorama
 
-Audit 73 impose de **préserver l'historique du consensus Boursorama**. En conséquence:
+L'historique Boursorama doit rester append-only et PIT. Les périodes relatives FactSet ne reçoivent jamais de fausse date historique.
 
-- l'historique Boursorama n'est plus classé `LEGACY_OR_UNRESOLVED` en tant que donnée/historique à conserver;
-- sa collecte, sa conservation chronologique et sa traçabilité PIT doivent être préservées lorsque disponibles;
-- aucune observation historique ne doit être remplacée rétroactivement par la dernière valeur connue;
-- l'absence d'une valeur historique ne doit pas être comblée avec une valeur future;
-- la conservation de cet historique ne signifie pas automatiquement que `consensus BUY/STRONG_BUY`, le potentiel, les révisions ou le nombre d'analystes sont des **critères de scoring actifs** du moteur Meta courant.
+### Finnhub
 
-La conservation Boursorama est désormais branchée sur le collecteur sélectionné réellement utilisé par CI LIGHT V4. Une réponse consensus live réussie peut ajouter un snapshot Audit 73; une lecture de cache ou un échec live ne doit pas fabriquer de nouveau point historique. Les colonnes FactSet relatives restent relatives et ne reçoivent pas de fausse date historique. Le timestamp PIT d'une capture est pris après la réponse HTTP réussie.
+Le sidecar historique conserve les séries réellement récupérées avec séparation entre `provider_period` et `available_at`. L'identité Finnhub est fail-closed : aucun symbole n'est certifié sans correspondance ISIN exacte.
 
-Le moteur `v182/hebdo/hebdo_at_meta.py` ne référence pas directement une colonne Boursorama/consensus parmi ses colonnes obligatoires. Toute promotion du consensus Boursorama en filtre, bonus, pondération ou critère décisionnel actif doit donc rester séparée de la conservation historique.
+### Limite historique démontrée
 
-### Consolidation méthodologique post-Audit 73 — V4 recherche
+Run longitudinal Audit 73 : `33596161484` — SUCCESS.
 
-Le module de recherche `src/v182/backtest/hebdo_meta_consensus_gate_audit73_v4.py` corrige un biais de comparaison important: un filtre fondamental/consensus ne peut agir que sur les trades disposant d'un snapshot PIT, alors que le J+1 complet peut inclure des trades sans historique PIT.
+Les snapshots consensus certifiés récupérables commencent seulement fin août 2026, alors que les signaux J+1 suffisamment matures du backtest s'arrêtent au premier semestre 2026. Il n'existe donc **aucun chevauchement PIT historique exploitable** permettant d'attribuer une performance aux filtres objectif/consensus.
 
-La V4 impose donc:
+Conséquence : les variantes objectif >20 %, consensus positif, amélioration du consensus et seuils d'analystes restent **FORWARD_RESEARCH_ONLY**. Aucune valeur actuelle ne doit être appliquée rétrospectivement.
 
-- une baseline `J1_PIT_COVERED_BASELINE`;
-- une comparaison like-for-like des variantes filtrées contre la cohorte J+1 réellement couverte par PIT;
-- la séparation explicite des trades non évaluables faute de PIT et des trades réellement rejetés par le filtre;
-- l'interdiction de présenter comme alpha du filtre un effet provenant simplement de l'absence de couverture historique;
-- des deltas explicites d'espérance, win rate, PF et RR versus la baseline J+1 PIT comparable;
-- l'interdiction de sélectionner a posteriori le seuil du nombre d'analystes à partir du même échantillon comme s'il s'agissait d'un paramètre validé.
+## TABPORT — référence technique
 
-Validation CI:
+Chaîne de référence :
 
-- workflow: `HEBDO AT META Audit73 consensus PIT`;
-- run V4 like-for-like: `33556971267`;
-- statut: `success`.
+`B_V2 -> META -> confirmation J+1 -> TABPORT`
 
-Cette V4 est une **couche de recherche/évaluation**, pas une activation des filtres dans le scoring de production.
+Paramètres conservés :
+- capital initial : `65 000 EUR` ;
+- maximum : `12` lignes ;
+- maximum par ligne : `4 500 EUR` ;
+- `5` entrées/mois ;
+- `40` entrées/an ;
+- frais : `0,20 %` par côté ;
+- slippage : `0,10 %` par côté ;
+- stop fixe : `-9 %` ;
+- horizon maximum de référence : **126 séances**.
 
-### Statut Finnhub après audit de conservation
+Longitudinal 2010–2026 de référence :
+- 556 trades ;
+- win rate 38,49 % ;
+- espérance +3,10 % / trade ;
+- PF 1,55 ;
+- RR 2,48 ;
+- rendement cumulé +118,18 % ;
+- drawdown max -17,82 % ;
+- performance annualisée approximative ~4,8 %/an.
 
-Le module historique `src/v182/sources/finnhub_consensus.py` utilise bien `stock/recommendation` et calcule notamment consensus courant, variation 4 semaines et `net_upgrades_30d`. L'audit a cependant confirmé que le chemin courant réduit la série mensuelle renvoyée par Finnhub au dernier état plus un point de comparaison, ce qui perd les autres mois dans la normalisation courante.
+Cette performance reste très inférieure à l'objectif économique du projet (>15 % net annuel, RR de préférence >3,3). La baseline est donc une **référence technique**, pas un modèle final suffisamment performant.
 
-Le sidecar `src/v182/sources/finnhub_recommendation_history_audit73.py` a donc été ajouté afin de préserver, sans influence sur le scoring:
+## Consolidation des études post-Audit 73
 
-- chaque ligne mensuelle retournée par Finnhub;
-- la `provider_period` fournie par Finnhub;
-- l'heure réelle de récupération `available_at` séparément;
-- les distributions strong buy / buy / hold / sell / strong sell et le nombre total d'analystes;
-- le SHA de la capture et la provenance;
-- une conservation append-only au niveau de chaque événement réel de récupération;
-- l'interdiction d'utiliser la période fournisseur comme timestamp de connaissance PIT;
-- le masquage des secrets/token dans les messages d'erreur.
+### 1. Garde-fous au niveau du titre
 
-Validation CI:
+Les filtres simples `vol_z`, ATR et probabilité de stop ne sont pas suffisamment robustes. Une combinaison volume + risque améliore certains agrégats OOS mais n'est pas stable dans le temps.
 
-- workflow: `HEBDO AT META Audit73 consensus PIT`;
-- run: `33557406778`;
-- statut: `success`;
-- compilation, tests Boursorama, tests Finnhub, persistance production Boursorama et strict PIT: tous `success`.
+Décision : **RESEARCH_ONLY / NON PROMU**.
 
-Le sidecar Finnhub reste volontairement à `production_scoring_influence = 0.0`. Il n'est pas encore branché à une collecte live récurrente, car `inputs/CI_LIGHT_UNIVERSE_V4.csv` fournit ISIN/nom/classe/horizon mais pas un symbole Finnhub certifié. Une activation live avant résolution fiable ISIN -> symbole Finnhub créerait un risque de mauvaise identité et est donc bloquée fail-closed.
+### 2. Régime de marché
 
-### TABPORT enrichi
+Les filtres imposant un marché « sain » dégradent fortement le holdout. La stratégie B/META bénéficie précisément de phases de capitulation/rebond ; filtrer les marchés faibles supprime des gagnants importants.
 
-Publication validée:
+Décision : **REJETÉ comme filtre de production**.
 
-- workflow: `TABPORT enriched publication`
-- run: `33549108644`
-- commit de publication: `68bcad1cefd60816ad0ab81df58ba5c48b549523`
-- statut: `success`
-- artefact: `TABPORT-ENRICHI-33549108644`
+### 3. Capitulation × confirmation J+1
 
-Chaîne publiée au moment de cette validation:
+Run `33600934483` — SUCCESS, 65 tests, artefact `9835407118`.
 
-`B_V2 -> META -> confirmation J+1 -> TABPORT stop fixe 0.9`
+Meilleure variante agrégée observée : `J1_INTRADAY_GE_DEV_Q50` :
+- PF OOS 2,064 ;
+- RR 2,479 ;
+- espérance +5,466 % ;
+- rendement segment +23,356 % ;
+- DD -6,992 %.
 
-Le workflow publie et valide notamment:
+Mais l'avantage annuel n'est pas stable et provient surtout de 2024.
 
-- baseline TABPORT enrichi;
-- matrice anti-faux-positifs;
-- attribution appariée;
-- walk-forward;
-- stop-risk overlay;
-- flat-EV tie-break;
-- convexité calibrée;
-- convexité continue;
-- décision de stop gouvernée;
-- ledger, NAV, résultats trimestriels et annuels.
+Décision : **RESEARCH_ONLY / NON PROMU**.
 
-Résultats globaux publiés de ce run:
+### 4. Sorties précoces / gestion post-entrée
 
-- 88 trades;
-- 41 gains / 47 pertes ou faux positifs;
-- win rate 46.59%;
-- gain moyen +21.87%;
-- perte moyenne -9.63%;
-- espérance +5.05% par trade;
-- PF 1.99;
-- RR/payoff 2.27;
-- P&L net +19 845 EUR;
-- capital 65 000 EUR -> 84 845 EUR;
-- performance +30.53%;
-- drawdown maximal -13.08%.
+Run `33602199980` — SUCCESS, 69 tests, artefact `9835942857`.
 
-La stabilité interannuelle reste un point de vigilance, notamment 2025.
+Les variantes `FAIL_FAST_J2`, invalidation structurelle, momentum J3, break-even/trailing et leurs combinaisons dégradent la performance OOS par rapport à la baseline.
 
-### Gouvernance historique / PRE2023
+Conclusion : les sorties précoces détruisent une partie de la convexité des rares gros gagnants.
 
-Architecture de recherche retenue:
+Décision : **REJETÉES ; conserver la logique de sortie baseline**.
 
-- 2010-2022: développement et backtests;
-- 2023-2026: holdout / OOS uniquement;
-- interdiction de retuner sur 2023-2026;
-- rapports longitudinaux autorisés uniquement avec segmentation explicite;
-- PIT / anti-look-ahead obligatoires;
-- comportement fail-closed en cas de donnée historique insuffisante ou invalide.
+### 5. Reclassement des candidats sans exclusion
 
-Le corpus Yahoo PRE2023 gouverné a été construit et validé:
+Run `33608312167` — SUCCESS, artefact `9838303060`.
 
-- workflow: `PRE2023 Yahoo development corpus`;
-- run: `33550367844`;
-- commit: `98bbf4b3508f2239e6f34680f9dc309d4732382c`;
-- statut: `success`.
+Famille figée : baseline EV, EV + J1, EV + risque, EV + J1 + risque, EV + J1 + volume, variante équilibrée.
 
-Le corpus brut 2010-2022 exclut fail-closed les lignes OHLCV invalides/incomplètes et ne doit pas injecter de données >=2023 dans le développement.
+Le modèle choisi uniquement sur 2010–2022 est **BASELINE_EV** avec le meilleur objectif développement (`20,2942`). Les variantes ayant de meilleurs agrégats ponctuels sur le holdout ne peuvent pas être promues a posteriori.
 
-L'accès gouverné 2010-2026 conserve la séparation développement 2010-2022 / holdout 2023-2026 et le blocage du fit sur le holdout.
+Décision : **conserver le classement baseline**.
 
-## Contraintes Work récentes à préserver
+### 6. Horizon de détention 63 / 126 / 189 / 252 séances
 
-- Audit 73 est la référence fonctionnelle officielle tant qu'un audit métier ultérieur n'est pas explicitement identifié;
-- préserver l'historique du consensus Boursorama conformément à Audit 73;
-- préserver les séries Finnhub récupérées sans antidater leur disponibilité;
-- PIT T-1 22h Paris pour les données utilisées dans la décision;
-- fail-closed si historique requis incomplet;
-- pas de TCT exploitable sans Meta temporel/OOS dûment entraîné;
-- aucun résultat historique ne doit être publié à partir de snapshots/features non réellement disponibles à la date simulée;
-- les données réelles du cache historique doivent être privilégiées aux reconstructions artificielles;
-- toute comparaison d'un filtre dépendant de données PIT doit utiliser une baseline comparable sur la même cohorte couverte.
+Run `33620294387` — **SUCCESS**, 68 tests.  
+Artefact : `TABPORT-HOLD-HORIZON-33620294387`, ID `9842895680`.  
+Résultats détaillés : `TABPORT_HOLD_HORIZON_DEV_ONLY_RESULTS.md`.
 
-Paramètres TABPORT implémentés au stade de validation du 1er septembre 2026:
+Cohorte commune :
+- 4 380 signaux confirmés en entrée ;
+- 4 168 signaux disposent d'au moins 252 séances futures par titre ;
+- 212 signaux exclus pour maturité insuffisante ;
+- dernière date de signal commune : `2025-08-25` ;
+- zéro sortie `EOP_DATA_END` pour les quatre variantes.
 
-- capital initial: 65 000 EUR;
-- 12 lignes;
-- 4 500 EUR par ligne;
-- 5 entrées/mois;
-- 40/an;
-- frais 0.20% par côté;
-- slippage 0.10%;
-- stop fixe -9%;
-- maturité 126 séances.
+Objectif développement 2011–2022 :
+- H63 : `6,9133` ;
+- **H126_BASELINE : `20,2942`** ;
+- H189 : `17,5063` ;
+- H252 : `19,8741`.
 
-## Règles de recherche non automatiquement actives
+Décision ex ante : **H126_BASELINE reste sélectionné**.
 
-La **conservation de l'historique Boursorama est acquise par Audit 73** et la conservation lossless Finnhub est désormais techniquement validée en sidecar. En revanche, les usages décisionnels suivants sont des variantes de recherche et ne doivent pas être déclarés `ACTIVE` dans le scoring de production sans validation distincte:
+Observations OOS sur cohorte commune :
+- H126 : PF 1,578 ; RR 1,845 ; espérance +2,71 % ; rendement +9,72 % ; DD -6,98 % ;
+- H189 : PF 2,176 ; RR 3,228 ; espérance +7,10 % ; rendement +19,63 % ; DD -7,58 % ;
+- H252 : PF 1,747 ; RR 3,478 ; espérance +5,36 % ; rendement +12,32 % ; DD -5,46 %.
 
-- objectif médian >= +20%;
-- filtre consensus BUY/STRONG_BUY;
-- bonus/filtre de révision de consensus;
-- nombre d'analystes comme mesure de confiance;
-- WAIT en cas de données fondamentales absentes;
-- collecte Boursorama/Finnhub uniquement sur les finalistes Meta;
-- chaîne J -> J+1 -> filtre fondamental -> entrée J+2.
+H189 est très intéressant OOS et H252 apporte de la convexité, mais aucun des deux n'a gagné la sélection développement. Ils restent **RESEARCH_ONLY**. H63 est rejeté.
 
-Le protocole de simulation de recherche doit tester progressivement ces variantes dans l'ordre technique -> J+1 -> objectif >20% -> consensus positif -> amélioration du consensus -> nombre d'analystes, sur fenêtre strictement PIT et avec baseline comparable.
+Les lignes annuelles 2026 de cette étude correspondent à des sorties de positions issues de signaux antérieurs au 25 août 2025 ; elles ne constituent pas une validation indépendante de génération de signaux 2026.
 
-## Discipline de mise à jour
+## État de décision au 2 septembre 2026
 
-À chaque reprise du projet:
+Aucune étude post-Audit 73 n'a justifié une modification de production.
 
-1. relire le HEAD `hebdo-at-meta`;
-2. identifier séparément le dernier commit technique et la dernière référence fonctionnelle Work;
-3. vérifier les derniers runs Actions;
-4. récupérer les décisions Work récentes disponibles;
-5. comparer leur chronologie;
-6. préserver explicitement les acquis Audit 73, notamment l'historique Boursorama;
-7. préserver sans antidatation les séries mensuelles Finnhub réellement récupérées;
-8. imposer une cohorte PIT comparable pour toute attribution d'effet aux filtres consensus/fondamentaux;
-9. mettre à jour ce document si l'état de référence change;
-10. seulement ensuite proposer ou appliquer une modification du process.
+**Baseline active de référence :**
+- sélection / classement EV existant ;
+- confirmation J+1 existante ;
+- stop fixe -9 % ;
+- horizon maximum 126 séances ;
+- capacité 12 lignes / 5 entrées par mois / 40 par an ;
+- aucune sortie précoce supplémentaire ;
+- aucun filtre de régime marché ;
+- aucun filtre consensus rétroactif.
 
-Aucun ancien extrait de conversation ne doit, à lui seul, remplacer l'état courant vérifié; inversement, un commit purement technique ultérieur ne doit pas être présenté comme une nouvelle version fonctionnelle sans preuve.
+Pistes conservées uniquement en recherche :
+- H189 ;
+- H252 / convexité longue ;
+- combinaison volume + risque ;
+- confirmation J1 intraday forte ;
+- consensus Boursorama/Finnhub en forward validation réelle.
+
+## Prochain axe autorisé
+
+Les études d'entrée, de régime, de sortie, de reclassement et d'horizon montrent que la baseline est difficile à battre sous sélection ex ante stricte.
+
+Le prochain axe de recherche doit donc porter sur **l'allocation du capital / dimensionnement des positions**, en conservant :
+- le même univers de signaux ;
+- le classement baseline ;
+- les sorties baseline ;
+- l'horizon 126 séances ;
+- le stop -9 % ;
+- la séparation développement 2010–2022 / holdout 2023–2026.
+
+Aucun paramètre d'allocation ne devra être choisi sur le holdout.
+
+## Discipline de reprise
+
+À chaque reprise :
+1. relire le HEAD `hebdo-at-meta` ;
+2. vérifier les derniers runs Actions ;
+3. préserver Audit 73 comme référence fonctionnelle tant qu'aucun audit métier ultérieur n'est explicitement validé ;
+4. préserver PIT/no-look-ahead et la séparation 2010–2022 / 2023–2026 ;
+5. ne promouvoir aucune variante à partir d'un meilleur résultat holdout observé a posteriori ;
+6. mettre à jour ce document après toute validation qui change réellement l'état de référence.
