@@ -33,6 +33,9 @@ class InstrumentQuality:
     ohlc_invariant_violations: int
     max_business_day_gap: int
     mt_756_sessions_available: bool
+    close_only_quality_pass: bool
+    mt_close_only_ready: bool
+    full_ohlc_quality_pass: bool
     quality_pass: bool
 
 
@@ -102,8 +105,9 @@ def audit_history(isin: str, ticker: str, frame: pd.DataFrame, cfg: dict) -> Ins
     l = pd.to_numeric(out["low"], errors="coerce")
     c = close
     comparable = o.notna() & h.notna() & l.notna() & c.notna()
+    gates = cfg["quality_gates"]
     scale = pd.concat([o.abs(), h.abs(), l.abs(), c.abs()], axis=1).max(axis=1).fillna(0.0)
-    tol = (scale * 1e-6).clip(lower=1e-8)
+    tol = float(gates["ohlc_rounding_absolute_tolerance"]) + scale * float(gates["ohlc_rounding_relative_tolerance"])
     invariant_bad = comparable & (
         (h + tol < l)
         | (h + tol < o)
@@ -120,16 +124,17 @@ def audit_history(isin: str, ticker: str, frame: pd.DataFrame, cfg: dict) -> Ins
             gap = max(0, len(pd.bdate_range(prev, cur)) - 2)
             max_gap = max(max_gap, gap)
 
-    gates = cfg["quality_gates"]
-    passed = (
+    close_only_pass = (
         close_cov >= float(gates["minimum_price_coverage_pct"])
         and volume_cov >= float(gates["minimum_volume_coverage_pct"])
         and dupes <= int(gates["maximum_duplicate_dates_per_instrument"])
         and nonpositive <= int(gates["maximum_nonpositive_close_rows"])
         and negative_volume <= int(gates["maximum_negative_volume_rows"])
-        and ohlc_bad <= int(gates["maximum_ohlc_invariant_violations"])
         and max_gap <= int(gates["maximum_internal_gap_business_days"])
     )
+    mt_depth = rows >= int(gates["minimum_history_sessions_for_mt"])
+    full_ohlc_pass = close_only_pass and ohlc_bad <= int(gates["full_ohlc_maximum_invariant_violations"])
+    mt_ready = bool(close_only_pass and mt_depth)
     return InstrumentQuality(
         isin=str(isin), ticker=str(ticker), rows=rows,
         first_date=None if not rows else str(out["date"].iloc[0].date()),
@@ -138,8 +143,11 @@ def audit_history(isin: str, ticker: str, frame: pd.DataFrame, cfg: dict) -> Ins
         zero_volume_pct=round(zero_volume, 4), duplicate_dates=dupes,
         nonpositive_close_rows=nonpositive, negative_volume_rows=negative_volume,
         ohlc_invariant_violations=ohlc_bad, max_business_day_gap=max_gap,
-        mt_756_sessions_available=rows >= int(gates["minimum_history_sessions_for_mt"]),
-        quality_pass=bool(passed),
+        mt_756_sessions_available=mt_depth,
+        close_only_quality_pass=bool(close_only_pass),
+        mt_close_only_ready=mt_ready,
+        full_ohlc_quality_pass=bool(full_ohlc_pass),
+        quality_pass=bool(close_only_pass),
     )
 
 
@@ -246,7 +254,7 @@ def build(root: Path = ROOT, *, refresh: bool = True, limit: int | None = None) 
     promotion_eligible = bool(
         promotion_ready_membership
         and len(quality_df)
-        and quality_df["quality_pass"].fillna(False).all()
+        and quality_df["mt_close_only_ready"].fillna(False).any()
         and not failures
     )
     manifest = {
@@ -254,13 +262,16 @@ def build(root: Path = ROOT, *, refresh: bool = True, limit: int | None = None) 
         "source": cfg["source"], "history_policy": cfg["history"],
         "requested_instruments": int(len(valid)), "ticker_mapping_gaps": int(len(gaps)),
         "built_instruments": int((quality_df["rows"] > 0).sum()) if len(quality_df) else 0,
-        "quality_pass_instruments": int(quality_df["quality_pass"].sum()) if len(quality_df) else 0,
+        "close_only_quality_pass_instruments": int(quality_df["close_only_quality_pass"].sum()) if len(quality_df) else 0,
+        "full_ohlc_quality_pass_instruments": int(quality_df["full_ohlc_quality_pass"].sum()) if len(quality_df) else 0,
         "mt_756_sessions_instruments": int(quality_df["mt_756_sessions_available"].sum()) if len(quality_df) else 0,
+        "mt_close_only_ready_instruments": int(quality_df["mt_close_only_ready"].sum()) if len(quality_df) else 0,
         "download_failures": failures,
         "pit_membership_complete": promotion_ready_membership,
         "promotion_eligible": promotion_eligible,
         "promotion_block_reason": None if promotion_eligible else "PIT_MEMBERSHIP_OR_DATA_QUALITY_INCOMPLETE",
         "current_universe_reconstruction_promotion_eligible": False,
+        "quality_profiles": cfg["quality_profiles"],
         "files": {
             "quality": {"path": str(quality_path.relative_to(root)), "sha256": _sha256(quality_path)},
             "membership": {"path": str(membership_path.relative_to(root)), "sha256": _sha256(membership_path)},
@@ -278,7 +289,12 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=None, help="Limit instruments for smoke tests")
     args = parser.parse_args(list(argv) if argv is not None else None)
     manifest = build(refresh=not args.no_refresh, limit=args.limit)
-    print(json.dumps({k: manifest[k] for k in ["requested_instruments", "built_instruments", "quality_pass_instruments", "mt_756_sessions_instruments", "pit_membership_complete", "promotion_eligible"]}, indent=2))
+    keys = [
+        "requested_instruments", "built_instruments", "close_only_quality_pass_instruments",
+        "full_ohlc_quality_pass_instruments", "mt_756_sessions_instruments", "mt_close_only_ready_instruments",
+        "pit_membership_complete", "promotion_eligible",
+    ]
+    print(json.dumps({k: manifest[k] for k in keys}, indent=2))
     return 0
 
 
