@@ -52,8 +52,13 @@ def rerank(x: pd.DataFrame, weights: tuple[float,float,float,float]) -> pd.DataF
     return ranked
 
 
+def _year_number(s: pd.Series) -> pd.Series:
+    """Accept period_table year labels such as '2010', '2010-12-31' or numeric."""
+    return pd.to_numeric(s.astype(str).str.extract(r"(\d{4})", expand=False), errors="coerce")
+
+
 def _objective(yearly: pd.DataFrame) -> float:
-    y=yearly.copy(); y=y[(y["periode"]>=2011)&(y["periode"]<=2022)]
+    y=yearly.copy(); years=_year_number(y["periode"]); y=y[(years>=2011)&(years<=2022)]
     if y.empty: return -1e9
     r=pd.to_numeric(y["rendement_portefeuille_pct"],errors="coerce").dropna()
     if r.empty: return -1e9
@@ -64,13 +69,11 @@ def _baseline_control(reference: pd.DataFrame, reranked: pd.DataFrame) -> dict:
     cols=["ticker","entry_date","exit_date","exit_reason","return_net","pnl_net"]
     a=reference[cols].sort_values(["entry_date","ticker","exit_date"]).reset_index(drop=True)
     b=reranked[cols].sort_values(["entry_date","ticker","exit_date"]).reset_index(drop=True)
-    if len(a)!=len(b):
-        raise ValueError(f"BLOCK_RERANK_BASELINE_COUNT:{len(a)}!={len(b)}")
+    if len(a)!=len(b): raise ValueError(f"BLOCK_RERANK_BASELINE_COUNT:{len(a)}!={len(b)}")
     keys=a[["ticker","entry_date","exit_date","exit_reason"]].astype(str).equals(b[["ticker","entry_date","exit_date","exit_reason"]].astype(str))
     max_ret=float(np.max(np.abs(pd.to_numeric(a["return_net"])-pd.to_numeric(b["return_net"])))) if len(a) else 0.0
     max_pnl=float(np.max(np.abs(pd.to_numeric(a["pnl_net"])-pd.to_numeric(b["pnl_net"])))) if len(a) else 0.0
-    if not keys or max_ret>1e-12 or max_pnl>1e-8:
-        raise ValueError(f"BLOCK_RERANK_BASELINE_MISMATCH keys={keys} ret={max_ret} pnl={max_pnl}")
+    if not keys or max_ret>1e-12 or max_pnl>1e-8: raise ValueError(f"BLOCK_RERANK_BASELINE_MISMATCH keys={keys} ret={max_ret} pnl={max_pnl}")
     return {"same_trade_count":True,"same_entry_exit_keys":True,"max_return_delta":max_ret,"max_pnl_delta_eur":max_pnl}
 
 
@@ -85,27 +88,20 @@ def run(pre2023:Path, manifest:Path, holdout_cache:Path, output_dir:Path)->dict:
     reference=Tabport65k(cfg).run(confirmed,prices)["ledger"].copy()
     rows=[]; yearly_parts=[]; ledgers=[]; model_dev_scores={}; baseline_control=None
     for model,w in CANDIDATES.items():
-        chosen=rerank(confirmed,w)
-        result=Tabport65k(cfg).run(chosen,prices)
+        chosen=rerank(confirmed,w); result=Tabport65k(cfg).run(chosen,prices)
         ledger=result["ledger"].copy(); nav=result["equity"].copy(); ledger["model"]=model; ledgers.append(ledger)
         if model=="BASELINE_EV": baseline_control=_baseline_control(reference,ledger)
-        ledger["signal_date"]=pd.to_datetime(ledger["signal_date"],utc=True,errors="coerce")
-        nav["date"]=pd.to_datetime(nav["date"],utc=True,errors="coerce")
+        ledger["signal_date"]=pd.to_datetime(ledger["signal_date"],utc=True,errors="coerce"); nav["date"]=pd.to_datetime(nav["date"],utc=True,errors="coerce")
         y=period_table(ledger,nav,"Y"); y.insert(0,"model",model); yearly_parts.append(y)
-        model_dev_scores[model]=_objective(y[y["periode"]<=2022])
+        model_dev_scores[model]=_objective(y)
         for seg,lo,hi in [("DEVELOPMENT_2010_2022",pd.Timestamp("2010-01-01",tz="UTC"),DEV_END),("HOLDOUT_2023_2026",HOLDOUT_START,pd.Timestamp("2100-01-01",tz="UTC"))]:
-            ls=ledger[(ledger["signal_date"]>=lo)&(ledger["signal_date"]<=hi)]
-            ns=nav[(nav["date"]>=lo)&(nav["date"]<=hi)]
+            ls=ledger[(ledger["signal_date"]>=lo)&(ledger["signal_date"]<=hi)]; ns=nav[(nav["date"]>=lo)&(nav["date"]<=hi)]
             rows.append({"model":model,"segment":seg,**overall_summary(ls,ns,initial_cash=cfg.initial_cash)})
     if baseline_control is None: raise ValueError("BLOCK_RERANK_BASELINE_CONTROL_MISSING")
     selected=max(model_dev_scores,key=model_dev_scores.get)
-    pd.DataFrame(rows).to_csv(output_dir/"TABPORT_RERANK_SEGMENTS.csv",index=False)
-    pd.concat(yearly_parts,ignore_index=True).to_csv(output_dir/"TABPORT_RERANK_YEARLY.csv",index=False)
-    pd.concat(ledgers,ignore_index=True).to_csv(output_dir/"TABPORT_RERANK_LEDGERS.csv",index=False)
-    confirmed.to_csv(output_dir/"TABPORT_RERANK_CONFIRMED.csv",index=False)
-    payload={"status":"SUCCESS","version":"TABPORT_RERANK_DEV_ONLY_V2","selected_on_development_only":selected,"development_objective":model_dev_scores,"candidate_weights":CANDIDATES,"baseline_control":baseline_control,"governance":{"fit_window":"2010-2022_ONLY","holdout":"2023-2026_EVALUATION_ONLY","holdout_used_for_candidate_or_weight_selection":False,"same_signal_universe":True,"same_exit_rules":True,"baseline_order_identity_required":True,"production_promotion":False,"synthetic_imputation":False},"quality":quality,"signal_audit":signal_audit}
-    (output_dir/"TABPORT_RERANK_SUMMARY.json").write_text(json.dumps(payload,ensure_ascii=False,indent=2,default=str),encoding="utf-8")
-    return payload
+    pd.DataFrame(rows).to_csv(output_dir/"TABPORT_RERANK_SEGMENTS.csv",index=False); pd.concat(yearly_parts,ignore_index=True).to_csv(output_dir/"TABPORT_RERANK_YEARLY.csv",index=False); pd.concat(ledgers,ignore_index=True).to_csv(output_dir/"TABPORT_RERANK_LEDGERS.csv",index=False); confirmed.to_csv(output_dir/"TABPORT_RERANK_CONFIRMED.csv",index=False)
+    payload={"status":"SUCCESS","version":"TABPORT_RERANK_DEV_ONLY_V3","selected_on_development_only":selected,"development_objective":model_dev_scores,"candidate_weights":CANDIDATES,"baseline_control":baseline_control,"governance":{"fit_window":"2010-2022_ONLY","holdout":"2023-2026_EVALUATION_ONLY","holdout_used_for_candidate_or_weight_selection":False,"same_signal_universe":True,"same_exit_rules":True,"baseline_order_identity_required":True,"production_promotion":False,"synthetic_imputation":False},"quality":quality,"signal_audit":signal_audit}
+    (output_dir/"TABPORT_RERANK_SUMMARY.json").write_text(json.dumps(payload,ensure_ascii=False,indent=2,default=str),encoding="utf-8"); return payload
 
 
 def main():
