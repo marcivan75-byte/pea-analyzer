@@ -1,0 +1,79 @@
+{
+  "version": "ETF_BACKTEST_BASE_V1_2026_09_03",
+  "status": "RESEARCH_DATA_FOUNDATION_NO_REAL_ORDERS",
+  "scope": "PEA_ETF_BACKTEST",
+  "history": {
+    "start": "2010-01-01",
+    "end": null,
+    "interval": "1d",
+    "rolling_trim_forbidden": true,
+    "append_only": true,
+    "preserve_raw_ohlc": true,
+    "preserve_adjusted_close": true,
+    "preserve_volume": true,
+    "preserve_dividends": true,
+    "preserve_splits": true
+  },
+  "source": {
+    "primary": "yfinance",
+    "auto_adjust": false,
+    "actions": true,
+    "fallbacks": ["marketstack", "alpha_vantage", "issuer_or_exchange"],
+    "source_attribution_required": true
+  },
+  "identity": {
+    "primary_key": "isin",
+    "ticker_mapping_required": true,
+    "historical_ticker_aliases_supported": true,
+    "duplicate_isin_forbidden": true
+  },
+  "pit_governance": {
+    "survivorship_bias_protection_required": true,
+    "membership_start_required_for_promotion": true,
+    "membership_end_supported": true,
+    "pea_eligibility_as_of_required_for_promotion": true,
+    "unknown_membership_status": "RESEARCH_ONLY_CURRENT_UNIVERSE_RECONSTRUCTION",
+    "current_universe_reconstruction_promotion_eligible": false,
+    "lookahead_forbidden": true,
+    "same_day_close_execution_forbidden": true
+  },
+  "quality_gates": {
+    "minimum_price_coverage_pct": 95.0,
+    "minimum_volume_coverage_pct": 90.0,
+    "minimum_history_sessions_for_mt": 756,
+    "maximum_duplicate_dates_per_instrument": 0,
+    "maximum_nonpositive_close_rows": 0,
+    "maximum_negative_volume_rows": 0,
+    "maximum_internal_gap_business_days": 10,
+    "full_ohlc_maximum_invariant_violations": 0,
+    "ohlc_rounding_absolute_tolerance": 0.005,
+    "ohlc_rounding_relative_tolerance": 0.0001,
+    "block_promotion_on_missing_membership_dates": true
+  },
+  "quality_profiles": {
+    "ETF_MT_CLOSE_ONLY": {
+      "uses": ["close", "adj_close", "volume"],
+      "ohlc_invariants_required": false,
+      "minimum_history_sessions": 756
+    },
+    "FULL_OHLC_RESEARCH": {
+      "uses": ["open", "high", "low", "close", "adj_close", "volume"],
+      "ohlc_invariants_required": true,
+      "minimum_history_sessions": 1
+    }
+  },
+  "outputs": {
+    "root": "data/backtest/etf_base_v1",
+    "prices": "prices",
+    "corporate_actions": "corporate_actions",
+    "instrument_quality": "ETF_BACKTEST_INSTRUMENT_QUALITY.csv",
+    "manifest": "ETF_BACKTEST_BASE_MANIFEST.json",
+    "pit_membership_template": "ETF_PIT_MEMBERSHIP.csv"
+  },
+  "governance": {
+    "no_real_orders": true,
+    "no_score_weight_changes": true,
+    "no_model_promotion_from_data_build_alone": true,
+    "holdout_policy_unchanged": true
+  }
+}

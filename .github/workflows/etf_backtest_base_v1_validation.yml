@@ -1,0 +1,52 @@
+name: ETF Backtest Base V1 Validation
+
+on:
+  pull_request:
+    paths:
+      - 'config/ETF_BACKTEST_BASE_V1.json'
+      - 'src/v182/backtest/etf_backtest_base_v1.py'
+      - 'tests/test_etf_backtest_base_v1.py'
+      - 'docs/ETF_BACKTEST_BASE_V1_AUDIT.md'
+      - '.github/workflows/etf_backtest_base_v1_validation.yml'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -e . pytest
+      - name: JSON contract
+        run: python -m json.tool config/ETF_BACKTEST_BASE_V1.json >/dev/null
+      - name: Compile
+        run: python -m py_compile src/v182/backtest/etf_backtest_base_v1.py
+      - name: Unit integrity tests
+        run: pytest -q tests/test_etf_backtest_base_v1.py
+      - name: Full ETF raw OHLCV audit from 2010
+        run: python -m v182.backtest.etf_backtest_base_v1
+      - name: Verify manifest governance
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('data/backtest/etf_base_v1/ETF_BACKTEST_BASE_MANIFEST.json')
+          m=json.loads(p.read_text())
+          assert m['requested_instruments'] >= 100
+          assert m['built_instruments'] > 0
+          assert m['close_only_quality_pass_instruments'] > 0
+          assert m['mt_close_only_ready_instruments'] > 0
+          assert m['current_universe_reconstruction_promotion_eligible'] is False
+          assert m['promotion_eligible'] is False
+          keys=['requested_instruments','built_instruments','close_only_quality_pass_instruments','full_ohlc_quality_pass_instruments','mt_756_sessions_instruments','mt_close_only_ready_instruments','ticker_mapping_gaps','pit_membership_complete','promotion_eligible']
+          print({k:m[k] for k in keys})
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ETF_BACKTEST_BASE_V1_FULL_AUDIT
+          path: data/backtest/etf_base_v1/
+          retention-days: 7
