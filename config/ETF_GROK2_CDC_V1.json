@@ -1,15 +1,22 @@
 {
-  "version": "ETF_GROK2_CDC_V1_2026_09_03",
+  "version": "ETF_GROK2_CDC_V2_2026_09_03",
   "status": "RESEARCH_CHALLENGER_NO_REAL_ORDERS",
   "base_model": "20.8.1-grok",
   "cdc_reference": "CDC Selection ETF Moyen Terme v1.0 2026-09-02",
+  "rejected_iteration": {
+    "version": "ETF_GROK2_CDC_V1_2026_09_03",
+    "reason": "THESIS_PROXY_EXIT_REDUCED_WIN_RATE_AND_DEGRADED_2024_2026",
+    "win_rate": 0.6111111111111112,
+    "expectancy": 0.035394212724729104,
+    "profit_factor": 3.567475757244545,
+    "diagnostic_2024_2026_expectancy": -0.006919414589057482
+  },
   "design_principles": {
     "momentum_is_confirmation_not_unique_thesis": true,
     "peer_comparison_required_when_testable": true,
     "lookthrough_required_operationally_but_not_backfilled_without_pit": true,
     "vehicle_quality_required_operationally_but_static_2026_fields_not_backfilled": true,
-    "price_only_stop_is_not_primary_exit": true,
-    "quarterly_review_equivalent_sessions": 63
+    "unvalidated_thesis_exit_not_promoted": true
   },
   "quantitative_core": {
     "group_multipliers": {
@@ -33,12 +40,13 @@
     "peer_group_fields": ["category", "geo_exposure"]
   },
   "exit_policy": {
-    "id": "GROK2_CDC_THESIS_PROXY_Q63_H378_S25",
-    "minimum_holding_before_thesis_break_sessions": 63,
-    "hard_risk_stop_return": -0.25,
-    "max_holding_sessions": 378,
-    "take_profit_target": null,
-    "thesis_break": "CLOSE_BELOW_SMA200_AND_PERF_6M_LE_0",
+    "id": "GROK2_PROVEN_V1_REPLAY_H168_S18_T04",
+    "mode": "PROVEN_V1_REPLAY",
+    "target_return": 0.04,
+    "hard_stop_return": -0.18,
+    "max_holding_sessions": 168,
+    "target_on_close": true,
+    "stop_on_close": true,
     "execution": "CLOSE"
   },
   "operational_cdc_overlay": {
