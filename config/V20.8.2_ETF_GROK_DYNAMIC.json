@@ -1,0 +1,15 @@
+{
+  "version": "V20.8.2_ETF_GROK_DYNAMIC_MISSING_2026_09_03",
+  "base_reference": "V20.8.1_ETF_GROK_HIGH_PRECISION",
+  "cloned_from": "V20.8.2_ETF_MT_DYNAMIC_MISSING_2026_08_12",
+  "status": "SHADOW_ACTIVE_CHALLENGER",
+  "minimum_weighted_coverage": 0.70,
+  "missing_policy": "AVAILABLE_CRITERIA_RENORMALIZED_TO_100_PERCENT",
+  "neutral_imputation_forbidden": true,
+  "selection_threshold": 82.0,
+  "top_n": 2,
+  "regime_gate": "UNCHANGED_FROM_GROK_REFERENCE",
+  "historical_performance_attribution": "NONE_UNTIL_DEDICATED_GROK_PIT_BACKTEST",
+  "reference_core_attribution": "GROK exact complete-38 clone preserves source-model parity only until GROK diverges",
+  "live_orders_enabled": false
+}
