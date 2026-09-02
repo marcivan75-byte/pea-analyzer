@@ -37,11 +37,15 @@ jobs:
           m=json.loads(p.read_text())
           assert m['requested_instruments'] >= 100
           assert m['built_instruments'] > 0
+          assert m['close_only_quality_pass_instruments'] > 0
+          assert m['mt_close_only_ready_instruments'] > 0
           assert m['current_universe_reconstruction_promotion_eligible'] is False
           assert m['promotion_eligible'] is False
-          print({k:m[k] for k in ['requested_instruments','built_instruments','quality_pass_instruments','mt_756_sessions_instruments','ticker_mapping_gaps','pit_membership_complete','promotion_eligible']})
+          keys=['requested_instruments','built_instruments','close_only_quality_pass_instruments','full_ohlc_quality_pass_instruments','mt_756_sessions_instruments','mt_close_only_ready_instruments','ticker_mapping_gaps','pit_membership_complete','promotion_eligible']
+          print({k:m[k] for k in keys})
           PY
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: ETF_BACKTEST_BASE_V1_FULL_AUDIT
           path: data/backtest/etf_base_v1/
