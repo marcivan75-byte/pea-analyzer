@@ -1,0 +1,16 @@
+{
+  "version": "ETF_GROK_V1_OPERATIONAL_RESEARCH_BACKTEST_2026_09_03_R2",
+  "period": "2013-01-01/2026-09-02",
+  "closed_trades": 73,
+  "open_end_of_data": 2,
+  "wins": 66,
+  "win_rate": 0.9041095890410958,
+  "expectancy": 0.027423032482431865,
+  "profit_factor": 4.5693990040624195,
+  "median_net_return": 0.03668732213028636,
+  "max_trade_loss": -0.1945293414751229,
+  "mean_excess_return": 0.0048951962232035235,
+  "duplicate_position_overlap_violations": 0,
+  "promotion_eligible": false,
+  "data_basis": "ETF_BACKTEST_BASE_V1_CURRENT_UNIVERSE_RECONSTRUCTION"
+}
