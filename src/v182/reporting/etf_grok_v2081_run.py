@@ -23,6 +23,10 @@ def _attach_selected_source_context(dynamic_snapshot, etf_with_tickers, root: Pa
     selected = dynamic_snapshot[dynamic_snapshot["dynamic_selected"].fillna(False).astype(bool)].copy()
     if selected.empty:
         return dynamic_snapshot, {"status": "NO_PRESELECTED_ROWS", "decision_influence": False, "score_influence": 0.0}
+    if "isin" not in selected.columns:
+        if "instrument_id" not in selected.columns:
+            raise RuntimeError("ETF_GROK_SELECTED_IDENTITY_MISSING")
+        selected["isin"] = selected["instrument_id"].astype(str)
     selected["asset_class"] = "ETF"
     selected["horizon"] = "GROK"
     selected["decision"] = "SHADOW_CANDIDATE"
@@ -31,8 +35,10 @@ def _attach_selected_source_context(dynamic_snapshot, etf_with_tickers, root: Pa
     source_columns = [c for c in enriched.columns if c.startswith("investing_") or c.startswith("boursorama_")]
     if not source_columns:
         return dynamic_snapshot, context
-    context_rows = enriched[["isin"] + source_columns].drop_duplicates("isin")
-    return dynamic_snapshot.merge(context_rows, on="isin", how="left"), context
+    context_rows = enriched[["isin"] + source_columns].drop_duplicates("isin").rename(columns={"isin": "instrument_id"})
+    if "instrument_id" not in dynamic_snapshot.columns:
+        raise RuntimeError("ETF_GROK_DYNAMIC_IDENTITY_MISSING")
+    return dynamic_snapshot.merge(context_rows, on="instrument_id", how="left"), context
 
 
 def run(
