@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      PYTHONPATH: ${{ github.workspace }}
+      PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/src
       GH_TOKEN: ${{ github.token }}
       PRE2023_ARTIFACT_ID: '9817322742'
     steps:
