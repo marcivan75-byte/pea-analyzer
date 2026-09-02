@@ -9,7 +9,6 @@ from typing import Iterable
 import pandas as pd
 
 from v182.backtest.etf_grok_research_backtest import (
-    COST_PER_SIDE,
     _benchmark_return,
     _load_histories,
     _monthly_signal_dates,
@@ -50,17 +49,32 @@ def _load_json(root: Path, rel: str) -> dict:
 
 def _simulate_grok2_exit(frame: pd.DataFrame, entry_date: pd.Timestamp, entry_price: float, cfg: dict) -> tuple[pd.Timestamp, float, int, str] | None:
     policy = cfg["exit_policy"]
-    min_hold = int(policy["minimum_holding_before_thesis_break_sessions"])
-    hard_stop = float(policy["hard_risk_stop_return"])
-    max_hold = int(policy["max_holding_sessions"])
     close = pd.to_numeric(frame["Close"], errors="coerce").dropna().sort_index()
-    if close.empty:
-        return None
-    sma200 = close.rolling(200).mean()
-    perf6 = close / close.shift(126) - 1.0
     path = close.loc[close.index >= entry_date]
     if path.empty:
         return None
+
+    if policy.get("mode") == "PROVEN_V1_REPLAY":
+        target = float(policy["target_return"])
+        stop = float(policy["hard_stop_return"])
+        max_hold = int(policy["max_holding_sessions"])
+        for i, (d, px) in enumerate(path.items()):
+            px = float(px)
+            ret = px / entry_price - 1.0
+            if ret >= target:
+                return pd.Timestamp(d), px, i, "TARGET_CLOSE"
+            if ret <= stop:
+                return pd.Timestamp(d), px, i, "STOP_CLOSE"
+            if i >= max_hold:
+                return pd.Timestamp(d), px, i, "TIME_CLOSE"
+        return pd.Timestamp(path.index[-1]), float(path.iloc[-1]), max(0, len(path) - 1), "END_OF_DATA"
+
+    # Retained only as an auditable rejected research variant. It is not the active V2 policy.
+    min_hold = int(policy["minimum_holding_before_thesis_break_sessions"])
+    hard_stop = float(policy["hard_risk_stop_return"])
+    max_hold = int(policy["max_holding_sessions"])
+    sma200 = close.rolling(200).mean()
+    perf6 = close / close.shift(126) - 1.0
     for i, (d, px) in enumerate(path.items()):
         px = float(px)
         ret = px / entry_price - 1.0
@@ -82,6 +96,31 @@ def _segment_stats(trades: pd.DataFrame, start: str, end: str) -> dict:
     d = pd.to_datetime(trades["entry_date"], errors="coerce")
     seg = trades.loc[(d >= pd.Timestamp(start)) & (d <= pd.Timestamp(end))]
     return _stats(seg)
+
+
+def _integrity_checks(trades: pd.DataFrame, max_positions: int, max_per_peer: int) -> dict:
+    if trades.empty:
+        return {"same_isin_overlap_violations": 0, "portfolio_capacity_violations": 0, "peer_overlap_violations": 0}
+    t = trades.copy()
+    t["entry_date"] = pd.to_datetime(t["entry_date"])
+    t["exit_date"] = pd.to_datetime(t["exit_date"])
+    same_isin = 0
+    for _, group in t.sort_values("entry_date").groupby("isin"):
+        prior_exit = None
+        for _, row in group.iterrows():
+            if prior_exit is not None and row["entry_date"] <= prior_exit:
+                same_isin += 1
+            prior_exit = row["exit_date"] if prior_exit is None else max(prior_exit, row["exit_date"])
+    dates = sorted(set(t["entry_date"]).union(set(t["exit_date"])))
+    capacity = 0
+    peer_overlap = 0
+    for d in dates:
+        active = t[(t["entry_date"] <= d) & (t["exit_date"] >= d)]
+        if len(active) > max_positions:
+            capacity += 1
+        if not active.empty and active.groupby("peer_group").size().max() > max_per_peer:
+            peer_overlap += 1
+    return {"same_isin_overlap_violations": same_isin, "portfolio_capacity_violations": capacity, "peer_overlap_violations": peer_overlap}
 
 
 def run(root: Path = ROOT, start: str = "2013-01-01", end: str | None = None) -> dict:
@@ -177,6 +216,7 @@ def run(root: Path = ROOT, start: str = "2013-01-01", end: str | None = None) ->
     development = _segment_stats(tdf, "2013-01-01", "2020-12-31")
     validation = _segment_stats(tdf, "2021-01-01", "2023-12-31")
     diagnostic = _segment_stats(tdf, "2024-01-01", end)
+    integrity = _integrity_checks(tdf, max_positions, max_per_peer)
 
     comparison = {
         "win_rate_delta_vs_v1": None if overall.get("win_rate") is None else float(overall["win_rate"] - frozen_v1["win_rate"]),
@@ -193,10 +233,12 @@ def run(root: Path = ROOT, start: str = "2013-01-01", end: str | None = None) ->
         "survivorship_bias_resolved": False,
         "promotion_eligible": False,
         "static_2026_fields_used_in_historical_score": False,
+        "active_exit_policy": g2_cfg["exit_policy"]["id"],
         "start": start,
         "end": end,
         "signal_dates": len(dates),
         "quality_eligible_instruments": len(allowed),
+        "integrity": integrity,
         "overall": overall,
         "development_2013_2020": development,
         "validation_2021_2023": validation,
