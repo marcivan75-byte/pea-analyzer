@@ -37,7 +37,9 @@ jobs:
           assert s['pit_membership_complete'] is False
           assert s['promotion_eligible'] is False
           assert s['entry_execution'] == 'NEXT_SESSION_CLOSE'
-          assert s['trades'] >= 0
+          assert s['duplicate_position_overlap_violations'] == 0
+          assert s['portfolio_max_positions'] == 2
+          assert s['trades_total'] >= s['closed_trades'] >= 0
           print(s)
           PY
       - uses: actions/upload-artifact@v4
