@@ -171,6 +171,85 @@ H189 est très intéressant OOS et H252 apporte de la convexité, mais aucun des
 
 Les lignes annuelles 2026 de cette étude correspondent à des sorties de positions issues de signaux antérieurs au 25 août 2025 ; elles ne constituent pas une validation indépendante de génération de signaux 2026.
 
+### 7. Dimensionnement fixe des positions
+
+Run `33621469608` — **SUCCESS**, 68 tests.  
+Artefact ID `9843367678`.
+
+Famille figée : `3 000`, `3 750`, `4 500`, `5 000`, `5 400 EUR` par ligne. Seul `max_position_eur` change.
+
+Objectif développement :
+- 3 000 : `14,9265` ;
+- 3 750 : `15,1545` ;
+- **4 500 baseline : `15,8383`** ;
+- 5 000 : `15,8065` ;
+- 5 400 : `15,7756`.
+
+Les tailles supérieures augmentent le rendement OOS mais aussi le drawdown. Les tailles inférieures réduisent le risque mais pénalisent davantage le rendement.
+
+Décision : **conserver 4 500 EUR**.
+
+### 8. Sensibilité du stop 7 / 8 / 9 / 10 / 11 %
+
+Run `33631983745` — **SUCCESS**, 67 tests.  
+Artefact ID `9847536688`.
+
+Objectif développement :
+- stop 7 % : `15,6575` ;
+- stop 8 % : `13,3172` ;
+- **stop 9 % baseline : `16,0902`** ;
+- stop 10 % : `12,8343` ;
+- stop 11 % : `14,2939`.
+
+OOS :
+- 7 % : PF 1,139 ; RR 2,670 ; rendement +2,97 % ; DD -9,64 % ;
+- 8 % : PF 1,222 ; RR 2,117 ; rendement +5,74 % ; DD -8,87 % ;
+- **9 % : PF 2,042 ; RR 2,246 ; rendement +19,08 % ; DD -9,85 %** ;
+- 10 % : PF 1,854 ; RR 1,958 ; rendement +14,39 % ; DD -5,77 % ;
+- 11 % : PF 1,322 ; RR 1,813 ; rendement +8,55 % ; DD -7,58 %.
+
+Décision : **conserver le stop -9 %**.
+
+### 9. Dimensionnement adaptatif au risque `prob_stop_9`
+
+Run `33634156295` — **SUCCESS**, 68 tests.  
+Artefact `TABPORT-RISK-SIZING-33634156295`, ID `9848329360`.
+
+Aucun signal n'est filtré ; classement, stop -9 %, horizon 126 séances et sorties sont inchangés. Seul le budget de ligne varie selon `prob_stop_9`, avec seuils appris exclusivement sur 2010–2022 : q33 `0,128813`, q60 `0,178491`, q67 `0,265445`.
+
+Objectif développement :
+- **BASELINE_4500 : `16,8630`** ;
+- HIGH_RISK_3750 : `15,6569` ;
+- HIGH_RISK_3000 : `14,9728` ;
+- THREE_TIER_4500_3750_3000 : `15,0417` ;
+- UPSIDE_5000_4500_3750 : `15,9183`.
+
+OOS :
+- baseline : PF 2,042 ; rendement +19,08 % ; DD -9,85 % ;
+- HIGH_RISK_3750 : PF 2,082 ; rendement +17,65 % ; DD -8,29 % ;
+- HIGH_RISK_3000 : PF 2,109 ; rendement +16,84 % ; DD -6,97 % ;
+- THREE_TIER : PF 2,095 ; rendement +17,17 % ; DD -7,31 % ;
+- UPSIDE : PF 2,103 ; rendement +19,17 % ; DD -8,36 %.
+
+Le sizing adaptatif réduit effectivement le drawdown OOS, mais **aucune politique ne bat la baseline dans la sélection développement**. La variante UPSIDE est intéressante a posteriori mais ne peut pas être promue.
+
+Décision : **conserver 4 500 EUR fixes ; sizing adaptatif RESEARCH_ONLY**.
+
+## Diagnostic transversal des pertes persistantes
+
+Analyse sur les trades 2010–2022 :
+- les mauvaises années 2011 / 2018 / 2022 ont un `prob_stop_9` moyen plus élevé (~`0,227`) que les bonnes années 2013 / 2017 / 2019 / 2021 (~`0,176`) ;
+- ATR médian également plus élevé dans les mauvaises années (~`3,05 %` contre ~`2,58 %`) ;
+- `drawdown_4w` est plus négatif dans les mauvaises années ;
+- `vol_z` distingue partiellement stops et gagnants mais n'est pas monotone de façon assez robuste ;
+- le quintile de risque `prob_stop_9` le plus élevé contient encore des gagnants fortement convexes : un filtre binaire supprimerait donc aussi des gagnants importants.
+
+Point structurel majeur :
+- `EV_net` est pratiquement constant autour de `0,044` entre gagnants et perdants ;
+- `prob_meta` est observé à `0,5` de façon quasi/totalement constante sur la cohorte étudiée.
+
+Ces deux variables ne fournissent donc actuellement presque aucune discrimination économique entre candidats. Ce constat devient prioritaire par rapport à de nouveaux balayages de seuils.
+
 ## État de décision au 2 septembre 2026
 
 Aucune étude post-Audit 73 n'a justifié une modification de production.
@@ -180,6 +259,7 @@ Aucune étude post-Audit 73 n'a justifié une modification de production.
 - confirmation J+1 existante ;
 - stop fixe -9 % ;
 - horizon maximum 126 séances ;
+- position fixe 4 500 EUR ;
 - capacité 12 lignes / 5 entrées par mois / 40 par an ;
 - aucune sortie précoce supplémentaire ;
 - aucun filtre de régime marché ;
@@ -190,21 +270,21 @@ Pistes conservées uniquement en recherche :
 - H252 / convexité longue ;
 - combinaison volume + risque ;
 - confirmation J1 intraday forte ;
+- sizing adaptatif au risque ;
 - consensus Boursorama/Finnhub en forward validation réelle.
 
 ## Prochain axe autorisé
 
-Les études d'entrée, de régime, de sortie, de reclassement et d'horizon montrent que la baseline est difficile à battre sous sélection ex ante stricte.
+Les études d'entrée, régime, sortie, reclassement, horizon, sizing fixe, sizing adaptatif et stop montrent qu'un nouveau balayage de paramètres isolés a désormais une faible probabilité d'apporter une amélioration robuste.
 
-Le prochain axe de recherche doit donc porter sur **l'allocation du capital / dimensionnement des positions**, en conservant :
-- le même univers de signaux ;
-- le classement baseline ;
-- les sorties baseline ;
-- l'horizon 126 séances ;
-- le stop -9 % ;
-- la séparation développement 2010–2022 / holdout 2023–2026.
+Le prochain chantier prioritaire est donc un **audit de calibration / dégénérescence du score META** :
+- expliquer pourquoi `prob_meta` vaut environ `0,5` de façon constante ;
+- expliquer pourquoi `EV_net` vaut environ `0,044` de façon quasi constante ;
+- déterminer si ces valeurs proviennent d'un fallback, d'une calibration neutralisée, d'un composant indisponible ou d'un calcul réellement non discriminant ;
+- vérifier si le classement EV actuel est effectivement capable d'ordonner les candidats ;
+- corriger uniquement une anomalie structurelle démontrée, sans inventer un nouveau score à partir du holdout.
 
-Aucun paramètre d'allocation ne devra être choisi sur le holdout.
+Toute calibration éventuelle doit être apprise exclusivement sur **2010–2022** puis gelée avant une unique validation **2023–2026**.
 
 ## Discipline de reprise
 
