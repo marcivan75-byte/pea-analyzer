@@ -1,7 +1,6 @@
 import pandas as pd
-from pathlib import Path
 
-from v182.backtest.etf_grok_research_backtest import _next_row, _simulate_exit, _stats
+from v182.backtest.etf_grok_research_backtest import _net_return, _next_row, _simulate_exit, _stats
 
 
 def test_next_session_entry_is_strictly_after_signal():
@@ -12,7 +11,7 @@ def test_next_session_entry_is_strictly_after_signal():
     assert px == 101.0
 
 
-def test_replay_target_exit_uses_close_and_costs_are_separate():
+def test_replay_target_exit_uses_close():
     idx = pd.bdate_range("2026-01-02", periods=4)
     f = pd.DataFrame({"Close": [100.0, 102.0, 104.0, 105.0]}, index=idx)
     cfg = {"exit_policy": {"target_return": 0.04, "hard_stop_return": -0.18, "max_holding_sessions": 168}}
@@ -22,10 +21,22 @@ def test_replay_target_exit_uses_close_and_costs_are_separate():
     assert hold == 2
 
 
-def test_stats_profit_factor_and_win_rate():
-    trades = pd.DataFrame({"net_return": [0.05, 0.03, -0.02]})
+def test_cost_is_applied_on_both_sides_multiplicatively():
+    net = _net_return(0.04)
+    assert net < 0.04
+    assert abs(net - ((1 - 0.0025) * 1.04 * (1 - 0.0025) - 1)) < 1e-12
+
+
+def test_stats_exclude_end_of_data_from_closed_win_rate():
+    trades = pd.DataFrame({
+        "net_return": [0.05, 0.03, -0.02, 0.10],
+        "exit_reason": ["TARGET_CLOSE", "TARGET_CLOSE", "STOP_CLOSE", "END_OF_DATA"],
+        "excess_return": [0.01, 0.02, -0.03, 0.05],
+    })
     s = _stats(trades)
-    assert s["trades"] == 3
+    assert s["trades_total"] == 4
+    assert s["closed_trades"] == 3
+    assert s["open_end_of_data"] == 1
     assert s["wins"] == 2
     assert abs(s["win_rate"] - 2 / 3) < 1e-12
     assert abs(s["profit_factor"] - 4.0) < 1e-12
