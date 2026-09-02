@@ -42,6 +42,16 @@ def test_current_universe_reconstruction_never_promotes():
     assert pit["pea_eligibility_as_of_required_for_promotion"] is True
 
 
+def test_exchange_local_daily_date_is_not_shifted_to_previous_utc_day():
+    idx = pd.DatetimeIndex([pd.Timestamp("2026-01-05 00:00:00", tz="Europe/Paris")], name="Date")
+    frame = pd.DataFrame({
+        "Open": [100.0], "High": [101.0], "Low": [99.0], "Close": [100.5],
+        "Adj Close": [100.5], "Volume": [1000], "Dividends": [0.0], "Stock Splits": [0.0],
+    }, index=idx)
+    normalised = _normalise_history(frame)
+    assert str(normalised.loc[0, "date"].date()) == "2026-01-05"
+
+
 def test_good_history_passes_quality_and_has_mt_depth():
     q = audit_history("FR0000000001", "TEST.PA", _frame(), CFG)
     assert q.quality_pass is True
