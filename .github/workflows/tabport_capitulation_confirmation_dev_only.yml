@@ -19,6 +19,7 @@ jobs:
     timeout-minutes: 45
     env:
       PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/src
+      PYTHONNOUSERSITE: '1'
       GH_TOKEN: ${{ github.token }}
       PRE2023_ARTIFACT_ID: '9817322742'
     steps:
@@ -51,6 +52,27 @@ jobs:
           python -m pip install pytest scikit-learn scipy
       - name: Validate focused chain
         run: |
+          set -euo pipefail
+          pwd
+          test -f v182/__init__.py
+          test -f v182/hebdo/__init__.py
+          test -f v182/hebdo/tabport_capitulation_confirmation_development.py
+          python - <<'PY'
+          import importlib.util, os, sys
+          print('cwd=', os.getcwd())
+          print('sys.path=', sys.path)
+          spec=importlib.util.find_spec('v182')
+          print('v182_spec=', spec)
+          if spec is None:
+              raise SystemExit('BLOCK_CI_V182_SPEC_MISSING')
+          import v182
+          print('v182_file=', getattr(v182,'__file__',None))
+          print('v182_path=', list(getattr(v182,'__path__',[])))
+          sub=importlib.util.find_spec('v182.hebdo')
+          print('v182_hebdo_spec=', sub)
+          if sub is None:
+              raise SystemExit('BLOCK_CI_V182_HEBDO_SPEC_MISSING')
+          PY
           python -m py_compile v182/hebdo/tabport_capitulation_confirmation_development.py
           python -m pytest -q tests/test_tabport_capitulation_confirmation_development.py tests/test_backtest_B_v2.py tests/test_hebdo_at_meta.py tests/test_tabport_meta.py tests/test_tabport_historical_meta.py
       - name: Run capitulation-confirmation study
