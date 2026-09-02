@@ -1,0 +1,81 @@
+name: TABPORT META structural degeneracy audit
+
+on:
+  push:
+    branches: [hebdo-at-meta]
+    paths:
+      - 'v182/hebdo/tabport_meta_degeneracy_audit.py'
+      - '.github/workflows/tabport_meta_degeneracy_audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  meta-degeneracy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      PYTHONNOUSERSITE: '1'
+      GH_TOKEN: ${{ github.token }}
+      PRE2023_ARTIFACT_ID: '9817322742'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-runtime.txt
+      - name: Restore governed holdout
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: data/cache/
+          key: ohlcv-v3-33132925283
+          restore-keys: |
+            ohlcv-v3-
+      - name: Restore governed PRE2023
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p inputs/pre2023
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${PRE2023_ARTIFACT_ID}/zip" > /tmp/pre2023.zip
+          unzip -oq /tmp/pre2023.zip -d inputs/pre2023
+          test -s inputs/pre2023/PRE2023_YAHOO_DEVELOPMENT_OHLCV.parquet
+          test -s inputs/pre2023/PRE2023_YAHOO_CORPUS_MANIFEST.json
+          test -n "$(find data/cache/actions -name 'history_*.parquet' -print -quit)"
+      - name: Install runtime
+        run: |
+          python -m pip install --prefer-binary -r requirements-runtime.txt
+          python -m pip install pytest scikit-learn scipy
+      - name: Validate audit module
+        run: |
+          python -m py_compile v182/hebdo/tabport_meta_degeneracy_audit.py
+          python -m pytest -q -o pythonpath=. tests/test_hebdo_at_meta.py tests/test_tabport_meta.py tests/test_tabport_historical_meta.py
+      - name: Run structural audit
+        run: |
+          python -m v182.hebdo.tabport_meta_degeneracy_audit \
+            --pre2023 inputs/pre2023/PRE2023_YAHOO_DEVELOPMENT_OHLCV.parquet \
+            --manifest inputs/pre2023/PRE2023_YAHOO_CORPUS_MANIFEST.json \
+            --holdout-cache data/cache/actions \
+            --output-dir outputs/meta_degeneracy
+      - name: Assert expected diagnostic contract
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('outputs/meta_degeneracy/TABPORT_META_DEGENERACY_SUMMARY.json').read_text())
+          assert s['status']=='SUCCESS'
+          assert s['diagnostic_only'] is True
+          assert s['production_change'] is False
+          print(json.dumps(s,indent=2))
+          PY
+      - name: Upload diagnostic package
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: TABPORT-META-DEGENERACY-${{ github.run_id }}
+          path: outputs/meta_degeneracy/
+          if-no-files-found: warn
+          retention-days: 30
