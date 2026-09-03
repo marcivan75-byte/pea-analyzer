@@ -8,6 +8,7 @@ import pandas as pd
 OUT = Path("outputs/tct_reverse_engineering_v1")
 HORIZONS = (4, 10, 20)
 THRESH = 0.20
+SCALE_BREAK_GROSS = 10.0  # quality quarantine only; not a trading rule
 
 
 def _norm_name(x: object) -> str:
@@ -60,8 +61,6 @@ def _long_from_multiindex(d: pd.DataFrame, file_name: str) -> tuple[list[pd.Data
     if d.columns.nlevels < 2:
         return parts, diag
 
-    # Yahoo cache convention is normally (ticker, field). Detect the field level
-    # instead of assuming position, so the reader remains stable if levels swap.
     field_words = {"open", "high", "low", "close", "adj close", "adj_close", "adjclose", "volume"}
     scores = []
     for level in range(d.columns.nlevels):
@@ -81,19 +80,13 @@ def _long_from_multiindex(d: pd.DataFrame, file_name: str) -> tuple[list[pd.Data
         if len(cols) == 0:
             continue
         sub = d.loc[:, cols].copy()
-        names = [_norm_name(c[field_level]) for c in cols]
-        sub.columns = names
-        # Duplicate field names can occur in malformed provider responses. Keep last.
+        sub.columns = [_norm_name(c[field_level]) for c in cols]
         sub = sub.loc[:, ~pd.Index(sub.columns).duplicated(keep="last")]
         pc = "adj_close" if "adj_close" in sub.columns else ("close" if "close" in sub.columns else None)
         if pc is None:
             continue
         out = pd.DataFrame(index=sub.index)
-        if date_values is not None:
-            out["date"] = date_values
-        else:
-            dates = _date_from_index(d)
-            out["date"] = dates.to_numpy()
+        out["date"] = date_values if date_values is not None else _date_from_index(d).to_numpy()
         out["ticker"] = str(ticker).upper()
         out["price"] = pd.to_numeric(sub[pc], errors="coerce").to_numpy()
         out["volume"] = pd.to_numeric(sub["volume"], errors="coerce").to_numpy() if "volume" in sub.columns else np.nan
@@ -113,8 +106,7 @@ def _long_from_flat(d: pd.DataFrame, file_name: str) -> tuple[list[pd.DataFrame]
     if d.empty:
         return [], diag
     if "date" not in d.columns and isinstance(d.index, pd.DatetimeIndex):
-        d = d.reset_index()
-        d = _norm_flat(d)
+        d = _norm_flat(d.reset_index())
         if "index" in d.columns and "date" not in d.columns:
             d = d.rename(columns={"index": "date"})
     pc = "adj_close" if "adj_close" in d.columns else ("close" if "close" in d.columns else None)
@@ -142,10 +134,7 @@ def _read_post2022() -> tuple[pd.DataFrame, list[dict], int]:
     for p in files:
         try:
             raw = pd.read_parquet(p)
-            if isinstance(raw.columns, pd.MultiIndex):
-                ps, diag = _long_from_multiindex(raw, p.name)
-            else:
-                ps, diag = _long_from_flat(raw, p.name)
+            ps, diag = _long_from_multiindex(raw, p.name) if isinstance(raw.columns, pd.MultiIndex) else _long_from_flat(raw, p.name)
             parts.extend(ps)
             audit.append(diag)
         except Exception as exc:
@@ -155,57 +144,134 @@ def _read_post2022() -> tuple[pd.DataFrame, list[dict], int]:
     return pd.concat(parts, ignore_index=True, sort=False), audit, len(files)
 
 
-def _event_inventory(allp: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def _analyze_history(allp: pd.DataFrame):
     raw: list[dict] = []
     clustered: list[dict] = []
+    master: list[dict] = []
     coverage: list[dict] = []
+    base_rows: list[dict] = []
+    scale_break_rows: list[dict] = []
 
     for ticker, g in allp.groupby("ticker", sort=False):
         g = g.sort_values("date").reset_index(drop=True)
         px = g["price"].to_numpy(float)
         dates = g["date"].to_numpy()
         n = len(g)
-        if n < 5:
+        if n < 21:
             continue
+        gross = np.full(n, np.nan)
+        gross[1:] = px[1:] / px[:-1]
+        break_at = np.isfinite(gross) & ((gross >= SCALE_BREAK_GROSS) | (gross <= 1.0 / SCALE_BREAK_GROSS))
+        break_prefix = np.cumsum(break_at.astype(int))
+        for j in np.flatnonzero(break_at):
+            scale_break_rows.append({
+                "ticker": ticker, "date": pd.Timestamp(dates[j]), "prior_date": pd.Timestamp(dates[j-1]),
+                "prior_price": px[j-1], "price": px[j], "gross_ratio": gross[j],
+            })
+
         coverage.append({
-            "ticker": ticker,
-            "min_date": str(g["date"].min().date()),
-            "max_date": str(g["date"].max().date()),
-            "rows": n,
-            "volume_nonnull_pct": float(g["volume"].notna().mean() * 100) if "volume" in g else 0.0,
+            "ticker": ticker, "min_date": str(g["date"].min().date()), "max_date": str(g["date"].max().date()),
+            "rows": n, "volume_nonnull_pct": float(g["volume"].notna().mean() * 100),
+            "scale_break_count": int(break_at.sum()),
         })
+
+        # Cache complete-horizon metrics per J0 to construct one cross-horizon master rally dataset.
+        metrics: dict[tuple[int, int], dict] = {}
         for H in HORIZONS:
             qual: list[int] = []
-            meta: list[tuple[int, float]] = []
-            for i in range(n - 1):
-                j2 = min(n, i + H + 1)
-                fut = px[i + 1 : j2]
-                if fut.size == 0 or not np.isfinite(fut).any() or not np.isfinite(px[i]) or px[i] <= 0:
+            meta: list[tuple[int, float, int]] = []
+            eligible_by_year: dict[int, int] = {}
+            positives_by_year: dict[int, int] = {}
+            quarantined_by_year: dict[int, int] = {}
+
+            # Complete horizon is mandatory: exactly H future observations must exist.
+            for i in range(0, n - H):
+                year = pd.Timestamp(dates[i]).year
+                # A quality break at positions i+1...i+H contaminates the forward window.
+                breaks = break_prefix[i + H] - break_prefix[i]
+                if breaks > 0:
+                    quarantined_by_year[year] = quarantined_by_year.get(year, 0) + 1
                     continue
+                if not np.isfinite(px[i]) or px[i] <= 0:
+                    continue
+                fut = px[i + 1 : i + H + 1]
+                if fut.size != H or not np.isfinite(fut).all():
+                    continue
+                eligible_by_year[year] = eligible_by_year.get(year, 0) + 1
                 rel = fut / px[i] - 1.0
-                k = int(np.nanargmax(rel))
-                m = float(rel[k])
-                if m > THRESH:
-                    peak_i = i + 1 + k
+                k = int(np.argmax(rel))
+                mfe = float(rel[k])
+                mae = float(np.min(rel))
+                hit_positions = np.flatnonzero(rel > THRESH)
+                first_passage = int(hit_positions[0] + 1) if hit_positions.size else None
+                peak_i = i + 1 + k
+                metrics[(i, H)] = {
+                    "mfe": mfe, "mae": mae, "peak_i": peak_i, "sessions_to_peak": peak_i - i,
+                    "first_passage": first_passage, "hit": bool(mfe > THRESH),
+                }
+                if mfe > THRESH:
+                    positives_by_year[year] = positives_by_year.get(year, 0) + 1
                     qual.append(i)
-                    meta.append((peak_i, m))
+                    meta.append((peak_i, mfe, first_passage or 0))
                     raw.append({
                         "ticker": ticker, "j0": pd.Timestamp(dates[i]), "horizon_sessions": H,
-                        "max_forward_return": m, "peak_date": pd.Timestamp(dates[peak_i]),
-                        "sessions_to_peak": peak_i - i, "j0_price": px[i], "peak_price": px[peak_i],
+                        "max_forward_return": mfe, "mae_forward_return": mae,
+                        "peak_date": pd.Timestamp(dates[peak_i]), "sessions_to_peak": peak_i - i,
+                        "first_passage_gt20_sessions": first_passage,
+                        "j0_price": px[i], "peak_price": px[peak_i],
                     })
+
+            years = set(eligible_by_year) | set(positives_by_year) | set(quarantined_by_year)
+            for year in sorted(years):
+                elig = eligible_by_year.get(year, 0)
+                pos = positives_by_year.get(year, 0)
+                base_rows.append({
+                    "year": year, "horizon_sessions": H, "eligible_observations": elig,
+                    "positive_observations": pos, "positive_rate_pct": 100.0 * pos / elig if elig else np.nan,
+                    "quarantined_scale_break_windows": quarantined_by_year.get(year, 0),
+                })
+
             last_suppressed = -1
-            for i, (peak_i, m) in zip(qual, meta):
+            for i, (peak_i, mfe, fp) in zip(qual, meta):
                 if i <= last_suppressed:
                     continue
+                m = metrics[(i, H)]
                 clustered.append({
                     "ticker": ticker, "j0": pd.Timestamp(dates[i]), "horizon_sessions": H,
-                    "max_forward_return": m, "peak_date": pd.Timestamp(dates[peak_i]),
-                    "sessions_to_peak": peak_i - i, "j0_price": px[i], "peak_price": px[peak_i],
+                    "max_forward_return": mfe, "mae_forward_return": m["mae"],
+                    "peak_date": pd.Timestamp(dates[peak_i]), "sessions_to_peak": peak_i - i,
+                    "first_passage_gt20_sessions": fp,
+                    "j0_price": px[i], "peak_price": px[peak_i],
                 })
                 last_suppressed = peak_i
 
-    return pd.DataFrame(raw), pd.DataFrame(clustered), pd.DataFrame(coverage)
+        # Master economic episodes = H20 clustered episodes. At its single J0, attach all horizon outcomes.
+        h20_qual = []
+        for i in range(0, n - 20):
+            m20 = metrics.get((i, 20))
+            if m20 and m20["hit"]:
+                h20_qual.append(i)
+        last_suppressed = -1
+        for i in h20_qual:
+            m20 = metrics[(i, 20)]
+            if i <= last_suppressed:
+                continue
+            row = {
+                "ticker": ticker, "j0": pd.Timestamp(dates[i]), "j0_price": px[i],
+                "peak20_date": pd.Timestamp(dates[m20["peak_i"]]),
+                "mfe20_pct": 100.0 * m20["mfe"], "mae20_pct": 100.0 * m20["mae"],
+                "first_passage_gt20_sessions": m20["first_passage"],
+            }
+            for H in HORIZONS:
+                m = metrics.get((i, H))
+                row[f"hit20_h{H}"] = bool(m and m["hit"])
+                row[f"mfe_h{H}_pct"] = 100.0 * m["mfe"] if m else np.nan
+                row[f"mae_h{H}_pct"] = 100.0 * m["mae"] if m else np.nan
+            master.append(row)
+            last_suppressed = m20["peak_i"]
+
+    return (pd.DataFrame(raw), pd.DataFrame(clustered), pd.DataFrame(master), pd.DataFrame(coverage),
+            pd.DataFrame(base_rows), pd.DataFrame(scale_break_rows))
 
 
 def main() -> None:
@@ -221,46 +287,58 @@ def main() -> None:
     allp = allp[allp["price"] > 0]
     allp = allp.sort_values(["ticker", "date"]).drop_duplicates(["ticker", "date"], keep="last").reset_index(drop=True)
 
-    raw, epi, cov = _event_inventory(allp)
-    for d in (raw, epi):
+    raw, epi, master, cov, base, scale_breaks = _analyze_history(allp)
+    for d in (raw, epi, master):
         if not d.empty:
             d["year"] = pd.to_datetime(d["j0"]).dt.year
+    for d in (raw, epi):
+        if not d.empty:
             d["max_forward_return_pct"] = 100.0 * d["max_forward_return"]
+            d["mae_forward_return_pct"] = 100.0 * d["mae_forward_return"]
 
     raw.to_csv(OUT / "TCT_GT20_RAW_DATES_2010_2026.csv", index=False)
     epi.to_csv(OUT / "TCT_GT20_CLUSTERED_EPISODES_2010_2026.csv", index=False)
+    master.to_csv(OUT / "TCT_GT20_MASTER_EPISODES_2010_2026.csv", index=False)
     cov.to_csv(OUT / "TCT_HISTORY_COVERAGE_2010_2026.csv", index=False)
+    base.to_csv(OUT / "TCT_GT20_BASE_RATES_2010_2026.csv", index=False)
+    scale_breaks.to_csv(OUT / "TCT_SCALE_BREAK_QUARANTINE_2010_2026.csv", index=False)
     (OUT / "POST2022_CACHE_SCHEMA_AUDIT.json").write_text(json.dumps(schema_audit, indent=2, default=str), encoding="utf-8")
 
     annual = (epi.groupby(["year", "horizon_sessions"])
               .agg(episodes=("ticker", "size"), unique_tickers=("ticker", "nunique"),
                    median_max_return_pct=("max_forward_return_pct", "median"),
-                   median_sessions_to_peak=("sessions_to_peak", "median"))
-              .reset_index()) if not epi.empty else pd.DataFrame(columns=["year", "horizon_sessions", "episodes", "unique_tickers"])
+                   median_first_passage=("first_passage_gt20_sessions", "median"),
+                   median_mae_pct=("mae_forward_return_pct", "median"))
+              .reset_index()) if not epi.empty else pd.DataFrame()
     annual.to_csv(OUT / "TCT_GT20_ANNUAL_INVENTORY_2010_2026.csv", index=False)
-    if not annual.empty:
-        pivot = annual.pivot(index="year", columns="horizon_sessions", values=["episodes", "unique_tickers"])
-        pivot.columns = [f"{a}_H{b}" for a, b in pivot.columns]
-        pivot.reset_index().to_csv(OUT / "TCT_GT20_ANNUAL_PIVOT_2010_2026.csv", index=False)
+
+    master_annual = (master.groupby("year")
+                     .agg(master_episodes=("ticker", "size"), unique_tickers=("ticker", "nunique"),
+                          hit_h4_pct=("hit20_h4", lambda x: 100.0 * x.mean()),
+                          hit_h10_pct=("hit20_h10", lambda x: 100.0 * x.mean()),
+                          median_mfe20_pct=("mfe20_pct", "median"), median_mae20_pct=("mae20_pct", "median"),
+                          median_first_passage=("first_passage_gt20_sessions", "median"))
+                     .reset_index()) if not master.empty else pd.DataFrame()
+    master_annual.to_csv(OUT / "TCT_GT20_MASTER_ANNUAL_2010_2026.csv", index=False)
 
     manifest = json.loads(Path("inputs/pre2023/PRE2023_YAHOO_CORPUS_MANIFEST.json").read_text())
     summary = {
         "status": "SUCCESS",
         "threshold_rule": "strict max forward adjusted/available price return > 20%",
+        "complete_horizon_required": True,
         "horizons_sessions": list(HORIZONS),
-        "dedup_rule": "first qualifying J0 retained; subsequent qualifying J0s through retained event peak suppressed, separately by ticker and horizon",
+        "quality_quarantine": f"exclude forward windows crossing adjacent gross price ratio >= {SCALE_BREAK_GROSS}x or <= 1/{SCALE_BREAK_GROSS}",
+        "dedup_rule": "per-horizon first qualifying J0 retained through observed peak; master episodes use H20 clusters with H4/H10/H20 labels at same J0",
         "pre2023_manifest": manifest,
         "post2022_cache_files": cache_file_count,
-        "post2022_rows": int(len(post)),
-        "post2022_tickers": int(post["ticker"].nunique()) if not post.empty else 0,
+        "post2022_rows": int(len(post)), "post2022_tickers": int(post["ticker"].nunique()) if not post.empty else 0,
         "post2022_min_date": str(post["date"].min()) if not post.empty else None,
         "post2022_max_date": str(post["date"].max()) if not post.empty else None,
-        "combined_rows": int(len(allp)),
-        "combined_tickers": int(allp["ticker"].nunique()),
-        "combined_min_date": str(allp["date"].min()),
-        "combined_max_date": str(allp["date"].max()),
-        "raw_positive_dates": int(len(raw)),
-        "clustered_episodes": int(len(epi)),
+        "combined_rows": int(len(allp)), "combined_tickers": int(allp["ticker"].nunique()),
+        "combined_min_date": str(allp["date"].min()), "combined_max_date": str(allp["date"].max()),
+        "scale_breaks_quarantined": int(len(scale_breaks)),
+        "raw_positive_dates": int(len(raw)), "clustered_horizon_episodes": int(len(epi)),
+        "master_h20_episodes": int(len(master)),
         "governance_warning": {
             "historical_universe_certified": bool(manifest.get("historical_universe_certified", False)),
             "survivorship_safe": bool(manifest.get("survivorship_safe", False)),
@@ -270,8 +348,12 @@ def main() -> None:
     }
     (OUT / "TCT_EVENT_INVENTORY_SUMMARY.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
     print(json.dumps(summary, indent=2, default=str))
-    print("---ANNUAL---")
+    print("---ANNUAL HORIZONS---")
     print(annual.to_csv(index=False))
+    print("---BASE RATES---")
+    print(base.to_csv(index=False))
+    print("---MASTER ANNUAL---")
+    print(master_annual.to_csv(index=False))
 
 
 if __name__ == "__main__":
