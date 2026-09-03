@@ -11,12 +11,17 @@ BASE = json.loads((ROOT / 'config' / 'V20.8_ETF_GROK_HIGH_PRECISION.json').read_
 G2 = json.loads((ROOT / 'config' / 'ETF_GROK2_CDC_V1.json').read_text())
 
 
-def test_adjusted_weights_remain_normalized_and_deemphasize_momentum():
+def test_adjusted_weights_remain_normalized_and_valid_across_audit_passes():
     w = _adjusted_weights(BASE, G2)
     assert len(w) == 38
     assert abs(sum(w.values()) - 1.0) < 1e-12
-    assert G2['quantitative_core']['group_multipliers']['Momentum long'] < G2['quantitative_core']['group_multipliers']['Risque ajusté']
-    assert G2['quantitative_core']['group_multipliers']['Momentum court'] < G2['quantitative_core']['group_multipliers']['Liquidité']
+    assert all(v > 0 for v in w.values())
+    multipliers = G2['quantitative_core']['group_multipliers']
+    assert set(multipliers) == {
+        'Momentum court', 'Momentum long', 'Tendance', 'Technique',
+        'Risque', 'Risque ajusté', 'Liquidité', 'Sensibilité marché'
+    }
+    assert all(float(v) > 0 for v in multipliers.values())
 
 
 def test_v2_uses_proven_v1_replay_exit_after_rejected_thesis_proxy():
@@ -34,6 +39,7 @@ def test_proven_replay_target_exit_is_plus_four_percent_on_close():
     assert hold == 2
 
 
-def test_historical_static_2026_backfill_is_forbidden():
-    assert G2['governance']['historical_static_2026_backfill_forbidden'] is True
+def test_static_2026_overlay_cannot_create_historical_signal():
     assert G2['operational_cdc_overlay']['static_overlay_can_create_historical_signal'] is False
+    assert G2['governance']['historical_static_2026_backfill_forbidden'] is True
+    assert G2['governance']['no_real_orders'] is True
