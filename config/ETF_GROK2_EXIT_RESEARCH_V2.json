@@ -1,0 +1,59 @@
+{
+  "version": "ETF_GROK2_EXIT_RESEARCH_V2_2026_09_03",
+  "status": "RESEARCH_ONLY_NO_REAL_ORDERS",
+  "base_model": "ETF_GROK2_CDC_FINAL_PASS5_2026_09_03",
+  "portfolio": {
+    "initial_capital_eur": 205000,
+    "max_positions": 2,
+    "weight_per_position": 0.5,
+    "entry_fee_bps": 25,
+    "exit_fee_bps": 25,
+    "world_benchmark_isin": "LU1681043599"
+  },
+  "execution": {
+    "entry": "NEXT_SESSION_CLOSE",
+    "exit": "NEXT_SESSION_CLOSE",
+    "review_frequency": "MONTHLY"
+  },
+  "review": {
+    "minimum_holding_sessions": 42,
+    "catastrophic_stop_return": -0.18,
+    "reversal": {
+      "close_below_sma50": true,
+      "macd_hist_below_zero": true,
+      "perf20_below_zero": true,
+      "minimum_confirmations": 3
+    },
+    "score_exhaustion": {
+      "entry_score_drop_points": 12.0,
+      "absolute_score_floor": 72.0
+    },
+    "rotation": {
+      "minimum_score_advantage_points": 10.0,
+      "minimum_perf63_advantage_points": 0.05
+    },
+    "trailing_protection": {
+      "drawdown_from_peak": -0.20,
+      "activate_after_gain": 0.15
+    }
+  },
+  "variants": {
+    "A_REVERSAL_STRICT": "monthly 3/3 technical reversal",
+    "B_REVERSAL_SCORE_STRICT": "A plus strict score exhaustion",
+    "C_ROTATION_STRICT": "B plus high-hurdle sector/style rotation",
+    "D_ROTATION_TRAIL_WIDE": "C plus wide catastrophic trailing protection"
+  },
+  "objective": {
+    "primary": "portfolio_cagr_vs_world",
+    "secondary": ["max_drawdown", "sortino", "calmar", "turnover", "capital_utilisation"],
+    "win_rate_is_secondary": true
+  },
+  "governance": {
+    "same_close_signal_execution_forbidden": true,
+    "fixed_take_profit_forbidden": true,
+    "pit_price_features_required": true,
+    "static_2026_backfill_forbidden": true,
+    "survivorship_bias_label_required": true,
+    "no_real_orders": true
+  }
+}
