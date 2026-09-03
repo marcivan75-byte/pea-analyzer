@@ -1,0 +1,54 @@
+name: ETF GROK2 CDC Backtest
+
+on:
+  pull_request:
+    paths:
+      - 'config/ETF_GROK2_CDC_V1.json'
+      - 'config/ETF_GROK_V1_FROZEN_BENCHMARK.json'
+      - 'src/v182/features/etf_grok2_cdc.py'
+      - 'src/v182/backtest/etf_grok2_research_backtest.py'
+      - 'tests/test_etf_grok2_cdc.py'
+      - '.github/workflows/etf_grok2_cdc_backtest.yml'
+  workflow_dispatch:
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -e . pytest
+      - name: GROK2 unit tests
+        run: pytest -q tests/test_etf_grok2_cdc.py tests/test_etf_grok_research_backtest.py tests/test_etf_backtest_base_v1.py
+      - name: Compile
+        run: python -m py_compile src/v182/features/etf_grok2_cdc.py src/v182/backtest/etf_grok2_research_backtest.py
+      - name: Build hardened ETF base
+        run: python -m v182.backtest.etf_backtest_base_v1
+      - name: Build PIT evidence layer
+        run: python -m v182.backtest.etf_pit_membership_v2
+      - name: GROK2 research backtest
+        run: python -m v182.backtest.etf_grok2_research_backtest --start 2013-01-01
+      - name: Validate governance
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('outputs/etf_grok2_research_backtest/ETF_GROK2_SUMMARY.json').read_text())
+          assert s['pit_price_features'] is True
+          assert s['static_2026_fields_used_in_historical_score'] is False
+          assert s['survivorship_bias_resolved'] is False
+          assert s['promotion_eligible'] is False
+          assert 'comparison_vs_v1' in s
+          print(s)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ETF_GROK2_CDC_BACKTEST
+          path: |
+            outputs/etf_grok2_research_backtest/
+            data/backtest/etf_base_v1/ETF_BACKTEST_INSTRUMENT_QUALITY.csv
+            data/backtest/etf_base_v1/ETF_PIT_COVERAGE_REPORT.json
+          retention-days: 7
