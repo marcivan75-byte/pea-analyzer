@@ -47,6 +47,8 @@ def simulate_world_variant(variant: str, histories: dict[str, pd.DataFrame], all
     fallback_fee = float(cfg["portfolio"].get("fallback_rebalance_fee_bps", 0)) / 10000.0
     max_pos = int(cfg["portfolio"]["max_grok_positions"])
     weight = float(cfg["portfolio"]["weight_per_grok_position"])
+    if max_pos != 2 or abs(weight * max_pos - 1.0) > 1e-12:
+        raise RuntimeError("V3_REQUIRES_TWO_FULLY_INVESTED_SLEEVES")
     min_hold = int(cfg["review"]["minimum_holding_sessions"])
     stop = float(cfg["review"]["catastrophic_stop_return"])
     min_rev = int(cfg["review"]["reversal"]["minimum_confirmations"])
@@ -62,9 +64,12 @@ def simulate_world_variant(variant: str, histories: dict[str, pd.DataFrame], all
     first_world = _next_obs(histories[WORLD_ISIN], start_ts - pd.Timedelta(days=1))
     if first_world is None:
         raise RuntimeError("V3_WORLD_START_MISSING")
-    world_units = initial * (1.0 - fallback_fee) / first_world[1]
-    cash = 0.0
-    positions: dict[str, Position] = {}
+
+    # Two independent sleeves. Each sleeve is always invested either in World or one GROK ETF.
+    # Its NAV is never resized to 50% of total portfolio after inception; it evolves independently.
+    sleeve_world_units = {sid: initial * weight * (1.0 - fallback_fee) / first_world[1] for sid in range(max_pos)}
+    sleeve_position: dict[int, Position | None] = {sid: None for sid in range(max_pos)}
+    position_sleeve: dict[str, int] = {}
     pending_exits: dict[str, dict] = {}
     pending_entries: list[dict] = []
     trades: list[ClosedTrade] = []
@@ -80,96 +85,103 @@ def simulate_world_variant(variant: str, histories: dict[str, pd.DataFrame], all
             raise RuntimeError("V3_WORLD_MARK_MISSING")
         return x
 
+    def positions() -> dict[str, Position]:
+        return {p.isin: p for p in sleeve_position.values() if p is not None}
+
     def active_value(d: pd.Timestamp) -> float:
         total = 0.0
-        for isin, p in positions.items():
-            px = _close(histories[isin], d)
+        for p in sleeve_position.values():
+            if p is None:
+                continue
+            px = _close(histories[p.isin], d)
             if px is not None:
                 total += p.units * px
         return total
 
+    def fallback_value(d: pd.Timestamp) -> float:
+        px = world_px(d)
+        return sum(sleeve_world_units.values()) * px
+
     def equity(d: pd.Timestamp) -> tuple[float, float, float]:
         av = active_value(d)
-        fv = world_units * world_px(d)
-        return cash + av + fv, av, fv
+        fv = fallback_value(d)
+        return av + fv, av, fv
 
-    def move_cash_to_world(d: pd.Timestamp):
-        nonlocal cash, world_units, turnover
-        if cash <= 0:
-            return
-        px = world_px(d)
-        gross = cash / (1.0 + fallback_fee)
-        world_units += gross / px
-        turnover += gross
-        cash -= gross * (1.0 + fallback_fee)
-        if abs(cash) < 1e-8:
-            cash = 0.0
-
-    def raise_from_world(amount: float, d: pd.Timestamp) -> float:
-        nonlocal world_units, turnover
-        px = world_px(d)
-        available = world_units * px
-        gross = min(max(amount, 0.0), available)
-        if gross <= 0:
-            return 0.0
-        world_units -= gross / px
-        turnover += gross
-        return gross * (1.0 - fallback_fee)
+    def reserved_sleeves() -> set[int]:
+        return {int(x["sleeve_id"]) for x in pending_entries}
 
     def schedule_exit(isin: str, signal_date: pd.Timestamp, reason: str, score: float | None) -> pd.Timestamp | None:
-        if isin in pending_exits or isin not in positions:
+        if isin in pending_exits or isin not in position_sleeve:
             return None
         nxt = _next_obs(histories[isin], signal_date)
         if nxt is None:
             return None
-        pending_exits[isin] = {"exec_date": nxt[0], "reason": reason, "score": score}
+        pending_exits[isin] = {"exec_date": nxt[0], "reason": reason, "score": score, "sleeve_id": position_sleeve[isin]}
         return nxt[0]
 
-    def schedule_entry(isin: str, signal_date: pd.Timestamp, score: float, peer: str, earliest: pd.Timestamp | None = None):
-        if isin == WORLD_ISIN or isin in positions or any(x["isin"] == isin for x in pending_entries):
+    def schedule_entry(isin: str, signal_date: pd.Timestamp, score: float, peer: str,
+                       earliest: pd.Timestamp | None = None, sleeve_id: int | None = None):
+        if isin == WORLD_ISIN or isin in position_sleeve or any(x["isin"] == isin for x in pending_entries):
+            return
+        if sleeve_id is None:
+            reserved = reserved_sleeves()
+            free = [sid for sid in range(max_pos) if sleeve_position[sid] is None and sid not in reserved]
+            if not free:
+                return
+            sleeve_id = free[0]
+        elif any(int(x["sleeve_id"]) == sleeve_id for x in pending_entries):
             return
         anchor = signal_date if earliest is None else max(signal_date, earliest - pd.Timedelta(nanoseconds=1))
         nxt = _next_obs(histories[isin], anchor)
         if nxt is not None:
-            pending_entries.append({"isin": isin, "exec_date": nxt[0], "score": score, "peer": peer})
+            pending_entries.append({"isin": isin, "exec_date": nxt[0], "score": score, "peer": peer, "sleeve_id": sleeve_id})
 
     def execute_exit(isin: str, d: pd.Timestamp, meta: dict):
-        nonlocal cash, turnover
-        p = positions.get(isin)
+        nonlocal turnover
+        sid = position_sleeve.get(isin)
+        if sid is None:
+            return
+        p = sleeve_position[sid]
         if p is None:
             return
         px = _close(histories[isin], d, exact=True)
         if px is None:
             return
         gross = p.units * px
-        cash += gross * (1.0 - exit_fee)
-        turnover += gross
+        after_exit = gross * (1.0 - exit_fee)
+        wpx = world_px(d)
+        fallback_gross = after_exit / (1.0 + fallback_fee)
+        sleeve_world_units[sid] = fallback_gross / wpx
+        turnover += gross + fallback_gross
         net_ret = (1.0 - entry_fee) * (px / p.entry_price) * (1.0 - exit_fee) - 1.0
         trades.append(ClosedTrade(variant, isin, str(p.entry_date.date()), str(d.date()), p.entry_price, px,
                                   p.entry_score, meta.get("score"), float(net_ret), p.holding_sessions, meta["reason"]))
-        del positions[isin]
-        move_cash_to_world(d)
+        sleeve_position[sid] = None
+        position_sleeve.pop(isin, None)
 
     def execute_entry(order: dict, d: pd.Timestamp):
-        nonlocal cash, turnover
+        nonlocal turnover
         isin = order["isin"]
-        if isin in positions or len(positions) >= max_pos:
+        sid = int(order["sleeve_id"])
+        if isin in position_sleeve or sleeve_position[sid] is not None:
             return
         px = _close(histories[isin], d, exact=True)
         if px is None:
             return
-        eq, _, _ = equity(d)
-        target = eq * weight
-        proceeds = raise_from_world(target * (1.0 + entry_fee), d)
-        cash += proceeds
-        gross = min(target, cash / (1.0 + entry_fee))
-        if gross <= 0:
+        wpx = world_px(d)
+        world_gross = sleeve_world_units[sid] * wpx
+        if world_gross <= 0:
             return
-        units = gross / px
-        cash -= gross * (1.0 + entry_fee)
-        turnover += gross
-        positions[isin] = Position(isin, units, d, px, float(order["score"]), str(order["peer"]), px, 0)
-        move_cash_to_world(d)
+        after_world_sale = world_gross * (1.0 - fallback_fee)
+        active_gross = after_world_sale / (1.0 + entry_fee)
+        if active_gross <= 0:
+            return
+        sleeve_world_units[sid] = 0.0
+        units = active_gross / px
+        turnover += world_gross + active_gross
+        p = Position(isin, units, d, px, float(order["score"]), str(order["peer"]), px, 0)
+        sleeve_position[sid] = p
+        position_sleeve[isin] = sid
 
     for d in dates:
         for isin, meta in list(pending_exits.items()):
@@ -181,10 +193,9 @@ def simulate_world_variant(variant: str, histories: dict[str, pd.DataFrame], all
         for order in todays:
             execute_entry(order, d)
 
-        for isin in list(positions):
+        for isin, p in list(positions().items()):
             if d not in histories[isin].index or isin in pending_exits:
                 continue
-            p = positions[isin]
             m = _history_metrics(histories[isin], d)
             if m["close"] is None:
                 continue
@@ -201,7 +212,7 @@ def simulate_world_variant(variant: str, histories: dict[str, pd.DataFrame], all
                 ranked = sorted([(i, v) for i, v in latest_scores.items() if v["decision"] in {"ELIGIBLE", "BUY_CANDIDATE"}],
                                 key=lambda x: x[1]["score"], reverse=True)
 
-                for isin, p in list(positions.items()):
+                for isin, p in list(positions().items()):
                     if isin in pending_exits or p.holding_sessions < min_hold:
                         continue
                     if _reversal(_history_metrics(histories[isin], d), min_rev):
@@ -215,13 +226,13 @@ def simulate_world_variant(variant: str, histories: dict[str, pd.DataFrame], all
 
                 if variant in {"F_WORLD_FALLBACK_ROTATION", "G_WORLD_FALLBACK_RELATIVE_EXIT"}:
                     for cand, cv in ranked:
-                        if cand in positions or any(x["isin"] == cand for x in pending_entries):
+                        if cand in position_sleeve or any(x["isin"] == cand for x in pending_entries):
                             continue
                         cm = _history_metrics(histories[cand], d)
                         if cm["perf63"] is None:
                             continue
                         replacement = None
-                        for held, hp in positions.items():
+                        for held, hp in positions().items():
                             if held in pending_exits or hp.holding_sessions < min_hold:
                                 continue
                             hv = latest_scores.get(held)
@@ -236,12 +247,13 @@ def simulate_world_variant(variant: str, histories: dict[str, pd.DataFrame], all
                                     replacement = (key, held)
                         if replacement is not None:
                             held = replacement[1]
+                            sid = position_sleeve[held]
                             exd = schedule_exit(held, d, "ROTATION_TO_STRONGER_ETF", latest_scores.get(held, {}).get("score"))
                             if exd is not None:
-                                schedule_entry(cand, d, cv["score"], cv["peer_group"], earliest=exd)
+                                schedule_entry(cand, d, cv["score"], cv["peer_group"], earliest=exd, sleeve_id=sid)
                             break
 
-                projected = {i for i in positions if i not in pending_exits}
+                projected = set(position_sleeve) - set(pending_exits)
                 projected.update(x["isin"] for x in pending_entries)
                 for cand, cv in ranked:
                     if len(projected) >= max_pos:
@@ -249,13 +261,16 @@ def simulate_world_variant(variant: str, histories: dict[str, pd.DataFrame], all
                     if cand in projected or cand == WORLD_ISIN:
                         continue
                     schedule_entry(cand, d, cv["score"], cv["peer_group"])
-                    projected.add(cand)
+                    if any(x["isin"] == cand for x in pending_entries):
+                        projected.add(cand)
 
         eq, av, fv = equity(d)
-        equity_rows.append({"date": d, "equity": eq, "active_grok": av, "world_fallback": fv, "cash": cash})
+        world_sleeves = sum(1 for sid in range(max_pos) if sleeve_position[sid] is None)
+        equity_rows.append({"date": d, "equity": eq, "active_grok": av, "world_fallback": fv, "cash": 0.0,
+                            "active_sleeves": max_pos - world_sleeves, "world_sleeves": world_sleeves})
         active_utilisation.append(0.0 if eq <= 0 else av / eq)
 
-    for isin, p in positions.items():
+    for isin, p in positions().items():
         px = _close(histories[isin], end_ts)
         if px is None:
             continue
@@ -267,6 +282,8 @@ def simulate_world_variant(variant: str, histories: dict[str, pd.DataFrame], all
     stats = _stats(edf.rename(columns={"active_grok": "invested"}), tdf, initial, active_utilisation, turnover)
     stats["active_grok_utilisation"] = stats.pop("capital_utilisation")
     stats["world_fallback_utilisation"] = float(1.0 - stats["active_grok_utilisation"])
+    stats["allocation_model"] = "TWO_INDEPENDENT_50PCT_SLEEVES"
+    stats["cash_target"] = 0.0
     return stats, tdf, edf
 
 
@@ -288,11 +305,13 @@ def run(root: Path = ROOT, start: str = "2013-01-01", end: str | None = None) ->
     variants = {}
     control, ct, ce = simulate_v2("A_REVERSAL_STRICT", histories, allowed, ref, base_cfg, g2_cfg, v2_cfg, start, end)
     variants["A_STRICT_CASH"] = control
-    ct.to_csv(outdir / "A_STRICT_CASH_TRADES.csv", index=False); ce.to_csv(outdir / "A_STRICT_CASH_EQUITY.csv", index=False)
+    ct.to_csv(outdir / "A_STRICT_CASH_TRADES.csv", index=False)
+    ce.to_csv(outdir / "A_STRICT_CASH_EQUITY.csv", index=False)
     for variant in ["E_WORLD_FALLBACK", "F_WORLD_FALLBACK_ROTATION", "G_WORLD_FALLBACK_RELATIVE_EXIT"]:
         stats, trades, eq = simulate_world_variant(variant, histories, allowed, ref, base_cfg, g2_cfg, cfg, start, end)
         variants[variant] = stats
-        trades.to_csv(outdir / f"{variant}_TRADES.csv", index=False); eq.to_csv(outdir / f"{variant}_EQUITY.csv", index=False)
+        trades.to_csv(outdir / f"{variant}_TRADES.csv", index=False)
+        eq.to_csv(outdir / f"{variant}_EQUITY.csv", index=False)
 
     for stats in variants.values():
         stats["cagr_delta_vs_world"] = float(stats["cagr"] - world["cagr"])
@@ -301,8 +320,8 @@ def run(root: Path = ROOT, start: str = "2013-01-01", end: str | None = None) ->
     result = {"version": cfg["version"], "status": cfg["status"], "start": start, "end": end,
               "world_benchmark": world, "variants": variants, "ranking_by_cagr_vs_world": ranked,
               "best_variant": ranked[0], "fixed_take_profit_used": False, "same_close_signal_execution_used": False,
-              "score_exhaustion_exit_used": False, "survivorship_bias_resolved": False,
-              "promotion_eligible": False, "real_orders_allowed": False}
+              "score_exhaustion_exit_used": False, "allocation_model": "TWO_INDEPENDENT_50PCT_SLEEVES",
+              "survivorship_bias_resolved": False, "promotion_eligible": False, "real_orders_allowed": False}
     (outdir / "SUMMARY.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return result
