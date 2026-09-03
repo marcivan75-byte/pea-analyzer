@@ -9,7 +9,8 @@
     "lookthrough_required_operationally_but_not_backfilled_without_pit": true,
     "vehicle_quality_required_operationally_but_static_2026_fields_not_backfilled": true,
     "price_only_stop_is_not_primary_exit": false,
-    "quarterly_review_equivalent_sessions": 63
+    "quarterly_review_equivalent_sessions": 63,
+    "unvalidated_thesis_exit_not_promoted": true
   },
   "quantitative_core": {
     "group_multipliers": {
