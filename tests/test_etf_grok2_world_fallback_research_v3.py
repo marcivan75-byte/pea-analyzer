@@ -29,6 +29,23 @@ def test_v3_governance_and_world_fallback():
     assert cfg["review"]["rotation"]["minimum_perf63_advantage_points"] >= 0.05
 
 
+def test_v3_economic_hurdles_prevent_free_or_hyperactive_switching():
+    cfg = json.loads((ROOT / "config/ETF_GROK2_EXIT_RESEARCH_V3.json").read_text(encoding="utf-8"))
+    portfolio = cfg["portfolio"]
+    review = cfg["review"]
+    # Every World<->GROK transition must carry a non-zero modeled cost.
+    assert portfolio["active_entry_fee_bps"] > 0
+    assert portfolio["active_exit_fee_bps"] > 0
+    assert portfolio["fallback_rebalance_fee_bps"] > 0
+    # Rotation and relative exit are deliberately slower than a short-term trading rule.
+    assert review["minimum_holding_sessions"] >= 42
+    assert review["relative_exit"]["minimum_holding_sessions"] >= 63
+    assert review["relative_exit"]["underperformance_vs_world_63_points"] <= -0.05
+    # A replacement must have both a material score edge and a 3-month momentum edge.
+    assert review["rotation"]["minimum_score_advantage_points"] >= 10.0
+    assert review["rotation"]["minimum_perf63_advantage_points"] >= 0.05
+
+
 def test_next_common_obs_skips_non_common_session():
     active = pd.DataFrame({"Close": [100.0, 101.0]}, index=pd.to_datetime(["2026-01-02", "2026-01-05"]))
     world = pd.DataFrame({"Close": [200.0, 202.0]}, index=pd.to_datetime(["2026-01-02", "2026-01-05"]))
