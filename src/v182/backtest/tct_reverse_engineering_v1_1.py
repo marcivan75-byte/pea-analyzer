@@ -7,11 +7,22 @@ import pandas as pd
 
 from v182.backtest.tct_reverse_engineering_v1 import (
     ReverseEngineeringConfig,
+    asof_snapshot_features,
     build_forward_labels,
     build_technical_features,
-    asof_snapshot_features,
     sanitize_feature_columns,
 )
+
+
+def _resolve_date_col(frame: pd.DataFrame, preferred: str = "date") -> str:
+    candidates = (preferred, "date", "as_of_date", "session_date")
+    lower = {str(c).lower(): str(c) for c in frame.columns}
+    for candidate in candidates:
+        if candidate in frame.columns:
+            return candidate
+        if candidate.lower() in lower:
+            return lower[candidate.lower()]
+    raise ValueError("SPLIT_DATE_COLUMN_MISSING")
 
 
 def infer_research_boundaries(frame: pd.DataFrame, date_col: str = "date") -> dict[str, pd.Timestamp]:
@@ -21,7 +32,8 @@ def infer_research_boundaries(frame: pd.DataFrame, date_col: str = "date") -> di
     Discovery 2020-2021, Development 2022-2023, Validation 2024, Holdout 2025+.
     For deeper histories, use the historical protocol ending with the same 2025+ holdout.
     """
-    dt = pd.to_datetime(frame[date_col], errors="coerce")
+    resolved_date_col = _resolve_date_col(frame, date_col)
+    dt = pd.to_datetime(frame[resolved_date_col], errors="coerce")
     start = dt.min()
     end = dt.max()
     if pd.isna(start) or pd.isna(end):
@@ -44,7 +56,6 @@ def infer_research_boundaries(frame: pd.DataFrame, date_col: str = "date") -> di
             "end": end.normalize(),
         }
 
-    # Fallback for shorter datasets: quantile-like year boundaries, still chronological.
     years = sorted(int(y) for y in dt.dropna().dt.year.unique())
     if len(years) < 4:
         raise ValueError("INSUFFICIENT_HISTORY_FOR_4_BLOCK_SPLIT")
@@ -64,8 +75,9 @@ def chronological_split_adaptive(
     purge_sessions: int = 20,
 ) -> pd.DataFrame:
     out = frame.copy()
-    dt = pd.to_datetime(out[date_col], errors="coerce")
-    bounds = infer_research_boundaries(out, date_col=date_col)
+    resolved_date_col = _resolve_date_col(out, date_col)
+    dt = pd.to_datetime(out[resolved_date_col], errors="coerce")
+    bounds = infer_research_boundaries(out, date_col=resolved_date_col)
     dev = bounds["development_start"]
     val = bounds["validation_start"]
     hold = bounds["holdout_start"]
