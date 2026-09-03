@@ -34,6 +34,28 @@ def test_adaptive_split_contains_four_blocks_when_history_supports_them():
     assert split["research_split_protocol"].nunique() == 1
 
 
+def test_date_alias_as_of_date_is_supported():
+    frame = pd.DataFrame({"as_of_date": pd.to_datetime([
+        "2020-01-02", "2022-01-03", "2024-01-03", "2025-01-03"
+    ])})
+    bounds = infer_research_boundaries(frame)
+    assert bounds["holdout_start"] == pd.Timestamp("2025-01-01")
+
+
+def test_date_alias_session_date_is_supported():
+    frame = pd.DataFrame({"session_date": pd.to_datetime([
+        "2020-01-02", "2022-01-03", "2024-01-03", "2025-01-03"
+    ])})
+    split = chronological_split_adaptive(frame, purge_sessions=0)
+    assert "HOLDOUT" in set(split["research_split"])
+
+
+def test_missing_date_column_fails_closed():
+    frame = pd.DataFrame({"x": [1, 2, 3, 4]})
+    with pytest.raises(ValueError, match="SPLIT_DATE_COLUMN_MISSING"):
+        infer_research_boundaries(frame)
+
+
 def test_too_short_history_fails_closed():
     frame = pd.DataFrame({"date": pd.to_datetime(["2023-01-03", "2024-01-03", "2025-01-03"])})
     with pytest.raises(ValueError, match="INSUFFICIENT_HISTORY_FOR_4_BLOCK_SPLIT"):
