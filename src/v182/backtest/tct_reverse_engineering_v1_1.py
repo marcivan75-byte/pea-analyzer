@@ -99,6 +99,71 @@ def chronological_split_adaptive(
     return out
 
 
+def build_catalyst_event_features_safe(
+    base: pd.DataFrame,
+    events: pd.DataFrame,
+    *,
+    id_col: str = "instrument_id",
+    date_col: str = "date",
+    event_time_col: str = "observed_at_utc",
+    event_type_col: str = "event_type",
+    windows_days: tuple[int, ...] | list[int] = (1, 3, 5, 10, 20),
+) -> tuple[pd.DataFrame, list[str]]:
+    """Encode only already-observed catalyst events using explicit ns timestamps.
+
+    Pandas 3 may preserve microsecond-resolution datetimes. This function forces
+    both signal dates and event timestamps to datetime64[ns, UTC] before integer
+    search arithmetic, preventing 1000x window distortion.
+    """
+    out = base.copy().reset_index(drop=True)
+    out[date_col] = pd.to_datetime(out[date_col], errors="coerce", utc=True).astype("datetime64[ns, UTC]")
+    hist = events.copy()
+    required = {id_col, event_time_col, event_type_col}
+    if not required.issubset(hist.columns):
+        raise ValueError("CATALYST_FIELDS_MISSING:" + ",".join(sorted(required - set(hist.columns))))
+    hist[event_time_col] = pd.to_datetime(hist[event_time_col], errors="coerce", utc=True).astype("datetime64[ns, UTC]")
+    if hist[event_time_col].isna().any():
+        raise ValueError("PIT_TIMESTAMP_INVALID")
+    hist[event_type_col] = hist[event_type_col].astype(str).str.upper().str.strip()
+    types = sorted(t for t in hist[event_type_col].unique() if t)
+    feature_cols: list[str] = []
+    date_ns = out[date_col].astype("int64").to_numpy()
+    day_ns = pd.Timedelta(days=1).value
+
+    for event_type in types:
+        safe = "".join(ch if ch.isalnum() else "_" for ch in event_type.lower()).strip("_")
+        typed = hist[hist[event_type_col] == event_type]
+        for window in windows_days:
+            col = f"catalyst_{safe}_count_{int(window)}d"
+            out[col] = 0
+            feature_cols.append(col)
+        age_col = f"catalyst_{safe}_age_days"
+        out[age_col] = np.nan
+        feature_cols.append(age_col)
+
+        for instrument, idx in out.groupby(id_col, sort=False).groups.items():
+            event_times = (
+                typed.loc[typed[id_col] == instrument, event_time_col]
+                .sort_values()
+                .astype("int64")
+                .to_numpy()
+            )
+            if len(event_times) == 0:
+                continue
+            positions = np.asarray(list(idx), dtype=int)
+            signals = date_ns[positions]
+            right = np.searchsorted(event_times, signals, side="right")
+            for window in windows_days:
+                left_boundary = signals - int(window) * day_ns
+                left = np.searchsorted(event_times, left_boundary, side="right")
+                out.loc[positions, f"catalyst_{safe}_count_{int(window)}d"] = right - left
+            has_prior = right > 0
+            prior_time = np.full(len(signals), np.nan)
+            prior_time[has_prior] = event_times[right[has_prior] - 1]
+            out.loc[positions, age_col] = (signals - prior_time) / day_ns
+    return out, feature_cols
+
+
 def prepare_research_matrix_adaptive(
     ohlcv: pd.DataFrame,
     *,
