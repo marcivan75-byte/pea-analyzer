@@ -24,8 +24,8 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-      - name: Install package
-        run: pip install -e .
+      - name: Install package and test tooling
+        run: pip install -e . pytest
       - name: Compile reverse-engineering engine
         run: python -m compileall -q src/v182/backtest/tct_reverse_engineering_v1.py src/v182/backtest/tct_reverse_engineering_v1_1.py scripts/run_tct_reverse_engineering_v1.py
       - name: Run targeted tests
