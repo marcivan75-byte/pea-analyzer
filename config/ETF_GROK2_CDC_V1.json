@@ -34,6 +34,7 @@
   },
   "exit_policy": {
     "id": "GROK2_PROVEN_V1_REPLAY_H168_S18_T04",
+    "mode": "PROVEN_V1_REPLAY",
     "target_return": 0.04,
     "hard_stop_return": -0.18,
     "max_holding_sessions": 168,
