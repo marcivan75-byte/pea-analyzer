@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
 
-from v182.backtest.etf_grok2_world_fallback_research_v3 import _relative_perf63
+import pandas as pd
+
+from v182.backtest.etf_grok2_world_fallback_research_v3 import _next_common_obs, _relative_perf63
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -25,6 +27,21 @@ def test_v3_governance_and_world_fallback():
     assert cfg["review"]["reversal"]["minimum_confirmations"] == 3
     assert cfg["review"]["rotation"]["minimum_score_advantage_points"] >= 10
     assert cfg["review"]["rotation"]["minimum_perf63_advantage_points"] >= 0.05
+
+
+def test_next_common_obs_skips_non_common_session():
+    active = pd.DataFrame({"Close": [100.0, 101.0]}, index=pd.to_datetime(["2026-01-02", "2026-01-05"]))
+    world = pd.DataFrame({"Close": [200.0, 202.0]}, index=pd.to_datetime(["2026-01-02", "2026-01-05"]))
+    # Signal after the common 2-Jan close: first executable transition must be 5-Jan.
+    result = _next_common_obs(active, world, pd.Timestamp("2026-01-02"))
+    assert result == (pd.Timestamp("2026-01-05"), 101.0, 202.0)
+
+
+def test_next_common_obs_never_uses_stale_world_close():
+    active = pd.DataFrame({"Close": [100.0, 101.0, 102.0]}, index=pd.to_datetime(["2026-01-02", "2026-01-05", "2026-01-06"]))
+    world = pd.DataFrame({"Close": [200.0, 202.0]}, index=pd.to_datetime(["2026-01-02", "2026-01-06"]))
+    result = _next_common_obs(active, world, pd.Timestamp("2026-01-02"))
+    assert result == (pd.Timestamp("2026-01-06"), 102.0, 202.0)
 
 
 def test_relative_perf_helper_is_importable():
