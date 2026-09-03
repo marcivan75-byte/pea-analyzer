@@ -1,5 +1,5 @@
 {
-  "version": "ETF_GROK2_CDC_PASS2_2026_09_03",
+  "version": "ETF_GROK2_CDC_PASS3_2026_09_03",
   "status": "RESEARCH_CHALLENGER_NO_REAL_ORDERS",
   "base_model": "20.8.1-grok",
   "cdc_reference": "CDC Selection ETF Moyen Terme v1.0 2026-09-02",
@@ -14,18 +14,18 @@
   },
   "quantitative_core": {
     "group_multipliers": {
-      "Momentum court": 0.90,
-      "Momentum long": 0.95,
+      "Momentum court": 1.00,
+      "Momentum long": 1.00,
       "Tendance": 1.00,
-      "Technique": 0.95,
-      "Risque": 1.10,
-      "Risque ajusté": 1.15,
-      "Liquidité": 1.15,
-      "Sensibilité marché": 1.05
+      "Technique": 1.00,
+      "Risque": 1.00,
+      "Risque ajusté": 1.00,
+      "Liquidité": 1.00,
+      "Sensibilité marché": 1.00
     },
-    "score_raw_weight": 0.50,
-    "global_rank_weight": 0.40,
-    "peer_rank_weight": 0.10,
+    "score_raw_weight": 0.55,
+    "global_rank_weight": 0.45,
+    "peer_rank_weight": 0.00,
     "selection_threshold": 82.0,
     "top_n": 2,
     "minimum_peer_count": 3,
@@ -39,8 +39,7 @@
     "target_return": 0.04,
     "hard_stop_return": -0.18,
     "max_holding_sessions": 168,
-    "execution": "CLOSE",
-    "research_note": "PASS2 retains proven GROK V1 exit; CDC thesis-exit variant rejected in Pass 0."
+    "execution": "CLOSE"
   },
   "rejected_iteration": {
     "id": "GROK2_CDC_THESIS_PROXY_Q63_H378_S25",
