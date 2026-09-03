@@ -9,9 +9,12 @@ import pandas as pd
 from v182.backtest.tct_reverse_engineering_v1 import (
     ReverseEngineeringConfig,
     discover_patterns_discovery_only,
-    prepare_research_matrix,
     quantile_factor_scan,
     run_eight_pass_audit,
+)
+from v182.backtest.tct_reverse_engineering_v1_1 import (
+    effective_config_for_history,
+    prepare_research_matrix_adaptive,
 )
 
 
@@ -54,9 +57,14 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     ohlcv = _load_table(args.ohlcv)
     exogenous = _load_table(args.exogenous) if args.exogenous else None
-    cfg = ReverseEngineeringConfig(min_support=args.min_support, max_pattern_size=args.max_pattern_size)
+    base_cfg = ReverseEngineeringConfig(min_support=args.min_support, max_pattern_size=args.max_pattern_size)
+    cfg = effective_config_for_history(ohlcv, base_cfg)
 
-    matrix, numeric_features = prepare_research_matrix(ohlcv, exogenous_history=exogenous, cfg=cfg)
+    matrix, numeric_features = prepare_research_matrix_adaptive(
+        ohlcv,
+        exogenous_history=exogenous,
+        cfg=cfg,
+    )
     boolean_factors = _derive_boolean_factors(matrix)
     label = "label_hit_25_h20"
 
@@ -76,6 +84,7 @@ def main() -> int:
         "instruments": int(matrix["instrument_id"].nunique()),
         "date_min": str(pd.to_datetime(matrix["date"]).min().date()),
         "date_max": str(pd.to_datetime(matrix["date"]).max().date()),
+        "split_protocol": matrix["research_split_protocol"].iloc[0] if len(matrix) else None,
         "splits": matrix["research_split"].value_counts(dropna=False).to_dict(),
         "audit_passes": int((audit["status"] == "PASS").sum()),
         "audit_failures": audit.loc[audit["status"] != "PASS", "audit_pass"].tolist(),
