@@ -41,6 +41,11 @@
     "execution": "CLOSE",
     "research_note": "PASS2 retains proven GROK V1 exit; CDC thesis-exit variant rejected in Pass 0."
   },
+  "rejected_iteration": {
+    "id": "GROK2_CDC_THESIS_PROXY_Q63_H378_S25",
+    "reason": "THESIS_PROXY_EXIT_REDUCED_WIN_RATE_AND_DEGRADED_2024_2026",
+    "status": "REJECTED_DO_NOT_PROMOTE"
+  },
   "operational_cdc_overlay": {
     "aum_warning_below_eur_m": 50,
     "broad_ter_warning_pct": 0.25,
