@@ -9,12 +9,18 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_v3_governance_and_world_fallback():
     cfg = json.loads((ROOT / "config/ETF_GROK2_EXIT_RESEARCH_V3.json").read_text(encoding="utf-8"))
     assert cfg["portfolio"]["world_fallback_isin"] == "LU1681043599"
+    assert cfg["portfolio"]["max_grok_positions"] == 2
+    assert cfg["portfolio"]["weight_per_grok_position"] == 0.5
+    assert cfg["portfolio"]["allocation_model"] == "TWO_INDEPENDENT_50PCT_SLEEVES"
     assert cfg["execution"]["entry"] == "NEXT_SESSION_CLOSE"
     assert cfg["execution"]["exit"] == "NEXT_SESSION_CLOSE"
     assert cfg["execution"]["residual_capital"] == "WORLD_FALLBACK"
+    assert cfg["execution"]["cash_target"] == 0.0
     assert cfg["governance"]["fixed_take_profit_forbidden"] is True
     assert cfg["governance"]["same_close_signal_execution_forbidden"] is True
     assert cfg["governance"]["score_exhaustion_exit_disabled"] is True
+    assert cfg["governance"]["two_independent_sleeves_required"] is True
+    assert cfg["governance"]["cash_reserve_forbidden_in_world_variants"] is True
     assert cfg["governance"]["no_real_orders"] is True
     assert cfg["review"]["reversal"]["minimum_confirmations"] == 3
     assert cfg["review"]["rotation"]["minimum_score_advantage_points"] >= 10
