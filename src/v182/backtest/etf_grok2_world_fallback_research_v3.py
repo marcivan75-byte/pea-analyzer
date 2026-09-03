@@ -30,6 +30,18 @@ def _close(frame: pd.DataFrame, d: pd.Timestamp, exact: bool = False) -> float |
     return None if s.empty else float(s.iloc[-1])
 
 
+def _next_common_obs(frame_a: pd.DataFrame, frame_b: pd.DataFrame, after: pd.Timestamp) -> tuple[pd.Timestamp, float, float] | None:
+    """First post-signal session where both instruments have an executable Close."""
+    a = pd.to_numeric(frame_a["Close"], errors="coerce").dropna()
+    b = pd.to_numeric(frame_b["Close"], errors="coerce").dropna()
+    common = a.index.intersection(b.index)
+    common = common[common > after]
+    if len(common) == 0:
+        return None
+    d = pd.Timestamp(common.min())
+    return d, float(a.loc[d]), float(b.loc[d])
+
+
 def _relative_perf63(histories: dict[str, pd.DataFrame], isin: str, d: pd.Timestamp) -> float | None:
     a = _history_metrics(histories[isin], d).get("perf63")
     w = _history_metrics(histories[WORLD_ISIN], d).get("perf63")
@@ -79,10 +91,10 @@ def simulate_world_variant(variant: str, histories: dict[str, pd.DataFrame], all
     latest_scores: dict[str, dict] = {}
     review_dates = set(_monthly_signal_dates(histories, start, end))
 
-    def world_px(d: pd.Timestamp) -> float:
-        x = _close(histories[WORLD_ISIN], d)
+    def world_px(d: pd.Timestamp, exact: bool = False) -> float:
+        x = _close(histories[WORLD_ISIN], d, exact=exact)
         if x is None:
-            raise RuntimeError("V3_WORLD_MARK_MISSING")
+            raise RuntimeError("V3_WORLD_EXEC_MISSING" if exact else "V3_WORLD_MARK_MISSING")
         return x
 
     def positions() -> dict[str, Position]:
@@ -99,8 +111,7 @@ def simulate_world_variant(variant: str, histories: dict[str, pd.DataFrame], all
         return total
 
     def fallback_value(d: pd.Timestamp) -> float:
-        px = world_px(d)
-        return sum(sleeve_world_units.values()) * px
+        return sum(sleeve_world_units.values()) * world_px(d)
 
     def equity(d: pd.Timestamp) -> tuple[float, float, float]:
         av = active_value(d)
@@ -113,7 +124,7 @@ def simulate_world_variant(variant: str, histories: dict[str, pd.DataFrame], all
     def schedule_exit(isin: str, signal_date: pd.Timestamp, reason: str, score: float | None) -> pd.Timestamp | None:
         if isin in pending_exits or isin not in position_sleeve:
             return None
-        nxt = _next_obs(histories[isin], signal_date)
+        nxt = _next_common_obs(histories[isin], histories[WORLD_ISIN], signal_date)
         if nxt is None:
             return None
         pending_exits[isin] = {"exec_date": nxt[0], "reason": reason, "score": score, "sleeve_id": position_sleeve[isin]}
@@ -132,7 +143,7 @@ def simulate_world_variant(variant: str, histories: dict[str, pd.DataFrame], all
         elif any(int(x["sleeve_id"]) == sleeve_id for x in pending_entries):
             return
         anchor = signal_date if earliest is None else max(signal_date, earliest - pd.Timedelta(nanoseconds=1))
-        nxt = _next_obs(histories[isin], anchor)
+        nxt = _next_common_obs(histories[isin], histories[WORLD_ISIN], anchor)
         if nxt is not None:
             pending_entries.append({"isin": isin, "exec_date": nxt[0], "score": score, "peer": peer, "sleeve_id": sleeve_id})
 
@@ -145,11 +156,11 @@ def simulate_world_variant(variant: str, histories: dict[str, pd.DataFrame], all
         if p is None:
             return
         px = _close(histories[isin], d, exact=True)
+        wpx = world_px(d, exact=True)
         if px is None:
-            return
+            raise RuntimeError("V3_ACTIVE_EXIT_EXEC_MISSING")
         gross = p.units * px
         after_exit = gross * (1.0 - exit_fee)
-        wpx = world_px(d)
         fallback_gross = after_exit / (1.0 + fallback_fee)
         sleeve_world_units[sid] = fallback_gross / wpx
         turnover += gross + fallback_gross
@@ -166,9 +177,9 @@ def simulate_world_variant(variant: str, histories: dict[str, pd.DataFrame], all
         if isin in position_sleeve or sleeve_position[sid] is not None:
             return
         px = _close(histories[isin], d, exact=True)
+        wpx = world_px(d, exact=True)
         if px is None:
-            return
-        wpx = world_px(d)
+            raise RuntimeError("V3_ACTIVE_ENTRY_EXEC_MISSING")
         world_gross = sleeve_world_units[sid] * wpx
         if world_gross <= 0:
             return
@@ -321,7 +332,8 @@ def run(root: Path = ROOT, start: str = "2013-01-01", end: str | None = None) ->
               "world_benchmark": world, "variants": variants, "ranking_by_cagr_vs_world": ranked,
               "best_variant": ranked[0], "fixed_take_profit_used": False, "same_close_signal_execution_used": False,
               "score_exhaustion_exit_used": False, "allocation_model": "TWO_INDEPENDENT_50PCT_SLEEVES",
-              "survivorship_bias_resolved": False, "promotion_eligible": False, "real_orders_allowed": False}
+              "common_session_execution_required": True, "survivorship_bias_resolved": False,
+              "promotion_eligible": False, "real_orders_allowed": False}
     (outdir / "SUMMARY.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return result
