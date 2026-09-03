@@ -1,53 +1,44 @@
 {
-  "version": "ETF_GROK2_CDC_V2_2026_09_03",
+  "version": "ETF_GROK2_CDC_PASS2_2026_09_03",
   "status": "RESEARCH_CHALLENGER_NO_REAL_ORDERS",
   "base_model": "20.8.1-grok",
   "cdc_reference": "CDC Selection ETF Moyen Terme v1.0 2026-09-02",
-  "rejected_iteration": {
-    "version": "ETF_GROK2_CDC_V1_2026_09_03",
-    "reason": "THESIS_PROXY_EXIT_REDUCED_WIN_RATE_AND_DEGRADED_2024_2026",
-    "win_rate": 0.6111111111111112,
-    "expectancy": 0.035394212724729104,
-    "profit_factor": 3.567475757244545,
-    "diagnostic_2024_2026_expectancy": -0.006919414589057482
-  },
   "design_principles": {
     "momentum_is_confirmation_not_unique_thesis": true,
     "peer_comparison_required_when_testable": true,
     "lookthrough_required_operationally_but_not_backfilled_without_pit": true,
     "vehicle_quality_required_operationally_but_static_2026_fields_not_backfilled": true,
-    "unvalidated_thesis_exit_not_promoted": true
+    "price_only_stop_is_not_primary_exit": false,
+    "quarterly_review_equivalent_sessions": 63
   },
   "quantitative_core": {
     "group_multipliers": {
-      "Momentum court": 0.75,
-      "Momentum long": 0.80,
+      "Momentum court": 0.90,
+      "Momentum long": 0.95,
       "Tendance": 1.00,
-      "Technique": 0.85,
-      "Risque": 1.20,
-      "Risque ajusté": 1.25,
-      "Liquidité": 1.30,
-      "Sensibilité marché": 1.10
+      "Technique": 0.95,
+      "Risque": 1.10,
+      "Risque ajusté": 1.15,
+      "Liquidité": 1.15,
+      "Sensibilité marché": 1.05
     },
-    "score_raw_weight": 0.45,
-    "global_rank_weight": 0.35,
-    "peer_rank_weight": 0.20,
+    "score_raw_weight": 0.50,
+    "global_rank_weight": 0.40,
+    "peer_rank_weight": 0.10,
     "selection_threshold": 82.0,
     "top_n": 2,
     "minimum_peer_count": 3,
-    "minimum_liquidity_percentile": 20.0,
-    "max_selected_per_peer_group": 1,
+    "minimum_liquidity_percentile": 10.0,
+    "max_selected_per_peer_group": 2,
     "peer_group_fields": ["category", "geo_exposure"]
   },
   "exit_policy": {
     "id": "GROK2_PROVEN_V1_REPLAY_H168_S18_T04",
-    "mode": "PROVEN_V1_REPLAY",
     "target_return": 0.04,
     "hard_stop_return": -0.18,
     "max_holding_sessions": 168,
-    "target_on_close": true,
-    "stop_on_close": true,
-    "execution": "CLOSE"
+    "execution": "CLOSE",
+    "research_note": "PASS2 retains proven GROK V1 exit; CDC thesis-exit variant rejected in Pass 0."
   },
   "operational_cdc_overlay": {
     "aum_warning_below_eur_m": 50,
