@@ -1,0 +1,56 @@
+{
+  "version": "ETF_GROK2_EXIT_RESEARCH_V3_WORLD_FALLBACK_2026_09_03",
+  "status": "RESEARCH_ONLY_NO_REAL_ORDERS",
+  "base_model": "ETF_GROK2_CDC_FINAL_PASS5_2026_09_03",
+  "portfolio": {
+    "initial_capital_eur": 205000,
+    "max_grok_positions": 2,
+    "weight_per_grok_position": 0.5,
+    "world_fallback_isin": "LU1681043599",
+    "active_entry_fee_bps": 25,
+    "active_exit_fee_bps": 25,
+    "fallback_rebalance_fee_bps": 0
+  },
+  "execution": {
+    "entry": "NEXT_SESSION_CLOSE",
+    "exit": "NEXT_SESSION_CLOSE",
+    "review_frequency": "MONTHLY",
+    "residual_capital": "WORLD_FALLBACK"
+  },
+  "review": {
+    "minimum_holding_sessions": 42,
+    "catastrophic_stop_return": -0.18,
+    "reversal": {
+      "minimum_confirmations": 3
+    },
+    "rotation": {
+      "minimum_score_advantage_points": 10.0,
+      "minimum_perf63_advantage_points": 0.05
+    },
+    "relative_exit": {
+      "minimum_holding_sessions": 63,
+      "underperformance_vs_world_63_points": -0.05,
+      "maximum_score_to_exit": 82.0
+    }
+  },
+  "variants": {
+    "A_STRICT_CASH": "strict reversal with residual cash",
+    "E_WORLD_FALLBACK": "strict reversal with residual capital tracking World",
+    "F_WORLD_FALLBACK_ROTATION": "E plus high-hurdle rotation, no score-exhaustion exit",
+    "G_WORLD_FALLBACK_RELATIVE_EXIT": "F plus relative weakness exit back to World"
+  },
+  "objective": {
+    "primary": "portfolio_cagr_vs_world",
+    "secondary": ["max_drawdown", "calmar", "sortino", "turnover", "active_capital_utilisation"],
+    "win_rate_is_secondary": true
+  },
+  "governance": {
+    "same_close_signal_execution_forbidden": true,
+    "fixed_take_profit_forbidden": true,
+    "score_exhaustion_exit_disabled": true,
+    "pit_price_features_required": true,
+    "static_2026_backfill_forbidden": true,
+    "survivorship_bias_label_required": true,
+    "no_real_orders": true
+  }
+}
