@@ -1,5 +1,5 @@
 {
-  "version": "ETF_GROK2_CDC_PASS4_PARITY_2026_09_03",
+  "version": "ETF_GROK2_CDC_PASS5_MICROTILT_2026_09_03",
   "status": "RESEARCH_CHALLENGER_NO_REAL_ORDERS",
   "base_model": "20.8.1-grok",
   "cdc_reference": "CDC Selection ETF Moyen Terme v1.0 2026-09-02",
@@ -14,14 +14,14 @@
   },
   "quantitative_core": {
     "group_multipliers": {
-      "Momentum court": 1.00,
+      "Momentum court": 0.97,
       "Momentum long": 1.00,
       "Tendance": 1.00,
       "Technique": 1.00,
-      "Risque": 1.00,
-      "Risque ajusté": 1.00,
-      "Liquidité": 1.00,
-      "Sensibilité marché": 1.00
+      "Risque": 1.02,
+      "Risque ajusté": 1.05,
+      "Liquidité": 1.05,
+      "Sensibilité marché": 1.02
     },
     "score_raw_weight": 0.55,
     "global_rank_weight": 0.45,
