@@ -9,7 +9,7 @@
     "world_fallback_isin": "LU1681043599",
     "active_entry_fee_bps": 25,
     "active_exit_fee_bps": 25,
-    "fallback_rebalance_fee_bps": 0
+    "fallback_rebalance_fee_bps": 25
   },
   "execution": {
     "entry": "NEXT_SESSION_CLOSE",
@@ -48,6 +48,7 @@
     "same_close_signal_execution_forbidden": true,
     "fixed_take_profit_forbidden": true,
     "score_exhaustion_exit_disabled": true,
+    "fallback_transaction_costs_not_zeroed": true,
     "pit_price_features_required": true,
     "static_2026_backfill_forbidden": true,
     "survivorship_bias_label_required": true,
