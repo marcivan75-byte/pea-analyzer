@@ -1,0 +1,97 @@
+name: TCT Reverse Engineering V1 Empirical
+
+on:
+  push:
+    branches:
+      - agent/tct-reverse-engineering-v1
+    paths:
+      - '.github/workflows/tct_reverse_engineering_v1_empirical.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  empirical:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore persistent OHLCV cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cache/
+          key: tct-research-ohlcv-${{ github.run_id }}
+          restore-keys: |
+            ohlcv-v3-
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Inspect restored cache
+        run: |
+          find data/cache/actions -maxdepth 1 -type f -name 'history_*.parquet' | head -20 || true
+          if [ -f data/cache/actions/history_manifest.json ]; then cat data/cache/actions/history_manifest.json; fi
+
+      - name: Convert governed cache to long OHLCV
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from v182.backtest.tct_reverse_cache_adapter import load_governed_action_cache
+          out = Path('outputs/tct_reverse_engineering_v1')
+          out.mkdir(parents=True, exist_ok=True)
+          frame = load_governed_action_cache('data/cache/actions')
+          target = out / 'actions_ohlcv_long.parquet'
+          frame.to_parquet(target, index=False)
+          print({'rows': len(frame), 'instruments': frame['instrument_id'].nunique(), 'date_min': str(frame['date'].min()), 'date_max': str(frame['date'].max())})
+          PY
+
+      - name: Run reverse-engineering research
+        run: |
+          set +e
+          python scripts/run_tct_reverse_engineering_v1.py \
+            --ohlcv outputs/tct_reverse_engineering_v1/actions_ohlcv_long.parquet \
+            --out outputs/tct_reverse_engineering_v1/research \
+            --min-support 30 \
+            --max-pattern-size 3
+          code=$?
+          echo "$code" > outputs/tct_reverse_engineering_v1/research/runner_exit_code.txt
+          exit 0
+
+      - name: Publish research summary
+        if: always()
+        run: |
+          if [ -f outputs/tct_reverse_engineering_v1/research/status.json ]; then
+            cat outputs/tct_reverse_engineering_v1/research/status.json
+            echo '## TCT Reverse Engineering V1' >> "$GITHUB_STEP_SUMMARY"
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat outputs/tct_reverse_engineering_v1/research/status.json >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f outputs/tct_reverse_engineering_v1/research/audit_8_passes.csv ]; then
+            echo '### Audit 8 passes' >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            cat outputs/tct_reverse_engineering_v1/research/audit_8_passes.csv >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f outputs/tct_reverse_engineering_v1/research/boolean_patterns_discovery.csv ]; then
+            echo '### Top patterns' >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            head -21 outputs/tct_reverse_engineering_v1/research/boolean_patterns_discovery.csv >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload empirical research artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TCT_REVERSE_ENGINEERING_V1_${{ github.run_id }}
+          path: outputs/tct_reverse_engineering_v1/
+          if-no-files-found: error
+          retention-days: 30
