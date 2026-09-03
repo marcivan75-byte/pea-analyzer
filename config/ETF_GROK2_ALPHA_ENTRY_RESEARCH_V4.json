@@ -1,0 +1,29 @@
+{
+  "version": "ETF_GROK2_ALPHA_ENTRY_RESEARCH_V4_2026_09_03",
+  "status": "RESEARCH_ONLY_NO_REAL_ORDERS",
+  "base_selection_threshold": 86.0,
+  "world_fallback_isin": "LU1681043599",
+  "entry_relative_perf63_minimums": [0.0, 0.02, 0.05, 0.08],
+  "objective": {
+    "primary": "positive_portfolio_cagr_delta_vs_world",
+    "promotion_hurdle_cagr_points": 0.02,
+    "secondary": ["max_drawdown", "calmar", "sortino", "turnover", "active_grok_utilisation"]
+  },
+  "design": {
+    "world_is_default_holding": true,
+    "grok_replaces_world_only_with_relative_strength": true,
+    "fixed_take_profit_forbidden": true,
+    "same_close_signal_execution_forbidden": true,
+    "monthly_review": true,
+    "strict_reversal_exit": true,
+    "rotation_disabled_in_this_pass": true,
+    "score_exhaustion_exit_disabled": true
+  },
+  "governance": {
+    "pit_price_features_required": true,
+    "static_2026_backfill_forbidden": true,
+    "survivorship_bias_label_required": true,
+    "survivorship_bias_resolved": false,
+    "no_real_orders": true
+  }
+}
