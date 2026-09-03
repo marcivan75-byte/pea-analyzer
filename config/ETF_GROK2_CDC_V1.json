@@ -1,5 +1,5 @@
 {
-  "version": "ETF_GROK2_CDC_PASS3_2026_09_03",
+  "version": "ETF_GROK2_CDC_PASS4_PARITY_2026_09_03",
   "status": "RESEARCH_CHALLENGER_NO_REAL_ORDERS",
   "base_model": "20.8.1-grok",
   "cdc_reference": "CDC Selection ETF Moyen Terme v1.0 2026-09-02",
@@ -28,8 +28,8 @@
     "peer_rank_weight": 0.00,
     "selection_threshold": 82.0,
     "top_n": 2,
-    "minimum_peer_count": 3,
-    "minimum_liquidity_percentile": 10.0,
+    "minimum_peer_count": 1,
+    "minimum_liquidity_percentile": 0.0,
     "max_selected_per_peer_group": 2,
     "peer_group_fields": ["category", "geo_exposure"]
   },
