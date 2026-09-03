@@ -1,5 +1,5 @@
 {
-  "version": "ETF_GROK2_CDC_PASS6_SELECTIVITY_2026_09_03",
+  "version": "ETF_GROK2_CDC_FINAL_PASS5_2026_09_03",
   "status": "RESEARCH_CHALLENGER_NO_REAL_ORDERS",
   "base_model": "20.8.1-grok",
   "cdc_reference": "CDC Selection ETF Moyen Terme v1.0 2026-09-02",
@@ -26,7 +26,7 @@
     "score_raw_weight": 0.55,
     "global_rank_weight": 0.45,
     "peer_rank_weight": 0.00,
-    "selection_threshold": 84.0,
+    "selection_threshold": 82.0,
     "top_n": 2,
     "minimum_peer_count": 1,
     "minimum_liquidity_percentile": 0.0,
