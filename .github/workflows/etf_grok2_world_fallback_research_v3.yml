@@ -6,6 +6,7 @@ on:
       - research/grok2-exit-refactor
     paths:
       - 'config/ETF_GROK2_EXIT_RESEARCH_V3.json'
+      - 'config/ETF_GROK2_CDC_V1.json'
       - 'src/v182/backtest/etf_grok2_world_fallback_research_v3.py'
       - 'tests/test_etf_grok2_world_fallback_research_v3.py'
       - '.github/workflows/etf_grok2_world_fallback_research_v3.yml'
