@@ -1,0 +1,213 @@
+name: TCT Reverse Engineering Event Inventory
+
+on:
+  push:
+    branches: [research/tct-reverse-engineering-v1]
+    paths:
+      - '.github/workflows/tct_reverse_engineering_event_inventory.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  PRE2023_ARTIFACT_ID: '9817322742'
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-runtime.txt
+      - name: Restore governed post-2022 OHLCV cache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: data/cache/
+          key: ohlcv-v3-33132925283
+          restore-keys: |
+            ohlcv-v3-
+      - name: Restore PRE2023 governed development corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p inputs/pre2023
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${PRE2023_ARTIFACT_ID}/zip" > /tmp/pre2023.zip
+          unzip -oq /tmp/pre2023.zip -d inputs/pre2023
+          test -s inputs/pre2023/PRE2023_YAHOO_DEVELOPMENT_OHLCV.parquet
+          test -s inputs/pre2023/PRE2023_YAHOO_CORPUS_MANIFEST.json
+          test -n "$(find data/cache/actions -name 'history_*.parquet' -print -quit)"
+      - name: Install analysis runtime
+        run: python -m pip install --prefer-binary pandas numpy pyarrow
+      - name: Build strict >20pct 4/10/20-session event inventory
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json, re
+          import numpy as np
+          import pandas as pd
+
+          OUT=Path('outputs/tct_reverse_engineering_v1')
+          OUT.mkdir(parents=True,exist_ok=True)
+          HORIZONS=(4,10,20)
+          THRESH=0.20
+
+          def norm_cols(df):
+              df=df.copy()
+              df.columns=[str(c).strip().lower().replace(' ','_') for c in df.columns]
+              aliases={'adjclose':'adj_close','datetime':'date','timestamp':'date','symbol':'ticker'}
+              df=df.rename(columns={c:aliases.get(c,c) for c in df.columns})
+              return df
+
+          pre=norm_cols(pd.read_parquet('inputs/pre2023/PRE2023_YAHOO_DEVELOPMENT_OHLCV.parquet'))
+          if 'date' not in pre or 'ticker' not in pre:
+              raise RuntimeError(f'PRE2023 schema unsupported: {pre.columns.tolist()}')
+          pre['date']=pd.to_datetime(pre['date'],utc=True,errors='coerce').dt.tz_convert(None)
+          price_col='adj_close' if 'adj_close' in pre.columns else 'close'
+          needed=['date','ticker',price_col]
+          if 'volume' in pre.columns: needed.append('volume')
+          pre=pre[needed].rename(columns={price_col:'price'}).copy()
+          pre['source']='PRE2023_GOVERNED_YAHOO'
+
+          parts=[]
+          cache_files=sorted(Path('data/cache/actions').glob('history_*.parquet'))
+          schemas=[]
+          for p in cache_files:
+              try:
+                  d=norm_cols(pd.read_parquet(p))
+              except Exception as e:
+                  schemas.append({'file':p.name,'error':str(e)})
+                  continue
+              schemas.append({'file':p.name,'columns':d.columns.tolist(),'rows':len(d)})
+              if d.empty: continue
+              if 'date' not in d.columns:
+                  if isinstance(d.index,pd.DatetimeIndex):
+                      d=d.reset_index().rename(columns={d.index.name or 'index':'date'})
+                      d=norm_cols(d)
+                  elif 'index' in d.columns:
+                      d=d.rename(columns={'index':'date'})
+              if 'ticker' not in d.columns:
+                  t=p.stem[len('history_'):]
+                  # cache convention commonly replaces path-unsafe separators; retain exact stem for traceability
+                  d['ticker']=t
+              pc='adj_close' if 'adj_close' in d.columns else ('close' if 'close' in d.columns else None)
+              if pc is None or 'date' not in d.columns: continue
+              d['date']=pd.to_datetime(d['date'],utc=True,errors='coerce').dt.tz_convert(None)
+              keep=['date','ticker',pc]
+              if 'volume' in d.columns: keep.append('volume')
+              d=d[keep].rename(columns={pc:'price'}).copy()
+              d['source']='POST2022_GOVERNED_CACHE'
+              # Only post PRE2023 boundary; avoid overlap and any accidental old cache rows.
+              d=d[d['date']>=pd.Timestamp('2023-01-01')]
+              if not d.empty: parts.append(d)
+
+          post=pd.concat(parts,ignore_index=True) if parts else pd.DataFrame(columns=pre.columns)
+          allp=pd.concat([pre,post],ignore_index=True,sort=False)
+          allp['ticker']=allp['ticker'].astype(str)
+          allp['price']=pd.to_numeric(allp['price'],errors='coerce')
+          if 'volume' in allp: allp['volume']=pd.to_numeric(allp['volume'],errors='coerce')
+          allp=allp.dropna(subset=['date','ticker','price'])
+          allp=allp[allp['price']>0]
+          allp=allp.sort_values(['ticker','date']).drop_duplicates(['ticker','date'],keep='last').reset_index(drop=True)
+
+          raw=[]
+          clustered=[]
+          coverage=[]
+          for ticker,g in allp.groupby('ticker',sort=False):
+              g=g.sort_values('date').reset_index(drop=True)
+              px=g['price'].to_numpy(float)
+              dates=g['date'].to_numpy()
+              n=len(g)
+              if n<5: continue
+              coverage.append({'ticker':ticker,'min_date':str(g['date'].min().date()),'max_date':str(g['date'].max().date()),'rows':n,'volume_nonnull_pct':float(g['volume'].notna().mean()*100) if 'volume' in g else 0.0})
+              for H in HORIZONS:
+                  qual=[]
+                  meta=[]
+                  for i in range(n-1):
+                      j2=min(n,i+H+1)
+                      if i+1>=j2: continue
+                      fut=px[i+1:j2]
+                      if fut.size==0 or not np.isfinite(fut).any(): continue
+                      rel=fut/px[i]-1.0
+                      k=int(np.nanargmax(rel))
+                      m=float(rel[k])
+                      if m>THRESH: # strict >20%, per specification
+                          peak_i=i+1+k
+                          qual.append(i)
+                          meta.append((peak_i,m))
+                          raw.append({'ticker':ticker,'j0':pd.Timestamp(dates[i]),'horizon_sessions':H,'max_forward_return':m,'peak_date':pd.Timestamp(dates[peak_i]),'sessions_to_peak':peak_i-i,'j0_price':px[i],'peak_price':px[peak_i]})
+                  # Deduplicate overlapping positive J0s into first-detectable episodes.
+                  # After retaining J0, suppress all candidate J0s through that event's observed peak.
+                  last_suppressed=-1
+                  for i,(peak_i,m) in zip(qual,meta):
+                      if i<=last_suppressed: continue
+                      clustered.append({'ticker':ticker,'j0':pd.Timestamp(dates[i]),'horizon_sessions':H,'max_forward_return':m,'peak_date':pd.Timestamp(dates[peak_i]),'sessions_to_peak':peak_i-i,'j0_price':px[i],'peak_price':px[peak_i]})
+                      last_suppressed=peak_i
+
+          raw=pd.DataFrame(raw)
+          epi=pd.DataFrame(clustered)
+          cov=pd.DataFrame(coverage)
+          for d in (raw,epi):
+              if not d.empty:
+                  d['year']=pd.to_datetime(d['j0']).dt.year
+                  d['max_forward_return_pct']=100*d['max_forward_return']
+          if not raw.empty: raw.to_csv(OUT/'TCT_GT20_RAW_DATES_2010_2026.csv',index=False)
+          if not epi.empty: epi.to_csv(OUT/'TCT_GT20_CLUSTERED_EPISODES_2010_2026.csv',index=False)
+          cov.to_csv(OUT/'TCT_HISTORY_COVERAGE_2010_2026.csv',index=False)
+          pd.DataFrame(schemas).to_json(OUT/'POST2022_CACHE_SCHEMA_AUDIT.json',orient='records',indent=2)
+
+          if epi.empty:
+              annual=pd.DataFrame(columns=['year','horizon_sessions','episodes','unique_tickers'])
+          else:
+              annual=(epi.groupby(['year','horizon_sessions'])
+                         .agg(episodes=('ticker','size'),unique_tickers=('ticker','nunique'),median_max_return_pct=('max_forward_return_pct','median'),median_sessions_to_peak=('sessions_to_peak','median'))
+                         .reset_index())
+          annual.to_csv(OUT/'TCT_GT20_ANNUAL_INVENTORY_2010_2026.csv',index=False)
+
+          pivot=annual.pivot(index='year',columns='horizon_sessions',values=['episodes','unique_tickers']) if not annual.empty else pd.DataFrame()
+          if not pivot.empty:
+              pivot.columns=[f'{a}_H{b}' for a,b in pivot.columns]
+              pivot.reset_index().to_csv(OUT/'TCT_GT20_ANNUAL_PIVOT_2010_2026.csv',index=False)
+
+          manifest=json.loads(Path('inputs/pre2023/PRE2023_YAHOO_CORPUS_MANIFEST.json').read_text())
+          summary={
+              'status':'SUCCESS',
+              'threshold_rule':'strict max forward adjusted/available price return > 20%',
+              'horizons_sessions':list(HORIZONS),
+              'dedup_rule':'first qualifying J0 retained; subsequent qualifying J0s through retained event peak suppressed, separately by ticker and horizon',
+              'pre2023_manifest':manifest,
+              'post2022_cache_files':len(cache_files),
+              'post2022_rows':int(len(post)),
+              'combined_rows':int(len(allp)),
+              'combined_tickers':int(allp.ticker.nunique()),
+              'combined_min_date':str(allp.date.min()),
+              'combined_max_date':str(allp.date.max()),
+              'raw_positive_dates':int(len(raw)),
+              'clustered_episodes':int(len(epi)),
+              'governance_warning':{
+                  'historical_universe_certified':bool(manifest.get('historical_universe_certified',False)),
+                  'survivorship_safe':bool(manifest.get('survivorship_safe',False)),
+                  'historical_pea_eligibility_certified':bool(manifest.get('historical_pea_eligibility_certified',False)),
+                  'use':'DISCOVERY_ONLY_UNTIL_SURVIVORSHIP_AND_HISTORICAL_PEA_MEMBERSHIP_ARE_CERTIFIED'
+              }
+          }
+          (OUT/'TCT_EVENT_INVENTORY_SUMMARY.json').write_text(json.dumps(summary,indent=2,default=str),encoding='utf-8')
+          print(json.dumps(summary,indent=2,default=str))
+          print('---ANNUAL---')
+          print(annual.to_csv(index=False))
+          PY
+      - name: Upload TCT reverse-engineering inventory
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: TCT-REVERSE-ENGINEERING-EVENT-INVENTORY-${{ github.run_id }}
+          path: outputs/tct_reverse_engineering_v1/
+          if-no-files-found: warn
+          retention-days: 30
