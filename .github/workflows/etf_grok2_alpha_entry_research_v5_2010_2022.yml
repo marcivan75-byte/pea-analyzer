@@ -1,0 +1,59 @@
+name: ETF GROK2 Alpha Entry V5 2010-2022
+
+on:
+  push:
+    branches:
+      - research/grok2-exit-refactor
+    paths:
+      - '.github/workflows/etf_grok2_alpha_entry_research_v5_2010_2022.yml'
+  workflow_dispatch:
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -e . pytest
+      - name: Compile
+        run: python -m py_compile src/v182/backtest/etf_grok2_alpha_entry_research_v5.py
+      - name: Build hardened ETF base
+        run: python -m v182.backtest.etf_backtest_base_v1
+      - name: Build PIT evidence layer
+        run: python -m v182.backtest.etf_pit_membership_v2
+      - name: Run alpha robustness research 2010-2022
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from v182.backtest.etf_grok2_alpha_entry_research_v5 import run
+          x = run(start='2010-01-01', end='2022-12-30')
+          out = Path('outputs/etf_grok2_alpha_entry_research_v5/SUMMARY_2010_2022.json')
+          out.write_text(json.dumps(x, ensure_ascii=False, indent=2), encoding='utf-8')
+          PY
+      - name: Validate governance
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('outputs/etf_grok2_alpha_entry_research_v5/SUMMARY_2010_2022.json')
+          x=json.loads(p.read_text())
+          assert x['start'] == '2010-01-01'
+          assert x['end'] == '2022-12-30'
+          assert x['fixed_take_profit_used'] is False
+          assert x['same_close_signal_execution_used'] is False
+          assert x['rotation_used'] is False
+          assert x['survivorship_bias_resolved'] is False
+          assert x['promotion_eligible'] is False
+          assert x['real_orders_allowed'] is False
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ETF_GROK2_ALPHA_ENTRY_RESEARCH_V5_2010_2022
+          path: outputs/etf_grok2_alpha_entry_research_v5/
+          retention-days: 90

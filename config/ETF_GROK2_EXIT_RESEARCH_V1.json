@@ -1,0 +1,56 @@
+{
+  "version": "ETF_GROK2_EXIT_RESEARCH_V1_2026_09_03",
+  "status": "RESEARCH_ONLY_NO_REAL_ORDERS",
+  "base_model": "ETF_GROK2_CDC_FINAL_PASS5_2026_09_03",
+  "portfolio": {
+    "initial_capital_eur": 205000,
+    "pea_initial_eur": 45000,
+    "boursovie_initial_eur": 160000,
+    "max_positions": 2,
+    "weight_per_position": 0.5,
+    "world_fallback_isin": "LU1681043599",
+    "entry_fee_bps": 25,
+    "exit_fee_bps": 25
+  },
+  "review": {
+    "frequency": "MONTHLY",
+    "minimum_holding_sessions": 20,
+    "catastrophic_stop_return": -0.18,
+    "reversal": {
+      "close_below_sma50": true,
+      "macd_hist_below_zero": true,
+      "perf20_below_zero": true,
+      "minimum_confirmations": 2
+    },
+    "score_exhaustion": {
+      "entry_score_drop_points": 8.0,
+      "absolute_score_floor": 76.0
+    },
+    "rotation": {
+      "minimum_score_advantage_points": 6.0,
+      "minimum_perf63_advantage_points": 0.03
+    },
+    "trailing_protection": {
+      "enabled_in_variant_d_only": true,
+      "drawdown_from_peak": -0.15,
+      "activate_after_gain": 0.08
+    }
+  },
+  "variants": {
+    "A_REVERSAL": "technical reversal only",
+    "B_REVERSAL_SCORE": "technical reversal plus monthly score exhaustion",
+    "C_REVERSAL_SCORE_ROTATION": "B plus rotation into materially stronger ETF",
+    "D_ROTATION_TRAIL": "C plus wide trailing protection"
+  },
+  "objective": {
+    "primary": "portfolio_cagr_vs_world",
+    "secondary": ["max_drawdown", "sortino", "calmar", "turnover", "capital_utilisation"],
+    "win_rate_is_secondary": true
+  },
+  "governance": {
+    "pit_price_features_required": true,
+    "static_2026_backfill_forbidden": true,
+    "survivorship_bias_label_required": true,
+    "no_real_orders": true
+  }
+}

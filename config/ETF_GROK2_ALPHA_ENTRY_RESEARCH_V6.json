@@ -1,0 +1,36 @@
+{
+  "version": "ETF_GROK2_ALPHA_ENTRY_RESEARCH_V6_CROSS_PERIOD_2026_09_03",
+  "status": "RESEARCH_ONLY_NO_REAL_ORDERS",
+  "base_selection_threshold": 86.0,
+  "periods": [
+    {"id": "OLD_2010_2022", "start": "2010-01-01", "end": "2022-12-30"},
+    {"id": "FULL_2013_2026", "start": "2013-01-01", "end": "2026-09-03"},
+    {"id": "RECENT_2023_2026", "start": "2023-01-01", "end": "2026-09-03"}
+  ],
+  "variants": [
+    {"id": "MH_04_00_00", "rel63_min": 0.04, "rel126_min": 0.00, "rel252_min": 0.00},
+    {"id": "MH_05_00_00", "rel63_min": 0.05, "rel126_min": 0.00, "rel252_min": 0.00},
+    {"id": "MH_06_02_00", "rel63_min": 0.06, "rel126_min": 0.02, "rel252_min": 0.00},
+    {"id": "MH_06_03_00", "rel63_min": 0.06, "rel126_min": 0.03, "rel252_min": 0.00},
+    {"id": "MH_06_03_03", "rel63_min": 0.06, "rel126_min": 0.03, "rel252_min": 0.03},
+    {"id": "MH_08_00_00", "rel63_min": 0.08, "rel126_min": 0.00, "rel252_min": 0.00}
+  ],
+  "robustness": {
+    "require_cagr_above_world_in_old_period": true,
+    "require_cagr_above_world_in_full_period": true,
+    "require_cagr_above_world_in_recent_period": true,
+    "minimum_total_closed_trades_across_periods": 10
+  },
+  "objective": {
+    "primary": "minimum_cagr_delta_vs_world_across_periods",
+    "secondary": ["mean_cagr_delta_vs_world", "closed_trades", "max_drawdown", "sortino", "calmar"]
+  },
+  "governance": {
+    "fixed_take_profit_forbidden": true,
+    "next_session_execution_required": true,
+    "world_fallback_required": true,
+    "rotation_disabled": true,
+    "survivorship_bias_label_required": true,
+    "no_real_orders": true
+  }
+}

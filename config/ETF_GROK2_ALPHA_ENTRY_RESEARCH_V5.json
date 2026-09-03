@@ -1,0 +1,33 @@
+{
+  "version": "ETF_GROK2_ALPHA_ENTRY_RESEARCH_V5_ROBUSTNESS_2026_09_03",
+  "status": "RESEARCH_ONLY_NO_REAL_ORDERS",
+  "base_selection_threshold": 86.0,
+  "variants": [
+    {"id": "R63_05", "rel63_min": 0.05, "rel126_min": null},
+    {"id": "R63_06", "rel63_min": 0.06, "rel126_min": null},
+    {"id": "R63_07", "rel63_min": 0.07, "rel126_min": null},
+    {"id": "R63_08", "rel63_min": 0.08, "rel126_min": null},
+    {"id": "R63_06_R126_00", "rel63_min": 0.06, "rel126_min": 0.00},
+    {"id": "R63_07_R126_00", "rel63_min": 0.07, "rel126_min": 0.00},
+    {"id": "R63_08_R126_00", "rel63_min": 0.08, "rel126_min": 0.00},
+    {"id": "R63_08_R126_03", "rel63_min": 0.08, "rel126_min": 0.03}
+  ],
+  "robustness": {
+    "minimum_closed_trades": 8,
+    "minimum_positive_year_fraction": 0.60,
+    "require_cagr_above_world": true
+  },
+  "objective": {
+    "primary": "cagr_delta_vs_world",
+    "promotion_hurdle_cagr_points": 0.02,
+    "secondary": ["max_drawdown", "calmar", "sortino", "closed_trades", "turnover"]
+  },
+  "governance": {
+    "fixed_take_profit_forbidden": true,
+    "next_session_execution_required": true,
+    "world_fallback_required": true,
+    "rotation_disabled": true,
+    "survivorship_bias_label_required": true,
+    "no_real_orders": true
+  }
+}

@@ -1,0 +1,48 @@
+name: ETF GROK2 Exit Rotation Research V2
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'config/ETF_GROK2_EXIT_RESEARCH_V2.json'
+      - 'src/v182/backtest/etf_grok2_exit_rotation_research_v2.py'
+      - 'tests/test_etf_grok2_exit_rotation_research_v2.py'
+      - '.github/workflows/etf_grok2_exit_rotation_research_v2.yml'
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -e . pytest
+      - name: Unit tests
+        run: pytest -q tests/test_etf_grok2_exit_rotation_research_v2.py tests/test_etf_grok2_cdc.py
+      - name: Compile
+        run: python -m py_compile src/v182/backtest/etf_grok2_exit_rotation_research_v2.py
+      - name: Build hardened ETF base
+        run: python -m v182.backtest.etf_backtest_base_v1
+      - name: Run strict J+1 exit and rotation portfolio research
+        run: python -m v182.backtest.etf_grok2_exit_rotation_research_v2
+      - name: Validate governance
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('outputs/etf_grok2_exit_rotation_research_v2/SUMMARY.json')
+          d=json.loads(p.read_text())
+          assert d['same_close_signal_execution_used'] is False
+          assert d['fixed_take_profit_used'] is False
+          assert d['execution']['entry'] == 'NEXT_SESSION_CLOSE'
+          assert d['execution']['exit'] == 'NEXT_SESSION_CLOSE'
+          assert len(d['variants']) == 4
+          assert d['world_benchmark']['isin'] == 'LU1681043599'
+          assert d['promotion_eligible'] is False
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ETF_GROK2_EXIT_ROTATION_RESEARCH_V2
+          path: outputs/etf_grok2_exit_rotation_research_v2/
