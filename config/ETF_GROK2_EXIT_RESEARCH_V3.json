@@ -6,6 +6,7 @@
     "initial_capital_eur": 205000,
     "max_grok_positions": 2,
     "weight_per_grok_position": 0.5,
+    "allocation_model": "TWO_INDEPENDENT_50PCT_SLEEVES",
     "world_fallback_isin": "LU1681043599",
     "active_entry_fee_bps": 25,
     "active_exit_fee_bps": 25,
@@ -15,7 +16,8 @@
     "entry": "NEXT_SESSION_CLOSE",
     "exit": "NEXT_SESSION_CLOSE",
     "review_frequency": "MONTHLY",
-    "residual_capital": "WORLD_FALLBACK"
+    "residual_capital": "WORLD_FALLBACK",
+    "cash_target": 0.0
   },
   "review": {
     "minimum_holding_sessions": 42,
@@ -34,10 +36,10 @@
     }
   },
   "variants": {
-    "A_STRICT_CASH": "strict reversal with residual cash",
-    "E_WORLD_FALLBACK": "strict reversal with residual capital tracking World",
-    "F_WORLD_FALLBACK_ROTATION": "E plus high-hurdle rotation, no score-exhaustion exit",
-    "G_WORLD_FALLBACK_RELATIVE_EXIT": "F plus relative weakness exit back to World"
+    "A_STRICT_CASH": "strict reversal with residual cash control",
+    "E_WORLD_FALLBACK": "two independent 50% sleeves; each sleeve is always World or one GROK ETF",
+    "F_WORLD_FALLBACK_ROTATION": "E plus high-hurdle GROK-to-GROK rotation, no score-exhaustion exit",
+    "G_WORLD_FALLBACK_RELATIVE_EXIT": "F plus persistent relative weakness exit back to World"
   },
   "objective": {
     "primary": "portfolio_cagr_vs_world",
@@ -49,6 +51,8 @@
     "fixed_take_profit_forbidden": true,
     "score_exhaustion_exit_disabled": true,
     "fallback_transaction_costs_not_zeroed": true,
+    "two_independent_sleeves_required": true,
+    "cash_reserve_forbidden_in_world_variants": true,
     "pit_price_features_required": true,
     "static_2026_backfill_forbidden": true,
     "survivorship_bias_label_required": true,
