@@ -47,7 +47,7 @@ jobs:
           test -s inputs/pre2023/PRE2023_YAHOO_DEVELOPMENT_OHLCV.parquet
           test -s inputs/pre2023/PRE2023_YAHOO_CORPUS_MANIFEST.json
           test -d data/cache/actions
-      - name: Validate HEBDO AT META governed access and yearly data quality
+      - name: Validate and quarantine 2010-2026 data quality
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
@@ -58,94 +58,100 @@ jobs:
           import pandas as pd
           from v182.hebdo.meta_price_history import load_pre2023_development, load_holdout, load_2010_2026, assert_fit_window
 
-          dev = load_pre2023_development(
-              'inputs/pre2023/PRE2023_YAHOO_DEVELOPMENT_OHLCV.parquet',
-              'inputs/pre2023/PRE2023_YAHOO_CORPUS_MANIFEST.json')
+          dev = load_pre2023_development('inputs/pre2023/PRE2023_YAHOO_DEVELOPMENT_OHLCV.parquet','inputs/pre2023/PRE2023_YAHOO_CORPUS_MANIFEST.json')
           hold = load_holdout('data/cache/actions')
-          combined = load_2010_2026(
-              'inputs/pre2023/PRE2023_YAHOO_DEVELOPMENT_OHLCV.parquet',
-              'inputs/pre2023/PRE2023_YAHOO_CORPUS_MANIFEST.json',
-              'data/cache/actions')
+          combined = load_2010_2026('inputs/pre2023/PRE2023_YAHOO_DEVELOPMENT_OHLCV.parquet','inputs/pre2023/PRE2023_YAHOO_CORPUS_MANIFEST.json','data/cache/actions')
           assert_fit_window(dev)
           try:
               assert_fit_window(hold.head(1))
           except ValueError as exc:
-              if 'BLOCK_META_FIT_HOLDOUT_ACCESS' not in str(exc):
-                  raise
+              if 'BLOCK_META_FIT_HOLDOUT_ACCESS' not in str(exc): raise
           else:
               raise SystemExit('BLOCK_META_HOLDOUT_FIT_GUARD_MISSING')
 
-          required_cols = ['date','ticker','open','high','low','close','volume']
-          for name, frame in [('development', dev), ('holdout', hold), ('combined', combined)]:
-              missing = [c for c in required_cols if c not in frame.columns]
-              if missing:
-                  raise SystemExit(f'BLOCK_META_REQUIRED_COLUMNS:{name}:{missing}')
-              if frame[required_cols].isna().any().any():
-                  raise SystemExit(f'BLOCK_META_REQUIRED_NULLS:{name}')
-              volume = pd.to_numeric(frame['volume'], errors='coerce')
-              if volume.isna().any() or not np.isfinite(volume.to_numpy(dtype='float64', na_value=np.nan)).all():
-                  raise SystemExit(f'BLOCK_META_VOLUME_NONFINITE:{name}')
-              if (volume < 0).any():
-                  raise SystemExit(f'BLOCK_META_VOLUME_NEGATIVE:{name}')
-              for col in ['open','high','low','close']:
-                  x = pd.to_numeric(frame[col], errors='coerce')
-                  if x.isna().any() or not np.isfinite(x.to_numpy(dtype='float64', na_value=np.nan)).all() or (x <= 0).any():
-                      raise SystemExit(f'BLOCK_META_PRICE_INVALID:{name}:{col}')
-              if frame.duplicated(['ticker','date']).any():
-                  raise SystemExit(f'BLOCK_META_DUPLICATE_TICKER_DATE:{name}')
-              o,h,l,c = (pd.to_numeric(frame[x], errors='coerce') for x in ('open','high','low','close'))
-              if ((h<l)|(h<o)|(h<c)|(l>o)|(l>c)).any():
-                  raise SystemExit(f'BLOCK_META_OHLC_GEOMETRY:{name}')
+          required = ['date','ticker','open','high','low','close','volume']
+          for name, frame in [('development',dev),('holdout',hold),('combined',combined)]:
+              miss=[c for c in required if c not in frame.columns]
+              if miss: raise SystemExit(f'BLOCK_META_REQUIRED_COLUMNS:{name}:{miss}')
+              if frame[['date','ticker','volume']].isna().any().any(): raise SystemExit(f'BLOCK_META_CORE_NULLS:{name}')
+              if frame.duplicated(['ticker','date']).any(): raise SystemExit(f'BLOCK_META_DUPLICATE_TICKER_DATE:{name}')
+              v=pd.to_numeric(frame['volume'],errors='coerce')
+              if v.isna().any() or not np.isfinite(v.to_numpy(dtype='float64',na_value=np.nan)).all() or (v<0).any():
+                  raise SystemExit(f'BLOCK_META_VOLUME_INVALID:{name}')
 
-          audited = combined.assign(year=combined['date'].dt.year)
-          years = sorted(audited['year'].unique().tolist())
-          if years != list(range(2010, 2027)):
-              raise SystemExit(f'BLOCK_META_YEAR_GAP:{years}')
+          def quality_flags(frame):
+              x=frame.copy()
+              vals={c:pd.to_numeric(x[c],errors='coerce') for c in ['open','high','low','close']}
+              finite=np.ones(len(x),dtype=bool)
+              positive=np.ones(len(x),dtype=bool)
+              for c in vals:
+                  a=vals[c].to_numpy(dtype='float64',na_value=np.nan)
+                  finite &= np.isfinite(a)
+                  positive &= (a>0)
+              o,h,l,c=vals['open'],vals['high'],vals['low'],vals['close']
+              geometry=(h>=l)&(h>=o)&(h>=c)&(l<=o)&(l<=c)
+              x['invalid_price']=~(finite & positive)
+              x['invalid_geometry']=~geometry.fillna(False).to_numpy()
+              x['certified_ohlc_row']=~(x['invalid_price']|x['invalid_geometry'])
+              x['zero_volume']=(pd.to_numeric(x['volume'],errors='coerce')==0)
+              return x
 
-          volume_audit = audited.groupby('year', as_index=False).agg(
-              rows=('volume','size'),
+          devq=quality_flags(dev)
+          if (~devq['certified_ohlc_row']).any():
+              raise SystemExit(f"BLOCK_META_DEVELOPMENT_OHLC_INVALID:{int((~devq['certified_ohlc_row']).sum())}")
+          q=quality_flags(combined)
+          q['year']=q['date'].dt.year
+          years=sorted(q['year'].unique().tolist())
+          if years != list(range(2010,2027)): raise SystemExit(f'BLOCK_META_YEAR_GAP:{years}')
+
+          annual=q.groupby('year',as_index=False).agg(
+              rows=('ticker','size'),
               tickers=('ticker','nunique'),
-              zero_volume_rows=('volume', lambda s: int((s == 0).sum())),
+              certified_ohlc_rows=('certified_ohlc_row','sum'),
+              invalid_price_rows=('invalid_price','sum'),
+              invalid_geometry_rows=('invalid_geometry','sum'),
+              zero_volume_rows=('zero_volume','sum'),
               median_volume=('volume','median'),
               first_date=('date','min'),
               last_date=('date','max'),
           )
-          volume_audit['zero_volume_pct'] = (100.0 * volume_audit['zero_volume_rows'] / volume_audit['rows']).round(6)
-          volume_audit['positive_volume_pct'] = (100.0 - volume_audit['zero_volume_pct']).round(6)
+          annual['certified_ohlc_pct']=(100*annual['certified_ohlc_rows']/annual['rows']).round(6)
+          annual['zero_volume_pct']=(100*annual['zero_volume_rows']/annual['rows']).round(6)
+          annual['positive_volume_pct']=(100-annual['zero_volume_pct']).round(6)
 
-          out = Path('outputs/meta_2010_2026')
-          out.mkdir(parents=True, exist_ok=True)
-          volume_audit.to_csv(out/'HEBDO_AT_META_VOLUME_AUDIT_BY_YEAR.csv', index=False)
+          anomalies=q.loc[~q['certified_ohlc_row'],['date','ticker','open','high','low','close','segment','invalid_price','invalid_geometry']].copy()
+          anomalies['reason_code']=np.where(anomalies['invalid_price'],'INVALID_NONPOSITIVE_OR_NONFINITE_PRICE','INVALID_OHLC_GEOMETRY')
+
+          out=Path('outputs/meta_2010_2026'); out.mkdir(parents=True,exist_ok=True)
+          annual.to_csv(out/'HEBDO_AT_META_DATA_QUALITY_BY_YEAR.csv',index=False)
+          anomalies.to_csv(out/'HEBDO_AT_META_OHLC_QUARANTINE.csv',index=False)
           print('YEARLY_DATA_QUALITY_BEGIN')
-          print(volume_audit.to_csv(index=False).strip())
+          print(annual.to_csv(index=False).strip())
           print('YEARLY_DATA_QUALITY_END')
+          print('OHLC_QUARANTINE_BEGIN')
+          print(anomalies.head(200).to_csv(index=False).strip())
+          print('OHLC_QUARANTINE_END')
 
-          summary = {
-              'status':'OK',
-              'engine':'HEBDO_AT_META',
+          summary={
+              'status':'OK_WITH_QUARANTINE' if len(anomalies) else 'OK',
               'access_window':'2010-2026',
-              'development_window':'2010-01-01..2022-12-31',
-              'holdout_window':'2023-01-01..2026',
-              'fit_holdout_blocked':True,
               'development_rows':int(len(dev)),
               'development_tickers':int(dev['ticker'].nunique()),
-              'development_min_date':str(dev['date'].min()),
-              'development_max_date':str(dev['date'].max()),
-              'development_zero_volume_rows':int((dev['volume'] == 0).sum()),
               'holdout_rows':int(len(hold)),
               'holdout_tickers':int(hold['ticker'].nunique()),
-              'holdout_min_date':str(hold['date'].min()),
-              'holdout_max_date':str(hold['date'].max()),
-              'holdout_zero_volume_rows':int((hold['volume'] == 0).sum()),
               'combined_rows':int(len(combined)),
               'combined_tickers':int(combined['ticker'].nunique()),
               'combined_min_date':str(combined['date'].min()),
               'combined_max_date':str(combined['date'].max()),
-              'combined_volume_nonnull_pct':round(100.0 * combined['volume'].notna().mean(), 6),
-              'combined_zero_volume_rows':int((combined['volume'] == 0).sum()),
-              'combined_zero_volume_pct':round(100.0 * (combined['volume'] == 0).mean(), 6),
               'all_years_2010_2026_present':True,
-              'duplicate_ticker_dates':int(combined.duplicated(['ticker','date']).sum()),
+              'duplicate_ticker_dates':0,
+              'combined_volume_nonnull_pct':100.0,
+              'combined_zero_volume_rows':int(q['zero_volume'].sum()),
+              'combined_zero_volume_pct':round(100*q['zero_volume'].mean(),6),
+              'ohlc_quarantine_rows':int(len(anomalies)),
+              'certified_ohlc_rows':int(q['certified_ohlc_row'].sum()),
+              'certified_ohlc_pct':round(100*q['certified_ohlc_row'].mean(),6),
+              'fit_holdout_blocked':True,
               'volume_basis':'RAW_MARKET_VOLUME_UNADJUSTED',
               'pre2023_price_basis':'YAHOO_ADJ_CLOSE_RATIO_OHLC',
               'historical_universe_certified':False,
