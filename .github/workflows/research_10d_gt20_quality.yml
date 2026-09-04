@@ -1,0 +1,169 @@
+name: Research 10D GT20 Quality
+
+on:
+  push:
+    branches: [hebdo-at-meta]
+    paths:
+      - '.github/workflows/research_10d_gt20_quality.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-10d-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install --prefer-binary pandas numpy pyarrow
+      - name: Restore governed 2023-2026 holdout cache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: data/cache/
+          key: ohlcv-v3-33132925283
+          restore-keys: |
+            ohlcv-v3-
+      - name: Download governed PRE2023 corpus
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: '9817322742'
+        run: |
+          mkdir -p inputs/pre2023
+          curl -fL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" \
+            -o /tmp/pre2023.zip
+          unzip -q /tmp/pre2023.zip -d inputs/pre2023
+          test -s inputs/pre2023/PRE2023_YAHOO_DEVELOPMENT_OHLCV.parquet
+          test -d data/cache/actions
+      - name: Build 10-session GT20 sample and QA
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json, math
+          import numpy as np
+          import pandas as pd
+          from v182.hebdo.meta_price_history import load_2010_2026
+
+          out=Path('outputs/research_10d_gt20'); out.mkdir(parents=True,exist_ok=True)
+          df=load_2010_2026('inputs/pre2023/PRE2023_YAHOO_DEVELOPMENT_OHLCV.parquet','inputs/pre2023/PRE2023_YAHOO_CORPUS_MANIFEST.json','data/cache/actions')
+          df=df[['date','ticker','open','high','low','close','volume','segment']].copy()
+          df['date']=pd.to_datetime(df['date'])
+          df=df.sort_values(['ticker','date']).reset_index(drop=True)
+          df['pos_in_ticker']=df.groupby('ticker').cumcount()
+          df['close_t10']=df.groupby('ticker')['close'].shift(-10)
+          df['date_t10']=df.groupby('ticker')['date'].shift(-10)
+          df['ret_10d_pct']=(df['close_t10']/df['close']-1.0)*100.0
+          hits=df[df['ret_10d_pct']>20.0].copy()
+          hits['year']=hits['date'].dt.year
+          hits['prev_pos']=hits.groupby('ticker')['pos_in_ticker'].shift(1)
+          hits['new_episode']=((hits['prev_pos'].isna())|((hits['pos_in_ticker']-hits['prev_pos'])>10)).astype(int)
+          hits['episode_id']=hits.groupby('ticker')['new_episode'].cumsum()
+          best_idx=hits.groupby(['ticker','episode_id'])['ret_10d_pct'].idxmax()
+          ep=hits.loc[best_idx].copy().sort_values(['year','date','ticker']).reset_index(drop=True)
+          counts=hits.groupby(['ticker','episode_id']).size().rename('nb_fenetres_qualifiantes_episode').reset_index()
+          ep=ep.merge(counts,on=['ticker','episode_id'],how='left')
+          ep['duree_calendaire_j']=(ep['date_t10']-ep['date']).dt.days
+          ep['ratio_fin_depart']=ep['close_t10']/ep['close']
+
+          round_ratios=np.array([1.25, 1.3333333333, 1.5, 1.6666666667, 2.0, 2.5, 3.0, 4.0, 5.0, 10.0])
+          def nearest_round_ratio(r):
+              if not np.isfinite(r): return (False, None, None)
+              d=np.abs(round_ratios-r)/round_ratios
+              j=int(np.argmin(d))
+              return bool(d[j] <= 0.0075), float(round_ratios[j]), float(d[j])
+
+          records=[]
+          for _,r in ep.iterrows():
+              alerts=[]
+              close=float(r['close']) if pd.notna(r['close']) else np.nan
+              close10=float(r['close_t10']) if pd.notna(r['close_t10']) else np.nan
+              gain=float(r['ret_10d_pct']) if pd.notna(r['ret_10d_pct']) else np.nan
+              vol=float(r['volume']) if pd.notna(r['volume']) else np.nan
+              ratio=float(r['ratio_fin_depart']) if pd.notna(r['ratio_fin_depart']) else np.nan
+              strong=False
+              if not np.isfinite(close) or not np.isfinite(close10) or close<=0 or close10<=0:
+                  status='EXCLU_ERREUR_DONNEE'; alerts.append('PRIX_INVALIDE'); strong=True
+              else:
+                  if close < 1.0: alerts.append('PENNY_STOCK_LT_1_EUR')
+                  if close < 0.5: alerts.append('PENNY_STOCK_LT_0_5_EUR'); strong=True
+                  if not np.isfinite(vol): alerts.append('VOLUME_MANQUANT'); strong=True
+                  elif vol==0: alerts.append('VOLUME_NUL'); strong=True
+                  elif vol<5000: alerts.append('VOLUME_LT_5000')
+                  if gain>50: alerts.append('GAIN_GT_50_PCT')
+                  if gain>100: alerts.append('GAIN_GT_100_PCT'); strong=True
+                  rr, rr_target, rr_gap=nearest_round_ratio(ratio)
+                  if rr:
+                      alerts.append(f'RATIO_ROND_SUSPECT_{rr_target:g}X')
+                  if strong: status='QUARANTAINE_PRIORITAIRE'
+                  elif alerts: status='A_CONTROLER'
+                  else: status='RETENU_PRELIMINAIRE'
+              records.append({
+                  'annee':int(r['year']), 'ticker':r['ticker'],
+                  'date_depart':r['date'].date().isoformat(), 'date_fin_10_seances':r['date_t10'].date().isoformat(),
+                  'duree_calendaire_j':int(r['duree_calendaire_j']),
+                  'cours_depart':close, 'cours_fin_10_seances':close10, 'gain_10_seances_pct':gain,
+                  'volume_depart':vol, 'nb_fenetres_qualifiantes_episode':int(r['nb_fenetres_qualifiantes_episode']),
+                  'ratio_fin_depart':ratio, 'suspect_corporate_action':any(a.startswith('RATIO_ROND_SUSPECT') for a in alerts),
+                  'penny_stock':close<1.0 if np.isfinite(close) else False,
+                  'liquidite_faible':vol<5000 if np.isfinite(vol) else True,
+                  'alertes_qa':'|'.join(alerts), 'nb_alertes':len(alerts), 'statut_qa':status,
+                  'segment':r.get('segment','')
+              })
+          qa=pd.DataFrame(records)
+          retained=qa[qa['statut_qa']=='RETENU_PRELIMINAIRE'].copy()
+          ctrl=qa[qa['statut_qa']!='RETENU_PRELIMINAIRE'].copy()
+          summary=(qa.groupby(['annee','statut_qa']).size().unstack(fill_value=0)
+                     .reindex(columns=['RETENU_PRELIMINAIRE','A_CONTROLER','QUARANTAINE_PRIORITAIRE','EXCLU_ERREUR_DONNEE'],fill_value=0))
+          summary['total']=summary.sum(axis=1)
+          flags=qa.groupby('annee').agg(
+              penny_stock=('penny_stock','sum'),
+              liquidite_faible=('liquidite_faible','sum'),
+              suspect_corporate_action=('suspect_corporate_action','sum'))
+          summary=summary.join(flags).reset_index()
+          summary['pct_retenu']=(100*summary['RETENU_PRELIMINAIRE']/summary['total']).round(2)
+
+          raw=hits[['year','ticker','date','date_t10','close','close_t10','ret_10d_pct']].copy()
+          raw.columns=['annee','ticker','date_depart','date_fin_10_seances','cours_depart','cours_fin_10_seances','gain_10_seances_pct']
+          raw.to_csv(out/'FENETRES_BRUTES_10J_GT20.csv',index=False)
+          qa.to_csv(out/'EPISODES_10J_GT20_QA_COMPLET.csv',index=False)
+          retained.to_csv(out/'EPISODES_10J_GT20_RETENUS_PRELIMINAIRES.csv',index=False)
+          ctrl.to_csv(out/'EPISODES_10J_GT20_A_CONTROLER_ET_QUARANTAINE.csv',index=False)
+          summary.to_csv(out/'RESUME_QA_EPISODES_10J_GT20.csv',index=False)
+          meta={
+              'source_rows':int(len(df)), 'source_tickers':int(df['ticker'].nunique()),
+              'source_min_date':str(df['date'].min().date()), 'source_max_date':str(df['date'].max().date()),
+              'threshold_pct':20.0, 'horizon_sessions':10,
+              'raw_qualifying_windows':int(len(hits)), 'deduplicated_episodes':int(len(qa)),
+              'retained_preliminary':int((qa['statut_qa']=='RETENU_PRELIMINAIRE').sum()),
+              'to_review':int((qa['statut_qa']=='A_CONTROLER').sum()),
+              'priority_quarantine':int((qa['statut_qa']=='QUARANTAINE_PRIORITAIRE').sum()),
+              'excluded_data_error':int((qa['statut_qa']=='EXCLU_ERREUR_DONNEE').sum()),
+              'survivorship_safe':False, 'pit_certified':False,
+              'qa_rule':'same selective quality rules as 5-session analysis'
+          }
+          (out/'METADATA_10J_GT20.json').write_text(json.dumps(meta,indent=2),encoding='utf-8')
+          (out/'METHODOLOGIE_QA_10J_GT20.txt').write_text(
+              'RETENU_PRELIMINAIRE: cours depart >=1 EUR, volume depart >=5000, gain <=50%, aucun ratio rond suspect.\n'
+              'A_CONTROLER: cours <1 EUR, volume <5000, gain >50%, ou ratio rond suspect.\n'
+              'QUARANTAINE_PRIORITAIRE: volume nul, cours <0.50 EUR, gain >100%, ou alerte forte.\n'
+              'EXCLU_ERREUR_DONNEE: prix non positif/non fini.\n'
+              'Un ratio rond est seulement un signal de corporate action probable et doit etre verifie PIT.\n'
+              'Ce QA ne certifie pas le biais de survivance.\n',encoding='utf-8')
+          print(json.dumps(meta,indent=2))
+          print(summary.to_csv(index=False))
+          PY
+      - name: Upload 10D research package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: research-10d-gt20-quality-${{ github.run_id }}
+          path: outputs/research_10d_gt20/
+          if-no-files-found: error
+          retention-days: 30
