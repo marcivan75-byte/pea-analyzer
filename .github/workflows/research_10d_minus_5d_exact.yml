@@ -1,0 +1,152 @@
+name: Research 10D minus 5D exact
+
+on:
+  push:
+    branches: [hebdo-at-meta]
+    paths:
+      - '.github/workflows/research_10d_minus_5d_exact.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install --prefer-binary pandas numpy pyarrow
+      - name: Restore governed 2023-2026 holdout cache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: data/cache/
+          key: ohlcv-v3-33132925283
+          restore-keys: |
+            ohlcv-v3-
+      - name: Download governed PRE2023 corpus
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: '9817322742'
+        run: |
+          mkdir -p inputs/pre2023
+          curl -fL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" \
+            -o /tmp/pre2023.zip
+          unzip -q /tmp/pre2023.zip -d inputs/pre2023
+          test -s inputs/pre2023/PRE2023_YAHOO_DEVELOPMENT_OHLCV.parquet
+          test -d data/cache/actions
+      - name: Build exact slow 10-session sample
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import numpy as np
+          import pandas as pd
+          from v182.hebdo.meta_price_history import load_2010_2026
+
+          out=Path('outputs/research_10d_minus_5d'); out.mkdir(parents=True,exist_ok=True)
+          df=load_2010_2026('inputs/pre2023/PRE2023_YAHOO_DEVELOPMENT_OHLCV.parquet','inputs/pre2023/PRE2023_YAHOO_CORPUS_MANIFEST.json','data/cache/actions')
+          df=df[['date','ticker','close','volume','segment']].copy()
+          df['date']=pd.to_datetime(df['date'])
+          df=df.sort_values(['ticker','date']).reset_index(drop=True)
+          df['pos']=df.groupby('ticker').cumcount()
+          for n in [5,10]:
+              df[f'close_t{n}']=df.groupby('ticker')['close'].shift(-n)
+              df[f'date_t{n}']=df.groupby('ticker')['date'].shift(-n)
+              df[f'ret_{n}d_pct']=(df[f'close_t{n}']/df['close']-1.0)*100.0
+
+          hits=df[df['ret_10d_pct']>20.0].copy()
+          hits['year']=hits['date'].dt.year
+          hits['prev_pos']=hits.groupby('ticker')['pos'].shift(1)
+          hits['new_episode']=((hits['prev_pos'].isna())|((hits['pos']-hits['prev_pos'])>10)).astype(int)
+          hits['episode_id']=hits.groupby('ticker')['new_episode'].cumsum()
+          best_idx=hits.groupby(['ticker','episode_id'])['ret_10d_pct'].idxmax()
+          ep=hits.loc[best_idx].copy().sort_values(['year','date','ticker']).reset_index(drop=True)
+          counts=hits.groupby(['ticker','episode_id']).size().rename('nb_fenetres_qualifiantes_episode').reset_index()
+          ep=ep.merge(counts,on=['ticker','episode_id'],how='left')
+
+          round_ratios=np.array([1.25,1.3333333333,1.5,1.6666666667,2.0,2.5,3.0,4.0,5.0,10.0])
+          def round_suspect(r):
+              if not np.isfinite(r): return False
+              return bool((np.abs(round_ratios-r)/round_ratios).min() <= 0.0075)
+
+          records=[]
+          for _,r in ep.iterrows():
+              c=float(r['close']) if pd.notna(r['close']) else np.nan
+              c5=float(r['close_t5']) if pd.notna(r['close_t5']) else np.nan
+              c10=float(r['close_t10']) if pd.notna(r['close_t10']) else np.nan
+              ret5=float(r['ret_5d_pct']) if pd.notna(r['ret_5d_pct']) else np.nan
+              ret10=float(r['ret_10d_pct']) if pd.notna(r['ret_10d_pct']) else np.nan
+              vol=float(r['volume']) if pd.notna(r['volume']) else np.nan
+              ratio=c10/c if np.isfinite(c) and c>0 and np.isfinite(c10) else np.nan
+              alerts=[]; strong=False
+              if not np.isfinite(c) or not np.isfinite(c10) or c<=0 or c10<=0:
+                  status='EXCLU_ERREUR_DONNEE'; alerts.append('PRIX_INVALIDE')
+              else:
+                  if c<1: alerts.append('PENNY_STOCK_LT_1_EUR')
+                  if c<0.5: alerts.append('PENNY_STOCK_LT_0_5_EUR'); strong=True
+                  if not np.isfinite(vol): alerts.append('VOLUME_MANQUANT'); strong=True
+                  elif vol==0: alerts.append('VOLUME_NUL'); strong=True
+                  elif vol<5000: alerts.append('VOLUME_LT_5000')
+                  if ret10>50: alerts.append('GAIN_GT_50_PCT')
+                  if ret10>100: alerts.append('GAIN_GT_100_PCT'); strong=True
+                  if round_suspect(ratio): alerts.append('RATIO_ROND_SUSPECT')
+                  status='QUARANTAINE_PRIORITAIRE' if strong else ('A_CONTROLER' if alerts else 'RETENU_PRELIMINAIRE')
+              records.append({
+                  'annee':int(r['year']),'ticker':r['ticker'],
+                  'date_depart':r['date'].date().isoformat(),
+                  'date_j5':r['date_t5'].date().isoformat() if pd.notna(r['date_t5']) else '',
+                  'date_j10':r['date_t10'].date().isoformat() if pd.notna(r['date_t10']) else '',
+                  'cours_depart':c,'cours_j5':c5,'cours_j10':c10,
+                  'gain_j5_pct':ret5,'gain_j10_pct':ret10,
+                  'gain_additionnel_j6_j10_points':ret10-ret5 if np.isfinite(ret5) else np.nan,
+                  'volume_depart':vol,'segment':r.get('segment',''),
+                  'nb_fenetres_qualifiantes_episode':int(r['nb_fenetres_qualifiantes_episode']),
+                  'statut_qa':status,'alertes_qa':'|'.join(alerts),
+                  'a_franchi_20_avant_ou_a_j5':bool(np.isfinite(ret5) and ret5>20.0),
+                  'vraiment_besoin_plus_de_5_seances':bool(np.isfinite(ret5) and ret5<=20.0 and ret10>20.0),
+              })
+          qa=pd.DataFrame(records)
+          retained10=qa[qa['statut_qa']=='RETENU_PRELIMINAIRE'].copy()
+          slow=retained10[(retained10['gain_j5_pct']<=20.0)&(retained10['gain_j10_pct']>20.0)].copy()
+          fast=retained10[retained10['gain_j5_pct']>20.0].copy()
+
+          slow.to_csv(out/'TITRES_VRAIMENT_6_A_10_SEANCES_POUR_PLUS_20.csv',index=False)
+          fast.to_csv(out/'TITRES_DEJA_PLUS_20_A_J5_PARMI_10J.csv',index=False)
+          retained10.to_csv(out/'TOUS_LES_RETENUS_10J_AVEC_RENDEMENT_J5.csv',index=False)
+          summary=slow.groupby('annee').agg(
+              episodes_6_10j=('ticker','size'),
+              titres_uniques=('ticker','nunique'),
+              gain_j5_median=('gain_j5_pct','median'),
+              gain_j10_median=('gain_j10_pct','median'),
+              gain_j10_moyen=('gain_j10_pct','mean'),
+          ).reset_index()
+          summary.to_csv(out/'RESUME_ANNUEL_VRAIMENT_6_A_10_SEANCES.csv',index=False)
+          meta={
+              'definition':'10-session retained-quality episodes with same-start return at J+5 <=20% and J+10 >20%',
+              'retained_10d_total':int(len(retained10)),
+              'already_gt20_by_j5':int(len(fast)),
+              'true_6_to_10_session_movers':int(len(slow)),
+              'pct_true_6_to_10_of_retained10':round(100*len(slow)/len(retained10),4) if len(retained10) else None,
+              'source_rows':int(len(df)),'source_tickers':int(df['ticker'].nunique()),
+              'survivorship_safe':False,'pit_certified':False
+          }
+          (out/'METADATA_VRAIMENT_6_A_10_SEANCES.json').write_text(json.dumps(meta,indent=2),encoding='utf-8')
+          print(json.dumps(meta,indent=2))
+          print(summary.to_csv(index=False))
+          PY
+      - name: Upload result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: research-10d-minus-5d-exact-${{ github.run_id }}
+          path: outputs/research_10d_minus_5d/
+          if-no-files-found: error
+          retention-days: 30
