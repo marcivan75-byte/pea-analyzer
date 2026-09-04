@@ -1,0 +1,59 @@
+{
+  "scope_status": "WORKING_SCOPE_NOT_OFFICIAL_COUNT",
+  "source": "V20.4_MATRICE_EXHAUSTIVE_CRITERES_PONDERATIONS_ACTIONS_ETF.xlsx",
+  "source_actions_columns": 308,
+  "working_scope_count": 226,
+  "working_scope_derivation": {
+    "exclude_quality_provenance_indirect": 56,
+    "exclude_decision_timing_gates": 16,
+    "exclude_derived_subscores_except_committee_score_1829": 10,
+    "result": 226
+  },
+  "historical_buckets": {
+    "A_OHLCV_2010_2026": 30,
+    "B_EXTERNAL_HIST_RECONSTRUCTIBLE": 32,
+    "C_HISTORIQUE_PARTIEL_ANALYSTES": 77,
+    "D_SNAPSHOT_CURRENT_OR_NON_PIT": 41,
+    "E_META_OUTPUT_NOT_PREDICTOR": 46
+  },
+  "screen_now_ohlcv": [
+    "n_sessions",
+    "last_close",
+    "mm20",
+    "mm50",
+    "mm100",
+    "mm200",
+    "rsi14",
+    "macd",
+    "macd_signal",
+    "macd_hist",
+    "atr14",
+    "bb_upper",
+    "bb_mid",
+    "bb_lower",
+    "rvol20",
+    "perf_1m_pct",
+    "perf_3m_pct",
+    "perf_6m_pct",
+    "perf_1y_pct",
+    "above_mm20",
+    "above_mm50",
+    "above_mm200",
+    "volatility_20d",
+    "volatility_60d",
+    "max_drawdown_1y",
+    "positive_reversal_flag",
+    "volume",
+    "ohlcv_n_sessions",
+    "ohlcv_last",
+    "ohlcv_perf_1y"
+  ],
+  "doctrine": [
+    "No look-ahead: every predictor must be known at J0.",
+    "Consensus/target history must not be backfilled before real snapshots.",
+    "Boursorama consensus PIT snapshots are only genuinely available from 2026-08-26 in the current evidence base.",
+    "2023-2026 remains OOS and must not be used to tune thresholds.",
+    "Patterns must be compared against contemporaneous non-winners, then against the full admissible universe.",
+    "The 226 count is a research working scope derived from the 308-column official matrix, not an independently documented official count."
+  ]
+}
