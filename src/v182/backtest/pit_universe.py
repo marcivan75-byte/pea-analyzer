@@ -1,8 +1,9 @@
 """Point-in-time universe controls for survivorship-bias-safe backtests.
 
-This module deliberately separates *security identity* from ticker symbols and
-*historical membership* from today's tradable universe.  It is intentionally
-small and dependency-light so legacy backtests can adopt it incrementally.
+This module deliberately separates security identity, venue/listing lifecycle,
+historical PEA membership and true economic terminal events. A delisting from one
+market is not automatically a terminal loss: the same security may transfer to
+another market and remain investable.
 """
 from __future__ import annotations
 
@@ -13,18 +14,26 @@ from typing import Iterable, Mapping, Optional, Sequence
 
 
 class ExitReason(str, Enum):
-    DELISTED = "delisted"
     ACQUIRED_CASH = "acquired_cash"
     ACQUIRED_STOCK = "acquired_stock"
     MERGED = "merged"
     BANKRUPTCY = "bankruptcy"
-    INELIGIBLE = "ineligible"
+    LIQUIDATED = "liquidated"
+    SECURITY_CANCELLED = "security_cancelled"
     UNKNOWN = "unknown"
+
+
+class ListingEventType(str, Enum):
+    ADMITTED = "admitted"
+    DELISTED = "delisted"
+    MARKET_TRANSFER = "market_transfer"
+    SUSPENDED = "suspended"
+    RESUMED = "resumed"
 
 
 @dataclass(frozen=True)
 class SecurityIdentity:
-    """Stable security identity; ticker/ISIN may change over time."""
+    """Stable security identity; ticker/ISIN aliases may change over time."""
 
     security_id: str
     ticker: str
@@ -35,8 +44,22 @@ class SecurityIdentity:
 
 
 @dataclass(frozen=True)
+class ListingEvent:
+    """Venue/listing lifecycle event; not necessarily an economic terminal event."""
+
+    security_id: str
+    effective_date: date
+    event_type: ListingEventType
+    mic_from: Optional[str] = None
+    mic_to: Optional[str] = None
+    reason_text: Optional[str] = None
+    source: str = "unknown"
+    confidence: float = 1.0
+
+
+@dataclass(frozen=True)
 class UniverseMembership:
-    """One effective-dated membership interval for a security."""
+    """One effective-dated membership interval for an investable universe."""
 
     security_id: str
     effective_from: date
@@ -57,7 +80,7 @@ class UniverseMembership:
 
 @dataclass(frozen=True)
 class TerminalEvent:
-    """Corporate/delisting event preventing silent disappearance of losers."""
+    """True economic/security terminal event preventing silent disappearance."""
 
     security_id: str
     effective_date: date
@@ -86,9 +109,8 @@ def universe_as_of(
 ) -> set[str]:
     """Return the confirmed investable universe at ``as_of``.
 
-    Default is deliberately fail-closed: uncertain reconstructed membership is
-    not promoted into the strict PIT universe unless callers explicitly lower
-    ``min_confidence``.
+    Default is fail-closed: uncertain reconstructed membership is not promoted
+    into the strict PIT universe unless callers explicitly lower min_confidence.
     """
 
     d = _as_date(as_of)
