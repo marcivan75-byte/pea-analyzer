@@ -47,7 +47,7 @@ jobs:
           test -s inputs/pre2023/PRE2023_YAHOO_DEVELOPMENT_OHLCV.parquet
           test -s inputs/pre2023/PRE2023_YAHOO_CORPUS_MANIFEST.json
           test -d data/cache/actions
-      - name: Validate HEBDO AT META governed access and volume continuity
+      - name: Validate HEBDO AT META governed access and yearly data quality
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
@@ -75,37 +75,50 @@ jobs:
           else:
               raise SystemExit('BLOCK_META_HOLDOUT_FIT_GUARD_MISSING')
 
+          required_cols = ['date','ticker','open','high','low','close','volume']
           for name, frame in [('development', dev), ('holdout', hold), ('combined', combined)]:
-              if 'volume' not in frame.columns:
-                  raise SystemExit(f'BLOCK_META_VOLUME_COLUMN_MISSING:{name}')
+              missing = [c for c in required_cols if c not in frame.columns]
+              if missing:
+                  raise SystemExit(f'BLOCK_META_REQUIRED_COLUMNS:{name}:{missing}')
+              if frame[required_cols].isna().any().any():
+                  raise SystemExit(f'BLOCK_META_REQUIRED_NULLS:{name}')
               volume = pd.to_numeric(frame['volume'], errors='coerce')
               if volume.isna().any() or not np.isfinite(volume.to_numpy(dtype='float64', na_value=np.nan)).all():
                   raise SystemExit(f'BLOCK_META_VOLUME_NONFINITE:{name}')
               if (volume < 0).any():
                   raise SystemExit(f'BLOCK_META_VOLUME_NEGATIVE:{name}')
-
-          early = combined.loc[(combined['date'] >= pd.Timestamp('2010-01-01', tz='UTC')) &
-                               (combined['date'] < pd.Timestamp('2017-01-01', tz='UTC'))].copy()
-          if early.empty:
-              raise SystemExit('BLOCK_META_2010_2016_VOLUME_WINDOW_EMPTY')
-          years = sorted(early['date'].dt.year.unique().tolist())
-          if years != list(range(2010, 2017)):
-              raise SystemExit(f'BLOCK_META_2010_2016_VOLUME_YEAR_GAP:{years}')
+              for col in ['open','high','low','close']:
+                  x = pd.to_numeric(frame[col], errors='coerce')
+                  if x.isna().any() or not np.isfinite(x.to_numpy(dtype='float64', na_value=np.nan)).all() or (x <= 0).any():
+                      raise SystemExit(f'BLOCK_META_PRICE_INVALID:{name}:{col}')
+              if frame.duplicated(['ticker','date']).any():
+                  raise SystemExit(f'BLOCK_META_DUPLICATE_TICKER_DATE:{name}')
+              o,h,l,c = (pd.to_numeric(frame[x], errors='coerce') for x in ('open','high','low','close'))
+              if ((h<l)|(h<o)|(h<c)|(l>o)|(l>c)).any():
+                  raise SystemExit(f'BLOCK_META_OHLC_GEOMETRY:{name}')
 
           audited = combined.assign(year=combined['date'].dt.year)
+          years = sorted(audited['year'].unique().tolist())
+          if years != list(range(2010, 2027)):
+              raise SystemExit(f'BLOCK_META_YEAR_GAP:{years}')
+
           volume_audit = audited.groupby('year', as_index=False).agg(
-              rows=('volume', 'size'),
-              tickers=('ticker', 'nunique'),
+              rows=('volume','size'),
+              tickers=('ticker','nunique'),
               zero_volume_rows=('volume', lambda s: int((s == 0).sum())),
-              median_volume=('volume', 'median'),
+              median_volume=('volume','median'),
+              first_date=('date','min'),
+              last_date=('date','max'),
           )
-          volume_audit['zero_volume_pct'] = (
-              100.0 * volume_audit['zero_volume_rows'] / volume_audit['rows']
-          ).round(6)
+          volume_audit['zero_volume_pct'] = (100.0 * volume_audit['zero_volume_rows'] / volume_audit['rows']).round(6)
+          volume_audit['positive_volume_pct'] = (100.0 - volume_audit['zero_volume_pct']).round(6)
 
           out = Path('outputs/meta_2010_2026')
           out.mkdir(parents=True, exist_ok=True)
           volume_audit.to_csv(out/'HEBDO_AT_META_VOLUME_AUDIT_BY_YEAR.csv', index=False)
+          print('YEARLY_DATA_QUALITY_BEGIN')
+          print(volume_audit.to_csv(index=False).strip())
+          print('YEARLY_DATA_QUALITY_END')
 
           summary = {
               'status':'OK',
@@ -125,14 +138,15 @@ jobs:
               'holdout_max_date':str(hold['date'].max()),
               'holdout_zero_volume_rows':int((hold['volume'] == 0).sum()),
               'combined_rows':int(len(combined)),
+              'combined_tickers':int(combined['ticker'].nunique()),
               'combined_min_date':str(combined['date'].min()),
               'combined_max_date':str(combined['date'].max()),
               'combined_volume_nonnull_pct':round(100.0 * combined['volume'].notna().mean(), 6),
+              'combined_zero_volume_rows':int((combined['volume'] == 0).sum()),
+              'combined_zero_volume_pct':round(100.0 * (combined['volume'] == 0).mean(), 6),
+              'all_years_2010_2026_present':True,
+              'duplicate_ticker_dates':int(combined.duplicated(['ticker','date']).sum()),
               'volume_basis':'RAW_MARKET_VOLUME_UNADJUSTED',
-              'volume_2010_2016_years_present':years,
-              'volume_2010_2016_rows':int(len(early)),
-              'volume_2010_2016_tickers':int(early['ticker'].nunique()),
-              'volume_2010_2016_zero_rows':int((early['volume'] == 0).sum()),
               'pre2023_price_basis':'YAHOO_ADJ_CLOSE_RATIO_OHLC',
               'historical_universe_certified':False,
               'survivorship_safe':False,
