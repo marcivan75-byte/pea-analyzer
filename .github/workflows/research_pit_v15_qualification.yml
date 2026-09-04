@@ -11,10 +11,12 @@ on:
       - src/v182/backtest/benchmark_pit_v15.py
       - src/v182/backtest/pit_source_registry_v15.py
       - src/v182/backtest/pit_universe.py
+      - src/v182/backtest/pit_universe_sources.py
       - tests/test_pit_v15_contract.py
       - tests/test_pit_v15_benchmark.py
       - tests/test_pit_v15_source_registry.py
       - tests/test_pit_universe.py
+      - tests/test_pit_universe_sources.py
       - docs/PIT_V15_DATA_CONTRACT.md
       - docs/PIT_SURVIVORSHIP_BIAS.md
       - .github/workflows/research_pit_v15_qualification.yml
@@ -42,6 +44,7 @@ jobs:
           python -m unittest tests.test_pit_v15_benchmark -v
           python -m unittest tests.test_pit_v15_source_registry -v
           python -m unittest tests.test_pit_universe -v
+          python -m unittest tests.test_pit_universe_sources -v
       - name: Verify no performance optimization is coupled to qualification
         run: |
           python - <<'PY'
@@ -49,6 +52,7 @@ jobs:
           p=Path('src/v182/backtest/pit_v15.py').read_text()
           b=Path('src/v182/backtest/benchmark_pit_v15.py').read_text()
           u=Path('src/v182/backtest/pit_universe.py').read_text()
+          us=Path('src/v182/backtest/pit_universe_sources.py').read_text()
           s=Path('src/v182/backtest/pit_source_registry_v15.py').read_text()
           d=Path('docs/PIT_V15_DATA_CONTRACT.md').read_text()
           assert 'performance_backtest_authorized' in p
@@ -60,7 +64,9 @@ jobs:
           assert 'unresolved_disappearance_count' in b
           assert 'performance_backtest_authorized_by_this_module' in b
           assert 'universe_as_of' in u
+          assert 'ListingEvent' in u
           assert 'TerminalEvent' in u
+          assert 'EURONEXT_NOTICES' in us and 'ESMA_FIRDS' in us
           assert 'primary_source_documentation_ready' in s
           assert 'Pas d\'optimisation technique' in d
           print('PIT_V15_DATA_QUALIFICATION_CONTRACT_OK')
