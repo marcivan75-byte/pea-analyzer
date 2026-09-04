@@ -186,3 +186,50 @@ def coverage_report(
             }
         )
     return report
+
+
+def strict_certification_status(
+    *,
+    membership_errors: Sequence[str],
+    price_coverage_pct: float,
+    terminal_event_coverage_pct: float,
+    unresolved_disappearance_count: int,
+    quarantine_count: int,
+    current_universe_used_for_history: bool,
+    silent_held_disappearance_count: int = 0,
+    min_price_coverage_pct: float = 99.0,
+    min_terminal_event_coverage_pct: float = 99.0,
+) -> dict[str, object]:
+    """Apply the blocking PIT_STRICT certification gates.
+
+    This function is intentionally fail-closed. It never infers that missing
+    historical data are harmless. A research/backtest caller may only label a
+    result ``PIT_STRICT_CERTIFIED`` when every gate below is satisfied.
+    """
+
+    checks = {
+        "temporal_identity_integrity": len(membership_errors) == 0,
+        "price_coverage": price_coverage_pct >= min_price_coverage_pct,
+        "terminal_event_coverage": (
+            terminal_event_coverage_pct >= min_terminal_event_coverage_pct
+        ),
+        "no_unresolved_disappearances": unresolved_disappearance_count == 0,
+        "no_quarantined_exit_evidence": quarantine_count == 0,
+        "no_current_universe_for_history": not current_universe_used_for_history,
+        "no_silent_held_disappearance": silent_held_disappearance_count == 0,
+    }
+    certified = all(checks.values())
+    failed = sorted(name for name, ok in checks.items() if not ok)
+    return {
+        "status": "PIT_STRICT_CERTIFIED" if certified else "PIT_STRICT_NOT_CERTIFIED",
+        "certified": certified,
+        "checks": checks,
+        "failed_gates": failed,
+        "price_coverage_pct": float(price_coverage_pct),
+        "terminal_event_coverage_pct": float(terminal_event_coverage_pct),
+        "unresolved_disappearance_count": int(unresolved_disappearance_count),
+        "quarantine_count": int(quarantine_count),
+        "silent_held_disappearance_count": int(silent_held_disappearance_count),
+        "min_price_coverage_pct": float(min_price_coverage_pct),
+        "min_terminal_event_coverage_pct": float(min_terminal_event_coverage_pct),
+    }
