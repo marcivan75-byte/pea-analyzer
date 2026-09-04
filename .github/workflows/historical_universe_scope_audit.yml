@@ -1,0 +1,126 @@
+name: Historical universe scope audit
+
+on:
+  push:
+    branches: [hebdo-at-meta]
+    paths:
+      - '.github/workflows/historical_universe_scope_audit.yml'
+      - 'inputs/V18.2_PEA_ACTIONS_MASTER.csv'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scope-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Install pandas
+        run: python -m pip install --prefer-binary pandas
+      - name: Derive governed current-universe market scope
+        run: |
+          python - <<'PY'
+          import json, re
+          from pathlib import Path
+          import pandas as pd
+
+          src=Path('inputs/V18.2_PEA_ACTIONS_MASTER.csv')
+          if not src.exists(): raise SystemExit('MASTER_NOT_FOUND')
+          # Read robustly without changing source.
+          last=None
+          for sep in [',',';','\t']:
+              try:
+                  d=pd.read_csv(src,sep=sep,low_memory=False)
+                  if len(d.columns)>1: break
+              except Exception as e: last=e
+          else:
+              raise SystemExit(f'MASTER_READ_FAILED:{last}')
+
+          cols={c.lower().strip():c for c in d.columns}
+          def pick(*names):
+              for n in names:
+                  if n in cols: return cols[n]
+              for low,orig in cols.items():
+                  if any(n in low for n in names): return orig
+              return None
+
+          ticker_col=pick('ticker','symbol','yahoo')
+          mic_col=pick('mic')
+          exch_col=pick('exchange','market','place')
+          country_col=pick('country','pays')
+          isin_col=pick('isin')
+
+          print('MASTER_COLUMNS_BEGIN')
+          print('\n'.join(map(str,d.columns)))
+          print('MASTER_COLUMNS_END')
+          print(f'ROWS={len(d)}')
+          print(f'TICKER_COL={ticker_col}')
+          print(f'MIC_COL={mic_col}')
+          print(f'EXCHANGE_COL={exch_col}')
+          print(f'COUNTRY_COL={country_col}')
+          print(f'ISIN_COL={isin_col}')
+
+          out=Path('outputs/historical_universe_scope'); out.mkdir(parents=True,exist_ok=True)
+          records=[]
+          for field,col in [('mic',mic_col),('exchange',exch_col),('country',country_col)]:
+              if col:
+                  s=d[col].fillna('').astype(str).str.strip()
+                  vc=s[s.ne('')].value_counts(dropna=False)
+                  for val,n in vc.items(): records.append({'dimension':field,'value':val,'rows':int(n)})
+          scope=pd.DataFrame(records)
+          scope.to_csv(out/'CURRENT_UNIVERSE_SCOPE_COUNTS.csv',index=False)
+
+          suffix_rows=[]
+          if ticker_col:
+              s=d[ticker_col].fillna('').astype(str).str.strip().str.upper()
+              suffix=s.str.extract(r'(\.[A-Z0-9]+)$',expand=False).fillna('NO_SUFFIX')
+              for val,n in suffix.value_counts().items(): suffix_rows.append({'suffix':val,'rows':int(n)})
+          pd.DataFrame(suffix_rows).to_csv(out/'CURRENT_UNIVERSE_TICKER_SUFFIX_COUNTS.csv',index=False)
+
+          # Country inferred independently from ISIN prefix where available.
+          isin_rows=[]
+          if isin_col:
+              pref=d[isin_col].fillna('').astype(str).str.strip().str[:2].str.upper()
+              pref=pref[pref.str.fullmatch(r'[A-Z]{2}',na=False)]
+              for val,n in pref.value_counts().items(): isin_rows.append({'isin_country_prefix':val,'rows':int(n)})
+          pd.DataFrame(isin_rows).to_csv(out/'CURRENT_UNIVERSE_ISIN_PREFIX_COUNTS.csv',index=False)
+
+          summary={
+              'status':'OK',
+              'purpose':'CURRENT_GOVERNED_UNIVERSE_SCOPE_ONLY',
+              'historical_universe_certified':False,
+              'survivorship_safe':False,
+              'historical_pea_eligibility_certified':False,
+              'rows':int(len(d)),
+              'columns':list(map(str,d.columns)),
+              'ticker_column':ticker_col,
+              'mic_column':mic_col,
+              'exchange_column':exch_col,
+              'country_column':country_col,
+              'isin_column':isin_col,
+              'unique_tickers':int(d[ticker_col].nunique()) if ticker_col else None,
+              'unique_isin':int(d[isin_col].nunique()) if isin_col else None,
+          }
+          (out/'CURRENT_UNIVERSE_SCOPE_SUMMARY.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False),encoding='utf-8')
+          print('SCOPE_COUNTS_BEGIN')
+          print(scope.to_csv(index=False).strip())
+          print('SCOPE_COUNTS_END')
+          print('SUFFIX_COUNTS_BEGIN')
+          print(pd.DataFrame(suffix_rows).to_csv(index=False).strip())
+          print('SUFFIX_COUNTS_END')
+          print('ISIN_PREFIX_COUNTS_BEGIN')
+          print(pd.DataFrame(isin_rows).to_csv(index=False).strip())
+          print('ISIN_PREFIX_COUNTS_END')
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          PY
+      - name: Upload scope evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: historical-universe-scope-${{ github.run_id }}
+          path: outputs/historical_universe_scope/
+          retention-days: 30
