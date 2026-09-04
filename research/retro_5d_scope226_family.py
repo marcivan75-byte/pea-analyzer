@@ -47,7 +47,7 @@ def add_family_features(df,family):
     elif family=='VOLUME':
         x['volume']=v; vm=g.volume.transform(lambda s:s.rolling(20,min_periods=20).mean()); x['rvol20']=v/vm.replace(0,np.nan)
     elif family=='REVERSAL_PRICE':
-        dr=c/prev-1; x['positive_reversal_flag']=((c>o)&(dr.shift(1)<0)&(c>prev)).astype(float)
+        dr=c/prev-1; prev_dr=dr.groupby(x.ticker).shift(1); x['positive_reversal_flag']=((c>o)&(prev_dr<0)&(c>prev)).astype(float)
     else: raise ValueError(family)
     cols=['ticker','date']+FAMILIES[family]
     z=x[cols].copy()
@@ -59,7 +59,7 @@ def add_family_features(df,family):
     return z
 
 def bh(p):
-    p=np.asarray(p,float); n=len(p); order=np.argsort(p); r=p[order]; q=r*n/np.arange(1,n+1); q=np.minimum.accumulate(q[::-1])[::-1]; out=np.empty(n); out[order]=np.minimum(q,1); return out
+    p=np.asarray(p,float); p=np.where(np.isfinite(p),p,1.0); n=len(p); order=np.argsort(p); r=p[order]; q=r*n/np.arange(1,n+1); q=np.minimum.accumulate(q[::-1])[::-1]; out=np.empty(n); out[order]=np.minimum(q,1); return out
 
 def screen(m,family):
     d=m.loc[pd.to_datetime(m.date).dt.year<=2018].copy(); rows=[]
@@ -71,7 +71,9 @@ def screen(m,family):
     for base,col,kind in vars:
         a=pd.to_numeric(d.loc[d.winner_5d.astype(bool),col],errors='coerce').replace([np.inf,-np.inf],np.nan).dropna(); b=pd.to_numeric(d.loc[~d.winner_5d.astype(bool),col],errors='coerce').replace([np.inf,-np.inf],np.nan).dropna()
         if min(len(a),len(b))<50: continue
-        p=float(mannwhitneyu(a,b,alternative='two-sided').pvalue)
+        try: p=float(mannwhitneyu(a,b,alternative='two-sided').pvalue)
+        except Exception: p=1.0
+        if not np.isfinite(p): p=1.0
         y=np.r_[np.ones(len(a)),np.zeros(len(b))]; z=np.r_[a.to_numpy(),b.to_numpy()]
         try: auc=float(roc_auc_score(y,z))
         except: auc=np.nan
