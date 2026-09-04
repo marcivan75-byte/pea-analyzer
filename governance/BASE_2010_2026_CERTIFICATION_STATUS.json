@@ -1,0 +1,107 @@
+{
+  "version": "2026-09-04",
+  "scope": "PEA Analyzer actions database 2010-2026",
+  "overall_status": "USABLE_FOR_DISCOVERY_WITH_GOVERNANCE_LIMITATIONS",
+  "price_history": {
+    "status": "CERTIFIED_WITH_QUARANTINE",
+    "combined_rows": 5635905,
+    "combined_tickers": 1782,
+    "min_date": "2010-01-04",
+    "max_date": "2026-08-27",
+    "certified_ohlc_rows": 5635174,
+    "certified_ohlc_pct": 99.98703,
+    "quarantined_ohlc_rows": 731,
+    "floating_point_geometry_artifacts_accepted": 1412,
+    "duplicate_ticker_dates": 0,
+    "pre2023_price_basis": "YAHOO_ADJ_CLOSE_RATIO_OHLC",
+    "holdout_price_basis": "YAHOO_AUTO_ADJUST_TRUE_GOVERNED_CACHE",
+    "source_mutation_or_synthetic_repair": false
+  },
+  "volume": {
+    "status": "CERTIFIED_BY_TICKER_USAGE_CLASS",
+    "nonnull_pct": 100.0,
+    "zero_volume_rows": 700297,
+    "zero_volume_pct": 12.425635,
+    "ticker_status_counts": {
+      "CERTIFIED_VOLUME_COVERAGE": 1139,
+      "GOOD_VOLUME_COVERAGE": 267,
+      "USABLE_WITH_LIMITATION": 191,
+      "LOW_CONFIDENCE_VOLUME": 139,
+      "EXCLUDE_VOLUME_FACTORS": 46
+    },
+    "policy": "Volume-derived features such as RVOL and OBV must respect ticker-level volume_factor_status."
+  },
+  "pre2023_bootstrap": {
+    "available_identity_tickers": 1782,
+    "ok_tickers": 1623,
+    "no_history_tickers": 158,
+    "all_rows_excluded_tickers": 1,
+    "coverage_pct": 91.0774,
+    "raw_rows": 4067835,
+    "kept_rows": 4055044,
+    "excluded_rows": 12791,
+    "excluded_pct_of_raw": 0.314442,
+    "duplicate_ticker_dates_after_filter": 0,
+    "invalid_ohlc_after_filter": 0,
+    "no_history_classification": {
+      "first_appears_2023": 56,
+      "first_appears_2024": 37,
+      "first_appears_2025": 41,
+      "first_appears_2026": 23,
+      "unresolved_no_coverage": ["STAR7.MI"]
+    }
+  },
+  "corporate_actions": {
+    "status": "AUDITED",
+    "factor_event_rows_gt_1pct": 9775,
+    "major_factor_event_rows_gt_5pct": 1951,
+    "large_raw_jump_rows_gt_35pct": 4039,
+    "coincident_raw_discontinuity_rows": 25,
+    "tickers_with_factor_events": 1025,
+    "tickers_with_coincident_raw_discontinuities": 21,
+    "raw_ohlc_safe_to_consume_naively": false
+  },
+  "holdout_governance": {
+    "development_window": "2010-01-01..2022-12-31",
+    "holdout_window": "2023-01-01..2026",
+    "fit_holdout_blocked": true,
+    "retuning_with_holdout": false
+  },
+  "historical_universe": {
+    "status": "NOT_CERTIFIED",
+    "historical_universe_certified": false,
+    "survivorship_safe": false,
+    "historical_pea_eligibility_certified": false,
+    "reason": "Current bootstrap is based on current governed identities. Active+delisted provider inventory workflow exists but EODHD_API_TOKEN is not configured in GitHub, so delisted historical membership and historical PEA windows remain unverified."
+  },
+  "consensus_and_targets": {
+    "status": "PIT_ARCHITECTURE_VALID_HISTORY_NOT_CERTIFIED",
+    "production_persistence_tests": "PASS",
+    "real_persisted_history_evidence": false,
+    "historical_fit_allowed": false,
+    "reason": "Audit73 validates append-only capture and strict PIT gates, but its workflow restores/saves no real source-history artifact and the expected source-cache file is not versioned."
+  },
+  "fundamentals_and_catalysts": {
+    "status": "NOT_CERTIFIED_FOR_HISTORICAL_FIT",
+    "historical_fit_allowed": false,
+    "reason": "No sufficiently documented point-in-time publication/availability series was found for fundamentals, earnings surprises, guidance or catalysts across 2010-2026."
+  },
+  "technical_features": {
+    "status": "RECONSTRUCTIBLE_FROM_CERTIFIED_OHLCV",
+    "historical_fit_allowed": true,
+    "conditions": [
+      "Use only observations available on or before signal timestamp.",
+      "Exclude 731 OHLC quarantine rows and windows crossing them when required by an indicator.",
+      "Respect warm-up history for long-window indicators.",
+      "Respect ticker-level volume-factor status for RVOL/OBV/volume acceleration."
+    ],
+    "candidate_families": [
+      "returns/momentum", "SMA/EMA", "RSI", "stochastic", "MACD", "ATR", "volatility", "Bollinger", "breakouts/ranges", "drawdown", "gaps/candles", "RVOL", "OBV", "liquidity"
+    ]
+  },
+  "certification_policy": {
+    "CERTIFIED": "Reproducible evidence and point-in-time validity established.",
+    "USABLE_WITH_LIMITATION": "Can be used only with explicit quality flags or scope limits.",
+    "EXCLUDED": "Must not be used for historical model fitting until evidence is supplied."
+  }
+}
