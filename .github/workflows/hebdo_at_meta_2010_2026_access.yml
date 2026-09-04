@@ -128,8 +128,12 @@ jobs:
           anomalies['reason_code']=np.where(anomalies['invalid_price'],'INVALID_NONPOSITIVE_OR_NONFINITE_PRICE','INVALID_OHLC_GEOMETRY')
 
           out=Path('outputs/meta_2010_2026'); out.mkdir(parents=True,exist_ok=True)
+          # Publish the actual physical combined OHLCV corpus used by this validation.
+          physical = out/'HEBDO_AT_META_OHLCV_2010_2026.parquet'
+          combined.to_parquet(physical,index=False,compression='zstd')
           annual.to_csv(out/'HEBDO_AT_META_DATA_QUALITY_BY_YEAR.csv',index=False)
           anomalies.to_csv(out/'HEBDO_AT_META_OHLC_QUARANTINE.csv',index=False)
+          print('PHYSICAL_OHLCV_FILE', physical, physical.stat().st_size)
           print('YEARLY_DATA_QUALITY_BEGIN')
           print(annual.to_csv(index=False).strip())
           print('YEARLY_DATA_QUALITY_END')
@@ -148,6 +152,8 @@ jobs:
               'combined_tickers':int(combined['ticker'].nunique()),
               'combined_min_date':str(combined['date'].min()),
               'combined_max_date':str(combined['date'].max()),
+              'physical_ohlcv_file':str(physical),
+              'physical_ohlcv_size_bytes':int(physical.stat().st_size),
               'all_years_2010_2026_present':True,
               'duplicate_ticker_dates':0,
               'combined_volume_nonnull_pct':100.0,
@@ -168,7 +174,7 @@ jobs:
           (out/'HEBDO_AT_META_2010_2026_ACCESS.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
           print(json.dumps(summary,indent=2))
           PY
-      - name: Upload access evidence
+      - name: Upload access evidence and physical OHLCV corpus
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
