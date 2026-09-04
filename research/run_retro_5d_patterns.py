@@ -11,6 +11,19 @@ _orig_retained = r.retained_universe
 _orig_matched = r.matched_controls
 
 
+def exact_round_ratio_suspect(series: pd.Series) -> pd.Series:
+    x = series.to_numpy(float)
+    out = np.zeros(len(x), dtype=bool)
+    ok = np.isfinite(x)
+    if ok.any():
+        d = np.abs(x[ok, None] - r.ROUND_RATIOS[None, :]) / r.ROUND_RATIOS[None, :]
+        out[ok] = d.min(axis=1) <= 0.005
+    return pd.Series(out, index=series.index)
+
+
+r._round_ratio_suspect = exact_round_ratio_suspect
+
+
 def retained_capture(df: pd.DataFrame) -> pd.DataFrame:
     global _FULL
     _FULL = df
@@ -34,7 +47,7 @@ def exact_winner_episodes(_univ: pd.DataFrame) -> pd.DataFrame:
         & (ep["close"] >= 1.0)
         & (ep["volume"] >= 5000)
         & (ep["ret_fwd5_pct"] <= 50.0)
-        & (~r._round_ratio_suspect(ep["future_ratio"]))
+        & (~exact_round_ratio_suspect(ep["future_ratio"]))
     )
     ep = ep.loc[qa].sort_values(["date", "ticker"]).reset_index(drop=True)
     if len(ep) != 5859:
