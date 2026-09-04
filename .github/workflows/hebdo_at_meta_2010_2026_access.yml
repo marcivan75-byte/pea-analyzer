@@ -82,16 +82,20 @@ jobs:
           def quality_flags(frame):
               x=frame.copy()
               vals={c:pd.to_numeric(x[c],errors='coerce') for c in ['open','high','low','close']}
+              arrays={c:vals[c].to_numpy(dtype='float64',na_value=np.nan) for c in vals}
               finite=np.ones(len(x),dtype=bool)
               positive=np.ones(len(x),dtype=bool)
-              for c in vals:
-                  a=vals[c].to_numpy(dtype='float64',na_value=np.nan)
+              for a in arrays.values():
                   finite &= np.isfinite(a)
                   positive &= (a>0)
-              o,h,l,c=vals['open'],vals['high'],vals['low'],vals['close']
-              geometry=(h>=l)&(h>=o)&(h>=c)&(l<=o)&(l<=c)
+              o,h,l,c=arrays['open'],arrays['high'],arrays['low'],arrays['close']
+              scale=np.maximum.reduce([np.abs(o),np.abs(h),np.abs(l),np.abs(c),np.ones(len(x))])
+              tol=1e-10*scale
+              strict_geometry=(h>=l)&(h>=o)&(h>=c)&(l<=o)&(l<=c)
+              tolerant_geometry=(h+tol>=l)&(h+tol>=o)&(h+tol>=c)&(l-tol<=o)&(l-tol<=c)
               x['invalid_price']=~(finite & positive)
-              x['invalid_geometry']=~geometry.fillna(False).to_numpy()
+              x['rounding_artifact_geometry']=(~strict_geometry) & tolerant_geometry & (~x['invalid_price'].to_numpy())
+              x['invalid_geometry']=~tolerant_geometry
               x['certified_ohlc_row']=~(x['invalid_price']|x['invalid_geometry'])
               x['zero_volume']=(pd.to_numeric(x['volume'],errors='coerce')==0)
               return x
@@ -110,6 +114,7 @@ jobs:
               certified_ohlc_rows=('certified_ohlc_row','sum'),
               invalid_price_rows=('invalid_price','sum'),
               invalid_geometry_rows=('invalid_geometry','sum'),
+              rounding_artifact_rows=('rounding_artifact_geometry','sum'),
               zero_volume_rows=('zero_volume','sum'),
               median_volume=('volume','median'),
               first_date=('date','min'),
@@ -148,6 +153,7 @@ jobs:
               'combined_volume_nonnull_pct':100.0,
               'combined_zero_volume_rows':int(q['zero_volume'].sum()),
               'combined_zero_volume_pct':round(100*q['zero_volume'].mean(),6),
+              'rounding_artifact_geometry_rows':int(q['rounding_artifact_geometry'].sum()),
               'ohlc_quarantine_rows':int(len(anomalies)),
               'certified_ohlc_rows':int(q['certified_ohlc_row'].sum()),
               'certified_ohlc_pct':round(100*q['certified_ohlc_row'].mean(),6),
