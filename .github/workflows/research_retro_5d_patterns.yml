@@ -1,0 +1,59 @@
+name: Research Retro 5D Patterns
+
+on:
+  push:
+    branches: [research/retro-5d-patterns]
+    paths:
+      - 'research/retro_5d_patterns.py'
+      - '.github/workflows/research_retro_5d_patterns.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  discover-patterns:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install --prefer-binary pandas numpy pyarrow scipy scikit-learn tabulate
+      - name: Restore governed 2023-2026 holdout cache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: data/cache/
+          key: ohlcv-v3-33132925283
+          restore-keys: |
+            ohlcv-v3-
+      - name: Download governed PRE2023 corpus
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: '9817322742'
+        run: |
+          mkdir -p inputs/pre2023
+          curl -fL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" \
+            -o /tmp/pre2023.zip
+          unzip -q /tmp/pre2023.zip -d inputs/pre2023
+          test -s inputs/pre2023/PRE2023_YAHOO_DEVELOPMENT_OHLCV.parquet
+          test -s inputs/pre2023/PRE2023_YAHOO_CORPUS_MANIFEST.json
+          test -d data/cache/actions
+      - name: Compile research pipeline
+        run: python -m py_compile research/retro_5d_patterns.py
+      - name: Discover and validate 5D patterns
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: python research/retro_5d_patterns.py
+      - name: Upload research evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: retro-5d-patterns-${{ github.run_id }}
+          path: outputs/retro_5d_patterns/
+          if-no-files-found: warn
+          retention-days: 30
