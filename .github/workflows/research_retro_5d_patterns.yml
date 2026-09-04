@@ -5,6 +5,7 @@ on:
     branches: [research/retro-5d-patterns]
     paths:
       - 'research/retro_5d_patterns.py'
+      - 'research/run_retro_5d_patterns.py'
       - '.github/workflows/research_retro_5d_patterns.yml'
   workflow_dispatch:
 
@@ -44,11 +45,11 @@ jobs:
           test -s inputs/pre2023/PRE2023_YAHOO_CORPUS_MANIFEST.json
           test -d data/cache/actions
       - name: Compile research pipeline
-        run: python -m py_compile research/retro_5d_patterns.py
+        run: python -m py_compile research/retro_5d_patterns.py research/run_retro_5d_patterns.py
       - name: Discover and validate 5D patterns
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: python research/retro_5d_patterns.py
+        run: python research/run_retro_5d_patterns.py
       - name: Upload research evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
