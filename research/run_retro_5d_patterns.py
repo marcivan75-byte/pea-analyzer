@@ -50,6 +50,7 @@ def exact_winner_episodes(_univ: pd.DataFrame) -> pd.DataFrame:
         & (~exact_round_ratio_suspect(ep["future_ratio"]))
     )
     ep = ep.loc[qa].sort_values(["date", "ticker"]).reset_index(drop=True)
+    ep["winner_5d"] = True
     if len(ep) != 5859:
         raise SystemExit(f"BLOCK_EXACT_5D_QA_POPULATION_EXPECTED_5859_GOT_{len(ep)}")
     return ep
