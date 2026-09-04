@@ -1,0 +1,131 @@
+name: PRE2023 EODHD survivorship inventory
+
+on:
+  push:
+    branches: [hebdo-at-meta]
+    paths:
+      - '.github/workflows/pre2023_eodhd_survivorship_inventory.yml'
+      - 'v182/data/pre2023_eodhd_inventory.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EODHD_API_TOKEN: ${{ secrets.EODHD_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install --prefer-binary pandas
+      - name: Build provider exchange scope from official exchange list
+        run: |
+          mkdir -p outputs/pre2023_survivorship
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from urllib.request import urlopen
+          from urllib.parse import urlencode
+          import pandas as pd
+
+          out=Path('outputs/pre2023_survivorship')
+          token=os.environ.get('EODHD_API_TOKEN','').strip()
+          if not token:
+              (out/'TOKEN_STATUS.json').write_text(json.dumps({'status':'TOKEN_MISSING','secret':'EODHD_API_TOKEN'},indent=2),encoding='utf-8')
+              raise SystemExit('BLOCK_PRE2023_SECRET: EODHD_API_TOKEN missing')
+
+          url='https://eodhd.com/api/exchanges-list/?'+urlencode({'api_token':token,'fmt':'json'})
+          payload=json.loads(urlopen(url,timeout=60).read().decode('utf-8'))
+          if not isinstance(payload,list): raise SystemExit('EXCHANGE_LIST_NON_LIST')
+          pd.DataFrame(payload).to_csv(out/'EODHD_EXCHANGES_LIST_SNAPSHOT.csv',index=False)
+
+          # Operating MICs represented by the governed current master. Segment MICs
+          # (Growth/Access) are mapped to their operating exchange family and are not
+          # interpreted as historical PEA eligibility evidence.
+          targets=[
+              ('XPAR','France','governed-master:XPAR/ALXP/XMLI + Yahoo .PA'),
+              ('XMIL','Italy','governed-master:MTAA/EXGM/XMIL/XMSM/MTAH + Yahoo .MI'),
+              ('XOSL','Norway','governed-master:XOSL/MERK/XOAS + Yahoo .OL'),
+              ('XAMS','Netherlands','governed-master:XAMS + Yahoo .AS'),
+              ('XBRU','Belgium','governed-master:XBRU/ALXB/MLXB + Yahoo .BR'),
+              ('XLIS','Portugal','governed-master:XLIS/ALXL + Yahoo .LS'),
+              ('XDUB','Ireland','governed-master:XDUB + Yahoo .IR'),
+              ('XLON','United Kingdom','governed-master:XLON + Yahoo .L; eligibility not assumed'),
+          ]
+          rows=[]; unresolved=[]
+          for mic,country,evidence in targets:
+              matches=[]
+              for r in payload:
+                  om=str(r.get('OperatingMIC') or '')
+                  mics=[x.strip().upper() for x in om.split(',') if x.strip()]
+                  if mic in mics: matches.append(r)
+              if not matches:
+                  unresolved.append({'mic':mic,'country':country,'scope_evidence':evidence,'reason':'NO_EODHD_OPERATING_MIC_MATCH'})
+                  continue
+              # Prefer exact-country match, otherwise retain only if unique.
+              cm=[r for r in matches if str(r.get('Country') or '').lower() in country.lower() or country.lower() in str(r.get('Country') or '').lower()]
+              chosen=(cm or matches)
+              if len(chosen)!=1:
+                  unresolved.append({'mic':mic,'country':country,'scope_evidence':evidence,'reason':'AMBIGUOUS_EODHD_MATCH','matches':'|'.join(str(r.get('Code')) for r in chosen)})
+                  continue
+              r=chosen[0]
+              rows.append({'eodhd_exchange':str(r.get('Code')).strip(),'mic':mic,'country':country,'scope_evidence':evidence+'; EODHD exchanges-list snapshot'})
+
+          scope=pd.DataFrame(rows,columns=['eodhd_exchange','mic','country','scope_evidence'])
+          scope.to_csv(out/'PRE2023_EODHD_EXCHANGE_SCOPE.csv',index=False)
+          pd.DataFrame(unresolved).to_csv(out/'PRE2023_EODHD_EXCHANGE_SCOPE_UNRESOLVED.csv',index=False)
+          print('RESOLVED_SCOPE_BEGIN')
+          print(scope.to_csv(index=False).strip())
+          print('RESOLVED_SCOPE_END')
+          print('UNRESOLVED_SCOPE_BEGIN')
+          print(pd.DataFrame(unresolved).to_csv(index=False).strip())
+          print('UNRESOLVED_SCOPE_END')
+          if scope.empty: raise SystemExit('BLOCK_PRE2023_EXCHANGE_SCOPE_EMPTY')
+          PY
+      - name: Build active plus delisted common-stock inventory
+        run: |
+          python v182/data/pre2023_eodhd_inventory.py \
+            --exchange-scope outputs/pre2023_survivorship/PRE2023_EODHD_EXCHANGE_SCOPE.csv \
+            --output outputs/pre2023_survivorship/PRE2023_EODHD_ACTIVE_DELISTED_INVENTORY.csv
+      - name: Summarize inventory without certifying historical eligibility
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+          p=Path('outputs/pre2023_survivorship/PRE2023_EODHD_ACTIVE_DELISTED_INVENTORY.csv')
+          d=pd.read_csv(p,dtype=str).fillna('')
+          by=d.groupby(['eodhd_exchange','provider_status'],as_index=False).size().rename(columns={'size':'rows'})
+          by.to_csv(p.parent/'PRE2023_EODHD_INVENTORY_COUNTS.csv',index=False)
+          summary={
+              'status':'CANDIDATE_INVENTORY_ONLY',
+              'rows':int(len(d)),
+              'unique_symbols':int(d['eodhd_symbol'].nunique()),
+              'active_rows':int((d['provider_status']=='active').sum()),
+              'delisted_rows':int((d['provider_status']=='delisted').sum()),
+              'symbols_with_isin':int(d['isin'].ne('').sum()),
+              'historical_universe_certified':False,
+              'survivorship_safe':False,
+              'historical_pea_eligibility_certified':False,
+              'reason':'active+delisted inventory is necessary but listing/eligibility windows are not yet certified'
+          }
+          (p.parent/'PRE2023_EODHD_INVENTORY_SUMMARY.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
+          print('INVENTORY_COUNTS_BEGIN')
+          print(by.to_csv(index=False).strip())
+          print('INVENTORY_COUNTS_END')
+          print(json.dumps(summary,indent=2))
+          PY
+      - name: Upload survivorship evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pre2023-eodhd-survivorship-${{ github.run_id }}
+          path: outputs/pre2023_survivorship/
+          if-no-files-found: warn
+          retention-days: 30
