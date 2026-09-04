@@ -2,7 +2,7 @@ name: Research Retro 5D Scope226
 
 on:
   push:
-    branches: [research/retro-5d-patterns]
+    branches: [research/retro-5d-scope226]
     paths:
       - 'research/retro_5d_scope226_ohlcv.py'
       - 'research/criteria_scope_226_manifest.json'
