@@ -4,15 +4,19 @@ on:
   push:
     branches:
       - research/at-weekly-v1-20260829
+      - feat/pit-survivorship-universe
     paths:
       - src/v182/backtest/pit_v15.py
       - src/v182/backtest/coverage_v15.py
       - src/v182/backtest/benchmark_pit_v15.py
       - src/v182/backtest/pit_source_registry_v15.py
+      - src/v182/backtest/pit_universe.py
       - tests/test_pit_v15_contract.py
       - tests/test_pit_v15_benchmark.py
       - tests/test_pit_v15_source_registry.py
+      - tests/test_pit_universe.py
       - docs/PIT_V15_DATA_CONTRACT.md
+      - docs/PIT_SURVIVORSHIP_BIAS.md
       - .github/workflows/research_pit_v15_qualification.yml
   workflow_dispatch:
 
@@ -37,12 +41,14 @@ jobs:
           python -m unittest tests.test_pit_v15_contract -v
           python -m unittest tests.test_pit_v15_benchmark -v
           python -m unittest tests.test_pit_v15_source_registry -v
+          python -m unittest tests.test_pit_universe -v
       - name: Verify no performance optimization is coupled to qualification
         run: |
           python - <<'PY'
           from pathlib import Path
           p=Path('src/v182/backtest/pit_v15.py').read_text()
           b=Path('src/v182/backtest/benchmark_pit_v15.py').read_text()
+          u=Path('src/v182/backtest/pit_universe.py').read_text()
           s=Path('src/v182/backtest/pit_source_registry_v15.py').read_text()
           d=Path('docs/PIT_V15_DATA_CONTRACT.md').read_text()
           assert 'performance_backtest_authorized' in p
@@ -50,7 +56,11 @@ jobs:
           assert 'P1_FACTSET' in p and 'P2_EPS' in p and 'P3_MODEL' in p
           assert 'TARGET_THRESHOLD_PCT = 20.0' in p
           assert 'pea_eligible_of_record' in b
+          assert 'survivorship_audit' in b
+          assert 'unresolved_disappearance_count' in b
           assert 'performance_backtest_authorized_by_this_module' in b
+          assert 'universe_as_of' in u
+          assert 'TerminalEvent' in u
           assert 'primary_source_documentation_ready' in s
           assert 'Pas d\'optimisation technique' in d
           print('PIT_V15_DATA_QUALIFICATION_CONTRACT_OK')
