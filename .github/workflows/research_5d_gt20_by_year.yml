@@ -1,0 +1,135 @@
+name: Research 5D >20% by year
+
+on:
+  push:
+    branches: [hebdo-at-meta]
+    paths:
+      - '.github/workflows/research_5d_gt20_by_year.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install --prefer-binary pandas numpy pyarrow openpyxl
+      - name: Restore governed 2023-2026 holdout cache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: data/cache/
+          key: ohlcv-v3-33132925283
+          restore-keys: |
+            ohlcv-v3-
+      - name: Download governed PRE2023 corpus
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: '9817322742'
+        run: |
+          mkdir -p inputs/pre2023
+          curl -fL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" \
+            -o /tmp/pre2023.zip
+          unzip -q /tmp/pre2023.zip -d inputs/pre2023
+          test -s inputs/pre2023/PRE2023_YAHOO_DEVELOPMENT_OHLCV.parquet
+          test -d data/cache/actions
+      - name: Compute >20 percent over 5 trading sessions
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+          import numpy as np
+          from v182.hebdo.meta_price_history import load_2010_2026
+
+          df = load_2010_2026(
+              'inputs/pre2023/PRE2023_YAHOO_DEVELOPMENT_OHLCV.parquet',
+              'inputs/pre2023/PRE2023_YAHOO_CORPUS_MANIFEST.json',
+              'data/cache/actions'
+          ).copy()
+          req=['date','ticker','open','high','low','close','volume']
+          miss=[c for c in req if c not in df.columns]
+          if miss: raise SystemExit(f'MISSING:{miss}')
+          df['date']=pd.to_datetime(df['date'])
+          df=df.sort_values(['ticker','date']).reset_index(drop=True)
+          df['pos_in_ticker']=df.groupby('ticker').cumcount()
+          df['date_t5']=df.groupby('ticker')['date'].shift(-5)
+          df['close_t5']=df.groupby('ticker')['close'].shift(-5)
+          df['ret_5d_pct']=(df['close_t5']/df['close']-1.0)*100.0
+
+          hits=df.loc[df['ret_5d_pct']>20].copy()
+          hits['year']=hits['date'].dt.year
+          hits['prev_pos']=hits.groupby('ticker')['pos_in_ticker'].shift(1)
+          # Collapse overlapping qualifying windows for the same ticker into one episode.
+          # A new episode begins only after >5 source sessions without a qualifying start.
+          hits['new_episode']=((hits['prev_pos'].isna()) | ((hits['pos_in_ticker']-hits['prev_pos'])>5)).astype(int)
+          hits['episode_id']=hits.groupby('ticker')['new_episode'].cumsum()
+          counts=hits.groupby(['ticker','episode_id']).size().rename('nb_fenetres_qualifiantes_episode')
+          best_idx=hits.groupby(['ticker','episode_id'])['ret_5d_pct'].idxmax()
+          ep=hits.loc[best_idx].copy()
+          ep=ep.join(counts,on=['ticker','episode_id'])
+          ep=ep.rename(columns={
+              'date':'date_depart','date_t5':'date_fin_5_seances','close':'cours_depart',
+              'close_t5':'cours_fin_5_seances','ret_5d_pct':'gain_5_seances_pct','volume':'volume_depart'
+          })
+          ep['annee']=ep['date_depart'].dt.year
+          ep['duree_calendaire_j']=(ep['date_fin_5_seances']-ep['date_depart']).dt.days
+          cols=['annee','ticker','date_depart','date_fin_5_seances','duree_calendaire_j','cours_depart','cours_fin_5_seances','gain_5_seances_pct','volume_depart','segment','nb_fenetres_qualifiantes_episode']
+          cols=[c for c in cols if c in ep.columns]
+          ep=ep[cols].sort_values(['annee','date_depart','gain_5_seances_pct'],ascending=[True,True,False]).reset_index(drop=True)
+
+          annual=ep.groupby('annee').agg(
+              nb_episodes=('ticker','size'),
+              nb_titres_uniques=('ticker','nunique'),
+              gain_median_5_seances_pct=('gain_5_seances_pct','median'),
+              gain_moyen_5_seances_pct=('gain_5_seances_pct','mean'),
+              gain_max_5_seances_pct=('gain_5_seances_pct','max')
+          ).reset_index()
+          raw=hits.groupby('year').agg(nb_fenetres_brutes_gt20=('ticker','size'),nb_titres_uniques_bruts=('ticker','nunique')).reset_index().rename(columns={'year':'annee'})
+          annual=annual.merge(raw,on='annee',how='outer').sort_values('annee')
+
+          out=Path('outputs/research_5d_gt20'); out.mkdir(parents=True,exist_ok=True)
+          ep.to_csv(out/'TITRES_PLUS_20_PCT_SUR_5_SEANCES_2010_2026.csv',index=False)
+          annual.to_csv(out/'RESUME_ANNUEL_PLUS_20_PCT_SUR_5_SEANCES.csv',index=False)
+          hits[['year','ticker','date','date_t5','close','close_t5','ret_5d_pct']].to_csv(out/'FENETRES_BRUTES_PLUS_20_PCT_SUR_5_SEANCES.csv',index=False)
+
+          with pd.ExcelWriter(out/'TITRES_PLUS_20_PCT_SUR_5_SEANCES_2010_2026.xlsx',engine='openpyxl') as xw:
+              annual.to_excel(xw,sheet_name='Resume_annuel',index=False)
+              ep.to_excel(xw,sheet_name='Episodes_dedoublonnes',index=False)
+              for year, g in ep.groupby('annee'):
+                  g.to_excel(xw,sheet_name=str(int(year)),index=False)
+              hits[['year','ticker','date','date_t5','close','close_t5','ret_5d_pct']].to_excel(xw,sheet_name='Fenetres_brutes',index=False)
+              pd.DataFrame([
+                  ['Definition','Gain strictement >20% entre la clôture de t et la clôture de t+5 séances du même ticker.'],
+                  ['5 jours','5 séances de cotation, et non 5 jours calendaires.'],
+                  ['Déduplication','Les fenêtres qualifiantes qui se chevauchent sur un même mouvement sont regroupées; l’épisode retient la fenêtre de 5 séances au gain maximal.'],
+                  ['Base','OHLCV gouvernée 2010-2026 utilisée par HEBDO AT META.'],
+                  ['Attention','Le fichier décrit la performance des tickers présents dans la base OHLCV; il ne constitue pas à lui seul une certification d’univers historique sans biais de survivance.']
+              ],columns=['Element','Regle']).to_excel(xw,sheet_name='Methodologie',index=False)
+
+          meta={
+              'source_rows':int(len(df)), 'source_tickers':int(df['ticker'].nunique()),
+              'source_min_date':str(df['date'].min().date()), 'source_max_date':str(df['date'].max().date()),
+              'raw_qualifying_windows':int(len(hits)), 'deduplicated_episodes':int(len(ep)),
+              'threshold_pct_strictly_greater_than':20.0, 'horizon_trading_sessions':5
+          }
+          (out/'METADATA.json').write_text(json.dumps(meta,indent=2),encoding='utf-8')
+          print(json.dumps(meta,indent=2))
+          PY
+      - name: Upload research export
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: research-5d-gt20-${{ github.run_id }}
+          path: outputs/research_5d_gt20/
+          if-no-files-found: error
+          retention-days: 30
