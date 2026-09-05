@@ -7,6 +7,7 @@ from typing import Any, Mapping
 import pandas as pd
 
 from v182.decision.etf_mt_operational_gates import annotate_ranking
+from v182.decision.etf_mt_fiche_validator import merge_human_fields
 
 
 INSTRUCTION_FIELDS = (
@@ -140,9 +141,14 @@ def write_instruction_fiches(annotated: pd.DataFrame, root: Path, config: Mappin
     markdown_parts = ["# Fiches THESIS_MT préremplies", "", "Uniquement les lignes `v21_thesis_eligible=YES`.", ""]
     for _, row in eligible.iterrows():
         fiche = build_instruction_fiche(row.to_dict(), config)
+        isin = fiche["prefilled"]["isin"] or f"ROW_{len(fiches)+1}"
+        dest = fiche_dir / f"{isin}.json"
+        existing = None
+        if dest.exists():
+            existing = json.loads(dest.read_text(encoding="utf-8"))
+        fiche = merge_human_fields(fiche, existing)
         fiches.append(fiche)
-        isin = fiche["prefilled"]["isin"] or f"ROW_{len(fiches)}"
-        (fiche_dir / f"{isin}.json").write_text(json.dumps(fiche, ensure_ascii=False, indent=2), encoding="utf-8")
+        dest.write_text(json.dumps(fiche, ensure_ascii=False, indent=2), encoding="utf-8")
         markdown_parts.append(render_fiche_markdown(fiche))
         markdown_parts.append("---")
         markdown_parts.append("")
@@ -150,9 +156,14 @@ def write_instruction_fiches(annotated: pd.DataFrame, root: Path, config: Mappin
     pack_md = outputs / "V21_ETF_MT_INSTRUCTION_FICHES.md"
     pack_json.write_text(json.dumps(fiches, ensure_ascii=False, indent=2), encoding="utf-8")
     pack_md.write_text("\n".join(markdown_parts), encoding="utf-8")
+    statuses = {}
+    for fiche in fiches:
+        statuses[fiche.get("status", "UNKNOWN")] = statuses.get(fiche.get("status", "UNKNOWN"), 0) + 1
     return {
         "eligible_rows": int(len(eligible)),
         "fiches_written": int(len(fiches)),
+        "status_counts": statuses,
+        "ready_for_review": int(statuses.get("READY_FOR_REVIEW", 0)),
         "outputs": {
             "fiches_dir": str(fiche_dir),
             "pack_json": str(pack_json),
