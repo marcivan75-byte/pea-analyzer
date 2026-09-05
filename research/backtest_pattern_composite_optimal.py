@@ -34,7 +34,7 @@ def load_benchmark(start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
         start=(start - pd.Timedelta(days=180)).strftime("%Y-%m-%d"),
         end=(end + pd.Timedelta(days=10)).strftime("%Y-%m-%d"),
         auto_adjust=False,
-        repair=True,
+        repair=False,
         progress=False,
         threads=False,
     )
@@ -75,6 +75,7 @@ def engineer(df: pd.DataFrame, bench: pd.DataFrame) -> pd.DataFrame:
     x["has_base"] = x.volatility < x.volatility_avg
 
     x = x.merge(bench[["date", "bench_ret90", "market_ok", "bench_close", "bench_mm20"]], on="date", how="left")
+    x = x.sort_values(["ticker", "date"]).reset_index(drop=True)
     x["rs"] = (1.0 + x.ret90) / (1.0 + x.bench_ret90) - 1.0
     # L'intention du commentaire 'Top 30%' impose un percentile cross-sectionnel par date.
     x["rs_rank"] = x.groupby("date").rs.rank(pct=True, method="average")
