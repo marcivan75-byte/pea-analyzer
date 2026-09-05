@@ -13,6 +13,7 @@ from v182.sources.yfinance_bulk import download_history
 from v182.features.etf_mt_v2081 import load_histories_from_cache, write_outputs
 from v182.features.etf_mt_history_integrity import sanitize_histories, score_snapshot_integrity
 from v182.features.etf_mt_v2082_dynamic import apply_dynamic_weighting
+from v182.reporting.etf_mt_process_annotate import write_gate_sidecar
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -66,12 +67,13 @@ def run(
         download_summary={"requested":result.requested,"successful":len(result.successful),"failed":len(result.failed),"ticker_mapping_gaps":int(len(gaps)),"mode":mode,"network_collection_executed":True,"network_requests_avoided":0,"cache_dir":str(cache)}
 
     strict_snapshot,strict_summary=score_snapshot_integrity(histories,etf_with_tickers,mt_cfg); run_id=os.environ.get("V2081_RUN_ID") or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"); strict_summary["run_id"]=run_id; strict_summary["download"]=download_summary; strict_summary["status"]="ACTIVE_REFERENCE_SCORING_NO_REAL_ORDERS"; strict_paths=write_outputs(strict_snapshot,strict_summary,outputs); strict_summary["outputs"]=strict_paths
+    gate_summary=write_gate_sidecar(strict_snapshot,root); strict_summary["v21_process_gates"]=gate_summary; strict_summary["v21_process_gates_score_influence"]=0.0
 
     dynamic_snapshot,dynamic_summary=apply_dynamic_weighting(strict_snapshot,scoring_histories,etf_with_tickers,mt_cfg,dynamic_cfg); dynamic_snapshot.loc[dynamic_snapshot["dynamic_selected"].fillna(False).astype(bool),"dynamic_decision"]="SHADOW_CANDIDATE"; dynamic_summary["promotion_allowed"]=False; dynamic_summary["real_orders_allowed"]=False; dynamic_summary["history_session_policy"]="OBSERVED_NUMERIC_CLOSE_ONLY"; dynamic_summary["run_id"]=run_id; dynamic_summary["download"]=strict_summary["download"]; dynamic_summary["strict_reference"]={"version":strict_summary.get("version"),"scorable_etfs":strict_summary.get("scorable_etfs"),"selected":strict_summary.get("selected"),"historical_attribution":"90.91% OOS 2021-2023 exact complete-38 only","history_session_policy":strict_summary.get("history_session_policy"),"real_orders_allowed":False}
-    dynamic_snapshot,source_context=_attach_selected_source_context(dynamic_snapshot,etf_with_tickers,root); dynamic_summary["selected_source_context"]=source_context; dynamic_summary["source_context_score_influence"]=0.0; dynamic_summary["source_context_weights_unchanged"]=True
-    outputs.mkdir(parents=True,exist_ok=True); dynamic_csv=outputs/"V20.8.2_ETF_MT_DYNAMIC_RANKING.csv"; dynamic_json=outputs/"V20.8.2_ETF_MT_DYNAMIC_SUMMARY.json"; dynamic_snapshot.to_csv(dynamic_csv,sep=";",index=False,encoding="utf-8-sig"); dynamic_json.write_text(json.dumps(dynamic_summary,ensure_ascii=False,indent=2,default=str),encoding="utf-8"); dynamic_summary["outputs"]={"ranking_csv":str(dynamic_csv),"summary_json":str(dynamic_json),"strict_reference_ranking":strict_paths["ranking_csv"],"strict_reference_summary":strict_paths["summary_json"]}
+    dynamic_snapshot,source_context=_attach_selected_source_context(dynamic_snapshot,etf_with_tickers,root); dynamic_summary["selected_source_context"]=source_context; dynamic_summary["source_context_score_influence"]=0.0; dynamic_summary["source_context_weights_unchanged"]=True; dynamic_summary["v21_process_gates"]=gate_summary
+    outputs.mkdir(parents=True,exist_ok=True); dynamic_csv=outputs/"V20.8.2_ETF_MT_DYNAMIC_RANKING.csv"; dynamic_json=outputs/"V20.8.2_ETF_MT_DYNAMIC_SUMMARY.json"; dynamic_snapshot.to_csv(dynamic_csv,sep=";",index=False,encoding="utf-8-sig"); dynamic_json.write_text(json.dumps(dynamic_summary,ensure_ascii=False,indent=2,default=str),encoding="utf-8"); dynamic_summary["outputs"]={"ranking_csv":str(dynamic_csv),"summary_json":str(dynamic_json),"strict_reference_ranking":strict_paths["ranking_csv"],"strict_reference_summary":strict_paths["summary_json"],"v21_gates_csv":gate_summary.get("outputs",{}).get("gates_csv")}
 
-    print(f"ETF MT V20.8.2 — {dynamic_summary['scorable_etfs']} ETF scorables après renormalisation, regime_allowed={dynamic_summary['regime']['allowed']}, selected={len(dynamic_summary['selected'])}; V20.8.1 strict conservée pour attribution historique")
+    print(f"ETF MT V20.8.2 — {dynamic_summary['scorable_etfs']} ETF scorables après renormalisation, regime_allowed={dynamic_summary['regime']['allowed']}, selected={len(dynamic_summary['selected'])}; V20.8.1 strict conservée pour attribution historique; V21 gates sidecar={gate_summary.get('thesis_eligible_after_gates')}")
     return dynamic_summary
 
 
