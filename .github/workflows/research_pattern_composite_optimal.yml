@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install dependencies
-        run: python -m pip install --prefer-binary pandas numpy pyarrow yfinance
+        run: python -m pip install --prefer-binary pandas numpy pyarrow scipy yfinance
       - name: Restore governed 2023-2026 holdout cache
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
         with:
