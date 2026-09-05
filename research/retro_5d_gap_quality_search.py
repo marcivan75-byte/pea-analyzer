@@ -66,29 +66,32 @@ def stat(x,m,period):
     return n,w,(100*w/n if n else np.nan),(z.mean() if n else np.nan),(z.median() if n else np.nan)
 
 def main():
-    raw=load(); x=features(raw,bench(raw.date.min(),raw.date.max())); e=eligible(x); P=primitives(x)
-    base={p:stat(x,e,p) for p in ['DISC','VAL','OOS']}
+    raw=load(); full=features(raw,bench(raw.date.min(),raw.date.max())); e=eligible(full)
+    base={p:stat(full,e,p) for p in ['DISC','VAL','OOS']}
+
+    # Every candidate below requires GAP>=5. Restrict only the combinatorial scan,
+    # after all features and eligibility have been computed on the full physical universe.
+    x=full.loc[e & (full.gap_pct>=5)].copy().reset_index(drop=True)
+    P=primitives(x); allrows=pd.Series(True,index=x.index)
     rows=[]
-    # Singles + combinations of 2 and 3, always including a gap primitive, fixed candidate library.
     gap_names=[k for k in P if k.startswith('GAP')]
     other=[k for k in P if not k.startswith('GAP')]
     defs=[]
     defs += [(g,) for g in gap_names]
     defs += [(g,o) for g in gap_names for o in other]
-    # limit 3-way to distinct feature families by prefix to reduce multiple testing/redundancy
     def fam(k): return k.split('_')[0].split('GE')[0].rstrip('0123456789.')
     for g in gap_names:
         for a,b in itertools.combinations(other,2):
             if fam(a)==fam(b): continue
             defs.append((g,a,b))
+
     for parts in defs:
-        m=e.copy()
+        m=allrows.copy()
         for k in parts: m &= P[k]
         rec={'pattern':'+'.join(parts),'depth':len(parts)}
-        valid=True
         for per in ['DISC','VAL','OOS']:
             n,w,pr,mean,med=stat(x,m,per); rec[f'{per}_n']=n; rec[f'{per}_wins']=w; rec[f'{per}_precision']=pr; rec[f'{per}_mean']=mean; rec[f'{per}_median']=med
-        # Selection is based on DISC+VAL only; OOS columns are reported but never used to admit candidates.
+        # Admission depends only on DISC + VAL. OOS is untouched by candidate selection.
         if rec['DISC_n']>=50 and rec['VAL_n']>=50 and rec['DISC_wins']>=3 and rec['VAL_wins']>=3 and rec['DISC_precision']>=2 and rec['VAL_precision']>=2 and rec['DISC_mean']>-1.0 and rec['VAL_mean']>-1.0:
             rows.append(rec)
     out=pd.DataFrame(rows)
@@ -96,15 +99,15 @@ def main():
         out['robust_pre_oos']=out[['DISC_precision','VAL_precision']].min(axis=1)
         out=out.sort_values(['robust_pre_oos','VAL_precision','DISC_n'],ascending=[False,False,False])
     out.to_csv(OUT/'VALIDATED_GAP_QUALITY_PATTERNS.csv',index=False)
-    # all single gap thresholds for context
+
     base_rows=[]
     for g in gap_names:
-        m=e&P[g]
+        m=P[g]
         r={'pattern':g}
         for per in ['DISC','VAL','OOS']:
             n,w,pr,mean,med=stat(x,m,per); r[f'{per}_n']=n; r[f'{per}_wins']=w; r[f'{per}_precision']=pr; r[f'{per}_mean']=mean
         base_rows.append(r)
     pd.DataFrame(base_rows).to_csv(OUT/'GAP_THRESHOLDS.csv',index=False)
-    summary={'eligible':int(e.sum()),'base_rates_pct':{p:base[p][2] for p in base},'candidate_library':len(defs),'validated_pre_oos':int(len(out)),'selection_rule':'DISC and VAL each n>=50,wins>=3,precision>=2%,mean>-1%; OOS not used for selection','top_pre_oos':out.head(20).to_dict('records') if len(out) else []}
+    summary={'eligible_full':int(e.sum()),'gap5_search_rows':int(len(x)),'base_rates_pct':{p:base[p][2] for p in base},'candidate_library':len(defs),'validated_pre_oos':int(len(out)),'selection_rule':'DISC and VAL each n>=50,wins>=3,precision>=2%,mean>-1%; OOS not used for selection','top_pre_oos':out.head(20).to_dict('records') if len(out) else []}
     (OUT/'SUMMARY.json').write_text(json.dumps(summary,indent=2),encoding='utf-8'); print(json.dumps(summary,indent=2))
 if __name__=='__main__': main()
