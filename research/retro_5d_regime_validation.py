@@ -9,14 +9,13 @@ from research.retro_5d_portfolio_validation import load_base, load_bench, featur
 from research.retro_5d_portfolio_ranking_validation import portfolio_ranked
 
 OUT=Path('outputs/retro_5d_regime_validation'); OUT.mkdir(parents=True,exist_ok=True)
-# Ranking rules were selected using PRE periods in the preceding study.
 SETUPS=[('TP20',3,'RS_DESC'),('TP20',5,'RS_DESC'),('DYN_BE_TP20',3,'GAP_ASC'),('DYN_BE_TP20',5,'RS_DESC'),('SL10_TP20',5,'RS_DESC')]
 
 
 def benchmark_regimes(a,b):
     z=yf.download('^STOXX50E',start=(a-pd.Timedelta(days=300)).strftime('%Y-%m-%d'),end=(b+pd.Timedelta(days=10)).strftime('%Y-%m-%d'),auto_adjust=False,repair=False,progress=False,threads=False)
     if isinstance(z.columns,pd.MultiIndex): z.columns=z.columns.get_level_values(0)
-    q=pd.DataFrame({'date':pd.to_datetime(z.index).tz_localize(None),'mkt_close':pd.to_numeric(z.Close,errors='coerce').to_numpy()}).dropna().sort_values('date')
+    q=pd.DataFrame({'signal_date':pd.to_datetime(z.index).tz_localize(None),'mkt_close':pd.to_numeric(z.Close,errors='coerce').to_numpy()}).dropna().sort_values('signal_date')
     q['ma20']=q.mkt_close.rolling(20,min_periods=20).mean(); q['ma50']=q.mkt_close.rolling(50,min_periods=50).mean(); q['ma200']=q.mkt_close.rolling(200,min_periods=200).mean()
     q['ret20']=(q.mkt_close/q.mkt_close.shift(20)-1)*100; q['ret60']=(q.mkt_close/q.mkt_close.shift(60)-1)*100
     q['vol20']=q.mkt_close.pct_change().rolling(20,min_periods=20).std(ddof=0)*np.sqrt(252)*100
@@ -68,8 +67,7 @@ def main():
     defs=candidate_defs(); rows=[]; selected=[]; annual=[]
     for cfg,maxp,rule in SETUPS:
         tt=trade_table(paths,cfg,25).merge(m,on='signal_date',how='left')
-        masks=regime_masks(tt)
-        candidates=[]
+        masks=regime_masks(tt); candidates=[]
         for parts in defs:
             z=apply_regime(tt,masks,parts)
             d=eval_period(z,rule,maxp,2010,2018); v=eval_period(z,rule,maxp,2019,2022); o=eval_period(z,rule,maxp,2023,2026)
@@ -80,8 +78,7 @@ def main():
         cand=pd.DataFrame(candidates)
         if len(cand): chosen=cand.sort_values(['robust_pre_return_pct','VAL_return_pct','DISC_return_pct'],ascending=False).iloc[0]
         else: chosen=pd.DataFrame([r for r in rows if r['config']==cfg and r['max_positions']==maxp]).sort_values('robust_pre_return_pct',ascending=False).iloc[0]
-        selected.append(chosen.to_dict()); parts=tuple(chosen.regime.split('+'))
-        z=apply_regime(tt,masks,parts)
+        selected.append(chosen.to_dict()); parts=tuple(chosen.regime.split('+')); z=apply_regime(tt,masks,parts)
         for y in range(2023,2027):
             yy=z[z.entry_date.dt.year==y].copy(); a,final,skip=portfolio_ranked(yy,rule,maxp)
             annual.append({'year':y,'config':cfg,'max_positions':maxp,'ranking_rule':rule,'regime':chosen.regime,'signals':len(yy),'accepted':len(a),'skipped':skip,'return_pct':100*(final/100000-1),'wins':int((a.net_ret>0).sum()) if len(a) else 0,'win_rate_pct':100*(a.net_ret>0).mean() if len(a) else np.nan,'mean_trade_pct':100*a.net_ret.mean() if len(a) else np.nan})
