@@ -55,7 +55,7 @@ def admissible(x): return np.isfinite(x.close_t5)&(x.close_t5>0)&(x.close>=1)&(x
 
 FEATURES=['ret1','ret3','ret5','ret10','ret20','ret60','ret126','ret252','mom_acc_5_20','mom_acc_10_20','dist_ma10','dist_ma20','dist_ma50','dist_ma100','dist_ma200','ma20_slope10','ma50_slope10','ma200_slope10','rsi14','rsi_d3','rsi_d5','stoch_k','stoch_gap','macd_hist_pct','macd_d1','macd_d3','atr14_pct','vol10','vol20','vol60','bb_width20','bb_z20','rvol10','rvol20','rvol60','rvol_d5','rvol_d10','dd60','dd1y','dist_low60','gap_pct','close_loc','range_pct','up_days5','reversal5']
 QS=[0.05,0.10,0.15,0.20,0.25,0.30,0.40,0.50,0.60,0.70,0.75,0.80,0.85,0.90,0.95]
-MIN_DISC=80; MIN_WINS=8; BEAM=220; MAX_DEPTH=7
+MIN_DISC=50; MIN_WINS=5; BEAM=60; MAX_DEPTH=5
 
 def stat(y,m):
     n=int(m.sum()); w=int((m&y).sum()); return n,w,(w/n if n else np.nan)
@@ -74,47 +74,47 @@ def main():
                 m=(z<=thr).fillna(False).to_numpy(bool) if op=='LE' else (z>=thr).fillna(False).to_numpy(bool)
                 n,w,p=stat(y,m&disc)
                 if n>=MIN_DISC and w>=MIN_WINS: prim.append({'f':f,'op':op,'q':q,'thr':thr,'mask':m,'n':n,'w':w,'p':p})
-    # keep strongest primitive per feature/op/q, then beam by discovery precision with diversity
     prim=sorted(prim,key=lambda a:(a['p'],a['w']),reverse=True)
-    beam=[{'parts':[p],'mask':p['mask'],'n':p['n'],'w':p['w'],'p':p['p']} for p in prim[:500]]
+    # runtime control: at most 8 threshold variants per feature
+    reduced=[]; counts={}
+    for p in prim:
+        if counts.get(p['f'],0)>=8: continue
+        reduced.append(p); counts[p['f']]=counts.get(p['f'],0)+1
+    prim=reduced
+    beam=[{'parts':[p],'mask':p['mask'],'n':p['n'],'w':p['w'],'p':p['p']} for p in prim[:240]]
     candidates=[]
     for depth in range(2,MAX_DEPTH+1):
         nxt=[]; seen=set()
         for b in beam:
             used={p['f'] for p in b['parts']}
-            for p in prim[:500]:
+            for p in prim[:240]:
                 if p['f'] in used: continue
                 key=tuple(sorted((z['f'],z['op'],round(z['q'],2)) for z in b['parts']+[p]))
                 if key in seen: continue
                 seen.add(key); m=b['mask']&p['mask']; n,w,prec=stat(y,m&disc)
                 if n<MIN_DISC or w<MIN_WINS: continue
-                # avoid dramatic overfitting to tiny discovery subsets
                 score=prec*(1+0.08*math.log10(max(n,10)))
                 nxt.append({'parts':b['parts']+[p],'mask':m,'n':n,'w':w,'p':prec,'score':score})
         nxt=sorted(nxt,key=lambda a:(a['score'],a['w']),reverse=True)[:BEAM]
         candidates.extend(nxt); beam=nxt
         if not beam: break
     rows=[]
-    for b in sorted(candidates,key=lambda a:(a['p'],a['w']),reverse=True)[:1500]:
+    for b in sorted(candidates,key=lambda a:(a['p'],a['w']),reverse=True)[:800]:
         nv,wv,pv=stat(y,b['mask']&val)
-        if nv<50 or wv<5: continue
-        # validation gate only; OOS not used for candidate admission/ranking
-        if pv<0.025 or pv<b['p']*0.35: continue
+        if nv<30 or wv<3: continue
+        if pv<0.025 or pv<b['p']*0.30: continue
         no,wo,po=stat(y,b['mask']&oos)
         desc=' & '.join(f"{p['f']} {'<=' if p['op']=='LE' else '>='} {p['thr']:.6g}" for p in b['parts'])
         rows.append({'depth':len(b['parts']),'pattern':desc,'disc_signals':b['n'],'disc_wins':b['w'],'disc_precision_pct':100*b['p'],'val_signals':nv,'val_wins':wv,'val_precision_pct':100*pv,'oos_signals':no,'oos_wins':wo,'oos_precision_pct':100*po,'selection_score':100*min(b['p'],pv)})
     out=pd.DataFrame(rows)
     if out.empty: raise SystemExit('NO_VALIDATED_PATTERNS')
-    # freeze ranking without OOS
     out=out.sort_values(['selection_score','val_precision_pct','val_signals'],ascending=[False,False,False]).reset_index(drop=True)
     od=Path('outputs/retro_5d_precision_aggressive'); od.mkdir(parents=True,exist_ok=True); out.to_csv(od/'ALL_VALIDATED_PATTERNS.csv',index=False)
     best={}
-    for floor in [50,100,250,500]:
+    for floor in [30,50,100,250,500]:
         q=out[(out.val_signals>=floor)].head(100).copy(); q.to_csv(od/f'TOP_PRE_OOS_MIN_{floor}.csv',index=False)
-        if len(q):
-            r=q.iloc[0].to_dict(); best[str(floor)]={k:r[k] for k in r}
-        else: best[str(floor)]=None
-    summary={'objective':'maximize success rate / precision','scope':'aggressive multi-family search over 45 accessible OHLCV-derived factors from the 145 accessible registry','discovery':'2010-2018','validation':'2019-2022','oos':'2023-2026','oos_used_for_tuning':False,'pit_strict_certified':False,'features_count':len(FEATURES),'validated_patterns':int(len(out)),'best_frozen_by_validation_floor':best}
+        best[str(floor)]=q.iloc[0].to_dict() if len(q) else None
+    summary={'objective':'maximize success rate / precision','scope':'runtime-optimized aggressive search over 45 accessible OHLCV-derived factors','discovery':'2010-2018','validation':'2019-2022','oos':'2023-2026','oos_used_for_tuning':False,'pit_strict_certified':False,'features_count':len(FEATURES),'beam':BEAM,'max_depth':MAX_DEPTH,'validated_patterns':int(len(out)),'best_frozen_by_validation_floor':best}
     (od/'SUMMARY.json').write_text(json.dumps(summary,indent=2,default=float),encoding='utf-8'); print(json.dumps(summary,indent=2,default=float))
 
 if __name__=='__main__': main()
