@@ -1,0 +1,96 @@
+{
+  "version": "ETF_MT_PROCESS_V21_0_2026_09_05",
+  "status": "SHADOW_PROCESS_OPTIMIZATION_NO_REAL_ORDERS",
+  "cdc_reference": "CDC Selection ETF Moyen Terme v1.0 2026-09-02",
+  "locked_reference_core": "V20.8.1_ETF_MT_HIGH_PRECISION",
+  "design": {
+    "do_not_retune_38_pit_weights": true,
+    "do_not_open_holdout_for_calibration": true,
+    "do_not_backfill_static_2026_fields": true,
+    "v2082_renormalization_is_coverage_challenger_only": true,
+    "grok2_cdc_quant_is_research_challenger_only": true,
+    "structural_overlay_cannot_promote": true,
+    "live_orders_enabled": false,
+    "decision_influence": 0.0
+  },
+  "books": {
+    "PRECISION": {
+      "role": "Entry engine and precision shadow book",
+      "score_source": "V20.8.1 exact complete-38",
+      "selection_threshold": 82.0,
+      "top_n": 2,
+      "regime": "MOMO_RISK_ON",
+      "frequency": "MONTHLY",
+      "exit": {
+        "id": "MT_FIX_H168_S18_T04",
+        "target_return": 0.04,
+        "hard_stop_return": -0.18,
+        "max_holding_sessions": 168,
+        "attribution": "ONLY_THIS_BOOK_MAY_CITE_90_91_OOS"
+      },
+      "promotion_allowed": false
+    },
+    "THESIS_MT": {
+      "role": "True medium-term sleeve 18-60 months",
+      "entry_universe": "PRECISION BUY_CANDIDATE after operational gates",
+      "score_source": "V20.8.1 for ranking only; thesis text is mandatory",
+      "exit": {
+        "id": "THESIS_MT_NO_FIXED_TARGET",
+        "target_return": null,
+        "hard_stop_return": -0.18,
+        "trailing_after_sessions": 63,
+        "trailing_giveback": 0.12,
+        "review_sessions": 63,
+        "max_holding_sessions": 378,
+        "primary_exit": "WRITTEN_THESIS_INVALIDATION",
+        "rejected_proxy_id": "GROK2_CDC_THESIS_PROXY_Q63_H378_S25",
+        "note": "Price-only thesis proxy was rejected on 2024-2026. Invalidation stays human/written, not a backtested rule."
+      },
+      "sizing": {
+        "line_pct_default": [5.0, 10.0],
+        "line_pct_max": 15.0,
+        "theme_correlated_cap_pct": 20.0,
+        "satellite_book_cap_pct": 30.0,
+        "max_open_lines": 6,
+        "max_per_peer_group": 1
+      },
+      "promotion_allowed": false,
+      "historical_performance_attribution": "NONE"
+    }
+  },
+  "operational_gates": {
+    "apply_on": "CURRENT_SNAPSHOT_ONLY",
+    "can_create_historical_signal": false,
+    "can_promote_precision_signal": false,
+    "missing_field_policy": "WARN_NOT_IMPUTE",
+    "vetoes": {
+      "not_pea_eligible": "BLOCK",
+      "aum_eur_m_below": {"threshold": 50.0, "action": "BLOCK", "if_missing": "WARN"},
+      "aum_eur_m_watch": {"threshold": 100.0, "action": "WARN", "if_missing": "WARN"},
+      "ter_pct_broad_above": {"threshold": 0.25, "categories": ["WORLD", "REGION", "BETA"], "action": "WARN", "if_missing": "WARN"},
+      "ter_pct_theme_above": {"threshold": 0.50, "categories": ["THEME", "FACTOR", "SECTOR"], "action": "WARN", "if_missing": "WARN"},
+      "sri_risk_indicator_ge": {"threshold": 6, "action": "DOWNGRADE", "if_missing": "IGNORE"},
+      "stale_dynamic_data_calendar_days": {"threshold": 7, "action": "BLOCK"}
+    }
+  },
+  "peer_and_overlap": {
+    "minimum_peers_documented": 3,
+    "peer_rank_in_historical_score": 0.0,
+    "overlap_with_core_required_when_portfolio_available": true,
+    "reject_if_incremental_exposure_negligible": true
+  },
+  "required_instruction_fields": [
+    "job_horizon",
+    "thesis_8_12_lines",
+    "invalidation",
+    "isin_ticker_index",
+    "peers_rejected",
+    "vehicle_ter_aum_replication",
+    "lookthrough_top10",
+    "overlap",
+    "precision_score",
+    "gate_status",
+    "sizing",
+    "review_date"
+  ]
+}
